@@ -23,8 +23,14 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        # NEXT_PUBLIC_*はビルド時にJSバンドルへ焼き込まれるため、
+        # containerの environment: だけでは本番ビルドに反映されない。
+        # 本番でドメインが変わる場合は、ルートの.envでNEXT_PUBLIC_API_URLを
+        # 直接上書きすること (例: https://api.example.com)。
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${BACKEND_PORT:-8000}}
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:${BACKEND_PORT:-8000}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${BACKEND_PORT:-8000}}
       INTERNAL_API_URL: http://backend:8000
     ports:
       - "${FRONTEND_PORT:-3000}:3000"

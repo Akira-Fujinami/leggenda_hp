@@ -37,7 +37,11 @@ EXPOSE 3000
 CMD ["npm", "run", "dev"]
 
 # ---- 本番ビルドステージ ----
+# NEXT_PUBLIC_*はビルド時にJSバンドルへ埋め込まれるため、コンテナ起動時の
+# environment:だけでは反映されない。build.argsとして明示的に渡す必要がある。
 FROM deps AS builder
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 COPY frontend/ .
 RUN npm run build
 

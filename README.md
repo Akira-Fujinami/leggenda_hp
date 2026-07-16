@@ -161,6 +161,32 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d
 - マイグレーションはコンテナ起動時に自動実行しない。デプロイ手順として
   `docker compose -f compose.yaml -f compose.prod.yaml exec backend php artisan migrate --force`
   を明示的に実行すること。
+- `NEXT_PUBLIC_API_URL` はNext.jsのビルド時にJSバンドルへ焼き込まれるため、
+  本番でAPIのドメインが変わる場合は`.env`で明示的に上書きしてから
+  `docker compose -f compose.yaml -f compose.prod.yaml build frontend` を実行すること
+  (コンテナ起動時の環境変数だけでは反映されない)。
+
+## テスト
+
+```bash
+docker compose exec backend php artisan test   # PHPUnit
+docker compose exec frontend npm test          # Vitest + Testing Library
+docker compose exec analyzer npm test          # Vitest (SSRFガード等)
+```
+
+E2Eテスト (`frontend/e2e/`) はNext.js/Laravel/analyzer用のPlaywrightとは別に、
+ブラウザで実際にユーザー登録→プロジェクト作成→サイト登録の流れを検証する。
+
+```bash
+cd frontend
+npx playwright install chromium   # 初回のみ
+npx playwright test               # docker composeで起動済みのfrontend/backendが対象
+```
+
+`next dev` は初回アクセス時にルートをオンデマンドでコンパイルするため、システム負荷が
+高い状況ではタイムアウトすることがある。安定して実行したい場合は本番ビルド
+(`compose.prod.yaml`) に対して `E2E_BASE_URL=http://localhost:3000 npx playwright test`
+のように実行することを推奨する。
 
 ## トラブルシューティング
 
@@ -178,8 +204,9 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d
 それでも改善しない場合は、`compose.override.yaml` の `WATCHPACK_POLLING=true` /
 `CHOKIDAR_USEPOLLING=true` が効いているか確認してください。
 
-## 現状の制約 (Phase 0時点)
+## 現状の制約 (Phase 1時点)
 
-- 認証 (Sanctum) 、プロジェクト/サイト管理、分析ジョブなどの業務ロジックは未実装。
+- ユーザー登録・ログイン・Project/Website CRUDは実装済み (Sanctum SPA Cookie認証)。
 - analyzerの `/analyze/*` エンドポイントはSSRF検証のみ実装済みで、実処理は501を返す。
-- Semrush等の外部API連携は未実装。
+- Semrush等の外部API連携、実際のサイト分析処理 (Playwright/Lighthouse) は未実装。
+- 分析開始ボタンはUI上に用意されているが無効化されている (準備中の表示)。

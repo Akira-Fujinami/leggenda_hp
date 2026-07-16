@@ -1,11 +1,21 @@
-import { HealthStatus } from "@/components/health-status";
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useUser } from "@/features/auth/hooks";
 
 export default function Home() {
+  const { data: user, isLoading } = useUser();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (isLoading) return;
+    router.replace(user ? "/dashboard" : "/login");
+  }, [isLoading, user, router]);
+
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-6 bg-zinc-50 p-16 font-sans dark:bg-black">
-      <h1 className="text-2xl font-semibold tracking-tight">Website Comparison</h1>
-      <p className="text-muted-foreground">Phase 0: Docker基盤セットアップ</p>
-      <HealthStatus />
+    <div className="flex flex-1 items-center justify-center py-24 text-sm text-muted-foreground">
+      読み込んでいます…
     </div>
   );
 }
