@@ -1,0 +1,59 @@
+# ローカル開発用の上書き設定。
+# `docker compose up` 実行時に compose.yaml と自動的にマージされる。
+services:
+  frontend:
+    build:
+      target: dev
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+
+  backend:
+    build:
+      target: dev
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/var/www/html
+      - backend-vendor:/var/www/html/vendor
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  queue-worker:
+    build:
+      target: dev
+    volumes:
+      - ./backend:/var/www/html
+      - backend-vendor:/var/www/html/vendor
+
+  queue-worker-heavy:
+    build:
+      target: dev
+    volumes:
+      - ./backend:/var/www/html
+      - backend-vendor:/var/www/html/vendor
+
+  scheduler:
+    build:
+      target: dev
+    volumes:
+      - ./backend:/var/www/html
+      - backend-vendor:/var/www/html/vendor
+
+  analyzer:
+    build:
+      target: dev
+    environment:
+      NODE_ENV: development
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "300"
+    volumes:
+      - ./analyzer:/app
+      - analyzer-node-modules:/app/node_modules
+    # analyzerの動作を直接確認したい場合のみ、以下のコメントを外してホストに公開する。
+    # ports:
+    #   - "3001:3001"

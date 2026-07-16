@@ -1,0 +1,27 @@
+**/.git
+**/.gitignore
+**/node_modules
+**/.next
+**/dist
+backend/vendor
+frontend/.env*
+backend/.env*
+analyzer/.env*
+# storage配下の実ファイル(ログ/キャッシュ)は除外するが、Laravelが起動時に
+# 必要とするディレクトリ構造自体(.gitignoreマーカー含む)は残す
+backend/storage/logs/*
+!backend/storage/logs/.gitignore
+backend/storage/framework/cache/*
+!backend/storage/framework/cache/.gitignore
+!backend/storage/framework/cache/data
+backend/storage/framework/cache/data/*
+!backend/storage/framework/cache/data/.gitignore
+backend/storage/framework/sessions/*
+!backend/storage/framework/sessions/.gitignore
+backend/storage/framework/views/*
+!backend/storage/framework/views/.gitignore
+# artisan storage:link が作るシンボリックリンク。ビルドコンテキストへの
+# 取り込み時にBuildKitがエラーになるため除外する (本番では別途storage:linkを実行する)
+backend/public/storage
+# docker/certs/*.pem, *.crt はビルド時にCOPYされる必要があるため除外しない
+# (Gitへのコミット除外は .gitignore 側で行う)

@@ -1,0 +1,93 @@
+# 本番用の上書き設定。
+# 使用例: docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+services:
+  frontend:
+    build:
+      target: prod
+    environment:
+      NODE_ENV: production
+    restart: unless-stopped
+
+  backend:
+    build:
+      target: prod
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+    volumes:
+      - backend-storage:/var/www/html/storage
+      - backend-public:/var/www/html/public
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  queue-worker:
+    build:
+      target: prod
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+    volumes:
+      - backend-storage:/var/www/html/storage
+    restart: unless-stopped
+
+  queue-worker-heavy:
+    build:
+      target: prod
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+    volumes:
+      - backend-storage:/var/www/html/storage
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      target: prod
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+    volumes:
+      - backend-storage:/var/www/html/storage
+    restart: unless-stopped
+
+  analyzer:
+    build:
+      target: prod
+    environment:
+      NODE_ENV: production
+      MAX_CONCURRENT_BROWSER_SESSIONS: "2"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - backend-storage:/var/www/html/storage:ro
+      - backend-public:/var/www/html/public:ro
+    ports:
+      - "${BACKEND_PORT:-8000}:80"
+    networks: [app-network]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  postgres:
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+
+  mailpit:
+    restart: unless-stopped
