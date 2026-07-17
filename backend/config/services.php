@@ -37,6 +37,7 @@ return [
 
     'analyzer' => [
         'url' => env('ANALYZER_URL', 'http://analyzer:3001'),
+        'token' => env('ANALYZER_TOKEN'),
     ],
 
 ];

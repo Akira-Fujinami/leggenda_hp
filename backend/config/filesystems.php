@@ -47,6 +47,16 @@ return [
             'report' => false,
         ],
 
+        // 分析成果物 (HTML/スクリーンショット/Lighthouse Raw JSON) 用の共有Volume。
+        // analyzerコンテナと同じVolumeをマウントし、双方から読み書きする。
+        // 直接公開URLにはせず、Laravel側のコントローラーで所有権確認の上ストリーミングする。
+        'analysis' => [
+            'driver' => 'local',
+            'root' => env('ANALYSIS_STORAGE_PATH', storage_path('app/analysis')),
+            'throw' => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

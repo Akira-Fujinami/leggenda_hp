@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\AnalysisController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\ProjectController;
@@ -25,4 +26,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/projects/{project}/websites', [WebsiteController::class, 'store']);
     Route::patch('/websites/{website}', [WebsiteController::class, 'update']);
     Route::delete('/websites/{website}', [WebsiteController::class, 'destroy']);
+
+    Route::get('/projects/{project}/analyses', [AnalysisController::class, 'index']);
+    Route::post('/projects/{project}/analyses', [AnalysisController::class, 'store']);
+    Route::get('/analyses/{analysis}', [AnalysisController::class, 'show']);
+    Route::get('/analyses/{analysis}/progress', [AnalysisController::class, 'progress']);
+    Route::get('/analyses/{analysis}/results', [AnalysisController::class, 'results']);
+    Route::get('/website-analyses/{websiteAnalysis}/screenshots/{device}', [AnalysisController::class, 'screenshot'])
+        ->name('analyses.screenshot');
 });

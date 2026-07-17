@@ -60,7 +60,6 @@ services:
       target: prod
     environment:
       NODE_ENV: production
-      MAX_CONCURRENT_BROWSER_SESSIONS: "2"
     restart: unless-stopped
 
   nginx:

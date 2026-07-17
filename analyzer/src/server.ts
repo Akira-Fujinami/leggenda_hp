@@ -1,14 +1,55 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import sensible from "@fastify/sensible";
 import { z } from "zod";
 import { logger } from "./logger.js";
 import { assertSafeUrl, SsrfError } from "./ssrf.js";
+import { requireAnalyzerToken } from "./auth.js";
+import { ConcurrencyLimiter, CONCURRENCY_LIMIT_EXCEEDED } from "./concurrency.js";
+import { env } from "./env.js";
+import { renderPage } from "./render.js";
+import { captureScreenshot, type Device } from "./screenshot.js";
+import { runLighthouse } from "./lighthouse.js";
+import { detectTechnologies } from "./technology.js";
 
-const analyzeRequestSchema = z.object({
+const renderRequestSchema = z.object({
   url: z.string().min(1),
-  analysis_id: z.union([z.string(), z.number()]),
-  device: z.enum(["desktop", "mobile"]).optional().default("desktop"),
+  timeout_ms: z.coerce.number().int().positive().max(180_000).default(60_000),
+  max_html_bytes: z.coerce.number().int().positive().optional(),
 });
+
+const screenshotRequestSchema = z.object({
+  url: z.string().min(1),
+  device: z.enum(["desktop", "mobile"]).default("desktop"),
+  full_page: z.boolean().default(true),
+  analysis_id: z.coerce.number().int().positive(),
+  website_analysis_id: z.coerce.number().int().positive(),
+});
+
+const lighthouseRequestSchema = z.object({
+  url: z.string().min(1),
+  timeout_ms: z.coerce.number().int().positive().max(180_000).default(60_000),
+});
+
+const technologyRequestSchema = z.object({
+  url: z.string().min(1),
+  html: z.string().optional(),
+});
+
+function sendValidationError(reply: FastifyReply, error: z.ZodError) {
+  return reply.code(400).send({
+    success: false,
+    data: null,
+    error: { code: "VALIDATION_ERROR", message: "リクエスト内容が不正です。", details: error.flatten() },
+  });
+}
+
+function sendSsrfBlocked(reply: FastifyReply, err: SsrfError) {
+  return reply.code(422).send({
+    success: false,
+    data: null,
+    error: { code: "SSRF_BLOCKED", message: err.message },
+  });
+}
 
 export function buildServer() {
   const app = Fastify({
@@ -19,62 +60,24 @@ export function buildServer() {
 
   app.register(sensible);
 
+  const limiter = new ConcurrencyLimiter(env.ANALYZER_MAX_CONCURRENCY);
+
   app.get("/health", async () => {
     return {
       success: true,
       data: {
         status: "ok",
         uptime_seconds: Math.round(process.uptime()),
+        active_sessions: limiter.activeCount,
       },
       error: null,
     };
   });
 
-  const notImplemented = (routeName: string) =>
-    async (
-      request: import("fastify").FastifyRequest,
-      reply: import("fastify").FastifyReply,
-    ) => {
-      const parseResult = analyzeRequestSchema.safeParse(request.body);
-      if (!parseResult.success) {
-        return reply.code(400).send({
-          success: false,
-          data: null,
-          error: {
-            code: "VALIDATION_ERROR",
-            message: "リクエスト内容が不正です。",
-            details: parseResult.error.flatten(),
-          },
-        });
-      }
-
-      try {
-        await assertSafeUrl(parseResult.data.url);
-      } catch (err) {
-        if (err instanceof SsrfError) {
-          request.log.warn({ route: routeName, analysisId: parseResult.data.analysis_id }, "ssrf_blocked");
-          return reply.code(422).send({
-            success: false,
-            data: null,
-            error: { code: "SSRF_BLOCKED", message: err.message },
-          });
-        }
-        throw err;
-      }
-
-      // Playwright/Lighthouse本体の実装はPhase 3で行う。
-      // Phase 0時点ではSSRF検証と契約(リクエスト/レスポンス形式)のみ確定させる。
-      return reply.code(501).send({
-        success: false,
-        data: null,
-        error: { code: "NOT_IMPLEMENTED", message: `${routeName} はまだ実装されていません。` },
-      });
-    };
-
-  app.post("/analyze/render", notImplemented("render"));
-  app.post("/analyze/screenshot", notImplemented("screenshot"));
-  app.post("/analyze/lighthouse", notImplemented("lighthouse"));
-  app.post("/analyze/technology", notImplemented("technology"));
+  app.register(async (analyze) => {
+    analyze.addHook("preHandler", requireAnalyzerToken);
+    registerAnalyzeRoutes(analyze, limiter);
+  });
 
   app.setErrorHandler((error, request, reply) => {
     request.log.error({ err: error }, "unhandled_error");
@@ -86,4 +89,157 @@ export function buildServer() {
   });
 
   return app;
+}
+
+function registerAnalyzeRoutes(
+  app: import("fastify").FastifyInstance,
+  limiter: ConcurrencyLimiter,
+) {
+  app.post("/analyze/render", async (request: FastifyRequest, reply: FastifyReply) => {
+    const parsed = renderRequestSchema.safeParse(request.body);
+    if (!parsed.success) return sendValidationError(reply, parsed.error);
+
+    try {
+      await assertSafeUrl(parsed.data.url);
+    } catch (err) {
+      if (err instanceof SsrfError) return sendSsrfBlocked(reply, err);
+      throw err;
+    }
+
+    const result = await limiter.run(() =>
+      renderPage(parsed.data.url, {
+        timeoutMs: parsed.data.timeout_ms,
+        maxHtmlBytes: parsed.data.max_html_bytes ?? env.MAX_HTML_BYTES,
+      }),
+    );
+
+    if (result === CONCURRENCY_LIMIT_EXCEEDED) {
+      return reply.code(503).send({
+        success: false,
+        data: null,
+        error: { code: "TOO_BUSY", message: "analyzerが混雑しています。" },
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        html: result.html,
+        final_url: result.finalUrl,
+        http_status: result.httpStatus,
+        load_time_ms: result.loadTimeMs,
+      },
+      error: null,
+    });
+  });
+
+  app.post("/analyze/screenshot", async (request: FastifyRequest, reply: FastifyReply) => {
+    const parsed = screenshotRequestSchema.safeParse(request.body);
+    if (!parsed.success) return sendValidationError(reply, parsed.error);
+
+    try {
+      await assertSafeUrl(parsed.data.url);
+    } catch (err) {
+      if (err instanceof SsrfError) return sendSsrfBlocked(reply, err);
+      throw err;
+    }
+
+    const result = await limiter.run(() =>
+      captureScreenshot(
+        parsed.data.url,
+        parsed.data.device as Device,
+        parsed.data.analysis_id,
+        parsed.data.website_analysis_id,
+        parsed.data.full_page,
+        env.BROWSER_TIMEOUT_MS,
+      ),
+    );
+
+    if (result === CONCURRENCY_LIMIT_EXCEEDED) {
+      return reply.code(503).send({
+        success: false,
+        data: null,
+        error: { code: "TOO_BUSY", message: "analyzerが混雑しています。" },
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        storage_path: result.storagePath,
+        width: result.width,
+        height: result.height,
+        file_size: result.fileSize,
+        mime_type: result.mimeType,
+      },
+      error: null,
+    });
+  });
+
+  app.post("/analyze/lighthouse", async (request: FastifyRequest, reply: FastifyReply) => {
+    const parsed = lighthouseRequestSchema.safeParse(request.body);
+    if (!parsed.success) return sendValidationError(reply, parsed.error);
+
+    try {
+      await assertSafeUrl(parsed.data.url);
+    } catch (err) {
+      if (err instanceof SsrfError) return sendSsrfBlocked(reply, err);
+      throw err;
+    }
+
+    const result = await limiter.run(() => runLighthouse(parsed.data.url, parsed.data.timeout_ms));
+
+    if (result === CONCURRENCY_LIMIT_EXCEEDED) {
+      return reply.code(503).send({
+        success: false,
+        data: null,
+        error: { code: "TOO_BUSY", message: "analyzerが混雑しています。" },
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        scores: result.scores,
+        metrics: result.metrics,
+        raw_report: result.rawReport,
+      },
+      error: null,
+    });
+  });
+
+  app.post("/analyze/technology", async (request: FastifyRequest, reply: FastifyReply) => {
+    const parsed = technologyRequestSchema.safeParse(request.body);
+    if (!parsed.success) return sendValidationError(reply, parsed.error);
+
+    try {
+      await assertSafeUrl(parsed.data.url);
+    } catch (err) {
+      if (err instanceof SsrfError) return sendSsrfBlocked(reply, err);
+      throw err;
+    }
+
+    const result = await limiter.run(async () => {
+      const html = parsed.data.html ?? (await renderPage(parsed.data.url, {
+        timeoutMs: env.BROWSER_TIMEOUT_MS,
+        maxHtmlBytes: env.MAX_HTML_BYTES,
+      })).html;
+
+      return detectTechnologies(html);
+    });
+
+    if (result === CONCURRENCY_LIMIT_EXCEEDED) {
+      return reply.code(503).send({
+        success: false,
+        data: null,
+        error: { code: "TOO_BUSY", message: "analyzerが混雑しています。" },
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: { technologies: result },
+      error: null,
+    });
+  });
 }

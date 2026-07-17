@@ -17,6 +17,9 @@ x-backend-env: &backend-env
   FRONTEND_URL: http://localhost:${FRONTEND_PORT:-3000}
   SANCTUM_STATEFUL_DOMAINS: localhost:${FRONTEND_PORT:-3000}
   ANALYZER_URL: http://analyzer:3001
+  ANALYZER_TOKEN: ${ANALYZER_TOKEN:-}
+  ANALYSIS_STORAGE_PATH: ${ANALYSIS_STORAGE_PATH:-/var/analysis-storage}
+  CRAWLER_USER_AGENT: ${CRAWLER_USER_AGENT:-WebsiteComparisonBot/0.1 (+https://example.com/bot)}
 
 services:
   frontend:
@@ -50,6 +53,8 @@ services:
       - backend/.env
     environment:
       <<: *backend-env
+    volumes:
+      - analysis-storage:/var/analysis-storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,6 +70,8 @@ services:
       - backend/.env
     environment:
       <<: *backend-env
+    volumes:
+      - analysis-storage:/var/analysis-storage
     command: ["php", "artisan", "queue:work", "redis", "--queue=default,analysis,external-api,reports", "--sleep=3", "--tries=3", "--timeout=300"]
     depends_on:
       postgres:
@@ -87,6 +94,8 @@ services:
       - backend/.env
     environment:
       <<: *backend-env
+    volumes:
+      - analysis-storage:/var/analysis-storage
     command: ["php", "artisan", "queue:work", "redis", "--queue=analysis-heavy", "--sleep=3", "--tries=2", "--timeout=600"]
     depends_on:
       postgres:
@@ -131,6 +140,12 @@ services:
       PORT: "3001"
       HOST: "0.0.0.0"
       LOG_LEVEL: info
+      ANALYZER_TOKEN: ${ANALYZER_TOKEN:-}
+      ANALYZER_MAX_CONCURRENCY: ${ANALYZER_MAX_CONCURRENCY:-2}
+      ANALYSIS_STORAGE_PATH: ${ANALYSIS_STORAGE_PATH:-/var/analysis-storage}
+      CRAWLER_USER_AGENT: ${CRAWLER_USER_AGENT:-WebsiteComparisonBot/0.1 (+https://example.com/bot)}
+    volumes:
+      - analysis-storage:/var/analysis-storage
     expose:
       - "3001"
     networks: [app-network]
@@ -190,3 +205,7 @@ volumes:
   backend-public:
   frontend-node-modules:
   analyzer-node-modules:
+  # backendとanalyzerで共有する分析結果ストレージ(生HTML/スクリーンショット/
+  # Lighthouse生JSON等)。screenshotはanalyzerが直接書き込み、Laravelは
+  # 認可チェックを経由して配信する(analyzerを直接公開しない)。
+  analysis-storage:

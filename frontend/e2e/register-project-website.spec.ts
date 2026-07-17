@@ -42,3 +42,52 @@ test("register, create a project, and register a website", async ({ page }) => {
   await expect(page.getByText("E2E比較プロジェクト")).toBeVisible();
   await expect(page.getByText("サイト 1件")).toBeVisible();
 });
+
+// 分析開始 → 進捗ページ → 結果ページまでを通しで検証する。
+// analyzerが実際にexample.comへネットワークアクセスするため、実行環境の
+// ネットワーク条件によってcompleted/partial/failedのいずれに落ち着くかは
+// 変わり得る(TLS傍受環境ではレンダリング等が失敗し得る)。そのため最終的な
+// 個別スコアの値までは検証せず、「パイプラインが正常にキューイングされ、
+// ポーリングが終端状態まで進み、結果画面がクラッシュせず表示される」ことを
+// 検証する(外部サイトの可用性に依存する値そのものは断言しない)。
+test("start an analysis and reach the results page", async ({ page }) => {
+  const unique = Date.now();
+  const email = `e2e-analysis-${unique}@example.com`;
+
+  await page.goto("/register");
+  await page.getByLabel("お名前").fill("E2E分析テストユーザー");
+  await page.getByLabel("メールアドレス").fill(email);
+  await page.getByLabel("パスワード", { exact: true }).fill("password123");
+  await page.getByLabel("パスワード（確認）").fill("password123");
+  await page.getByRole("button", { name: "登録する" }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+
+  await page.getByRole("button", { name: "新規比較プロジェクト作成" }).first().click();
+  await page.getByLabel("プロジェクト名").fill("E2E分析プロジェクト");
+  await page.getByRole("button", { name: "作成する" }).click();
+  await expect(page).toHaveURL(/\/projects\/\d+$/);
+
+  await page.getByLabel("サイト名").fill("自社サイト");
+  await page.getByLabel("URL").fill("example.com");
+  await page.getByLabel("自社サイトとして登録する").check();
+  await page.getByRole("button", { name: "サイトを追加" }).click();
+  await expect(page.getByText("自社サイト")).toBeVisible();
+
+  const startButton = page.getByRole("button", { name: "分析を開始する" });
+  await expect(startButton).toBeEnabled();
+  await startButton.click();
+
+  await page.getByRole("button", { name: "開始する" }).click();
+
+  await expect(page).toHaveURL(/\/analyses\/\d+$/);
+  await expect(page.getByRole("heading", { name: "分析の進捗" })).toBeVisible();
+
+  // ジョブパイプライン全体(静的取得/robots/sitemap/レンダリング/スクリーンショット/
+  // Lighthouse/技術検出/SEO解析/確定)が終端状態に達するまで待つ。
+  await expect(page.getByRole("button", { name: "結果を見る" })).toBeVisible({ timeout: 120_000 });
+
+  await page.getByRole("button", { name: "結果を見る" }).click();
+  await expect(page).toHaveURL(/\/analyses\/\d+\/results$/);
+  await expect(page.getByRole("heading", { name: "分析結果" })).toBeVisible();
+  await expect(page.getByText("総合スコア")).toBeVisible();
+});

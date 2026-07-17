@@ -1,5 +1,6 @@
 <?php
 
+use App\Exceptions\Analysis\AnalysisAlreadyRunningException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -33,6 +34,18 @@ return Application::configure(basePath: dirname(__DIR__))
                 'errors' => $e->errors(),
                 'error_code' => 'VALIDATION_ERROR',
             ], 422);
+        });
+
+        $exceptions->render(function (AnalysisAlreadyRunningException $e, Request $request) {
+            if (! $request->is('api/*')) {
+                return null;
+            }
+
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors' => [],
+                'error_code' => 'ANALYSIS_ALREADY_RUNNING',
+            ], 409);
         });
 
         $exceptions->render(function (AuthenticationException $e, Request $request) {

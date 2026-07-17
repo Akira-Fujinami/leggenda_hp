@@ -1,5 +1,6 @@
 import dns from "node:dns/promises";
 import ipaddr from "ipaddr.js";
+import { env } from "./env.js";
 
 export class SsrfError extends Error {
   constructor(message: string) {
@@ -46,6 +47,16 @@ export interface SafeUrlResult {
  * ホスト名の許可判定だけでなくDNS解決後の実IPも検査することで、
  * DNSリバインディングによる検証バイパスを防ぐ。
  */
+function isTestAllowlisted(url: URL): boolean {
+  if (!env.SSRF_TEST_ALLOWLIST) {
+    return false;
+  }
+
+  const allowed = env.SSRF_TEST_ALLOWLIST.split(",").map((entry) => entry.trim());
+
+  return allowed.includes(url.host) || allowed.includes(url.hostname);
+}
+
 export async function assertSafeUrl(rawUrl: string): Promise<SafeUrlResult> {
   let url: URL;
   try {
@@ -56,6 +67,10 @@ export async function assertSafeUrl(rawUrl: string): Promise<SafeUrlResult> {
 
   if (!ALLOWED_PROTOCOLS.has(url.protocol)) {
     throw new SsrfError(`許可されていないプロトコルです: ${url.protocol}`);
+  }
+
+  if (isTestAllowlisted(url)) {
+    return { url, resolvedAddresses: [] };
   }
 
   const hostname = url.hostname.toLowerCase();

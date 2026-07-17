@@ -18,7 +18,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AnalysisStatusBadge } from "@/features/analysis/analysis-status-badge";
+import { isAnalysisTerminal, useAnalyses, useStartAnalysis } from "@/features/analysis/hooks";
 import { useDeleteProject, useProject } from "@/features/projects/hooks";
+import { ApiError } from "@/lib/api-client";
 import { WebsiteForm } from "@/features/websites/website-form";
 import { WebsiteTable } from "@/features/websites/website-table";
 
@@ -31,12 +34,20 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const { data, isLoading, isError } = useProject(projectId);
   const deleteProject = useDeleteProject();
   const [isDeleting, setIsDeleting] = useState(false);
+  const { data: analysesData } = useAnalyses(projectId);
+  const startAnalysis = useStartAnalysis(projectId);
 
   const handleDelete = () => {
     setIsDeleting(true);
     deleteProject.mutate(projectId, {
       onSuccess: () => router.replace("/dashboard"),
       onSettled: () => setIsDeleting(false),
+    });
+  };
+
+  const handleStartAnalysis = () => {
+    startAnalysis.mutate(undefined, {
+      onSuccess: (res) => router.push(`/analyses/${res.data.id}`),
     });
   };
 
@@ -60,6 +71,18 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const project = data.data;
   const websiteCount = project.websites.length;
   const limitReached = websiteCount >= MAX_WEBSITES;
+
+  const analyses = analysesData?.data ?? [];
+  const latestAnalysis = analyses[0];
+  const hasRunningAnalysis = latestAnalysis !== undefined && !isAnalysisTerminal(latestAnalysis.status);
+  const startDisabled = websiteCount === 0 || hasRunningAnalysis || startAnalysis.isPending;
+
+  const startAnalysisError =
+    startAnalysis.error instanceof ApiError
+      ? startAnalysis.error.errorCode === "ANALYSIS_ALREADY_RUNNING"
+        ? "既に実行中の分析があります。完了するまでお待ちください。"
+        : startAnalysis.error.message
+      : null;
 
   return (
     <div className="space-y-6">
@@ -109,11 +132,31 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <CardTitle>登録サイト（{websiteCount} / {MAX_WEBSITES}件）</CardTitle>
-          <Button disabled title="分析機能は準備中です">
-            分析を開始する
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger render={<Button disabled={startDisabled} />}>分析を開始する</AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>分析を開始しますか？</AlertDialogTitle>
+                <AlertDialogDescription>
+                  登録されている{websiteCount}件のサイトを対象に分析を開始します。完了までしばらく時間がかかります。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>キャンセル</AlertDialogCancel>
+                <AlertDialogAction disabled={startAnalysis.isPending} onClick={handleStartAnalysis}>
+                  {startAnalysis.isPending ? "開始中…" : "開始する"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </CardHeader>
         <CardContent className="space-y-6">
+          {startAnalysisError && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              {startAnalysisError}
+            </p>
+          )}
+
           {websiteCount === 0 ? (
             <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
               サイトを登録して分析を開始しましょう。
@@ -123,6 +166,36 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           )}
 
           <WebsiteForm projectId={project.id} disabled={limitReached} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>分析履歴</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {analyses.length === 0 ? (
+            <p className="text-sm text-muted-foreground">まだ分析は実行されていません。</p>
+          ) : (
+            <ul className="divide-y">
+              {analyses.map((analysis) => (
+                <li key={analysis.id} className="flex items-center justify-between gap-4 py-2">
+                  <div className="flex items-center gap-3">
+                    <AnalysisStatusBadge status={analysis.status} />
+                    <span className="text-sm text-muted-foreground">
+                      {new Date(analysis.created_at).toLocaleString("ja-JP")}
+                    </span>
+                  </div>
+                  <Link
+                    href={isAnalysisTerminal(analysis.status) ? `/analyses/${analysis.id}/results` : `/analyses/${analysis.id}`}
+                    className="text-sm text-primary underline-offset-4 hover:underline"
+                  >
+                    {isAnalysisTerminal(analysis.status) ? "結果を見る" : "進捗を見る"}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </CardContent>
       </Card>
     </div>

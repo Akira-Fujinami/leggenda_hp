@@ -30,4 +30,12 @@ class Project extends Model
     {
         return $this->hasMany(Website::class)->orderBy('display_order');
     }
+
+    /**
+     * @return HasMany<Analysis, $this>
+     */
+    public function analyses(): HasMany
+    {
+        return $this->hasMany(Analysis::class);
+    }
 }
