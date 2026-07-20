@@ -6,14 +6,18 @@ namespace App\Services\AiAnalysis\Data;
  * AiAnalysisProviderの出力。isMock=trueの場合、これは実際のAI分析結果では
  * ないことを呼び出し側・画面側が必ず判別できるようにするためのフラグであり、
  * モックであることを隠して「事実」として返してはならない。
+ *
+ * strengths/weaknesses/priorityActions/competitorInsightsの各要素は、実際に
+ * AIへ提示したmetric key・website_analysis_idにのみ言及できる
+ * (存在しない参照はAiAnalysisResponseParserが構築前に除外する)。
  */
 readonly class AiAnalysisResult
 {
     /**
-     * @param  list<string>  $strengths
-     * @param  list<string>  $weaknesses
-     * @param  list<string>  $priorityActions
-     * @param  list<string>  $competitorInsights
+     * @param  list<AiStrengthItem>  $strengths
+     * @param  list<AiWeaknessItem>  $weaknesses
+     * @param  list<AiPriorityActionItem>  $priorityActions
+     * @param  list<AiCompetitorInsightItem>  $competitorInsights
      * @param  list<string>  $cautions
      */
     public function __construct(
@@ -40,10 +44,10 @@ readonly class AiAnalysisResult
     {
         return [
             'summary' => $this->summary,
-            'strengths' => $this->strengths,
-            'weaknesses' => $this->weaknesses,
-            'priority_actions' => $this->priorityActions,
-            'competitor_insights' => $this->competitorInsights,
+            'strengths' => array_map(fn (AiStrengthItem $item) => $item->toArray(), $this->strengths),
+            'weaknesses' => array_map(fn (AiWeaknessItem $item) => $item->toArray(), $this->weaknesses),
+            'priority_actions' => array_map(fn (AiPriorityActionItem $item) => $item->toArray(), $this->priorityActions),
+            'competitor_insights' => array_map(fn (AiCompetitorInsightItem $item) => $item->toArray(), $this->competitorInsights),
             'cautions' => $this->cautions,
             'confidence' => $this->confidence,
             'provider' => $this->provider,

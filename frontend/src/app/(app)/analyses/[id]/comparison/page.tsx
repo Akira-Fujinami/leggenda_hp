@@ -6,11 +6,13 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ComparisonTable } from "@/features/comparison/comparison-table";
 import { DataQualityWarnings } from "@/features/comparison/data-quality-warnings";
+import { ExternalSeoInfoPanel } from "@/features/comparison/external-seo-info";
 import { useComparison } from "@/features/comparison/hooks";
 import { RankingSummary } from "@/features/comparison/ranking-summary";
 import { RecommendationList } from "@/features/comparison/recommendation-list";
 import { ScoreCharts } from "@/features/comparison/score-charts";
 import { StrengthsWeaknesses } from "@/features/comparison/strengths-weaknesses";
+import { AiAnalysisSection } from "@/features/ai-analysis/ai-analysis-section";
 
 export default function AnalysisComparisonPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -60,8 +62,10 @@ export default function AnalysisComparisonPage({ params }: { params: Promise<{ i
           <RankingSummary ranking={comparison.ranking} />
           <ScoreCharts ranking={comparison.ranking} categories={comparison.categories} />
           <ComparisonTable ranking={comparison.ranking} categories={comparison.categories} metrics={comparison.metrics} />
+          <ExternalSeoInfoPanel ranking={comparison.ranking} externalSeo={comparison.external_seo} />
           <StrengthsWeaknesses ranking={comparison.ranking} strengths={comparison.strengths} weaknesses={comparison.weaknesses} />
           <RecommendationList analysisId={analysisId} ranking={comparison.ranking} />
+          <AiAnalysisSection ranking={comparison.ranking} />
         </>
       )}
     </div>

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\AiAnalysisController;
 use App\Http\Controllers\Api\AnalysisController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\HealthController;
@@ -39,4 +40,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/website-analyses/{websiteAnalysis}/recommendations', [RecommendationController::class, 'forWebsiteAnalysis']);
     Route::get('/website-analyses/{websiteAnalysis}/screenshots/{device}', [AnalysisController::class, 'screenshot'])
         ->name('analyses.screenshot');
+
+    Route::get('/website-analyses/{websiteAnalysis}/ai-analysis', [AiAnalysisController::class, 'show']);
+    Route::post('/website-analyses/{websiteAnalysis}/ai-analysis', [AiAnalysisController::class, 'store'])
+        ->middleware('throttle:10,1');
 });

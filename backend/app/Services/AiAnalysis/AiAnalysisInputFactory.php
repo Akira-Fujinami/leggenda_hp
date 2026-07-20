@@ -128,6 +128,7 @@ class AiAnalysisInputFactory
         $competitorGaps = $entries
             ->reject(fn (SiteScoreEntry $entry) => $entry->websiteAnalysis->id === $websiteAnalysis->id)
             ->map(fn (SiteScoreEntry $entry) => new AiCompetitorGap(
+                websiteAnalysisId: $entry->websiteAnalysis->id,
                 competitorName: $entry->websiteAnalysis->website?->name ?? "サイト #{$entry->websiteAnalysis->website_id}",
                 scoreGap: round($entry->score->overallScore - $targetEntry->score->overallScore, 2),
             ))

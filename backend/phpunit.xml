@@ -35,6 +35,13 @@
             config('database.default')等を出力して検証すること。
         -->
         <server name="APP_ENV" value="testing" force="true"/>
+        <!--
+            テストではMock SEO/AI Providerを明示的に許可する
+            (production環境判定はAPP_ENV=testingなので別途安全)。
+            個々のテストがconfig(['analysis.allow_mock_providers' => false])で
+            上書きして、拒否されるケースも検証できる。
+        -->
+        <server name="ALLOW_MOCK_PROVIDERS" value="true" force="true"/>
         <server name="APP_MAINTENANCE_DRIVER" value="file" force="true"/>
         <server name="BCRYPT_ROUNDS" value="4" force="true"/>
         <server name="BROADCAST_CONNECTION" value="null" force="true"/>

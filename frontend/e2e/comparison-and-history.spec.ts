@@ -87,7 +87,7 @@ test("analyze a primary site and a competitor, then view the comparison and reco
   // これらはCard内のCardTitle(<div>)で表示されるため、ARIAのheadingロールは
   // 持たない。getByTextで見出し文言そのものを確認する。
   await expect(page.getByText("サイト別ランキング")).toBeVisible();
-  await expect(page.getByText("改善提案", { exact: true })).toBeVisible();
+  await expect(page.getByText("ルールベース改善提案", { exact: true })).toBeVisible();
 });
 
 test("analyze the same project twice and view the history comparison screen", async ({ page }) => {

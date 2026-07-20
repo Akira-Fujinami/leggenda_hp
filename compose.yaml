@@ -20,12 +20,21 @@ x-backend-env: &backend-env
   ANALYZER_TOKEN: ${ANALYZER_TOKEN:-}
   ANALYSIS_STORAGE_PATH: ${ANALYSIS_STORAGE_PATH:-/var/analysis-storage}
   CRAWLER_USER_AGENT: ${CRAWLER_USER_AGENT:-WebsiteComparisonBot/0.1 (+https://example.com/bot)}
+  ALLOW_MOCK_PROVIDERS: ${ALLOW_MOCK_PROVIDERS:-false}
   SEO_PROVIDER: ${SEO_PROVIDER:-mock}
   SEMRUSH_API_KEY: ${SEMRUSH_API_KEY:-}
   SEMRUSH_DATABASE: ${SEMRUSH_DATABASE:-jp}
   SEMRUSH_TIMEOUT: ${SEMRUSH_TIMEOUT:-30}
   SEMRUSH_MAX_RETRIES: ${SEMRUSH_MAX_RETRIES:-1}
   SEMRUSH_DAILY_UNIT_LIMIT: ${SEMRUSH_DAILY_UNIT_LIMIT:-}
+  SEMRUSH_CACHE_TTL_HOURS: ${SEMRUSH_CACHE_TTL_HOURS:-24}
+  AI_PROVIDER: ${AI_PROVIDER:-mock}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+  AI_TIMEOUT: ${AI_TIMEOUT:-60}
+  AI_MAX_RETRIES: ${AI_MAX_RETRIES:-1}
+  AI_MAX_INPUT_TOKENS: ${AI_MAX_INPUT_TOKENS:-}
+  AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-2000}
 
 services:
   frontend:
@@ -92,9 +101,12 @@ services:
       retries: 3
       start_period: 10s
 
-  # Semrush等の外部API呼び出しは専用キュー(external-api)・専用ワーカーへ隔離する。
-  # 外部APIのレート制限・障害・タイムアウトが、通常のanalysisキューの処理
-  # (ページ取得・レンダリング等)に波及しないようにするため。
+  # Semrush・AI Provider等の外部API呼び出しは専用キュー(external-api, ai)・
+  # 専用ワーカーへ隔離する。外部APIのレート制限・障害・タイムアウトが、通常の
+  # analysisキューの処理(ページ取得・レンダリング等)に波及しないようにするため。
+  # aiはAI分析(GenerateAiAnalysisJob)専用のキュー名で、external-apiと同じ
+  # ワーカーが処理する(どちらも「サードパーティAPI呼び出し」という性質が
+  # 同じで、隔離の目的を共有するため、コンテナを分けるほどの独立性は不要と判断)。
   queue-worker-external:
     build:
       context: .
@@ -105,7 +117,7 @@ services:
       <<: *backend-env
     volumes:
       - analysis-storage:/var/analysis-storage
-    command: ["php", "artisan", "queue:work", "redis", "--queue=external-api", "--sleep=3", "--tries=2", "--timeout=60"]
+    command: ["php", "artisan", "queue:work", "redis", "--queue=external-api,ai", "--sleep=3", "--tries=2", "--timeout=90"]
     depends_on:
       postgres:
         condition: service_healthy

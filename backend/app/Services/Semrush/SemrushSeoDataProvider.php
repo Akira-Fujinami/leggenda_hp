@@ -36,20 +36,34 @@ class SemrushSeoDataProvider implements SeoDataProvider
         }
 
         $domainOverview = $this->fetchDomainOverview($domain, $database, $apiKey);
-        $backlinks = $this->fetchBacklinksOverview($domain, $database, $apiKey);
+        $backlinksResult = $this->fetchBacklinksOverview($domain, $apiKey);
         $competitors = $this->fetchCompetitors($domain, $database, $apiKey);
+
+        // authority_scoreはbacklinks_overviewのascore列(Semrushの実際の
+        // Authority Score)からのみ取得する。domain_ranksのRk(ランク)から
+        // 逆算した近似値は「捏造」に当たるため使わない ―― 取得できなければ
+        // nullのまま返し、呼び出し側(FetchExternalSeoDataJob)でunavailableとして扱う。
+        $domain0 = $domainOverview['domain'];
+        if ($domain0 !== null) {
+            $domain0 = new SeoDomainMetrics(
+                authorityScore: $backlinksResult['authorityScore'],
+                organicTrafficEstimate: $domain0->organicTrafficEstimate,
+                organicKeywordsCount: $domain0->organicKeywordsCount,
+                paidSearchPresent: $domain0->paidSearchPresent,
+            );
+        }
 
         return new SeoProviderResult(
             isMock: false,
             database: $database,
             domainScope: 'root_domain',
-            domain: $domainOverview['domain'],
+            domain: $domain0,
             keywords: $domainOverview['keywords'],
-            backlinks: $backlinks,
+            backlinks: $backlinksResult['metrics'],
             competitors: $competitors,
             rawForStorage: [
                 'domain_ranks' => $domainOverview['raw'],
-                'backlinks_overview' => $backlinks?->toArray(),
+                'backlinks_overview' => $backlinksResult['metrics']?->toArray(),
                 'domain_domains' => $competitors?->toArray(),
             ],
         );
@@ -72,19 +86,17 @@ class SemrushSeoDataProvider implements SeoDataProvider
             return ['domain' => null, 'keywords' => null, 'raw' => []];
         }
 
-        // Rk(ランク)は数値が小さいほど良いため、Authority Score相当として
-        // 0-100スケールに大まかに変換する(Semrushの実際のAuthority Score
-        // エンドポイントが別途利用可能な契約であれば、そちらを優先すべき)。
-        $rank = isset($row['Rk']) ? (int) $row['Rk'] : null;
-        $authorityScore = $rank !== null && $rank > 0 ? max(0.0, 100.0 - log10(max($rank, 1)) * 10) : null;
-
         return [
             'domain' => new SeoDomainMetrics(
-                authorityScore: $authorityScore,
+                authorityScore: null, // fetch()側でbacklinks_overviewのascoreから埋める
                 organicTrafficEstimate: isset($row['Ot']) ? (int) $row['Ot'] : null,
                 organicKeywordsCount: isset($row['Or']) ? (int) $row['Or'] : null,
                 paidSearchPresent: isset($row['Ad']) ? ((int) $row['Ad'] > 0) : null,
             ),
+            // Semrushの上位3位/10位キーワード数は、Organic Search Keywordsレポート
+            // (type=domain_organic)を全件走査して順位を集計する必要があり、
+            // 現在の契約プランで確実に取得できるかを実キーで未検証のため、
+            // 存在しない値を捏造するよりnullのまま返す(unavailable扱いにする)。
             'keywords' => new SeoKeywordMetrics(
                 top3KeywordsCount: null,
                 top10KeywordsCount: null,
@@ -93,24 +105,31 @@ class SemrushSeoDataProvider implements SeoDataProvider
         ];
     }
 
-    private function fetchBacklinksOverview(string $domain, string $database, string $apiKey): ?SeoBacklinkMetrics
+    /**
+     * @return array{metrics: ?SeoBacklinkMetrics, authorityScore: ?float}
+     */
+    private function fetchBacklinksOverview(string $domain, string $apiKey): array
     {
         $rows = $this->request('backlinks_overview', $apiKey, [
             'target' => $domain,
             'target_type' => 'root_domain',
-            'export_columns' => 'total,domains_num',
+            'export_columns' => 'total,domains_num,ascore',
         ], baseUrlOverride: (string) config('services.semrush.analytics_base_url'));
 
         $row = $rows[0] ?? null;
 
         if ($row === null) {
-            return null;
+            return ['metrics' => null, 'authorityScore' => null];
         }
 
-        return new SeoBacklinkMetrics(
-            backlinksCount: isset($row['total']) ? (int) $row['total'] : null,
-            referringDomainsCount: isset($row['domains_num']) ? (int) $row['domains_num'] : null,
-        );
+        return [
+            'metrics' => new SeoBacklinkMetrics(
+                backlinksCount: isset($row['total']) ? (int) $row['total'] : null,
+                referringDomainsCount: isset($row['domains_num']) ? (int) $row['domains_num'] : null,
+            ),
+            // ascore = Semrush Authority Score(backlinks_overviewレポートの実列)。
+            'authorityScore' => isset($row['ascore']) && is_numeric($row['ascore']) ? (float) $row['ascore'] : null,
+        ];
     }
 
     private function fetchCompetitors(string $domain, string $database, string $apiKey): ?SeoCompetitorMetrics

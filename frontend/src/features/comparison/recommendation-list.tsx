@@ -28,7 +28,10 @@ export function RecommendationList({ analysisId, ranking }: { analysisId: number
   return (
     <Card>
       <CardHeader>
-        <CardTitle>改善提案</CardTitle>
+        <div className="flex items-center gap-2">
+          <CardTitle>ルールベース改善提案</CardTitle>
+          <Badge variant="outline">計測データに基づく確定的な提案</Badge>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">

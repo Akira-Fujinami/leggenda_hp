@@ -3,17 +3,19 @@
 namespace App\Services\AiAnalysis;
 
 use App\Services\AiAnalysis\Data\AiAnalysisInput;
-use App\Services\AiAnalysis\Data\AiAnalysisResult;
+use App\Services\AiAnalysis\Data\AiAnalysisOutcome;
 
 /**
  * AI分析Providerの抽象化。Semrush等のSeoDataProviderと同様に、実際のAI API
  * (OpenAI/Anthropic等)固有の呼び出し方法・レスポンス形式をJob/Controllerから
- * 隠蔽する。次PhaseでMockAiAnalysisProvider以外の実装を追加する際も、
- * この契約(AiAnalysisInputを受け取りAiAnalysisResultを返す)だけを満たせばよい。
+ * 隠蔽する。
  */
 interface AiAnalysisProvider
 {
-    public function analyze(AiAnalysisInput $input): AiAnalysisResult;
+    /**
+     * @throws AiAnalysisException
+     */
+    public function analyze(AiAnalysisInput $input): AiAnalysisOutcome;
 
     public function name(): string;
 }

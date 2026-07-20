@@ -3,7 +3,12 @@
 namespace App\Services\AiAnalysis;
 
 use App\Services\AiAnalysis\Data\AiAnalysisInput;
+use App\Services\AiAnalysis\Data\AiAnalysisOutcome;
 use App\Services\AiAnalysis\Data\AiAnalysisResult;
+use App\Services\AiAnalysis\Data\AiCompetitorInsightItem;
+use App\Services\AiAnalysis\Data\AiPriorityActionItem;
+use App\Services\AiAnalysis\Data\AiStrengthItem;
+use App\Services\AiAnalysis\Data\AiWeaknessItem;
 
 /**
  * 開発・テスト向けのAI分析Provider。外部APIを一切呼び出さず、既存の
@@ -24,7 +29,7 @@ class MockAiAnalysisProvider implements AiAnalysisProvider
         return 'mock';
     }
 
-    public function analyze(AiAnalysisInput $input): AiAnalysisResult
+    public function analyze(AiAnalysisInput $input): AiAnalysisOutcome
     {
         $siteLabel = $input->websiteName ?? 'このサイト';
 
@@ -36,25 +41,44 @@ class MockAiAnalysisProvider implements AiAnalysisProvider
             $input->coverageRate,
         );
 
+        $strengths = array_slice(
+            array_map(fn (string $label) => new AiStrengthItem(title: $label, description: $label, evidenceMetricKeys: []), $input->strengths),
+            0,
+            self::MAX_STRENGTHS,
+        );
+
+        $weaknesses = array_slice(
+            array_map(fn (string $label) => new AiWeaknessItem(title: $label, description: $label, evidenceMetricKeys: []), $input->weaknesses),
+            0,
+            self::MAX_WEAKNESSES,
+        );
+
         $priorityActions = $input->recommendations
             ->take(self::MAX_PRIORITY_ACTIONS)
-            ->map(fn ($recommendation) => $recommendation->title)
-            ->values()
-            ->all();
-
-        $competitorInsights = $input->competitorGaps
-            ->map(fn ($gap) => sprintf(
-                '%sとの総合スコア差: %+.1f点',
-                $gap->competitorName,
-                $gap->scoreGap,
+            ->map(fn ($recommendation) => new AiPriorityActionItem(
+                title: $recommendation->title,
+                description: $recommendation->title,
+                priority: $recommendation->priority,
+                impact: $recommendation->impact,
+                effort: $recommendation->effort,
+                evidenceMetricKeys: [],
             ))
             ->values()
             ->all();
 
-        return new AiAnalysisResult(
+        $competitorInsights = $input->competitorGaps
+            ->map(fn ($gap) => new AiCompetitorInsightItem(
+                title: sprintf('%sとのスコア差', $gap->competitorName),
+                description: sprintf('%sとの総合スコア差: %+.1f点', $gap->competitorName, $gap->scoreGap),
+                competitorWebsiteAnalysisIds: [$gap->websiteAnalysisId],
+            ))
+            ->values()
+            ->all();
+
+        $result = new AiAnalysisResult(
             summary: $summary,
-            strengths: array_slice($input->strengths, 0, self::MAX_STRENGTHS),
-            weaknesses: array_slice($input->weaknesses, 0, self::MAX_WEAKNESSES),
+            strengths: $strengths,
+            weaknesses: $weaknesses,
             priorityActions: $priorityActions,
             competitorInsights: $competitorInsights,
             cautions: ['これはモックデータです。実際のAI分析結果ではありません。'],
@@ -63,5 +87,7 @@ class MockAiAnalysisProvider implements AiAnalysisProvider
             model: null,
             isMock: true,
         );
+
+        return new AiAnalysisOutcome($result, usageInputTokens: null, usageOutputTokens: null);
     }
 }

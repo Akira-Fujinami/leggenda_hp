@@ -86,6 +86,21 @@ export interface DataQuality {
   warnings: string[];
 }
 
+export interface ExternalSeoInfo {
+  website_analysis_id: number;
+  provider: string | null;
+  is_mock: boolean;
+  status: string;
+  database: string | null;
+  requested_domain: string | null;
+  normalized_domain: string | null;
+  scope: string | null;
+  fetched_at: string | null;
+  cache_hit: boolean;
+  error_code: string | null;
+  error_message: string | null;
+}
+
 export interface ComparisonResult {
   analysis: AnalysisSummary;
   primary_website_analysis_id: number | null;
@@ -95,6 +110,7 @@ export interface ComparisonResult {
   strengths: StrengthWeaknessGroup[];
   weaknesses: StrengthWeaknessGroup[];
   data_quality: DataQuality[];
+  external_seo: ExternalSeoInfo[];
 }
 
 export interface RecommendationItem {

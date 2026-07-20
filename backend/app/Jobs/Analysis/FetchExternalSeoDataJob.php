@@ -81,21 +81,52 @@ class FetchExternalSeoDataJob extends BaseWebsiteAnalysisJob
         $backlinks = $data['backlinks'] ?? [];
         $competitors = $data['competitors'] ?? [];
 
-        // モックデータは「本物の評価」として採点に混ぜない(UI上もデモ表示に留める)。
-        $status = $snapshot->is_mock ? MetricResultStatus::NotApplicable : MetricResultStatus::Success;
         $confidence = $snapshot->is_mock ? 0.0 : 0.9;
         $evidence = ['provider' => $snapshot->provider, 'domain' => $snapshot->domain, 'fetched_at' => $snapshot->fetched_at?->toIso8601String(), 'is_mock' => $snapshot->is_mock];
 
-        $this->recordMetric($this->websiteAnalysisId, 'authority_score', $status, normalizedValue: $domain['authority_score'] ?? null, rawValue: $domain, evidence: $evidence, confidence: $confidence);
-        $this->recordMetric($this->websiteAnalysisId, 'organic_traffic_estimate', $status, normalizedValue: $domain['organic_traffic_estimate'] ?? null, rawValue: $domain, evidence: $evidence, confidence: $confidence);
-        $this->recordMetric($this->websiteAnalysisId, 'organic_keywords_count', $status, normalizedValue: $domain['organic_keywords_count'] ?? null, rawValue: $domain, evidence: $evidence, confidence: $confidence);
-        $this->recordMetric($this->websiteAnalysisId, 'top10_keywords_count', $status, normalizedValue: $keywords['top10_keywords_count'] ?? null, rawValue: $keywords, evidence: $evidence, confidence: $confidence);
-        $this->recordMetric($this->websiteAnalysisId, 'backlinks_count', $status, normalizedValue: $backlinks['backlinks_count'] ?? null, rawValue: $backlinks, evidence: $evidence, confidence: $confidence);
-        $this->recordMetric($this->websiteAnalysisId, 'referring_domains_count', $status, normalizedValue: $backlinks['referring_domains_count'] ?? null, rawValue: $backlinks, evidence: $evidence, confidence: $confidence);
+        $this->recordExternalMetric('authority_score', $domain['authority_score'] ?? null, $domain, $evidence, $confidence, $snapshot->is_mock);
+        $this->recordExternalMetric('organic_traffic_estimate', $domain['organic_traffic_estimate'] ?? null, $domain, $evidence, $confidence, $snapshot->is_mock);
+        $this->recordExternalMetric('organic_keywords_count', $domain['organic_keywords_count'] ?? null, $domain, $evidence, $confidence, $snapshot->is_mock);
+        $this->recordExternalMetric('top10_keywords_count', $keywords['top10_keywords_count'] ?? null, $keywords, $evidence, $confidence, $snapshot->is_mock);
+        $this->recordExternalMetric('backlinks_count', $backlinks['backlinks_count'] ?? null, $backlinks, $evidence, $confidence, $snapshot->is_mock);
+        $this->recordExternalMetric('referring_domains_count', $backlinks['referring_domains_count'] ?? null, $backlinks, $evidence, $confidence, $snapshot->is_mock);
 
-        $this->recordMetric($this->websiteAnalysisId, 'top3_keywords_count', $status, normalizedValue: $keywords['top3_keywords_count'] ?? null, rawValue: $keywords, evidence: $evidence, confidence: $confidence);
-        $this->recordMetric($this->websiteAnalysisId, 'paid_search_present', $status, normalizedValue: $domain['paid_search_present'] ?? null, rawValue: $domain, evidence: $evidence, confidence: $confidence);
-        $this->recordMetric($this->websiteAnalysisId, 'competitor_domains_count', $status, normalizedValue: $competitors['competitor_domains_count'] ?? null, rawValue: $competitors, evidence: $evidence, confidence: $confidence);
+        $this->recordExternalMetric('top3_keywords_count', $keywords['top3_keywords_count'] ?? null, $keywords, $evidence, $confidence, $snapshot->is_mock);
+        $this->recordExternalMetric('paid_search_present', $domain['paid_search_present'] ?? null, $domain, $evidence, $confidence, $snapshot->is_mock);
+        $this->recordExternalMetric('competitor_domains_count', $competitors['competitor_domains_count'] ?? null, $competitors, $evidence, $confidence, $snapshot->is_mock);
+    }
+
+    /**
+     * @param  array<string, mixed>  $rawContext
+     * @param  array<string, mixed>  $evidence
+     */
+    private function recordExternalMetric(string $key, mixed $value, array $rawContext, array $evidence, float $confidence, bool $isMock): void
+    {
+        // モックデータは「本物の評価」として採点に混ぜない(UI上もデモ表示に留める)。
+        if ($isMock) {
+            $this->recordMetric($this->websiteAnalysisId, $key, MetricResultStatus::NotApplicable, normalizedValue: $value, rawValue: $rawContext, evidence: $evidence, confidence: $confidence);
+
+            return;
+        }
+
+        // 実データの場合、個々の項目がnull(=Semrush側で取得できなかった)なら
+        // 「成功扱いでnull」にはせず、その項目だけunavailableとして正直に記録する
+        // (未取得値を0点として採点させないため)。
+        if ($value === null) {
+            $this->recordMetric(
+                $this->websiteAnalysisId,
+                $key,
+                MetricResultStatus::Unavailable,
+                rawValue: $rawContext,
+                evidence: $evidence,
+                errorCode: 'SEMRUSH_METRIC_UNAVAILABLE',
+                errorMessage: 'この指標は現在契約中のSemrush APIプランでは取得できませんでした。',
+            );
+
+            return;
+        }
+
+        $this->recordMetric($this->websiteAnalysisId, $key, MetricResultStatus::Success, normalizedValue: $value, rawValue: $rawContext, evidence: $evidence, confidence: $confidence);
     }
 
     private function recordAllUnavailable(?string $errorCode, ?string $errorMessage): void

@@ -41,11 +41,22 @@ return [
     ],
 
     'ai' => [
-        // 'mock'のみ実装済み。'openai'/'anthropic'は将来対応予定で、
+        // 実装済み: 'mock', 'openai'。'anthropic'は将来対応予定で、
         // 現時点で指定するとAiAnalysisProviderFactoryが明確な設定エラーを投げる
         // (黙ってmockへフォールバックしない)。
         'provider' => env('AI_PROVIDER', 'mock'),
-        'api_key' => env('AI_API_KEY'),
+        'timeout' => (int) env('AI_TIMEOUT', 60),
+        'max_retries' => (int) env('AI_MAX_RETRIES', 1),
+        'max_input_tokens' => env('AI_MAX_INPUT_TOKENS') !== null && env('AI_MAX_INPUT_TOKENS') !== ''
+            ? (int) env('AI_MAX_INPUT_TOKENS')
+            : null,
+        'max_output_tokens' => (int) env('AI_MAX_OUTPUT_TOKENS', 2000),
+    ],
+
+    'openai' => [
+        'api_key' => env('OPENAI_API_KEY'),
+        'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
+        'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
     ],
 
     'semrush' => [

@@ -9,8 +9,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 #[Fillable([
-    'website_analysis_id', 'provider', 'operation', 'domain', 'database', 'status', 'raw_storage_path',
-    'normalized_data', 'is_mock', 'fetched_at', 'expires_at', 'source_snapshot_id',
+    'website_analysis_id', 'requested_domain', 'provider', 'operation', 'domain', 'scope', 'database', 'status',
+    'raw_storage_path', 'normalized_data', 'is_mock', 'fetched_at', 'expires_at', 'source_snapshot_id',
     'error_code', 'error_message',
 ])]
 class ExternalDataSnapshot extends Model

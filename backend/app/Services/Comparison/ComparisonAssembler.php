@@ -5,6 +5,7 @@ namespace App\Services\Comparison;
 use App\Enums\MetricResultStatus;
 use App\Models\Analysis;
 use App\Models\CategoryDefinition;
+use App\Models\ExternalDataSnapshot;
 use App\Models\MetricDefinition;
 use App\Models\Recommendation;
 use App\Services\Scoring\OverallScoreCalculator;
@@ -58,9 +59,16 @@ class ComparisonAssembler
             ->get()
             ->groupBy('website_analysis_id');
 
+        $externalSeoSnapshots = ExternalDataSnapshot::query()
+            ->whereIn('website_analysis_id', $analysis->websiteAnalyses->pluck('id'))
+            ->where('operation', 'domain_overview')
+            ->get()
+            ->keyBy('website_analysis_id');
+
         $strengths = [];
         $weaknesses = [];
         $dataQuality = [];
+        $externalSeo = [];
 
         foreach ($entries as $entry) {
             $waId = $entry->websiteAnalysis->id;
@@ -70,6 +78,7 @@ class ComparisonAssembler
             $strengths[] = ['website_analysis_id' => $waId, 'items' => $sw['strengths']];
             $weaknesses[] = ['website_analysis_id' => $waId, 'items' => $sw['weaknesses']];
             $dataQuality[] = $this->buildDataQuality($entry);
+            $externalSeo[] = $this->buildExternalSeoInfo($waId, $externalSeoSnapshots->get($waId));
         }
 
         return [
@@ -100,6 +109,45 @@ class ComparisonAssembler
             'strengths' => $strengths,
             'weaknesses' => $weaknesses,
             'data_quality' => $dataQuality,
+            'external_seo' => $externalSeo,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildExternalSeoInfo(int $websiteAnalysisId, ?ExternalDataSnapshot $snapshot): array
+    {
+        if ($snapshot === null) {
+            return [
+                'website_analysis_id' => $websiteAnalysisId,
+                'provider' => null,
+                'is_mock' => false,
+                'status' => 'unavailable',
+                'database' => null,
+                'requested_domain' => null,
+                'normalized_domain' => null,
+                'scope' => null,
+                'fetched_at' => null,
+                'cache_hit' => false,
+                'error_code' => null,
+                'error_message' => null,
+            ];
+        }
+
+        return [
+            'website_analysis_id' => $websiteAnalysisId,
+            'provider' => $snapshot->provider,
+            'is_mock' => (bool) $snapshot->is_mock,
+            'status' => $snapshot->status,
+            'database' => $snapshot->database,
+            'requested_domain' => $snapshot->requested_domain,
+            'normalized_domain' => $snapshot->domain,
+            'scope' => $snapshot->scope,
+            'fetched_at' => $snapshot->fetched_at?->toIso8601String(),
+            'cache_hit' => $snapshot->source_snapshot_id !== null,
+            'error_code' => $snapshot->error_code,
+            'error_message' => $snapshot->error_message,
         ];
     }
 

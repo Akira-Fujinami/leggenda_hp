@@ -32,8 +32,10 @@ class ExternalSeoDataService
     {
         $provider = $this->providerFactory->make();
         $database = (string) config('services.semrush.database', 'us');
-        $normalizedDomain = $this->domainNormalizer->normalize($websiteAnalysis->website->normalized_url);
+        $requestedDomain = $websiteAnalysis->website->normalized_url;
+        $normalizedDomain = $this->domainNormalizer->normalize($requestedDomain);
         $lookupDomain = $normalizedDomain->domainForLookup();
+        $scope = $normalizedDomain->scope();
 
         $cached = $this->findFreshCache($provider->name(), $lookupDomain, $database);
 
@@ -41,7 +43,9 @@ class ExternalSeoDataService
             return ExternalDataSnapshot::query()->updateOrCreate(
                 ['website_analysis_id' => $websiteAnalysis->id, 'provider' => $provider->name(), 'operation' => self::OPERATION],
                 [
+                    'requested_domain' => $requestedDomain,
                     'domain' => $lookupDomain,
+                    'scope' => $scope,
                     'database' => $database,
                     'status' => $cached->status,
                     'raw_storage_path' => $cached->raw_storage_path,
@@ -105,7 +109,9 @@ class ExternalSeoDataService
         return ExternalDataSnapshot::query()->updateOrCreate(
             ['website_analysis_id' => $websiteAnalysis->id, 'provider' => $provider->name(), 'operation' => self::OPERATION],
             [
+                'requested_domain' => $requestedDomain,
                 'domain' => $lookupDomain,
+                'scope' => $scope,
                 'database' => $database,
                 'status' => 'success',
                 'raw_storage_path' => $rawStoragePath,

@@ -47,6 +47,17 @@ return [
     */
     'seo_provider' => env('SEO_PROVIDER', 'mock'),
 
-    // ExternalDataSnapshotのキャッシュ有効期間 (時間)。
-    'external_data_cache_hours' => (int) env('EXTERNAL_DATA_CACHE_HOURS', 24),
+    // ExternalDataSnapshotのキャッシュ有効期間 (時間)。SEMRUSH_CACHE_TTL_HOURSを
+    // 優先し、未設定なら後方互換のためEXTERNAL_DATA_CACHE_HOURSにフォールバックする。
+    'external_data_cache_hours' => (int) env('SEMRUSH_CACHE_TTL_HOURS', env('EXTERNAL_DATA_CACHE_HOURS', 24)),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mock Provider(SEO/AI)の許可
+    |--------------------------------------------------------------------------
+    | production環境ではAPP_ENV判定により常にMock Providerを拒否する
+    | (この設定値に関わらず)。それ以外の環境(local/testing)でも、通常起動時に
+    | 意図せずMockが使われないよう、明示的にtrueを設定した場合のみ許可する。
+    */
+    'allow_mock_providers' => (bool) env('ALLOW_MOCK_PROVIDERS', false),
 ];
