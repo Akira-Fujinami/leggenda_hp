@@ -33,4 +33,29 @@ describe("PerformanceDetails", () => {
 
     expect(screen.getByText("82pt")).toBeInTheDocument();
   });
+
+  it("shows the Lighthouse SEO score alongside the other category scores", () => {
+    const metrics = [
+      makeMetric({ status: "success", value: 82, counts_toward_score: true, score: 8.2, max_score: 10, error_message: null }),
+      { ...makeMetric({ status: "success" }), key: "lighthouse_seo_score", name: "Lighthouse SEOスコア", value: 95, counts_toward_score: true, score: 3, max_score: 3 },
+    ];
+
+    render(<PerformanceDetails metrics={metrics} />);
+
+    expect(screen.getByText("SEO")).toBeInTheDocument();
+    expect(screen.getByText("95pt")).toBeInTheDocument();
+  });
+
+  it("shows request count and transfer size as reference info, converting bytes to KB", () => {
+    const metrics = [
+      makeMetric({ status: "success", value: 82, counts_toward_score: true, score: 8.2, max_score: 10, error_message: null }),
+      { ...makeMetric({ status: "success" }), key: "lighthouse_request_count", name: "リクエスト数", scoring_type: "not_scored", unit: "requests", value: 42, counts_toward_score: false },
+      { ...makeMetric({ status: "success" }), key: "lighthouse_transfer_size", name: "転送量", scoring_type: "not_scored", unit: "bytes", value: 512000, counts_toward_score: false },
+    ];
+
+    render(<PerformanceDetails metrics={metrics} />);
+
+    expect(screen.getByText(/リクエスト数: 42requests/)).toBeInTheDocument();
+    expect(screen.getByText(/転送量: 500 KB/)).toBeInTheDocument();
+  });
 });

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>E2E Fixture Site A | 充実サイト</title>
+  <meta name="description" content="E2Eテスト用のfixtureサイトA。料金・事例・FAQ・会社概要・固定CTA・少項目フォームを備えた「充実サイト」として振る舞う。">
+  <link rel="canonical" href="http://e2e-fixture-a:8080/">
+  <meta name="robots" content="index, follow">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="/favicon.ico">
+  <meta property="og:title" content="E2E Fixture Site A">
+  <meta property="og:description" content="fixture site A for e2e tests">
+  <script type="application/ld+json">{"@type": "Organization", "name": "Fixture Site A"}</script>
+  <style>
+    .fixed-contact {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      width: 140px;
+      height: 48px;
+      display: block;
+      background: #2563eb;
+      color: #fff;
+      text-align: center;
+      line-height: 48px;
+    }
+  </style>
+</head>
+<body>
+  <h1>充実サイトへようこそ</h1>
+
+  <nav>
+    <a href="/pricing">料金プラン</a>
+    <a href="/case-study">導入事例・お客様の声</a>
+    <a href="/faq">よくある質問</a>
+    <a href="/company">会社概要</a>
+    <a href="/privacy">プライバシーポリシー</a>
+    <a href="https://example.com/partner">パートナーサイト</a>
+  </nav>
+
+  <img src="/hero.png" alt="サービス紹介の画像">
+  <img src="/team.png" alt="チームメンバーの写真">
+
+  <p>
+    私たちは中小企業向けにウェブサイト分析ツールを提供しています。料金プランは複数用意しており、
+    小規模事業者から成長中の企業まで幅広くご利用いただけます。導入事例では実際にツールを活用して
+    成果を出したお客様の声を多数掲載しています。よくある質問ページでは導入前によく寄せられる疑問に
+    お答えしています。会社概要ページでは沿革や事業内容をご確認いただけます。
+  </p>
+  <p>
+    サービスの特長は、実際のHTMLから根拠のあるデータのみを抽出し、推測や捏造を行わない分析基盤に
+    あります。SEO・コンテンツ・表示速度・アクセシビリティ・技術環境・集客導線・外部評価という
+    7つの観点から、根拠(evidence)付きでウェブサイトを評価します。評価結果は優先度順に整理された
+    改善提案として提示されるため、限られたリソースの中で何から着手すべきかを明確に判断できます。
+  </p>
+  <p>
+    お問い合わせは下記の簡単なフォームから承っております。必要な項目はお名前とメールアドレスの
+    2点のみで、営業担当より迅速にご連絡いたします。画面右下には常時表示のお問い合わせボタンを
+    設置しており、ページのどこからでもすぐにご連絡いただけます。ぜひお気軽にお問い合わせください。
+    採用情報や外部予約サービスは現時点ではご用意しておりません。
+  </p>
+
+  <form>
+    <label>お名前 <input type="text" name="contact_name" required></label>
+    <label>メールアドレス <input type="email" name="contact_email" required autocomplete="email"></label>
+    <input type="hidden" name="source" value="fixture-a">
+    <button type="submit">送信する</button>
+  </form>
+
+  <a class="fixed-contact" href="/contact" aria-label="お問い合わせ">お問い合わせ</a>
+
+  <footer>
+    <a href="/about">私たちについて</a>
+    <a href="mailto:contact@example.com">contact@example.com</a>
+    <a href="tel:0312345678">03-1234-5678</a>
+  </footer>
+</body>
+</html>

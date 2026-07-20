@@ -71,4 +71,34 @@ class SafeUrlValidatorTest extends TestCase
             throw $e;
         }
     }
+
+    public function test_ssrf_test_allowlist_permits_a_configured_host_and_port(): void
+    {
+        config(['analysis.ssrf_test_allowlist' => 'e2e-fixture-a:8080,e2e-fixture-b:8080']);
+
+        $result = $this->validator->assertSafe('http://e2e-fixture-a:8080/');
+
+        $this->assertSame('e2e-fixture-a', $result['host']);
+    }
+
+    public function test_ssrf_test_allowlist_does_not_bypass_the_port_restriction(): void
+    {
+        config(['analysis.ssrf_test_allowlist' => 'e2e-fixture-a:9999']);
+
+        $this->expectException(AnalysisException::class);
+        $this->validator->assertSafe('http://e2e-fixture-a:9999/');
+    }
+
+    public function test_ssrf_test_allowlist_is_ignored_in_production(): void
+    {
+        config(['analysis.ssrf_test_allowlist' => 'e2e-fixture-a:8080']);
+        app()->detectEnvironment(fn () => 'production');
+
+        try {
+            $this->expectException(AnalysisException::class);
+            $this->validator->assertSafe('http://e2e-fixture-a:8080/');
+        } finally {
+            app()->detectEnvironment(fn () => 'testing');
+        }
+    }
 }

@@ -3,7 +3,9 @@
 namespace App\Jobs\Analysis;
 
 use App\Enums\JobType;
+use App\Enums\MetricResultStatus;
 use App\Enums\PageType;
+use App\Jobs\Analysis\Concerns\RecordsMetricResults;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
@@ -17,9 +19,15 @@ use Illuminate\Support\Facades\Storage;
  * DetectTechnologyJobがJS実行後のDOMを利用できるよう、レンダリング結果を
  * 保存しておく(取得できなかった場合、DetectTechnologyJobは静的HTMLに
  * フォールバックする)。
+ *
+ * 「固定表示CTA」の有無(position: fixed/sticky)はレンダリング後のCSS適用
+ * 結果でしか判定できないため、静的HTML解析(AnalyzeHtmlSeoJob)ではなく
+ * ここでanalyzerの検出結果をそのままMetricResultとして記録する。
  */
 class RenderPageJob extends BaseWebsiteAnalysisJob
 {
+    use RecordsMetricResults;
+
     public $tries = 2;
 
     public $timeout = 90;
@@ -47,6 +55,17 @@ class RenderPageJob extends BaseWebsiteAnalysisJob
         AnalysisPage::query()->updateOrCreate(
             ['website_analysis_id' => $this->websiteAnalysisId, 'page_type' => PageType::Homepage],
             ['rendered_html_path' => $htmlPath],
+        );
+
+        $fixedCta = $data['fixed_cta'] ?? null;
+        $detected = (bool) ($fixedCta['detected'] ?? false);
+
+        $this->recordMetric(
+            $this->websiteAnalysisId,
+            'fixed_cta_present',
+            $detected ? MetricResultStatus::Success : MetricResultStatus::NotFound,
+            normalizedValue: $detected,
+            rawValue: $fixedCta,
         );
     }
 }

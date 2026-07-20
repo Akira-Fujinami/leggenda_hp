@@ -167,4 +167,115 @@ class HtmlSeoAnalyzerTest extends TestCase
         $this->assertSame(2, $result['h1']['count']);
         $this->assertFalse($result['title']['present']);
     }
+
+    public function test_it_detects_business_links_with_confidence_when_href_and_text_both_match(): void
+    {
+        $html = '<html><body>'
+            .'<a href="/pricing">料金プラン</a>'
+            .'<a href="/faq">よくある質問</a>'
+            .'<a href="/case-study">導入事例</a>'
+            .'<a href="/company">会社概要</a>'
+            .'<a href="/privacy">プライバシーポリシー</a>'
+            .'<a href="/recruit">採用情報</a>'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        foreach (['pricing', 'faq', 'case_study', 'company_info', 'privacy_policy', 'recruit'] as $category) {
+            $this->assertTrue($result['business_links'][$category]['present'], "expected {$category} to be detected");
+            $this->assertEqualsWithDelta(0.95, $result['business_links'][$category]['confidence'], 0.001);
+            $this->assertSame('internal', $result['business_links'][$category]['link_type']);
+        }
+    }
+
+    public function test_it_gives_lower_confidence_when_only_the_href_matches_a_business_link_keyword(): void
+    {
+        // リンクテキストが一致しない(URLのみの一致)場合は確信度を100%にしない。
+        $html = '<html><body><a href="/pricing">詳しくはこちら</a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['business_links']['pricing']['present']);
+        $this->assertLessThan(0.95, $result['business_links']['pricing']['confidence']);
+    }
+
+    public function test_it_does_not_detect_business_links_that_are_absent(): void
+    {
+        $result = $this->analyzer->analyze('<html><body><a href="/other">別ページ</a></body></html>', 'https://example.com/');
+
+        $this->assertFalse($result['business_links']['pricing']['present']);
+        $this->assertNull($result['business_links']['pricing']['url']);
+    }
+
+    public function test_it_detects_a_known_third_party_reservation_service(): void
+    {
+        $html = '<html><body><a href="https://www.tablecheck.com/shops/example">ご予約はこちら</a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['third_party_reservation']['detected']);
+        $this->assertSame('www.tablecheck.com', $result['third_party_reservation']['host']);
+    }
+
+    public function test_it_does_not_flag_an_unknown_external_host_as_a_third_party_reservation_service(): void
+    {
+        $html = '<html><body><a href="https://unrelated-vendor.example/reserve">予約</a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertFalse($result['third_party_reservation']['detected']);
+    }
+
+    public function test_it_classifies_form_input_burden_by_required_field_count(): void
+    {
+        $html = '<html><body><form>'
+            .'<input type="text" name="name" required>'
+            .'<input type="email" name="email" required>'
+            .'<input type="hidden" name="token" value="x">'
+            .'<input type="submit" value="送信">'
+            .'</form></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['form_burden']['form_found']);
+        $this->assertSame(2, $result['form_burden']['required_field_count']);
+        $this->assertSame(2, $result['form_burden']['total_field_count']);
+        $this->assertSame('small', $result['form_burden']['tier']);
+    }
+
+    public function test_it_classifies_a_large_form_as_a_high_input_burden(): void
+    {
+        $requiredInputs = '';
+        for ($i = 0; $i < 11; $i++) {
+            $requiredInputs .= "<input type=\"text\" name=\"field{$i}\" required>";
+        }
+        $html = "<html><body><form>{$requiredInputs}<input type=\"submit\"></form></body></html>";
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertSame(11, $result['form_burden']['required_field_count']);
+        $this->assertSame('large', $result['form_burden']['tier']);
+    }
+
+    public function test_it_reports_no_form_burden_when_there_is_no_form(): void
+    {
+        $result = $this->analyzer->analyze('<html><body><p>no form here</p></body></html>', 'https://example.com/');
+
+        $this->assertFalse($result['form_burden']['form_found']);
+        $this->assertNull($result['form_burden']['required_field_count']);
+        $this->assertNull($result['form_burden']['tier']);
+    }
+
+    public function test_it_prefers_the_contact_like_form_as_the_representative_form(): void
+    {
+        $html = '<html><body>'
+            .'<form><input type="text" name="q1" required><input type="text" name="q2" required>'
+            .'<input type="text" name="q3" required><input type="submit"></form>'
+            .'<form><input type="email" name="contact_email" required><input type="submit"></form>'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        // 項目数だけなら1つ目のフォーム(3項目)の方が多いが、
+        // 「問い合わせらしいフォーム」(email/contact系name)を優先して選ぶ。
+        $this->assertSame(2, $result['form_burden']['form_count']);
+        $this->assertSame(1, $result['form_burden']['required_field_count']);
+    }
 }

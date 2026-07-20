@@ -3,23 +3,39 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { findMetric } from "@/features/analysis/results/metric-lookup";
 import type { MetricEvaluation } from "@/types/analysis";
 
-const LIGHTHOUSE_METRIC_KEYS = ["lighthouse_performance", "lighthouse_accessibility", "lighthouse_best_practices", "fcp", "lcp", "cls", "speed_index", "tbt"];
+const LIGHTHOUSE_METRIC_KEYS = ["lighthouse_performance", "lighthouse_accessibility", "lighthouse_best_practices", "lighthouse_seo_score", "fcp", "lcp", "cls", "speed_index", "tbt"];
+
+const INFO_METRIC_KEYS = ["lighthouse_request_count", "lighthouse_transfer_size"];
 
 const METRIC_LABELS: Record<string, string> = {
   lighthouse_performance: "Performance",
   lighthouse_accessibility: "Accessibility",
   lighthouse_best_practices: "Best Practices",
+  lighthouse_seo_score: "SEO",
   fcp: "First Contentful Paint (FCP)",
   lcp: "Largest Contentful Paint (LCP)",
   cls: "Cumulative Layout Shift (CLS)",
   speed_index: "Speed Index",
   tbt: "Total Blocking Time (TBT)",
+  lighthouse_request_count: "リクエスト数",
+  lighthouse_transfer_size: "転送量",
 };
+
+function formatInfoValue(metric: MetricEvaluation): string {
+  if (metric.value === null || metric.value === undefined) return "-";
+  if (metric.key === "lighthouse_transfer_size" && typeof metric.value === "number") {
+    return `${Math.round((metric.value / 1024) * 10) / 10} KB`;
+  }
+  return typeof metric.value === "number" && metric.unit ? `${metric.value}${metric.unit}` : String(metric.value);
+}
 
 export function PerformanceDetails({ metrics }: { metrics: MetricEvaluation[] }) {
   const performance = findMetric(metrics, "lighthouse_performance");
   const succeeded = performance?.status === "success";
   const lighthouseMetrics = LIGHTHOUSE_METRIC_KEYS.map((key) => findMetric(metrics, key)).filter((m): m is MetricEvaluation => m !== undefined);
+  const infoMetrics = INFO_METRIC_KEYS.map((key) => findMetric(metrics, key)).filter(
+    (m): m is MetricEvaluation => m !== undefined && m.value !== null
+  );
 
   return (
     <Card>
@@ -49,6 +65,15 @@ export function PerformanceDetails({ metrics }: { metrics: MetricEvaluation[] })
               </p>
             </AlertDescription>
           </Alert>
+        )}
+        {infoMetrics.length > 0 && (
+          <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+            {infoMetrics.map((metric) => (
+              <span key={metric.key}>
+                {METRIC_LABELS[metric.key] ?? metric.name}: {formatInfoValue(metric)}
+              </span>
+            ))}
+          </div>
         )}
       </CardContent>
     </Card>

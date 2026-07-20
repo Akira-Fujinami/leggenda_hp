@@ -122,6 +122,7 @@ class MetricDefinitionSeeder extends Seeder
             ['key' => 'structured_data_present', 'name' => 'JSON-LD構造化データ', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 1, 'not_found_policy' => 'exclude', 'display_order' => 160, 'recommendation_template' => '構造化データ(JSON-LD)の設置を検討してください。'],
             ['key' => 'ogp_present', 'name' => 'OGP基本項目', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 1, 'not_found_policy' => 'exclude', 'display_order' => 170, 'recommendation_template' => 'SNSシェア用にOGPタグ(og:title等)を設定してください。'],
             ['key' => 'redirect_count_low', 'name' => 'リダイレクト回数', 'value_type' => 'number', 'unit' => 'hops', 'source_type' => 'http', 'scoring_type' => 'threshold', 'points' => 1, 'higher_is_better' => false, 'thresholds' => [['min' => 0, 'max' => 0, 'score_rate' => 1], ['min' => 1, 'max' => 1, 'score_rate' => 0.7], ['min' => 2, 'max' => 2, 'score_rate' => 0.3], ['min' => 3, 'max' => 999, 'score_rate' => 0]], 'display_order' => 180, 'recommendation_template' => 'リダイレクトの回数を減らしてください。'],
+            ['key' => 'lighthouse_seo_score', 'name' => 'Lighthouse SEOスコア', 'value_type' => 'score', 'unit' => 'pt', 'source_type' => 'lighthouse', 'scoring_type' => 'lighthouse', 'points' => 3, 'display_order' => 190],
         ];
     }
 
@@ -133,6 +134,12 @@ class MetricDefinitionSeeder extends Seeder
             ['key' => 'internal_link_sufficient', 'name' => '内部リンク数', 'value_type' => 'number', 'unit' => 'links', 'source_type' => 'static_html', 'scoring_type' => 'linear', 'points' => 3, 'minimum_value' => 0, 'target_value' => 5, 'display_order' => 30, 'recommendation_template' => '関連ページへの内部リンクを増やしてください。'],
             ['key' => 'heading_structure_present', 'name' => '見出し構造', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 2, 'display_order' => 40, 'recommendation_template' => '見出し(H2等)を使ってコンテンツを構造化してください。'],
             ['key' => 'external_link_present', 'name' => '外部リンク数', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 2, 'not_found_policy' => 'exclude', 'display_order' => 50, 'recommendation_template' => '信頼性向上のため、関連する外部サイトへのリンクを検討してください。'],
+            ['key' => 'pricing_info_link_present', 'name' => '料金情報リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 1, 'not_found_policy' => 'exclude', 'is_required' => false, 'display_order' => 60, 'recommendation_template' => '料金情報ページへのリンクを設置し、見込み顧客が価格を把握しやすくしてください。'],
+            ['key' => 'case_study_or_testimonial_link_present', 'name' => '導入事例・お客様の声リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 1, 'not_found_policy' => 'exclude', 'is_required' => false, 'display_order' => 70, 'recommendation_template' => '導入事例やお客様の声を掲載し、サービスの信頼性を示してください。'],
+            // 以下は「事業内容によって有無の是非が分かれる」ため採点対象外(情報表示専用)。
+            ['key' => 'company_info_link_present', 'name' => '会社概要リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 80],
+            ['key' => 'privacy_policy_link_present', 'name' => 'プライバシーポリシーリンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 90],
+            ['key' => 'faq_link_present', 'name' => 'FAQ/よくある質問リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 100],
         ];
     }
 
@@ -145,6 +152,9 @@ class MetricDefinitionSeeder extends Seeder
             ['key' => 'cls', 'name' => 'Cumulative Layout Shift', 'value_type' => 'number', 'source_type' => 'lighthouse', 'scoring_type' => 'threshold', 'points' => 2, 'higher_is_better' => false, 'thresholds' => [['min' => 0, 'max' => 0.1, 'score_rate' => 1], ['min' => 0.1, 'max' => 0.25, 'score_rate' => 0.5], ['min' => 0.25, 'max' => 999, 'score_rate' => 0]], 'display_order' => 40, 'recommendation_template' => 'レイアウトのずれ(CLS)を抑えてください。'],
             ['key' => 'speed_index', 'name' => 'Speed Index', 'value_type' => 'number', 'unit' => 'ms', 'source_type' => 'lighthouse', 'scoring_type' => 'inverse_linear', 'points' => 1, 'higher_is_better' => false, 'target_value' => 3400, 'maximum_value' => 5800, 'display_order' => 50],
             ['key' => 'tbt', 'name' => 'Total Blocking Time', 'value_type' => 'number', 'unit' => 'ms', 'source_type' => 'lighthouse', 'scoring_type' => 'inverse_linear', 'points' => 1, 'higher_is_better' => false, 'target_value' => 200, 'maximum_value' => 600, 'display_order' => 60, 'recommendation_template' => 'メインスレッドをブロックするJavaScriptを削減してください。'],
+            // リクエスト数・転送量は「多い/少ない」自体を機械的に採点せず、参考情報として表示する。
+            ['key' => 'lighthouse_request_count', 'name' => 'リクエスト数', 'value_type' => 'number', 'unit' => 'requests', 'source_type' => 'lighthouse', 'scoring_type' => 'not_scored', 'points' => 0, 'higher_is_better' => false, 'display_order' => 70],
+            ['key' => 'lighthouse_transfer_size', 'name' => '転送量', 'value_type' => 'number', 'unit' => 'bytes', 'source_type' => 'lighthouse', 'scoring_type' => 'not_scored', 'points' => 0, 'higher_is_better' => false, 'display_order' => 80],
         ];
     }
 
@@ -185,6 +195,11 @@ class MetricDefinitionSeeder extends Seeder
             ['key' => 'document_request_cta_present', 'name' => '資料請求導線', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 2, 'not_found_policy' => 'exclude', 'is_required' => false, 'display_order' => 50, 'recommendation_template' => '資料請求フォームの設置を検討してください。'],
             ['key' => 'sns_link_present', 'name' => 'SNSリンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 1, 'not_found_policy' => 'exclude', 'display_order' => 60, 'recommendation_template' => 'SNSアカウントへのリンクを設置してください。'],
             ['key' => 'cta_count_sufficient', 'name' => 'CTA数', 'value_type' => 'number', 'unit' => 'count', 'source_type' => 'static_html', 'scoring_type' => 'linear', 'points' => 1, 'minimum_value' => 0, 'target_value' => 3, 'display_order' => 70, 'recommendation_template' => '主要な行動喚起(CTA)を増やしてください。'],
+            ['key' => 'fixed_cta_present', 'name' => '固定表示CTA', 'value_type' => 'boolean', 'source_type' => 'analyzer', 'scoring_type' => 'boolean', 'points' => 2, 'not_found_policy' => 'exclude', 'is_required' => false, 'display_order' => 80, 'recommendation_template' => '画面に常時表示される問い合わせ・予約導線(固定CTA)の設置を検討してください。'],
+            ['key' => 'form_input_burden', 'name' => 'フォーム入力負担(必須項目数)', 'value_type' => 'number', 'unit' => 'fields', 'source_type' => 'static_html', 'scoring_type' => 'inverse_linear', 'points' => 2, 'higher_is_better' => false, 'target_value' => 3, 'maximum_value' => 10, 'not_found_policy' => 'exclude', 'is_required' => false, 'display_order' => 90, 'recommendation_template' => '問い合わせフォームの必須入力項目数を減らし、入力の負担を下げてください。'],
+            // 予約手段(自社フォームか外部予約サービスか)は事業内容によって優劣がつくものではないため採点対象外。
+            ['key' => 'external_reservation_service_detected', 'name' => '外部予約サービス利用', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 100],
+            ['key' => 'recruit_link_present', 'name' => '採用情報リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 110],
         ];
     }
 

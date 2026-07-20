@@ -7,13 +7,25 @@ const FIXTURE_HTML = `
   </head><body><h1>Hello from fixture</h1></body></html>
 `;
 
+const FIXED_CTA_HTML = `
+  <html><head><title>Fixed CTA Fixture</title></head>
+  <body>
+    <h1>Fixed CTA fixture</h1>
+    <a href="/contact" aria-label="お問い合わせ"
+       style="position:fixed;bottom:0;right:0;width:120px;height:48px;display:block;">
+      お問い合わせ
+    </a>
+  </body></html>
+`;
+
 // env.ts はモジュール読み込み時に process.env を評価するため、fixtureサーバーの
 // ポートが決まった後、server.ts をimportするより前に設定する必要がある。
 // ANALYZER_TOKENは(本番運用中のコンテナ環境変数がテストプロセスにも継承されて
 // いる場合に備えて)明示的に空にし、このファイルでは認証を対象外にする
 // (認証自体はauth.test.tsで別途検証済み)。
 const fixture: FixtureServer = await startFixtureServer(FIXTURE_HTML);
-process.env.SSRF_TEST_ALLOWLIST = fixture.hostAndPort;
+const fixedCtaFixture: FixtureServer = await startFixtureServer(FIXED_CTA_HTML);
+process.env.SSRF_TEST_ALLOWLIST = `${fixture.hostAndPort},${fixedCtaFixture.hostAndPort}`;
 process.env.ANALYSIS_STORAGE_PATH = "/tmp/analysis-storage-test";
 process.env.ANALYZER_TOKEN = "";
 
@@ -31,6 +43,7 @@ describe("analyzer routes", () => {
     await app.close();
     await closeBrowser();
     await fixture.close();
+    await fixedCtaFixture.close();
   });
 
   it("health check succeeds", async () => {
@@ -84,6 +97,22 @@ describe("analyzer routes", () => {
     expect(body.success).toBe(true);
     expect(body.data.html).toContain("Hello from fixture");
     expect(body.data.http_status).toBe(200);
+    // 固定CTAが存在しないページではdetected=falseであり、偽陽性を出さない。
+    expect(body.data.fixed_cta.detected).toBe(false);
+  }, 30_000);
+
+  it("detects a fixed/sticky contact CTA on the rendered page", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/analyze/render",
+      payload: { url: `${fixedCtaFixture.origin}/`, timeout_ms: 20_000 },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.data.fixed_cta.detected).toBe(true);
+    expect(body.data.fixed_cta.position).toBe("fixed");
+    expect(body.data.fixed_cta.href).toBe("/contact");
   }, 30_000);
 
   it("captures a screenshot of the local fixture page and stores it on disk", async () => {

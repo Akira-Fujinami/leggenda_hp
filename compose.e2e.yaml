@@ -1,0 +1,45 @@
+# E2Eテスト用の上書き設定。
+# 使用例: docker compose -f compose.yaml -f compose.e2e.yaml up -d --build
+#
+# register-project-website.spec.ts / comparison-and-history.spec.ts は実際に
+# example.com/example.org へネットワークアクセスするが、営業・コンバージョン系
+# Metricの検出内容(料金/FAQ/導入事例リンク・固定CTA・フォーム入力負担等)は
+# 外部サイトのコンテンツに依存すると再現性が無い。そのため、e2e-fixture-a/b
+# という2つのローカルfixtureサイト(内容はfrontend/e2e/fixtures配下で固定)を
+# Docker Compose内部に用意し、analyzer/backend側のSSRF許可リスト
+# (SSRF_TEST_ALLOWLIST)に明示的に登録することで、通常のSSRF対策を維持した
+# まま分析対象として到達できるようにする(production環境ではこの設定自体を
+# 無視するガードが analyzer/backend 双方に入っている)。
+services:
+  e2e-fixture-a:
+    image: busybox:stable
+    command: ["httpd", "-f", "-p", "8080", "-h", "/www"]
+    volumes:
+      - ./frontend/e2e/fixtures/site-a:/www:ro
+    networks: [app-network]
+
+  e2e-fixture-b:
+    image: busybox:stable
+    command: ["httpd", "-f", "-p", "8080", "-h", "/www"]
+    volumes:
+      - ./frontend/e2e/fixtures/site-b:/www:ro
+    networks: [app-network]
+
+  analyzer:
+    environment:
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080"
+    depends_on:
+      - e2e-fixture-a
+      - e2e-fixture-b
+
+  backend:
+    environment:
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080"
+
+  queue-worker:
+    environment:
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080"
+
+  queue-worker-heavy:
+    environment:
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080"

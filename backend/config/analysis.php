@@ -60,4 +60,15 @@ return [
     | 意図せずMockが使われないよう、明示的にtrueを設定した場合のみ許可する。
     */
     'allow_mock_providers' => (bool) env('ALLOW_MOCK_PROVIDERS', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | SSRFテスト許可リスト (E2Eテスト専用)
+    |--------------------------------------------------------------------------
+    | E2Eテストでローカルfixtureサイト(Docker Compose内の専用サービス)へ
+    | 分析対象として到達させるための例外リスト。"host" または "host:port" を
+    | カンマ区切りで指定する。production環境では(この値が設定されていても)
+    | 常に無視する ―― analyzer側のSSRF_TEST_ALLOWLISTと同じ設計方針。
+    */
+    'ssrf_test_allowlist' => env('SSRF_TEST_ALLOWLIST', ''),
 ];

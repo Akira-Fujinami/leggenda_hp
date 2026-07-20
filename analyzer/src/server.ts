@@ -128,6 +128,7 @@ function registerAnalyzeRoutes(
         final_url: result.finalUrl,
         http_status: result.httpStatus,
         load_time_ms: result.loadTimeMs,
+        fixed_cta: result.fixedCta,
       },
       error: null,
     });

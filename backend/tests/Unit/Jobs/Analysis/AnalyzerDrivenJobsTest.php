@@ -6,9 +6,12 @@ use App\Enums\AnalysisJobStatus;
 use App\Enums\Device;
 use App\Enums\JobType;
 use App\Enums\MetricResultStatus;
+use App\Enums\PageType;
 use App\Jobs\Analysis\CaptureScreenshotJob;
 use App\Jobs\Analysis\DetectTechnologyJob;
+use App\Jobs\Analysis\RenderPageJob;
 use App\Jobs\Analysis\RunLighthouseJob;
+use App\Models\AnalysisPage;
 use App\Models\MetricResult;
 use App\Models\Screenshot;
 use App\Models\Website;
@@ -48,7 +51,7 @@ class AnalyzerDrivenJobsTest extends TestCase
                 'success' => true,
                 'data' => [
                     'scores' => ['performance' => 80, 'seo' => 90, 'accessibility' => 70, 'best_practices' => 85],
-                    'metrics' => ['fcp_ms' => 1200, 'lcp_ms' => 2000, 'cls' => 0.05, 'speed_index_ms' => 1800, 'tbt_ms' => 100, 'inp_ms' => null],
+                    'metrics' => ['fcp_ms' => 1200, 'lcp_ms' => 2000, 'cls' => 0.05, 'speed_index_ms' => 1800, 'tbt_ms' => 100, 'inp_ms' => null, 'request_count' => 42, 'transfer_size_bytes' => 512000],
                     'raw_report' => ['categories' => ['performance' => ['score' => 0.8]]],
                 ],
             ], 200),
@@ -66,6 +69,17 @@ class AnalyzerDrivenJobsTest extends TestCase
 
         $outcome = (new MetricScorer)->score($performance->metricDefinition, $performance);
         $this->assertEqualsWithDelta(0.8 * (float) $performance->metricDefinition->max_score, $outcome->score, 0.01);
+
+        $seoScore = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'lighthouse_seo_score'))->first();
+        $this->assertSame(MetricResultStatus::Success, $seoScore->status);
+        $this->assertEquals(90, $seoScore->normalized_value['value']);
+
+        $requestCount = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'lighthouse_request_count'))->first();
+        $this->assertSame(MetricResultStatus::Success, $requestCount->status);
+        $this->assertEquals(42, $requestCount->normalized_value['value']);
+
+        $transferSize = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'lighthouse_transfer_size'))->first();
+        $this->assertEquals(512000, $transferSize->normalized_value['value']);
 
         Storage::disk('analysis')->assertExists("analyses/{$websiteAnalysis->analysis_id}/websites/{$websiteAnalysis->id}/metadata/lighthouse.json");
     }
@@ -153,6 +167,63 @@ class AnalyzerDrivenJobsTest extends TestCase
         $this->assertNotNull($screenshot);
         $this->assertSame('analyses/1/websites/1/screenshots/abc.png', $screenshot->storage_path);
         $this->assertSame(1440, $screenshot->width);
+    }
+
+    public function test_render_job_records_a_detected_fixed_cta(): void
+    {
+        Http::fake([
+            '*/analyze/render' => Http::response([
+                'success' => true,
+                'data' => [
+                    'html' => '<html><body>Hello</body></html>',
+                    'final_url' => 'https://example.com',
+                    'http_status' => 200,
+                    'load_time_ms' => 120,
+                    'fixed_cta' => ['detected' => true, 'text' => 'お問い合わせ', 'href' => '/contact', 'position' => 'fixed'],
+                ],
+            ], 200),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+        ]);
+        (new RenderPageJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $fixedCta = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'fixed_cta_present'))->first();
+        $this->assertSame(MetricResultStatus::Success, $fixedCta->status);
+        $this->assertTrue($fixedCta->normalized_value['value']);
+        $this->assertSame('/contact', $fixedCta->raw_value['href']);
+    }
+
+    public function test_render_job_records_no_fixed_cta_when_none_is_detected(): void
+    {
+        Http::fake([
+            '*/analyze/render' => Http::response([
+                'success' => true,
+                'data' => [
+                    'html' => '<html><body>Hello</body></html>',
+                    'final_url' => 'https://example.com',
+                    'http_status' => 200,
+                    'load_time_ms' => 120,
+                    'fixed_cta' => ['detected' => false, 'text' => null, 'href' => null, 'position' => null],
+                ],
+            ], 200),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+        ]);
+        (new RenderPageJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $fixedCta = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'fixed_cta_present'))->first();
+        $this->assertSame(MetricResultStatus::NotFound, $fixedCta->status);
+        $this->assertFalse($fixedCta->normalized_value['value']);
     }
 
     public function test_analyzer_unavailable_marks_job_failed(): void

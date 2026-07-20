@@ -1,10 +1,12 @@
 import { withPage } from "./browser.js";
+import { detectFixedCta, type FixedCtaResult } from "./fixedCta.js";
 
 export interface RenderResult {
   html: string;
   finalUrl: string;
   httpStatus: number | null;
   loadTimeMs: number;
+  fixedCta: FixedCtaResult;
 }
 
 export interface RenderOptions {
@@ -30,11 +32,17 @@ export async function renderPage(url: string, options: RenderOptions): Promise<R
       ? Buffer.from(html, "utf8").subarray(0, options.maxHtmlBytes).toString("utf8")
       : html;
 
+    // レンダリング後のCSS適用状態(position: fixed/sticky)はJS実行後のDOMでしか
+    // 判定できないため、静的HTML解析(HtmlSeoAnalyzer)ではなくここで検出する。
+    // 失敗してもレンダリング自体は成功として扱う(取得できなかった、として null)。
+    const fixedCta = await detectFixedCta(page);
+
     return {
       html: truncated,
       finalUrl: page.url(),
       httpStatus: response?.status() ?? null,
       loadTimeMs: Date.now() - started,
+      fixedCta,
     };
   });
 }

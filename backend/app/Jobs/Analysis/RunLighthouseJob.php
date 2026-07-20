@@ -56,12 +56,15 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
         $this->recordScore('lighthouse_performance', $scores['performance'] ?? null, ['scores' => $scores], $evidence);
         $this->recordScore('lighthouse_accessibility', $scores['accessibility'] ?? null, ['scores' => $scores], $evidence);
         $this->recordScore('lighthouse_best_practices', $scores['best_practices'] ?? null, ['scores' => $scores], $evidence);
+        $this->recordScore('lighthouse_seo_score', $scores['seo'] ?? null, ['scores' => $scores], $evidence);
 
         $this->recordMetricValue('fcp', $metrics['fcp_ms'] ?? null, $metrics, $evidence);
         $this->recordMetricValue('lcp', $metrics['lcp_ms'] ?? null, $metrics, $evidence);
         $this->recordMetricValue('cls', $metrics['cls'] ?? null, $metrics, $evidence);
         $this->recordMetricValue('speed_index', $metrics['speed_index_ms'] ?? null, $metrics, $evidence);
         $this->recordMetricValue('tbt', $metrics['tbt_ms'] ?? null, $metrics, $evidence);
+        $this->recordMetricValue('lighthouse_request_count', $metrics['request_count'] ?? null, $metrics, $evidence);
+        $this->recordMetricValue('lighthouse_transfer_size', $metrics['transfer_size_bytes'] ?? null, $metrics, $evidence);
     }
 
     /**

@@ -39,10 +39,12 @@ class AnalyzeHtmlSeoJob extends BaseWebsiteAnalysisJob
         'h1_single', 'canonical_present', 'canonical_self_referencing', 'robots_meta_indexable',
         'viewport_present', 'lang_present', 'favicon_present', 'structured_data_present', 'ogp_present',
         'word_count_sufficient', 'img_alt_coverage', 'internal_link_sufficient', 'heading_structure_present',
-        'external_link_present',
+        'external_link_present', 'pricing_info_link_present', 'case_study_or_testimonial_link_present',
+        'company_info_link_present', 'privacy_policy_link_present', 'faq_link_present',
         'a11y_lang_present', 'a11y_form_label_present', 'a11y_button_name_present', 'a11y_heading_order_ok',
         'form_present', 'tel_or_mailto_present', 'contact_cta_present', 'reservation_cta_present',
         'document_request_cta_present', 'sns_link_present', 'cta_count_sufficient',
+        'form_input_burden', 'external_reservation_service_detected', 'recruit_link_present',
     ];
 
     public function jobType(): JobType
@@ -132,6 +134,25 @@ class AnalyzeHtmlSeoJob extends BaseWebsiteAnalysisJob
 
         $externalPresent = $result['links']['external'] > 0;
         $this->recordMetric($this->websiteAnalysisId, 'external_link_present', $externalPresent ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $externalPresent, rawValue: $result['links'], analysisPageId: $pageId);
+
+        $this->recordBusinessLink($result, 'pricing', 'pricing_info_link_present', $pageId);
+        $this->recordBusinessLink($result, 'case_study', 'case_study_or_testimonial_link_present', $pageId);
+        $this->recordBusinessLink($result, 'company_info', 'company_info_link_present', $pageId);
+        $this->recordBusinessLink($result, 'privacy_policy', 'privacy_policy_link_present', $pageId);
+        $this->recordBusinessLink($result, 'faq', 'faq_link_present', $pageId);
+    }
+
+    private function recordBusinessLink(array $result, string $businessLinkKey, string $metricKey, int $pageId): void
+    {
+        $link = $result['business_links'][$businessLinkKey] ?? ['present' => false];
+        $present = (bool) $link['present'];
+        $confidence = $present ? (float) ($link['confidence'] ?? 0.65) : 1.0;
+
+        $this->recordMetric(
+            $this->websiteAnalysisId, $metricKey,
+            $present ? MetricResultStatus::Success : MetricResultStatus::NotFound,
+            normalizedValue: $present, rawValue: $link, analysisPageId: $pageId, confidence: $confidence,
+        );
     }
 
     private function recordAccessibility(array $result, int $pageId): void
@@ -178,6 +199,16 @@ class AnalyzeHtmlSeoJob extends BaseWebsiteAnalysisJob
 
         $ctaCount = $links['contact_like'] + $links['tel'] + $links['mailto'] + ($forms['reservation_like'] ? 1 : 0) + ($forms['document_request_like'] ? 1 : 0);
         $this->recordMetric($this->websiteAnalysisId, 'cta_count_sufficient', MetricResultStatus::Success, normalizedValue: $ctaCount, rawValue: ['cta_count' => $ctaCount], analysisPageId: $pageId);
+
+        $burden = $result['form_burden'];
+        $burdenStatus = $burden['form_found'] ? MetricResultStatus::Success : MetricResultStatus::NotFound;
+        $this->recordMetric($this->websiteAnalysisId, 'form_input_burden', $burdenStatus, normalizedValue: $burden['required_field_count'], rawValue: $burden, analysisPageId: $pageId);
+
+        $reservationService = $result['third_party_reservation'];
+        $reservationDetected = $reservationService['detected'];
+        $this->recordMetric($this->websiteAnalysisId, 'external_reservation_service_detected', $reservationDetected ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $reservationDetected, rawValue: $reservationService, analysisPageId: $pageId);
+
+        $this->recordBusinessLink($result, 'recruit', 'recruit_link_present', $pageId);
     }
 
     private function recordAllUnavailable(): void

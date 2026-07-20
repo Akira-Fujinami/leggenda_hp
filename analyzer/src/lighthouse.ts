@@ -16,6 +16,8 @@ export interface LighthouseResult {
     speed_index_ms: number | null;
     tbt_ms: number | null;
     inp_ms: number | null;
+    request_count: number | null;
+    transfer_size_bytes: number | null;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   rawReport: any;
@@ -58,6 +60,16 @@ export async function runLighthouse(url: string, timeoutMs: number): Promise<Lig
       return typeof value === "number" ? Math.round(value) : null;
     };
 
+    // "network-requests"/"total-byte-weight" はLighthouseのバージョンによって
+    // audit IDやdetails構造が変わり得るため、optional chainingで安全に取り出し、
+    // 取得できない場合は0にフォールバックせずnullのままにする。
+    const requestCount = (() => {
+      // "network-requests" auditのdetailsは複数のバリアント型のunionであり、
+      // "items"を持つ型に静的に絞り込めないため、実行時にArray.isArray()で確認する。
+      const details = lhr.audits["network-requests"]?.details as { items?: unknown[] } | undefined;
+      return Array.isArray(details?.items) ? details.items.length : null;
+    })();
+
     return {
       scores: {
         performance: categoryScore("performance"),
@@ -72,6 +84,8 @@ export async function runLighthouse(url: string, timeoutMs: number): Promise<Lig
         speed_index_ms: auditValue("speed-index"),
         tbt_ms: auditValue("total-blocking-time"),
         inp_ms: auditValue("interaction-to-next-paint") ?? auditValue("experimental-interaction-to-next-paint"),
+        request_count: requestCount,
+        transfer_size_bytes: auditValue("total-byte-weight"),
       },
       rawReport: lhr,
     };

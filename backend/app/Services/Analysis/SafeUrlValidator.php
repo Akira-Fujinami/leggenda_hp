@@ -55,6 +55,10 @@ class SafeUrlValidator
 
         $host = strtolower($parts['host']);
 
+        if ($this->isTestAllowlisted($host, $port)) {
+            return ['url' => $rawUrl, 'host' => $host, 'resolved_ips' => $this->resolve($host)];
+        }
+
         if (in_array($host, self::BLOCKED_HOSTNAMES, true)) {
             throw new AnalysisException(AnalysisErrorCode::UnsafeUrl, "アクセスが禁止されているホストです: {$host}");
         }
@@ -75,6 +79,28 @@ class SafeUrlValidator
         }
 
         return ['url' => $rawUrl, 'host' => $host, 'resolved_ips' => $resolvedIps];
+    }
+
+    /**
+     * E2Eテストのローカルfixtureサイト(Docker内部の専用サービス、Docker bridge
+     * ネットワークのプライベートIPで到達する)向けの例外。production環境では
+     * 設定値に関わらず常に無視する(ALLOW_MOCK_PROVIDERSと同じ防御方針)。
+     */
+    private function isTestAllowlisted(string $host, ?int $port): bool
+    {
+        if (app()->environment('production')) {
+            return false;
+        }
+
+        $allowlist = trim((string) config('analysis.ssrf_test_allowlist', ''));
+        if ($allowlist === '') {
+            return false;
+        }
+
+        $entries = array_map('trim', explode(',', $allowlist));
+        $hostAndPort = $port !== null ? "{$host}:{$port}" : $host;
+
+        return in_array($host, $entries, true) || in_array($hostAndPort, $entries, true);
     }
 
     /**

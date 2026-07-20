@@ -19,6 +19,29 @@ class HtmlSeoAnalyzer
 
     private const DOCUMENT_REQUEST_KEYWORDS = ['資料請求', 'catalog', 'download', '資料ダウンロード'];
 
+    private const PRICING_KEYWORDS = ['price', 'pricing', 'plan', 'fee', 'cost', '料金', '価格', 'プラン', '費用'];
+
+    private const FAQ_KEYWORDS = ['faq', 'q&a', 'よくある質問', 'ヘルプ', 'help'];
+
+    private const CASE_STUDY_KEYWORDS = ['case-study', 'case_study', 'testimonial', 'voice', 'works', 'portfolio', '導入事例', '事例', 'お客様の声', '実績'];
+
+    private const COMPANY_INFO_KEYWORDS = ['about', 'company', 'profile', '会社概要', '企業情報', '会社案内'];
+
+    private const PRIVACY_POLICY_KEYWORDS = ['privacy', 'プライバシー', '個人情報保護方針', '個人情報'];
+
+    private const RECRUIT_KEYWORDS = ['recruit', 'careers', 'career', '採用', '求人'];
+
+    /**
+     * 外部予約サービスとして既知のホスト。網羅的ではなく、フェイクの検出を
+     * 避けるため「確実に予約サービスと分かるドメイン」のみに限定する。
+     *
+     * @var list<string>
+     */
+    private const THIRD_PARTY_RESERVATION_HOSTS = [
+        'airregi.jp', 'tablecheck.com', 'opentable.com', 'coubic.com', 'hotpepper.jp',
+        'ebica.jp', 'toreta.in', 'timerex.net', 'calendly.com',
+    ];
+
     /**
      * @return array<string, mixed>
      */
@@ -50,9 +73,206 @@ class HtmlSeoAnalyzer
             'structured_data' => $this->analyzeStructuredData($xpath),
             'images' => $this->analyzeImages($xpath),
             'links' => $this->analyzeLinks($xpath, $pageHost),
+            'business_links' => $this->analyzeBusinessLinks($xpath, $pageHost),
+            'third_party_reservation' => $this->analyzeThirdPartyReservationService($xpath),
             'content' => $this->analyzeContent($dom, $xpath),
             'forms' => $this->analyzeForms($xpath),
+            'form_burden' => $this->analyzeFormBurden($xpath),
             'accessibility' => $this->analyzeAccessibilityHeuristics($xpath),
+        ];
+    }
+
+    /**
+     * 営業・信頼性に関わる代表的なページ(料金/FAQ/導入事例/会社概要/
+     * プライバシーポリシー/採用情報)へのリンクをキーワードベースで検出する。
+     * href・リンクテキスト・aria-label・titleのいずれかにキーワードが
+     * 含まれるかで判定し、URL(href)だけの一致では確信度を上限に置かない
+     * (実データに存在しない一致を捏造しないため、リンクテキスト等でも
+     * 一致した場合のみ高い確信度とする)。
+     *
+     * @return array<string, array{present: bool, url: ?string, text: ?string, confidence: ?float, link_type: ?string}>
+     */
+    private function analyzeBusinessLinks(\DOMXPath $xpath, string $pageHost): array
+    {
+        $categories = [
+            'pricing' => self::PRICING_KEYWORDS,
+            'faq' => self::FAQ_KEYWORDS,
+            'case_study' => self::CASE_STUDY_KEYWORDS,
+            'company_info' => self::COMPANY_INFO_KEYWORDS,
+            'privacy_policy' => self::PRIVACY_POLICY_KEYWORDS,
+            'recruit' => self::RECRUIT_KEYWORDS,
+        ];
+
+        $nodes = $xpath->query('//a[@href]');
+        $detected = array_fill_keys(array_keys($categories), null);
+
+        foreach ($nodes ?? [] as $node) {
+            $href = trim($node->getAttribute('href'));
+            if ($href === '' || str_starts_with($href, '#') || str_starts_with($href, 'mailto:')
+                || str_starts_with($href, 'tel:') || str_starts_with($href, 'javascript:')) {
+                continue;
+            }
+
+            $text = trim($node->textContent);
+            $ariaLabel = $node instanceof \DOMElement ? trim($node->getAttribute('aria-label')) : '';
+            $title = $node instanceof \DOMElement ? trim($node->getAttribute('title')) : '';
+            $hrefLower = mb_strtolower($href);
+            $textLower = mb_strtolower($text);
+            $labelLower = mb_strtolower($ariaLabel.' '.$title);
+
+            foreach ($categories as $category => $keywords) {
+                if ($detected[$category] !== null) {
+                    continue; // 最初に見つかったリンクを代表として採用する。
+                }
+
+                $hrefMatch = $this->containsAny($hrefLower, $keywords);
+                $textMatch = $this->containsAny($textLower, $keywords) || $this->containsAny($labelLower, $keywords);
+
+                if (! $hrefMatch && ! $textMatch) {
+                    continue;
+                }
+
+                $confidence = $hrefMatch && $textMatch ? 0.95 : ($textMatch ? 0.75 : 0.65);
+                $representativeText = $text !== '' ? $text : ($ariaLabel !== '' ? $ariaLabel : $title);
+
+                $detected[$category] = [
+                    'url' => $href,
+                    'text' => mb_substr($representativeText, 0, 100),
+                    'confidence' => $confidence,
+                    'link_type' => $this->classifyLinkType($href, $pageHost),
+                ];
+            }
+        }
+
+        $result = [];
+        foreach (array_keys($categories) as $category) {
+            $result[$category] = [
+                'present' => $detected[$category] !== null,
+                'url' => $detected[$category]['url'] ?? null,
+                'text' => $detected[$category]['text'] ?? null,
+                'confidence' => $detected[$category]['confidence'] ?? null,
+                'link_type' => $detected[$category]['link_type'] ?? null,
+            ];
+        }
+
+        return $result;
+    }
+
+    private function classifyLinkType(string $href, string $pageHost): string
+    {
+        $host = strtolower((string) parse_url($href, PHP_URL_HOST));
+
+        if ($host === '') {
+            return 'internal'; // host無し(相対パス)は内部リンクとして扱う。
+        }
+
+        foreach (self::THIRD_PARTY_RESERVATION_HOSTS as $thirdPartyHost) {
+            if (str_ends_with($host, $thirdPartyHost)) {
+                return 'third_party';
+            }
+        }
+
+        return $host === $pageHost ? 'internal' : 'external';
+    }
+
+    /**
+     * 既知の外部予約サービス(第三者ドメイン)へのリンクを検出する。
+     * 予約導線が「自社フォーム」か「外部予約サービス」かは事業内容によって
+     * 優劣がつくものではないため、採点はせず情報表示のみに用いる。
+     *
+     * @return array{detected: bool, host: ?string, url: ?string}
+     */
+    private function analyzeThirdPartyReservationService(\DOMXPath $xpath): array
+    {
+        $nodes = $xpath->query('//a[@href]');
+
+        foreach ($nodes ?? [] as $node) {
+            $href = trim($node->getAttribute('href'));
+            $host = strtolower((string) parse_url($href, PHP_URL_HOST));
+
+            if ($host === '') {
+                continue;
+            }
+
+            foreach (self::THIRD_PARTY_RESERVATION_HOSTS as $thirdPartyHost) {
+                if (str_ends_with($host, $thirdPartyHost)) {
+                    return ['detected' => true, 'host' => $host, 'url' => $href];
+                }
+            }
+        }
+
+        return ['detected' => false, 'host' => null, 'url' => null];
+    }
+
+    /**
+     * フォームごとの入力項目数(hidden/submit/button/imageを除く)を数え、
+     * 「最も問い合わせらしいフォーム」(メール系入力やcontact/inquiryを
+     * 示すname属性を含むもの)を代表として選び、入力負担を
+     * small(必須5以下)/medium(6〜10)/large(11以上)に分類する。
+     * 該当するフォームが複数あり問い合わせらしいものが無い場合は、
+     * 入力項目数が最も多いフォームを代表とする。
+     *
+     * @return array{form_found: bool, form_count: int, required_field_count: ?int, total_field_count: ?int, tier: ?string}
+     */
+    private function analyzeFormBurden(\DOMXPath $xpath): array
+    {
+        $forms = $xpath->query('//form');
+
+        if (($forms?->length ?? 0) === 0) {
+            return ['form_found' => false, 'form_count' => 0, 'required_field_count' => null, 'total_field_count' => null, 'tier' => null];
+        }
+
+        $lowerType = 'translate(@type, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")';
+        $fieldQuery = ".//input[not({$lowerType}=\"hidden\") and not({$lowerType}=\"submit\") and not({$lowerType}=\"button\") and not({$lowerType}=\"image\")] | .//select | .//textarea";
+
+        $candidates = [];
+        foreach ($forms as $form) {
+            $fields = $xpath->query($fieldQuery, $form);
+            $total = $fields?->length ?? 0;
+            $required = 0;
+            $contactLike = false;
+
+            foreach ($fields ?? [] as $field) {
+                if (! $field instanceof \DOMElement) {
+                    continue;
+                }
+
+                if ($field->hasAttribute('required') || strtolower($field->getAttribute('aria-required')) === 'true') {
+                    $required++;
+                }
+
+                $type = strtolower($field->getAttribute('type'));
+                $name = strtolower($field->getAttribute('name'));
+                if ($type === 'email' || str_contains($name, 'mail') || str_contains($name, 'contact') || str_contains($name, 'inquiry')) {
+                    $contactLike = true;
+                }
+            }
+
+            $candidates[] = ['total' => $total, 'required' => $required, 'contact_like' => $contactLike];
+        }
+
+        usort($candidates, function (array $a, array $b): int {
+            if ($a['contact_like'] !== $b['contact_like']) {
+                return $a['contact_like'] ? -1 : 1;
+            }
+
+            return $b['total'] <=> $a['total'];
+        });
+
+        $chosen = $candidates[0];
+
+        $tier = match (true) {
+            $chosen['required'] <= 5 => 'small',
+            $chosen['required'] <= 10 => 'medium',
+            default => 'large',
+        };
+
+        return [
+            'form_found' => true,
+            'form_count' => count($candidates),
+            'required_field_count' => $chosen['required'],
+            'total_field_count' => $chosen['total'],
+            'tier' => $tier,
         ];
     }
 
