@@ -81,6 +81,10 @@ class DetectTechnologyJob extends BaseWebsiteAnalysisJob
             normalizedValue: $analyticsConfigured,
             rawValue: ['technologies' => $technologies],
             evidence: ['count' => count($technologies)],
+            // 静的検出(GA/GTMの既知タグの有無)に基づく判定であり、独自計測・
+            // サーバーサイド計測・同意後読み込み等は検出できないため、
+            // 「未検出」であっても「未設置」と断定できるほどの確信度は無い。
+            confidence: $analyticsConfigured ? 0.9 : 0.6,
         );
 
         $cmsOrFramework = array_values(array_filter($technologies, fn ($t) => in_array($t['category'] ?? null, self::CMS_OR_FRAMEWORK_CATEGORIES, true)));

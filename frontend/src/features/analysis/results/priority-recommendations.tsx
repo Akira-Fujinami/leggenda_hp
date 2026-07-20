@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatEvidence, formatMetricValueField } from "@/features/analysis/formatters/metric-evidence-formatter";
 import type { ResultRecommendation } from "@/types/analysis";
 
 const PRIORITY_LABELS: Record<ResultRecommendation["priority"], string> = { critical: "緊急", high: "高", medium: "中", low: "低" };
@@ -11,18 +12,6 @@ const PRIORITY_VARIANTS: Record<ResultRecommendation["priority"], "destructive" 
 };
 const IMPACT_LABELS: Record<ResultRecommendation["impact"], string> = { high: "大", medium: "中", low: "小" };
 const EFFORT_LABELS: Record<ResultRecommendation["effort"], string> = { small: "小", medium: "中", large: "大" };
-
-function formatValue(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return Object.entries(record)
-      .map(([k, v]) => `${k}: ${String(v)}`)
-      .join(", ");
-  }
-
-  return String(value);
-}
 
 export function PriorityRecommendations({ recommendations, url }: { recommendations: ResultRecommendation[]; url: string | null }) {
   const top5 = recommendations.slice(0, 5);
@@ -37,9 +26,10 @@ export function PriorityRecommendations({ recommendations, url }: { recommendati
           <p className="text-sm text-muted-foreground">現時点で改善提案はありません。</p>
         ) : (
           top5.map((rec) => {
-            const current = formatValue(rec.current_value);
-            const recommended = formatValue(rec.recommended_value);
-            const evidence = formatValue(rec.evidence);
+            const valueContext = { metric_value_type: rec.metric_value_type, metric_unit: rec.metric_unit };
+            const current = formatMetricValueField(rec.current_value, valueContext);
+            const recommended = formatMetricValueField(rec.recommended_value, valueContext);
+            const evidence = formatEvidence(rec.evidence);
 
             return (
               <div key={rec.id} className="rounded-md border p-3">

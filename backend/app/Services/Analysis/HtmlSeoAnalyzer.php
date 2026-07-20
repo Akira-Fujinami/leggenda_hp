@@ -8,9 +8,15 @@ namespace App\Services\Analysis;
  */
 class HtmlSeoAnalyzer
 {
-    private const SNS_HOSTS = [
-        'twitter.com', 'x.com', 'facebook.com', 'instagram.com', 'youtube.com',
-        'linkedin.com', 'tiktok.com',
+    private const SNS_PLATFORMS = [
+        'instagram' => ['instagram.com'],
+        'x' => ['x.com', 'twitter.com'],
+        'facebook' => ['facebook.com', 'fb.com', 'fb.me'],
+        'line' => ['line.me', 'lin.ee'],
+        'youtube' => ['youtube.com', 'youtu.be'],
+        'tiktok' => ['tiktok.com'],
+        'linkedin' => ['linkedin.com'],
+        'pinterest' => ['pinterest.com', 'pinterest.jp'],
     ];
 
     private const CONTACT_KEYWORDS = ['contact', 'inquiry', 'お問い合わせ', 'お問合せ', '問い合わせ'];
@@ -23,13 +29,44 @@ class HtmlSeoAnalyzer
 
     private const FAQ_KEYWORDS = ['faq', 'q&a', 'よくある質問', 'ヘルプ', 'help'];
 
-    private const CASE_STUDY_KEYWORDS = ['case-study', 'case_study', 'testimonial', 'voice', 'works', 'portfolio', '導入事例', '事例', 'お客様の声', '実績'];
+    /**
+     * 導入事例・お客様の声として確度の高い語のみ。「取り組み」「実績」「story」
+     * 「works」等の単独では意味が広すぎる語は、誤検出(例:「改善の取り組み」)を
+     * 招くため意図的に含めない(強い語のみでdetected=trueとする)。
+     */
+    private const CASE_STUDY_KEYWORDS = [
+        'case-study', 'case_study', 'case study', 'case studies', 'testimonial', 'testimonials',
+        'customer stories', 'success stories', 'portfolio', 'reviews',
+        '導入事例', '活用事例', '事例紹介', 'お客様の声', '利用者の声', '体験談', '制作実績', '実績紹介', '口コミ', 'レビュー',
+    ];
 
-    private const COMPANY_INFO_KEYWORDS = ['about', 'company', 'profile', '会社概要', '企業情報', '会社案内'];
+    private const COMPANY_INFO_KEYWORDS = [
+        'company', 'corporate', 'about us', 'about', 'organization', 'operator',
+        '会社概要', '会社情報', '企業情報', '運営会社', '運営者情報', '法人情報', 'コーポレート', '私たちについて',
+    ];
 
     private const PRIVACY_POLICY_KEYWORDS = ['privacy', 'プライバシー', '個人情報保護方針', '個人情報'];
 
     private const RECRUIT_KEYWORDS = ['recruit', 'careers', 'career', '採用', '求人'];
+
+    /**
+     * 代表フォーム選定において「問い合わせ・相談フォームらしい」とみなす語
+     * (action/id/class、input name/type、周辺見出しの判定に共通で使う)。
+     */
+    private const CONTACT_FORM_SIGNAL_KEYWORDS = [
+        'contact', 'inquiry', 'inquire', 'consult', 'consultation', 'support',
+        'mail', 'email', 'message', 'subject',
+        'お問い合わせ', 'お問合せ', '問い合わせ', '相談', 'ご相談', '連絡',
+    ];
+
+    /**
+     * 検索フォームらしいことを示す語(代表フォーム選定で問い合わせフォームより
+     * 優先度を下げるための除外シグナル)。
+     */
+    private const SEARCH_FORM_SIGNAL_KEYWORDS = [
+        'search', 'query', 'keyword', 'destination', 'checkin', 'checkout',
+        '検索', 'キーワード', '目的地', 'チェックイン', 'チェックアウト',
+    ];
 
     /**
      * 外部予約サービスとして既知のホスト。網羅的ではなく、フェイクの検出を
@@ -61,9 +98,18 @@ class HtmlSeoAnalyzer
         libxml_use_internal_errors($previous);
 
         $xpath = new \DOMXPath($dom);
+
+        // script/style/template/noscript配下は解析対象から除外する。libxml2の
+        // HTMLパーサーは、script内のJSテンプレートリテラル(例:
+        // `<a href="...">${tagHTML}</a>`)に含まれるタグ様の文字列を実際のDOM
+        // 要素として誤って構築することがあり、未評価の`${...}`プレースホルダーが
+        // そのままリンクテキスト等として抽出されてしまう不具合の根本原因になる。
+        // ただしJSON-LD構造化データ(application/ld+json)は解析に必要なため残す。
+        $this->stripNonContentElements($xpath);
         $pageHost = strtolower((string) parse_url($pageUrl, PHP_URL_HOST));
 
         return [
+            'page_structure' => $this->analyzePageStructure($xpath),
             'title' => $this->analyzeTitle($xpath),
             'meta_description' => $this->analyzeMetaDescription($xpath),
             'h1' => $this->analyzeH1($xpath),
@@ -73,6 +119,7 @@ class HtmlSeoAnalyzer
             'structured_data' => $this->analyzeStructuredData($xpath),
             'images' => $this->analyzeImages($xpath),
             'links' => $this->analyzeLinks($xpath, $pageHost),
+            'sns_links' => $this->analyzeSnsLinks($xpath, $pageUrl),
             'business_links' => $this->analyzeBusinessLinks($xpath, $pageHost),
             'third_party_reservation' => $this->analyzeThirdPartyReservationService($xpath),
             'content' => $this->analyzeContent($dom, $xpath),
@@ -80,6 +127,80 @@ class HtmlSeoAnalyzer
             'form_burden' => $this->analyzeFormBurden($xpath),
             'accessibility' => $this->analyzeAccessibilityHeuristics($xpath),
         ];
+    }
+
+    /**
+     * script(JSON-LD以外)・style・template・noscriptの部分木をDOMから除去する。
+     * 除去は「事後に見つけて弾く」のではなく、以降の全解析処理(analyzeLinks
+     * ・analyzeBusinessLinks・analyzeContent等すべて)が最初から script/style
+     * 配下を一切見なくなるようにするための根本対策。
+     */
+    private function stripNonContentElements(\DOMXPath $xpath): void
+    {
+        $toRemove = [];
+
+        foreach ($xpath->query('//script') ?? [] as $node) {
+            if ($node instanceof \DOMElement && strtolower($node->getAttribute('type')) === 'application/ld+json') {
+                continue; // 構造化データの抽出に必要なため残す。
+            }
+            $toRemove[] = $node;
+        }
+
+        foreach (['style', 'template', 'noscript'] as $tag) {
+            foreach ($xpath->query("//{$tag}") ?? [] as $node) {
+                $toRemove[] = $node;
+            }
+        }
+
+        foreach ($toRemove as $node) {
+            $node->parentNode?->removeChild($node);
+        }
+    }
+
+    /**
+     * 取得したHTMLが実際のページ内容を持っているかどうかの簡易判定。
+     * head/bodyが存在しない、またはbodyがほぼ空(bot拒否ページ・取得失敗の
+     * プレースホルダー等)の場合、h1/viewportなどの「無し」判定を単純な
+     * not_found(意図的に設置していない)ではなくunavailable(そもそも
+     * 判定材料が無い)として扱うためのシグナルにする。
+     *
+     * @return array{has_head: bool, has_body: bool, body_is_effectively_empty: bool}
+     */
+    private function analyzePageStructure(\DOMXPath $xpath): array
+    {
+        $hasHead = ($xpath->query('//head')?->length ?? 0) > 0;
+        $bodyNodes = $xpath->query('//body');
+        $hasBody = ($bodyNodes?->length ?? 0) > 0;
+
+        $bodyText = $hasBody ? trim((string) $bodyNodes->item(0)?->textContent) : '';
+
+        return [
+            'has_head' => $hasHead,
+            'has_body' => $hasBody,
+            // 数文字程度しかない本文は、bot拒否ページやローディング画面のみが
+            // 返された可能性が高いと判断する目安。
+            'body_is_effectively_empty' => mb_strlen($bodyText) < 20,
+        ];
+    }
+
+    /**
+     * リンクテキスト等の候補文字列から、未評価のテンプレートプレースホルダー
+     * (JSテンプレートリテラル/Vue/Handlebars/Blade等の`${...}`/`{{...}}`/`{%...%}`)や
+     * 残存HTMLタグ断片を含むものを除外する。stripNonContentElements()による
+     * 根本対策に加え、万一script以外の経路で同種のゴミ文字列が紛れ込んだ場合の
+     * 二重の防御として機能する。
+     */
+    private function sanitizeCandidateText(string $text): ?string
+    {
+        if ($text === '') {
+            return null;
+        }
+
+        if (preg_match('/\$\{.*?\}|\{\{.*?\}\}|\{%.*?%\}|<[a-zA-Z][^>]*>/u', $text)) {
+            return null;
+        }
+
+        return $text;
     }
 
     /**
@@ -109,23 +230,31 @@ class HtmlSeoAnalyzer
         foreach ($nodes ?? [] as $node) {
             $href = trim($node->getAttribute('href'));
             if ($href === '' || str_starts_with($href, '#') || str_starts_with($href, 'mailto:')
-                || str_starts_with($href, 'tel:') || str_starts_with($href, 'javascript:')) {
+                || str_starts_with($href, 'tel:') || str_starts_with($href, 'javascript:')
+                || str_contains($href, '${') || str_contains($href, '{{')) {
                 continue;
             }
 
-            $text = trim($node->textContent);
-            $ariaLabel = $node instanceof \DOMElement ? trim($node->getAttribute('aria-label')) : '';
-            $title = $node instanceof \DOMElement ? trim($node->getAttribute('title')) : '';
-            $hrefLower = mb_strtolower($href);
+            // 候補テキストは事前にsanitizeし、テンプレート未評価文字列や
+            // HTMLタグ断片が残っていれば「テキスト無し」として扱う
+            // (stripNonContentElements()の根本対策に対する二重の防御)。
+            $text = $this->sanitizeCandidateText(trim($node->textContent)) ?? '';
+            $ariaLabel = $node instanceof \DOMElement ? ($this->sanitizeCandidateText(trim($node->getAttribute('aria-label'))) ?? '') : '';
+            $title = $node instanceof \DOMElement ? ($this->sanitizeCandidateText(trim($node->getAttribute('title'))) ?? '') : '';
             $textLower = mb_strtolower($text);
             $labelLower = mb_strtolower($ariaLabel.' '.$title);
+
+            // hrefはパス部分のみをセグメント単位で照合する(クエリ文字列に
+            // 偶然含まれる短い語(例: トラッキングパラメータ内の"about"や
+            // "profile")による誤検出を避けるため)。
+            $hrefPathSegments = $this->pathSegments($href);
 
             foreach ($categories as $category => $keywords) {
                 if ($detected[$category] !== null) {
                     continue; // 最初に見つかったリンクを代表として採用する。
                 }
 
-                $hrefMatch = $this->containsAny($hrefLower, $keywords);
+                $hrefMatch = $this->segmentsMatchAny($hrefPathSegments, $keywords);
                 $textMatch = $this->containsAny($textLower, $keywords) || $this->containsAny($labelLower, $keywords);
 
                 if (! $hrefMatch && ! $textMatch) {
@@ -137,7 +266,7 @@ class HtmlSeoAnalyzer
 
                 $detected[$category] = [
                     'url' => $href,
-                    'text' => mb_substr($representativeText, 0, 100),
+                    'text' => $representativeText !== '' ? mb_substr($representativeText, 0, 100) : null,
                     'confidence' => $confidence,
                     'link_type' => $this->classifyLinkType($href, $pageHost),
                 ];
@@ -156,6 +285,51 @@ class HtmlSeoAnalyzer
         }
 
         return $result;
+    }
+
+    /**
+     * hrefのパス部分を"/"区切りの小文字セグメント配列にする(クエリ文字列・
+     * フラグメントは含めない)。
+     *
+     * @return list<string>
+     */
+    private function pathSegments(string $href): array
+    {
+        $path = (string) parse_url($href, PHP_URL_PATH);
+
+        return array_values(array_filter(explode('/', mb_strtolower($path)), fn ($segment) => $segment !== ''));
+    }
+
+    /**
+     * パスセグメントのいずれかが、キーワードと完全一致するか、
+     * "keyword-"/"keyword_"で始まるか、"-keyword"/"_keyword"で終わるかを見る。
+     * 単純な部分文字列一致(str_contains)と違い、"about-cancellation"のような
+     * 無関係な語の一部に短い語(about等)がたまたま含まれるケースを誤検出しない。
+     *
+     * @param  list<string>  $segments
+     * @param  list<string>  $keywords
+     */
+    private function segmentsMatchAny(array $segments, array $keywords): bool
+    {
+        foreach ($segments as $segment) {
+            foreach ($keywords as $keyword) {
+                $keywordLower = mb_strtolower($keyword);
+
+                if (str_contains($keywordLower, ' ')) {
+                    // "about us"のようにスペースを含むキーワードはURLパスに
+                    // そのまま現れないため、セグメント一致の対象外(テキスト側でのみ判定)。
+                    continue;
+                }
+
+                if ($segment === $keywordLower
+                    || str_starts_with($segment, $keywordLower.'-') || str_starts_with($segment, $keywordLower.'_')
+                    || str_ends_with($segment, '-'.$keywordLower) || str_ends_with($segment, '_'.$keywordLower)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function classifyLinkType(string $href, string $pageHost): string
@@ -205,33 +379,59 @@ class HtmlSeoAnalyzer
     }
 
     /**
-     * フォームごとの入力項目数(hidden/submit/button/imageを除く)を数え、
-     * 「最も問い合わせらしいフォーム」(メール系入力やcontact/inquiryを
-     * 示すname属性を含むもの)を代表として選び、入力負担を
-     * small(必須5以下)/medium(6〜10)/large(11以上)に分類する。
-     * 該当するフォームが複数あり問い合わせらしいものが無い場合は、
-     * 入力項目数が最も多いフォームを代表とする。
+     * ページ全体のフォーム数・入力項目総数と、代表フォーム(最も問い合わせ/
+     * 相談らしいフォーム)の入力負担を分けて算出する。
      *
-     * @return array{form_found: bool, form_count: int, required_field_count: ?int, total_field_count: ?int, tier: ?string}
+     * 代表フォームの選定優先順位:
+     *   1. フォーム自身のaction/id/classにcontact/inquiry/consultation等の語がある
+     *   2. フォーム直前の見出し(h1〜h4)にcontact/inquiry等の語がある
+     *   3. mail/email/message/subject等を示す入力欄name/placeholderを持つ
+     *   4. いずれにも該当しない場合、入力項目数が最も多いフォームを代表とする
+     *      (search/検索等、検索フォームらしい語を持つフォームは、他に候補が
+     *      無い場合の最終フォールバックとしてのみ選ぶ ―― 旅行検索フォームを
+     *      問い合わせフォームとして評価しないため)。
+     *
+     * 入力負担(tier)は代表フォームの入力項目数(total)・必須項目数(required)の
+     * いずれかが閾値を超えたら段階を上げる。必須項目が0でも入力項目数自体が
+     * 多ければ負担は大きいと判断する:
+     *   small:  total<=5 かつ required<=5
+     *   medium: total 6-10 または required 6-10
+     *   large:  total>=11 または required>=11
+     *
+     * @return array{form_found: bool, form_count: int, page_total_field_count: int, required_field_count: ?int, total_field_count: ?int, tier: ?string, representative_form_reason: ?string}
      */
     private function analyzeFormBurden(\DOMXPath $xpath): array
     {
         $forms = $xpath->query('//form');
 
         if (($forms?->length ?? 0) === 0) {
-            return ['form_found' => false, 'form_count' => 0, 'required_field_count' => null, 'total_field_count' => null, 'tier' => null];
+            return [
+                'form_found' => false, 'form_count' => 0, 'page_total_field_count' => 0,
+                'required_field_count' => null, 'total_field_count' => null, 'tier' => null,
+                'representative_form_reason' => null,
+            ];
         }
 
         $lowerType = 'translate(@type, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")';
         $fieldQuery = ".//input[not({$lowerType}=\"hidden\") and not({$lowerType}=\"submit\") and not({$lowerType}=\"button\") and not({$lowerType}=\"image\")] | .//select | .//textarea";
 
         $candidates = [];
+        $pageTotalFields = 0;
+
         foreach ($forms as $form) {
             $fields = $xpath->query($fieldQuery, $form);
             $total = $fields?->length ?? 0;
+            $pageTotalFields += $total;
             $required = 0;
-            $contactLike = false;
 
+            $formAttrs = $form instanceof \DOMElement
+                ? mb_strtolower($form->getAttribute('action').' '.$form->getAttribute('id').' '.$form->getAttribute('class'))
+                : '';
+            $isContactByAttrs = $this->containsAny($formAttrs, self::CONTACT_FORM_SIGNAL_KEYWORDS);
+            $isSearchByAttrs = $this->containsAny($formAttrs, self::SEARCH_FORM_SIGNAL_KEYWORDS);
+            $isContactByHeading = $this->containsAny(mb_strtolower($this->precedingHeadingText($xpath, $form)), self::CONTACT_FORM_SIGNAL_KEYWORDS);
+
+            $isContactByField = false;
             foreach ($fields ?? [] as $field) {
                 if (! $field instanceof \DOMElement) {
                     continue;
@@ -243,17 +443,26 @@ class HtmlSeoAnalyzer
 
                 $type = strtolower($field->getAttribute('type'));
                 $name = strtolower($field->getAttribute('name'));
-                if ($type === 'email' || str_contains($name, 'mail') || str_contains($name, 'contact') || str_contains($name, 'inquiry')) {
-                    $contactLike = true;
+                $placeholder = strtolower($field->getAttribute('placeholder'));
+                if ($type === 'email' || $this->containsAny($name.' '.$placeholder, ['mail', 'contact', 'inquiry', 'message', 'subject'])) {
+                    $isContactByField = true;
                 }
             }
 
-            $candidates[] = ['total' => $total, 'required' => $required, 'contact_like' => $contactLike];
+            $priority = match (true) {
+                $isContactByAttrs => 1,
+                $isContactByHeading => 2,
+                $isContactByField => 3,
+                $isSearchByAttrs => 5,
+                default => 4,
+            };
+
+            $candidates[] = ['total' => $total, 'required' => $required, 'priority' => $priority];
         }
 
         usort($candidates, function (array $a, array $b): int {
-            if ($a['contact_like'] !== $b['contact_like']) {
-                return $a['contact_like'] ? -1 : 1;
+            if ($a['priority'] !== $b['priority']) {
+                return $a['priority'] <=> $b['priority'];
             }
 
             return $b['total'] <=> $a['total'];
@@ -262,18 +471,43 @@ class HtmlSeoAnalyzer
         $chosen = $candidates[0];
 
         $tier = match (true) {
-            $chosen['required'] <= 5 => 'small',
-            $chosen['required'] <= 10 => 'medium',
-            default => 'large',
+            $chosen['total'] >= 11 || $chosen['required'] >= 11 => 'large',
+            $chosen['total'] >= 6 || $chosen['required'] >= 6 => 'medium',
+            default => 'small',
+        };
+
+        $reason = match ($chosen['priority']) {
+            1 => 'form_attributes',
+            2 => 'nearby_heading',
+            3 => 'field_names',
+            5 => 'largest_search_form_fallback',
+            default => 'largest_form_fallback',
         };
 
         return [
             'form_found' => true,
             'form_count' => count($candidates),
+            'page_total_field_count' => $pageTotalFields,
             'required_field_count' => $chosen['required'],
             'total_field_count' => $chosen['total'],
             'tier' => $tier,
+            'representative_form_reason' => $reason,
         ];
+    }
+
+    /**
+     * フォーム直前に現れる見出し(h1〜h4)のテキストを取得する
+     * (代表フォーム選定における「周辺見出し」シグナルに使う)。
+     */
+    private function precedingHeadingText(\DOMXPath $xpath, \DOMNode $form): string
+    {
+        $headings = $xpath->query('(preceding::h1|preceding::h2|preceding::h3|preceding::h4)[last()]', $form);
+
+        if ($headings === false || $headings->length === 0) {
+            return '';
+        }
+
+        return trim($headings->item(0)->textContent);
     }
 
     /**
@@ -360,17 +594,28 @@ class HtmlSeoAnalyzer
         ];
     }
 
+    /**
+     * H1のテキストも、リンクテキストと同様に未評価のテンプレートプレースホルダー
+     * (`${...}`等)が残っていないかsanitizeする。これは解析側の誤検出だけでなく、
+     * 対象サイト自身のテンプレートがサーバーサイドで正しく評価されずに配信
+     * されているケース(実在)にも対応するため ―― count(実際に存在するh1要素数)
+     * は正しく保つが、表示用のtexts配列には採用しない。
+     */
     private function analyzeH1(\DOMXPath $xpath): array
     {
         $nodes = $xpath->query('//h1');
         $texts = [];
         foreach ($nodes ?? [] as $node) {
-            $texts[] = trim($node->textContent);
+            $sanitized = $this->sanitizeCandidateText(trim($node->textContent));
+            if ($sanitized !== null) {
+                $texts[] = $sanitized;
+            }
         }
 
         return [
             'count' => $nodes?->length ?? 0,
             'texts' => $texts,
+            'primary_text' => $texts[0] ?? null,
         ];
     }
 
@@ -492,7 +737,6 @@ class HtmlSeoAnalyzer
         $mailto = 0;
         $tel = 0;
         $line = 0;
-        $sns = 0;
         $contactLike = 0;
 
         foreach ($nodes ?? [] as $node) {
@@ -519,13 +763,6 @@ class HtmlSeoAnalyzer
             $host = strtolower((string) parse_url($href, PHP_URL_HOST));
 
             if ($host !== '') {
-                foreach (self::SNS_HOSTS as $snsHost) {
-                    if (str_ends_with($host, $snsHost)) {
-                        $sns++;
-                        break;
-                    }
-                }
-
                 if ($host === $pageHost) {
                     $internal++;
                 } else {
@@ -550,8 +787,64 @@ class HtmlSeoAnalyzer
             'mailto' => $mailto,
             'tel' => $tel,
             'line' => $line,
-            'sns' => $sns,
             'contact_like' => $contactLike,
+        ];
+    }
+
+    /**
+     * SNSリンクをプラットフォーム別に検出する。判定は実際のa[href]の遷移先
+     * ホスト名のみに基づき、本文中に「Instagram」等の語があるだけでは
+     * 検出しない。protocol-relative URL(//instagram.com/...)はページと
+     * 同じschemeとして解決し、サブドメイン(m.facebook.com等)も許容する。
+     *
+     * @return array{detected: bool, count: int, platforms: list<array{platform: string, url: string, text: ?string}>}
+     */
+    private function analyzeSnsLinks(\DOMXPath $xpath, string $pageUrl): array
+    {
+        $nodes = $xpath->query('//a[@href]');
+        $pageScheme = (string) (parse_url($pageUrl, PHP_URL_SCHEME) ?: 'https');
+        $found = [];
+        $seenPlatforms = [];
+
+        foreach ($nodes ?? [] as $node) {
+            $href = trim($node->getAttribute('href'));
+            if ($href === '') {
+                continue;
+            }
+
+            $resolvedHref = str_starts_with($href, '//') ? "{$pageScheme}:{$href}" : $href;
+            $host = strtolower((string) parse_url($resolvedHref, PHP_URL_HOST));
+
+            if ($host === '') {
+                continue;
+            }
+
+            $platform = null;
+            foreach (self::SNS_PLATFORMS as $platformKey => $hosts) {
+                foreach ($hosts as $snsHost) {
+                    if (str_ends_with($host, $snsHost)) {
+                        $platform = $platformKey;
+                        break 2;
+                    }
+                }
+            }
+
+            if ($platform === null || isset($seenPlatforms[$platform])) {
+                continue; // 未知のホスト、または同一プラットフォームの2件目以降はスキップ(代表1件のみ記録)。
+            }
+
+            $text = $this->sanitizeCandidateText(trim($node->textContent)) ?? '';
+            $ariaLabel = $node instanceof \DOMElement ? ($this->sanitizeCandidateText(trim($node->getAttribute('aria-label'))) ?? '') : '';
+            $label = $text !== '' ? $text : ($ariaLabel !== '' ? $ariaLabel : ucfirst($platform));
+
+            $seenPlatforms[$platform] = true;
+            $found[] = ['platform' => $platform, 'url' => $href, 'text' => mb_substr($label, 0, 50)];
+        }
+
+        return [
+            'detected' => $found !== [],
+            'count' => count($found),
+            'platforms' => array_values($found),
         ];
     }
 

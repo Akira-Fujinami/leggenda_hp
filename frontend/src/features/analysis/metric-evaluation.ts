@@ -1,3 +1,4 @@
+import { formatNumberWithUnit } from "@/features/analysis/formatters/unit-labels";
 import type { MetricEvaluation } from "@/types/analysis";
 
 /**
@@ -56,11 +57,20 @@ export function classifyMetric(metric: MetricEvaluation): EvaluationState {
 }
 
 export function formatMetricValue(metric: MetricEvaluation): string {
-  const { value, unit } = metric;
+  const { value, unit, value_type: valueType } = metric;
 
   if (value === null || value === undefined) return "-";
   if (typeof value === "boolean") return value ? "あり" : "なし";
-  if (typeof value === "number") return unit ? `${value}${unit}` : String(value);
+
+  if (typeof value === "number") {
+    // value_type="percentage"の内部値は0〜1のratioとして保存する契約のため、
+    // 表示時のみ100倍する(DB上の値やMetricごとの個別変換は行わない)。
+    if (valueType === "percentage") {
+      return `${(value * 100).toFixed(2)}%`;
+    }
+
+    return formatNumberWithUnit(value, unit);
+  }
 
   return String(value);
 }

@@ -124,4 +124,32 @@ class MetricScorerTest extends TestCase
         $this->assertTrue($outcome->countsTowardScore);
         $this->assertSame(0.0, $outcome->score);
     }
+
+    /**
+     * img_alt_coverage等のscoring_type=ratioは、正規化値が既に0.0〜1.0の
+     * 達成率として保存されている契約。ここで誤って100倍/1で割る等の変換を
+     * 行うと、0.9868(98.68%相当)のような値が0点近くまたは上限超過スコアに
+     * なってしまう。DBの値は変えず、そのままmax_scoreに乗算されることを確認する。
+     */
+    public function test_ratio_scoring_treats_the_stored_value_as_a_0_to_1_fraction_not_0_to_100(): void
+    {
+        $definition = $this->definition(['scoring_type' => 'ratio', 'max_score' => 4.0]);
+        $result = MetricResult::factory()->make(['status' => MetricResultStatus::Success, 'normalized_value' => ['value' => 0.9868]]);
+
+        $outcome = $this->scorer->score($definition, $result);
+
+        $this->assertTrue($outcome->countsTowardScore);
+        $this->assertEqualsWithDelta(0.9868 * 4.0, $outcome->score, 0.01);
+        $this->assertSame(4.0, $outcome->maxScore);
+    }
+
+    public function test_ratio_scoring_clamps_an_out_of_range_value_rather_than_over_or_under_scoring(): void
+    {
+        $definition = $this->definition(['scoring_type' => 'ratio', 'max_score' => 4.0]);
+        $result = MetricResult::factory()->make(['status' => MetricResultStatus::Success, 'normalized_value' => ['value' => 1.5]]);
+
+        $outcome = $this->scorer->score($definition, $result);
+
+        $this->assertSame(4.0, $outcome->score);
+    }
 }

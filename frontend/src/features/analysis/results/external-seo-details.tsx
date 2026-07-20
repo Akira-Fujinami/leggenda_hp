@@ -27,6 +27,11 @@ const UNAVAILABLE_REASON_LABELS: Record<string, string> = {
   SEMRUSH_METRIC_UNAVAILABLE: "この指標は現在のSemrush契約プランでは取得できません。",
 };
 
+interface AuthorityEvidence {
+  provider?: string;
+  is_mock?: boolean;
+}
+
 function deriveDataState(authorityMetrics: MetricEvaluation[]): "real" | "mock" | "unavailable" {
   if (authorityMetrics.some((m) => m.status === "success")) return "real";
   if (authorityMetrics.some((m) => m.status === "not_applicable")) return "mock";
@@ -38,7 +43,14 @@ export function ExternalSeoDetails({ metrics }: { metrics: MetricEvaluation[] })
   const authorityMetrics = DISPLAY_KEYS.map(({ key }) => findMetric(metrics, key)).filter((m): m is MetricEvaluation => m !== undefined);
   const dataState = deriveDataState(authorityMetrics);
   const firstUnavailable = authorityMetrics.find((m) => m.status === "unavailable");
-  const providerMetric = authorityMetrics.find((m) => m.source_type);
+  // provider/is_mockは、この指標をスコアリングした際に実際に使われた
+  // ProviderをMetricResult.evidenceへ記録したもの(動的な実測情報)。
+  // MetricDefinition.source_type(静的なスキーマ上の分類。常に"semrush")を
+  // 使うと、Mock使用時でも"provider: semrush"と表示されてしまい、
+  // 「デモデータ」バッジと矛盾して見えるため使わない。
+  const providerMetric = authorityMetrics.find((m) => (m.evidence as AuthorityEvidence | null)?.provider);
+  const evidence = providerMetric?.evidence as AuthorityEvidence | null;
+  const isMock = evidence?.is_mock ?? dataState === "mock";
 
   return (
     <Card>
@@ -49,10 +61,11 @@ export function ExternalSeoDetails({ metrics }: { metrics: MetricEvaluation[] })
         </Badge>
       </CardHeader>
       <CardContent className="space-y-3">
-        {providerMetric?.source_type && (
+        {evidence?.provider && (
           <p className="text-xs text-muted-foreground">
-            provider: {providerMetric.source_type}
-            {providerMetric.measured_at && ` ・取得日時: ${new Date(providerMetric.measured_at).toLocaleString("ja-JP")}`}
+            データ種別: {isMock ? "デモデータ" : "実データ"}　Provider: {isMock ? "Mock" : evidence.provider}
+            {isMock && "　模擬対象: Semrush形式"}
+            {providerMetric?.measured_at && ` ・取得日時: ${new Date(providerMetric.measured_at).toLocaleString("ja-JP")}`}
           </p>
         )}
 

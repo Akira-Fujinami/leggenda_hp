@@ -40,6 +40,29 @@ function LengthCard({
   );
 }
 
+interface H1RawValue {
+  count?: number;
+  primary_text?: string | null;
+}
+
+function H1Card({ metric }: { metric: MetricEvaluation }) {
+  const raw = metric.raw_value as H1RawValue | null;
+  const count = raw?.count;
+  const primaryText = raw?.primary_text;
+
+  return (
+    <MetricEvaluationCard
+      metric={metric}
+      label="H1タグ"
+      description={
+        count !== undefined
+          ? `H1: ${count}件${primaryText ? ` ・内容: ${primaryText}(ページの主題と一致しているか内容をご確認ください)` : ""}`
+          : "ページの主題を表すH1見出しを1件だけ設定することが推奨されます。"
+      }
+    />
+  );
+}
+
 export function SeoDetails({ metrics, seo }: { metrics: MetricEvaluation[]; seo: AnalysisSeoSummary | null }) {
   const canonical = findMetric(metrics, "canonical_present");
   const canonicalSelf = findMetric(metrics, "canonical_self_referencing");
@@ -71,11 +94,7 @@ export function SeoDetails({ metrics, seo }: { metrics: MetricEvaluation[]; seo:
           text={seo?.meta_description ?? null}
         />
         {findMetric(metrics, "h1_single") && (
-          <MetricEvaluationCard
-            metric={findMetric(metrics, "h1_single")!}
-            label="H1タグ"
-            description="ページの主題を表すH1見出しを1件だけ設定することが推奨されます。"
-          />
+          <H1Card metric={findMetric(metrics, "h1_single")!} />
         )}
         {canonical && <MetricEvaluationCard metric={canonicalSelf ?? canonical} label="canonicalタグ" />}
         {robotsMeta && <MetricEvaluationCard metric={robotsMeta} label="robots meta(インデックス可否)" />}

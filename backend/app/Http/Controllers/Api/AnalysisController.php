@@ -27,8 +27,7 @@ class AnalysisController extends Controller
         private readonly AnalysisService $analyses,
         private readonly ComparisonAssembler $comparisonAssembler,
         private readonly HistoryComparisonService $historyComparisonService,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request, Project $project): JsonResponse
     {
@@ -77,7 +76,7 @@ class AnalysisController extends Controller
             'websiteAnalyses.jobs',
             'websiteAnalyses.screenshots',
             'websiteAnalyses.metricResults.metricDefinition',
-            'websiteAnalyses.recommendations',
+            'websiteAnalyses.recommendations.metricResult.metricDefinition',
         ]);
 
         return $this->success(new AnalysisResultsResource($analysis));

@@ -10,6 +10,7 @@ import { renderPage } from "./render.js";
 import { captureScreenshot, type Device } from "./screenshot.js";
 import { runLighthouse } from "./lighthouse.js";
 import { detectTechnologies } from "./technology.js";
+import { classifyError } from "./errorClassification.js";
 
 const renderRequestSchema = z.object({
   url: z.string().min(1),
@@ -48,6 +49,22 @@ function sendSsrfBlocked(reply: FastifyReply, err: SsrfError) {
     success: false,
     data: null,
     error: { code: "SSRF_BLOCKED", message: err.message },
+  });
+}
+
+/**
+ * Playwright/Lighthouse等が投げた例外を分類し、ユーザー向けの短いメッセージで
+ * 応答する。生のエラーメッセージ・スタックトレースはlogger経由でのみ記録し、
+ * レスポンスボディには含めない(秘密情報・内部実装の詳細を返さないため)。
+ */
+function sendClassifiedError(reply: FastifyReply, err: unknown, requestId: string) {
+  const classified = classifyError(err);
+  logger.error({ err, code: classified.code, requestId }, "analyzer_operation_failed");
+
+  return reply.code(500).send({
+    success: false,
+    data: null,
+    error: { code: classified.code, message: classified.message },
   });
 }
 
@@ -106,12 +123,17 @@ function registerAnalyzeRoutes(
       throw err;
     }
 
-    const result = await limiter.run(() =>
-      renderPage(parsed.data.url, {
-        timeoutMs: parsed.data.timeout_ms,
-        maxHtmlBytes: parsed.data.max_html_bytes ?? env.MAX_HTML_BYTES,
-      }),
-    );
+    let result;
+    try {
+      result = await limiter.run(() =>
+        renderPage(parsed.data.url, {
+          timeoutMs: parsed.data.timeout_ms,
+          maxHtmlBytes: parsed.data.max_html_bytes ?? env.MAX_HTML_BYTES,
+        }),
+      );
+    } catch (err) {
+      return sendClassifiedError(reply, err, request.id);
+    }
 
     if (result === CONCURRENCY_LIMIT_EXCEEDED) {
       return reply.code(503).send({
@@ -145,16 +167,21 @@ function registerAnalyzeRoutes(
       throw err;
     }
 
-    const result = await limiter.run(() =>
-      captureScreenshot(
-        parsed.data.url,
-        parsed.data.device as Device,
-        parsed.data.analysis_id,
-        parsed.data.website_analysis_id,
-        parsed.data.full_page,
-        env.BROWSER_TIMEOUT_MS,
-      ),
-    );
+    let result;
+    try {
+      result = await limiter.run(() =>
+        captureScreenshot(
+          parsed.data.url,
+          parsed.data.device as Device,
+          parsed.data.analysis_id,
+          parsed.data.website_analysis_id,
+          parsed.data.full_page,
+          env.BROWSER_TIMEOUT_MS,
+        ),
+      );
+    } catch (err) {
+      return sendClassifiedError(reply, err, request.id);
+    }
 
     if (result === CONCURRENCY_LIMIT_EXCEEDED) {
       return reply.code(503).send({
@@ -188,7 +215,12 @@ function registerAnalyzeRoutes(
       throw err;
     }
 
-    const result = await limiter.run(() => runLighthouse(parsed.data.url, parsed.data.timeout_ms));
+    let result;
+    try {
+      result = await limiter.run(() => runLighthouse(parsed.data.url, parsed.data.timeout_ms));
+    } catch (err) {
+      return sendClassifiedError(reply, err, request.id);
+    }
 
     if (result === CONCURRENCY_LIMIT_EXCEEDED) {
       return reply.code(503).send({
@@ -220,14 +252,19 @@ function registerAnalyzeRoutes(
       throw err;
     }
 
-    const result = await limiter.run(async () => {
-      const html = parsed.data.html ?? (await renderPage(parsed.data.url, {
-        timeoutMs: env.BROWSER_TIMEOUT_MS,
-        maxHtmlBytes: env.MAX_HTML_BYTES,
-      })).html;
+    let result;
+    try {
+      result = await limiter.run(async () => {
+        const html = parsed.data.html ?? (await renderPage(parsed.data.url, {
+          timeoutMs: env.BROWSER_TIMEOUT_MS,
+          maxHtmlBytes: env.MAX_HTML_BYTES,
+        })).html;
 
-      return detectTechnologies(html);
-    });
+        return detectTechnologies(html);
+      });
+    } catch (err) {
+      return sendClassifiedError(reply, err, request.id);
+    }
 
     if (result === CONCURRENCY_LIMIT_EXCEEDED) {
       return reply.code(503).send({

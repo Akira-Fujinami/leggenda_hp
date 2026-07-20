@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use App\Enums\AnalysisJobStatus;
 use App\Enums\PageType;
+use App\Models\Analysis;
 use App\Models\CategoryDefinition;
 use App\Services\Scoring\MetricScorer;
 use App\Services\Scoring\OverallScoreCalculator;
@@ -17,7 +18,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * HtmlSeoAnalyzer等が抽出済みの小さな構造化データ(件数・真偽値・短い文字列)
  * のみであり、ページ全文やAPI生レスポンスではないため含めてよい。
  *
- * @mixin \App\Models\Analysis
+ * @mixin Analysis
  */
 class AnalysisResultsResource extends JsonResource
 {
@@ -73,22 +74,33 @@ class AnalysisResultsResource extends JsonResource
                     'metrics' => $this->metricList($wa),
                     'recommendations' => $wa->recommendations
                         ->sortByDesc('sort_score')
-                        ->map(fn ($r) => [
-                            'id' => $r->id,
-                            'category_key' => $r->category_key,
-                            'title' => $r->title,
-                            'description' => $r->description,
-                            'evidence' => $r->evidence,
-                            'current_value' => $r->current_value,
-                            'recommended_value' => $r->recommended_value,
-                            'priority' => $r->priority->value,
-                            'impact' => $r->impact->value,
-                            'effort' => $r->effort->value,
-                            'confidence' => (float) $r->confidence,
-                            'status' => $r->status->value,
-                            'source' => $r->source->value,
-                            'sort_score' => (float) $r->sort_score,
-                        ])->values(),
+                        ->map(function ($r) {
+                            $definition = $r->metricResult?->metricDefinition;
+
+                            return [
+                                'id' => $r->id,
+                                'category_key' => $r->category_key,
+                                'title' => $r->title,
+                                'description' => $r->description,
+                                'evidence' => $r->evidence,
+                                'current_value' => $r->current_value,
+                                'recommended_value' => $r->recommended_value,
+                                // current_value/recommended_value/evidenceのJSONを
+                                // Frontendが読める形に整形するために、対象MetricDefinitionの
+                                // key/value_type/unitを併せて返す(raw JSONをそのまま
+                                // 文字列化して表示させないため)。
+                                'metric_key' => $definition?->key,
+                                'metric_value_type' => $definition?->value_type,
+                                'metric_unit' => $definition?->unit,
+                                'priority' => $r->priority->value,
+                                'impact' => $r->impact->value,
+                                'effort' => $r->effort->value,
+                                'confidence' => (float) $r->confidence,
+                                'status' => $r->status->value,
+                                'source' => $r->source->value,
+                                'sort_score' => (float) $r->sort_score,
+                            ];
+                        })->values(),
                 ];
             })->values(),
         ];
@@ -115,11 +127,16 @@ class AnalysisResultsResource extends JsonResource
                     'key' => $definition->key,
                     'name' => $definition->name,
                     'category_key' => $definition->category_key,
+                    'value_type' => $definition->value_type,
                     'unit' => $definition->unit,
                     'scoring_type' => $definition->scoring_type,
                     'status' => $r->status->value,
                     'value' => $r->normalized_value['value'] ?? null,
                     'raw_value' => $r->raw_value,
+                    // evidenceは真偽値の根拠(件数・URL・実際に使われたProvider等)を
+                    // 保持する小さな構造化データ(is_mock/provider等を含む)。
+                    // 生HTML/生JSONは含まれない(RecordsMetricResults参照)。
+                    'evidence' => $r->evidence,
                     'min_value' => $definition->minimum_value !== null ? (float) $definition->minimum_value : null,
                     'target_value' => $definition->target_value !== null ? (float) $definition->target_value : null,
                     'max_value' => $definition->maximum_value !== null ? (float) $definition->maximum_value : null,

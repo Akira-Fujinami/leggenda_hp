@@ -129,7 +129,7 @@ class MetricDefinitionSeeder extends Seeder
     private function contentMetrics(): array
     {
         return [
-            ['key' => 'word_count_sufficient', 'name' => '本文の文字数', 'value_type' => 'number', 'unit' => 'words', 'source_type' => 'static_html', 'scoring_type' => 'linear', 'points' => 4, 'minimum_value' => 0, 'target_value' => 300, 'display_order' => 10, 'recommendation_template' => '本文のコンテンツ量を増やしてください(目安300文字以上)。'],
+            ['key' => 'word_count_sufficient', 'name' => '本文の文字数', 'value_type' => 'number', 'unit' => 'characters', 'source_type' => 'static_html', 'scoring_type' => 'linear', 'points' => 4, 'minimum_value' => 0, 'target_value' => 300, 'display_order' => 10, 'recommendation_template' => '本文のコンテンツ量を増やしてください(目安300文字以上)。'],
             ['key' => 'img_alt_coverage', 'name' => '画像alt充足率', 'value_type' => 'percentage', 'unit' => '%', 'source_type' => 'static_html', 'scoring_type' => 'ratio', 'points' => 4, 'display_order' => 20, 'recommendation_template' => '重要な画像に代替テキスト(alt)を設定してください。'],
             ['key' => 'internal_link_sufficient', 'name' => '内部リンク数', 'value_type' => 'number', 'unit' => 'links', 'source_type' => 'static_html', 'scoring_type' => 'linear', 'points' => 3, 'minimum_value' => 0, 'target_value' => 5, 'display_order' => 30, 'recommendation_template' => '関連ページへの内部リンクを増やしてください。'],
             ['key' => 'heading_structure_present', 'name' => '見出し構造', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 2, 'display_order' => 40, 'recommendation_template' => '見出し(H2等)を使ってコンテンツを構造化してください。'],
@@ -172,7 +172,10 @@ class MetricDefinitionSeeder extends Seeder
     private function technologyMetrics(): array
     {
         return [
-            ['key' => 'analytics_configured', 'name' => 'アクセス解析の設置', 'value_type' => 'boolean', 'source_type' => 'technology', 'scoring_type' => 'boolean', 'points' => 4, 'display_order' => 10, 'recommendation_template' => 'Google Analytics等のアクセス解析を導入してください。'],
+            // GA/GTMのような一般的なタグの静的検出に基づく判定であり、独自計測・
+            // サーバーサイド計測・同意後読み込み等は検出できない。そのため名称・
+            // 文言は「未設置」と断定せず「検出できなかった」旨に留める。
+            ['key' => 'analytics_configured', 'name' => '一般的なアクセス解析タグの検出', 'value_type' => 'boolean', 'source_type' => 'technology', 'scoring_type' => 'boolean', 'points' => 4, 'display_order' => 10, 'recommendation_template' => '一般的なアクセス解析タグを検出できませんでした。独自計測や同意後読み込みを利用している場合は、実装状況を確認してください。'],
             ['key' => 'lighthouse_best_practices', 'name' => 'Lighthouse Best Practices', 'value_type' => 'score', 'unit' => 'pt', 'source_type' => 'lighthouse', 'scoring_type' => 'lighthouse', 'points' => 6, 'display_order' => 20],
             // 以下は「技術の種類」そのものへの優劣をつけない情報表示専用項目(not_scored)。
             ['key' => 'cms_detected', 'name' => 'CMS検出', 'value_type' => 'text', 'source_type' => 'technology', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 30],
@@ -200,6 +203,12 @@ class MetricDefinitionSeeder extends Seeder
             // 予約手段(自社フォームか外部予約サービスか)は事業内容によって優劣がつくものではないため採点対象外。
             ['key' => 'external_reservation_service_detected', 'name' => '外部予約サービス利用', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 100],
             ['key' => 'recruit_link_present', 'name' => '採用情報リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 110],
+            // ページ全体のフォーム数・入力項目総数・代表フォーム自体の項目数は、
+            // 「フォーム入力負担」(=代表フォームの必須項目数)とは別の情報として
+            // 表示する(採点はform_input_burdenのみで行い、二重採点しない)。
+            ['key' => 'page_form_count', 'name' => 'ページ内フォーム数', 'value_type' => 'number', 'unit' => 'count', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 120],
+            ['key' => 'page_input_count', 'name' => 'ページ内入力項目総数', 'value_type' => 'number', 'unit' => 'fields', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 130],
+            ['key' => 'representative_form_field_count', 'name' => '代表フォームの入力項目数', 'value_type' => 'number', 'unit' => 'fields', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 140],
         ];
     }
 

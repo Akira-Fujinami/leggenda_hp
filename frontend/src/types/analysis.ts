@@ -118,11 +118,13 @@ export interface MetricEvaluation {
   key: string;
   name: string;
   category_key: string;
+  value_type: string;
   unit: string | null;
   scoring_type: string;
   status: MetricEvaluationStatus;
   value: boolean | number | string | null;
   raw_value: Record<string, unknown> | null;
+  evidence: Record<string, unknown> | null;
   min_value: number | null;
   target_value: number | null;
   max_value: number | null;
@@ -145,6 +147,9 @@ export interface ResultRecommendation {
   evidence: Record<string, unknown> | null;
   current_value: unknown;
   recommended_value: unknown;
+  metric_key: string | null;
+  metric_value_type: string | null;
+  metric_unit: string | null;
   priority: "critical" | "high" | "medium" | "low";
   impact: "high" | "medium" | "low";
   effort: "small" | "medium" | "large";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyMetric } from "@/features/analysis/metric-evaluation";
+import { classifyMetric, formatMetricValue } from "@/features/analysis/metric-evaluation";
 import type { MetricEvaluation } from "@/types/analysis";
 
 function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation {
@@ -7,11 +7,13 @@ function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation
     key: "test_metric",
     name: "テスト指標",
     category_key: "technical_seo",
+    value_type: "boolean",
     unit: null,
     scoring_type: "boolean",
     status: "success",
     value: true,
     raw_value: null,
+    evidence: null,
     min_value: null,
     target_value: null,
     max_value: null,
@@ -71,5 +73,61 @@ describe("classifyMetric", () => {
     const metric = makeMetric({ counts_toward_score: true, score: 0, max_score: 0 });
 
     expect(classifyMetric(metric)).toBe("unavailable");
+  });
+});
+
+describe("formatMetricValue", () => {
+  it("multiplies a percentage-typed ratio by 100 for display, without altering the stored value", () => {
+    const metric = makeMetric({ value_type: "percentage", unit: "%", value: 0.9868 });
+
+    expect(formatMetricValue(metric)).toBe("98.68%");
+  });
+
+  it("formats a second percentage example correctly (not the raw ratio)", () => {
+    const metric = makeMetric({ value_type: "percentage", unit: "%", value: 0.8519 });
+
+    expect(formatMetricValue(metric)).toBe("85.19%");
+  });
+
+  it("does not multiply a non-percentage numeric value by 100", () => {
+    const metric = makeMetric({ value_type: "number", unit: "count", value: 22 });
+
+    expect(formatMetricValue(metric)).toBe("22件");
+  });
+
+  it("labels a characters-unit value in Japanese instead of leaking the internal 'characters' unit", () => {
+    const metric = makeMetric({ value_type: "number", unit: "characters", value: 8060 });
+
+    expect(formatMetricValue(metric)).toBe("8,060文字");
+  });
+
+  it("labels a words-unit value distinctly from characters", () => {
+    const metric = makeMetric({ value_type: "number", unit: "words", value: 120 });
+
+    expect(formatMetricValue(metric)).toBe("120単語");
+  });
+
+  it("labels a fields-unit value as 項目", () => {
+    const metric = makeMetric({ value_type: "number", unit: "fields", value: 5 });
+
+    expect(formatMetricValue(metric)).toBe("5項目");
+  });
+
+  it("formats bytes as KB/MB rather than a raw byte count", () => {
+    const metric = makeMetric({ value_type: "number", unit: "bytes", value: 512000 });
+
+    expect(formatMetricValue(metric)).toBe("500.0KB");
+  });
+
+  it("formats milliseconds as seconds once the value exceeds 1000ms", () => {
+    const metric = makeMetric({ value_type: "number", unit: "ms", value: 2500 });
+
+    expect(formatMetricValue(metric)).toBe("2.5秒");
+  });
+
+  it("keeps a sub-second millisecond value in ms", () => {
+    const metric = makeMetric({ value_type: "number", unit: "ms", value: 800 });
+
+    expect(formatMetricValue(metric)).toBe("800ms");
   });
 });

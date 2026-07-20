@@ -25,7 +25,12 @@ const FIXED_CTA_HTML = `
 // (認証自体はauth.test.tsで別途検証済み)。
 const fixture: FixtureServer = await startFixtureServer(FIXTURE_HTML);
 const fixedCtaFixture: FixtureServer = await startFixtureServer(FIXED_CTA_HTML);
-process.env.SSRF_TEST_ALLOWLIST = `${fixture.hostAndPort},${fixedCtaFixture.hostAndPort}`;
+// 接続拒否エラーの分類を検証するため、一度起動してすぐ閉じたfixtureサーバーの
+// アドレスを保持しておく(許可リストにはホスト:ポートとして登録済みだが、
+// 実際には何も listen していないため接続が拒否される)。
+const closedFixture: FixtureServer = await startFixtureServer("unused");
+await closedFixture.close();
+process.env.SSRF_TEST_ALLOWLIST = `${fixture.hostAndPort},${fixedCtaFixture.hostAndPort},${closedFixture.hostAndPort}`;
 process.env.ANALYSIS_STORAGE_PATH = "/tmp/analysis-storage-test";
 process.env.ANALYZER_TOKEN = "";
 
@@ -114,6 +119,21 @@ describe("analyzer routes", () => {
     expect(body.data.fixed_cta.position).toBe("fixed");
     expect(body.data.fixed_cta.href).toBe("/contact");
   }, 30_000);
+
+  it("returns a classified error (not a generic internal error) when navigation fails", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/analyze/render",
+      payload: { url: `${closedFixture.origin}/`, timeout_ms: 10_000 },
+    });
+
+    expect(response.statusCode).toBe(500);
+    const body = response.json();
+    expect(body.success).toBe(false);
+    expect(body.error.code).not.toBe("INTERNAL_ERROR");
+    // 生のエラーメッセージ・スタックトレースはユーザー向けレスポンスに含めない。
+    expect(body.error.message).not.toContain(closedFixture.origin);
+  }, 20_000);
 
   it("captures a screenshot of the local fixture page and stores it on disk", async () => {
     const response = await app.inject({

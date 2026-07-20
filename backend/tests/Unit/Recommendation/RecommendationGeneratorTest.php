@@ -116,6 +116,62 @@ class RecommendationGeneratorTest extends TestCase
         $this->assertSame(0, Recommendation::query()->count());
     }
 
+    public function test_suppresses_tel_or_mailto_recommendation_when_a_contact_cta_already_exists(): void
+    {
+        $category = CategoryDefinition::factory()->create(['key' => 'conversion', 'weight' => 15]);
+        $telDefinition = MetricDefinition::factory()->create([
+            'key' => 'tel_or_mailto_present', 'category_key' => 'conversion', 'scoring_type' => 'boolean',
+            'max_score' => 3, 'recommendation_template' => '電話番号やメールアドレスへのリンクを設置してください。',
+        ]);
+        $contactDefinition = MetricDefinition::factory()->create([
+            'key' => 'contact_cta_present', 'category_key' => 'conversion', 'scoring_type' => 'boolean',
+            'max_score' => 3, 'recommendation_template' => '問い合わせへの導線を分かりやすく設置してください。',
+        ]);
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+        MetricResult::factory()->create([
+            'website_analysis_id' => $websiteAnalysis->id, 'metric_definition_id' => $telDefinition->id,
+            'status' => MetricResultStatus::NotFound, 'normalized_value' => ['value' => false],
+        ]);
+        MetricResult::factory()->create([
+            'website_analysis_id' => $websiteAnalysis->id, 'metric_definition_id' => $contactDefinition->id,
+            'status' => MetricResultStatus::Success, 'normalized_value' => ['value' => true],
+        ]);
+
+        $results = MetricResult::query()->with('metricDefinition')->get();
+        $this->generator->generate($websiteAnalysis, $results, collect([$category]));
+
+        // 問い合わせ導線(contact_cta_present)は満点のため提案されず、
+        // tel/mailtoは「他に問い合わせ手段がある」ため抑制されて提案されない。
+        $this->assertSame(0, Recommendation::query()->count());
+    }
+
+    public function test_still_recommends_tel_or_mailto_when_no_other_contact_avenue_exists(): void
+    {
+        $category = CategoryDefinition::factory()->create(['key' => 'conversion', 'weight' => 15]);
+        $telDefinition = MetricDefinition::factory()->create([
+            'key' => 'tel_or_mailto_present', 'category_key' => 'conversion', 'scoring_type' => 'boolean',
+            'max_score' => 3, 'recommendation_template' => '電話番号やメールアドレスへのリンクを設置してください。',
+        ]);
+        $contactDefinition = MetricDefinition::factory()->create([
+            'key' => 'contact_cta_present', 'category_key' => 'conversion', 'scoring_type' => 'boolean',
+            'max_score' => 3, 'recommendation_template' => '問い合わせへの導線を分かりやすく設置してください。',
+        ]);
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+        MetricResult::factory()->create([
+            'website_analysis_id' => $websiteAnalysis->id, 'metric_definition_id' => $telDefinition->id,
+            'status' => MetricResultStatus::NotFound, 'normalized_value' => ['value' => false],
+        ]);
+        MetricResult::factory()->create([
+            'website_analysis_id' => $websiteAnalysis->id, 'metric_definition_id' => $contactDefinition->id,
+            'status' => MetricResultStatus::NotFound, 'normalized_value' => ['value' => false],
+        ]);
+
+        $results = MetricResult::query()->with('metricDefinition')->get();
+        $this->generator->generate($websiteAnalysis, $results, collect([$category]));
+
+        $this->assertSame(2, Recommendation::query()->count());
+    }
+
     public function test_regenerating_does_not_create_duplicates(): void
     {
         $category = CategoryDefinition::factory()->create(['key' => 'technical_seo', 'weight' => 20]);

@@ -5,8 +5,8 @@ import type { MetricEvaluation } from "@/types/analysis";
 
 function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation {
   return {
-    key: "title_present", name: "titleタグ", category_key: "technical_seo", unit: null, scoring_type: "boolean",
-    status: "success", value: true, raw_value: null, min_value: null, target_value: null, max_value: null,
+    key: "title_present", name: "titleタグ", category_key: "technical_seo", value_type: "boolean", unit: null, scoring_type: "boolean",
+    status: "success", value: true, raw_value: null, evidence: null, min_value: null, target_value: null, max_value: null,
     higher_is_better: true, confidence: 1, source_type: "static_html", measured_at: null, error_code: null,
     error_message: null, counts_toward_score: true, score: 1, max_score: 1,
     ...overrides,
@@ -39,5 +39,24 @@ describe("SeoDetails", () => {
     render(<SeoDetails metrics={metrics} seo={null} />);
 
     expect(screen.getByText("要改善")).toBeInTheDocument();
+  });
+
+  it("shows the actual H1 content and count without auto-judging topic relevance", () => {
+    const metrics: MetricEvaluation[] = [
+      makeMetric({
+        key: "h1_single",
+        name: "H1タグ(1件)",
+        value: true,
+        score: 3,
+        max_score: 3,
+        raw_value: { count: 1, texts: ["ホテル・旅館ランキング"], primary_text: "ホテル・旅館ランキング" },
+      }),
+    ];
+
+    render(<SeoDetails metrics={metrics} seo={null} />);
+
+    expect(screen.getByText(/H1: 1件/)).toBeInTheDocument();
+    expect(screen.getByText(/ホテル・旅館ランキング/)).toBeInTheDocument();
+    expect(screen.getByText(/内容をご確認ください/)).toBeInTheDocument();
   });
 });

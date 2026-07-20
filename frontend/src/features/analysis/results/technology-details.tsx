@@ -13,17 +13,30 @@ const INFO_KEYS: Array<{ key: string; label: string }> = [
   { key: "cdn_detected", label: "CDN" },
 ];
 
-function TechRow({ label, metric, valueLabel }: { label: string; metric?: MetricEvaluation; valueLabel?: string }) {
+function TechRow({
+  label,
+  metric,
+  valueLabel,
+  description,
+}: {
+  label: string;
+  metric?: MetricEvaluation;
+  valueLabel?: string;
+  description?: string;
+}) {
   if (!metric) return null;
   const state = classifyMetric(metric);
 
   return (
-    <div className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm">
-      <span>{label}</span>
-      <div className="flex items-center gap-2">
-        {valueLabel && <span className="text-muted-foreground">{valueLabel}</span>}
-        <Badge variant={EVALUATION_BADGE_VARIANT[state]}>{EVALUATION_LABELS[state]}</Badge>
+    <div className="rounded-md border p-2 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <span>{label}</span>
+        <div className="flex items-center gap-2">
+          {valueLabel && <span className="text-muted-foreground">{valueLabel}</span>}
+          <Badge variant={EVALUATION_BADGE_VARIANT[state]}>{EVALUATION_LABELS[state]}</Badge>
+        </div>
       </div>
+      {description && state !== "good" && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
     </div>
   );
 }
@@ -39,7 +52,11 @@ export function TechnologyDetails({ metrics }: { metrics: MetricEvaluation[] }) 
       </CardHeader>
       <CardContent className="space-y-2">
         <TechRow label="CMS / フレームワーク" metric={cms} valueLabel={typeof cms?.value === "string" ? cms.value : undefined} />
-        <TechRow label="アクセス解析の設置" metric={analytics} />
+        <TechRow
+          label="一般的なアクセス解析タグの検出"
+          metric={analytics}
+          description="Google Analytics/Google Tag Manager等の一般的なタグを検出できませんでした。独自計測や同意後読み込みを利用している場合、実際には計測が行われている可能性があります。"
+        />
         {INFO_KEYS.map(({ key, label }) => (
           <TechRow key={key} label={label} metric={findMetric(metrics, key)} />
         ))}

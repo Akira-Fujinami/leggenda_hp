@@ -41,11 +41,24 @@ class RecommendationGenerator
         'authority' => RecommendationEffort::Large,
     ];
 
+    /**
+     * キー(抑制対象) => キー(これがtrueなら抑制対象の提案を生成しない)。
+     * 例: tel/mailtoリンクが無くても、問い合わせ導線(contact_cta_present)が
+     * 別途存在するなら、電話番号の欠如だけを理由に緊急対応を促さない
+     * (旅行予約サイト等ではWeb問い合わせ・チャット中心のこともあるため)。
+     * 採点(スコア)自体は変えず、あくまで「改善提案を出すかどうか」のみを
+     * 調整する ―― 採点まで甘くすると実際に電話導線が無い事実が見えなくなるため。
+     *
+     * @var array<string, string>
+     */
+    private const SUPPRESSED_WHEN_SATISFIED = [
+        'tel_or_mailto_present' => 'contact_cta_present',
+    ];
+
     public function __construct(
         private readonly MetricScorer $scorer,
         private readonly RecommendationPriorityCalculator $priorityCalculator,
-    ) {
-    }
+    ) {}
 
     /**
      * @param  Collection<int, MetricResult>  $results  metricDefinition読み込み済み
@@ -70,6 +83,10 @@ class RecommendationGenerator
 
             if ($ratio >= 0.999) {
                 // 満点相当のためこの回では提案しない(既存の提案があればstatus等はそのまま残す)。
+                continue;
+            }
+
+            if ($this->isSuppressedBySatisfiedAlternative($definition->key, $results)) {
                 continue;
             }
 
@@ -109,6 +126,22 @@ class RecommendationGenerator
                 ],
             );
         }
+    }
+
+    /**
+     * @param  Collection<int, MetricResult>  $results
+     */
+    private function isSuppressedBySatisfiedAlternative(string $key, Collection $results): bool
+    {
+        $satisfyingKey = self::SUPPRESSED_WHEN_SATISFIED[$key] ?? null;
+
+        if ($satisfyingKey === null) {
+            return false;
+        }
+
+        $satisfyingResult = $results->first(fn (MetricResult $r) => $r->metricDefinition?->key === $satisfyingKey);
+
+        return (bool) ($satisfyingResult?->normalized_value['value'] ?? false);
     }
 
     private function classifyImpact(MetricDefinition $definition, float $categoryWeight): RecommendationImpact

@@ -140,6 +140,119 @@ class AnalyzeHtmlSeoJobTest extends TestCase
         $this->assertSame('small', $burden->raw_value['tier']);
     }
 
+    public function test_records_page_wide_form_counts_separately_and_sns_links_by_platform(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        $html = '<html><head><title>Example</title></head><body>'
+            .'<h1>Hello</h1>'
+            .'<a href="https://www.instagram.com/example">Instagram</a>'
+            .'<a href="https://x.com/example">X</a>'
+            .'<form><input type="text" name="q1"><input type="text" name="q2"></form>'
+            .'<form><input type="email" name="contact_email" required></form>'
+            .'</body></html>';
+
+        $rawHtmlPath = app(AnalysisStoragePaths::class)->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'homepage.html');
+        Storage::disk('analysis')->put($rawHtmlPath, $html);
+
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'final_url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+            'http_status' => 200,
+            'raw_html_path' => $rawHtmlPath,
+            'fetched_at' => now(),
+        ]);
+
+        (new AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $resultFor = fn (string $key) => MetricResult::query()
+            ->whereHas('metricDefinition', fn ($q) => $q->where('key', $key))
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->first();
+
+        $this->assertSame(2, $resultFor('page_form_count')->normalized_value['value']);
+        $this->assertSame(3, $resultFor('page_input_count')->normalized_value['value']);
+        $this->assertSame(1, $resultFor('representative_form_field_count')->normalized_value['value']);
+
+        $sns = $resultFor('sns_link_present');
+        $this->assertSame(MetricResultStatus::Success, $sns->status);
+        $this->assertSame(2, $sns->raw_value['count']);
+        $platforms = array_column($sns->raw_value['platforms'], 'platform');
+        $this->assertEqualsCanonicalizing(['instagram', 'x'], $platforms);
+    }
+
+    public function test_marks_h1_and_viewport_unavailable_rather_than_not_found_when_the_page_body_is_effectively_empty(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        // bot拒否ページ・取得失敗のプレースホルダーを模した、本文がほぼ空のHTML。
+        $html = '<html><head><title>Access Denied</title></head><body>Denied</body></html>';
+        $rawHtmlPath = app(AnalysisStoragePaths::class)->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'homepage.html');
+        Storage::disk('analysis')->put($rawHtmlPath, $html);
+
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'final_url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+            'http_status' => 200,
+            'raw_html_path' => $rawHtmlPath,
+            'fetched_at' => now(),
+        ]);
+
+        (new AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $resultFor = fn (string $key) => MetricResult::query()
+            ->whereHas('metricDefinition', fn ($q) => $q->where('key', $key))
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->first();
+
+        $this->assertSame(MetricResultStatus::Unavailable, $resultFor('h1_single')->status);
+        $this->assertSame(MetricResultStatus::Unavailable, $resultFor('viewport_present')->status);
+        $this->assertSame(MetricResultStatus::Unavailable, $resultFor('heading_structure_present')->status);
+    }
+
+    public function test_prefers_rendered_html_over_static_html_when_both_are_available(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        // 静的HTMLにはh1が無いが、レンダリング後HTML(JS実行後)にはある
+        // ―― SPA的なサイトでJSがh1を注入するケースを模している。
+        $staticHtml = '<html><head><title>Example</title></head><body><p>Loading...</p></body></html>';
+        $renderedHtml = '<html><head><title>Example</title><meta name="viewport" content="width=device-width"></head>'
+            .'<body><h1>ホテル・旅館ランキング</h1><p>'.str_repeat('コンテンツ ', 20).'</p></body></html>';
+
+        $paths = app(AnalysisStoragePaths::class);
+        $rawHtmlPath = $paths->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'homepage.html');
+        $renderedHtmlPath = $paths->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'homepage.rendered.html');
+        Storage::disk('analysis')->put($rawHtmlPath, $staticHtml);
+        Storage::disk('analysis')->put($renderedHtmlPath, $renderedHtml);
+
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'final_url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+            'http_status' => 200,
+            'raw_html_path' => $rawHtmlPath,
+            'rendered_html_path' => $renderedHtmlPath,
+            'fetched_at' => now(),
+        ]);
+
+        (new AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $h1 = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'h1_single'))
+            ->where('website_analysis_id', $websiteAnalysis->id)->first();
+        $viewport = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'viewport_present'))
+            ->where('website_analysis_id', $websiteAnalysis->id)->first();
+
+        $this->assertTrue($h1->normalized_value['value']);
+        $this->assertTrue($viewport->normalized_value['value']);
+        $this->assertSame('rendered', $h1->raw_value['html_source']);
+    }
+
     public function test_records_form_input_burden_as_not_found_when_there_is_no_form(): void
     {
         $websiteAnalysis = WebsiteAnalysis::factory()->create();
