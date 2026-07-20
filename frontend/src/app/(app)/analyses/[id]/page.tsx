@@ -8,19 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisStatusBadge } from "@/features/analysis/analysis-status-badge";
 import { isAnalysisTerminal, useAnalysisProgress } from "@/features/analysis/hooks";
-
-const JOB_TYPE_LABELS: Record<string, string> = {
-  fetch_static_page: "静的HTML取得",
-  fetch_robots: "robots.txt取得",
-  fetch_sitemap: "sitemap.xml取得",
-  render_page: "レンダリング",
-  capture_screenshot_desktop: "スクリーンショット(PC)",
-  capture_screenshot_mobile: "スクリーンショット(モバイル)",
-  run_lighthouse: "Lighthouse計測",
-  analyze_html_seo: "SEO解析",
-  detect_technology: "使用技術検出",
-  finalize_website_analysis: "サイト分析の確定",
-};
+import { jobTypeLabel } from "@/features/analysis/job-labels";
 
 export default function AnalysisProgressPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -102,7 +90,7 @@ export default function AnalysisProgressPage({ params }: { params: Promise<{ id:
                             : "size-1.5 rounded-full bg-muted-foreground/40"
                       }
                     />
-                    {JOB_TYPE_LABELS[job.job_type] ?? job.job_type}
+                    {jobTypeLabel(job.job_type)}
                   </li>
                 ))}
               </ul>
