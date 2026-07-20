@@ -23,12 +23,20 @@ services:
       retries: 5
       start_period: 20s
 
+  # ジョブが$timeoutを超過した場合、Laravelのqueue:workはSIGALRMハンドラ経由で
+  # ワーカープロセス自体をexit()させる(1ジョブだけを失敗させるのではなく、
+  # プロセス全体を終了させる設計 ―― Redisのretry_after経過後に別ワーカーが
+  # 再取得することを前提にしている)。本番はcompose.prod.yamlでrestart:
+  # unless-stoppedが付くため自動復帰するが、開発環境ではrestart指定が無く、
+  # 一度クラッシュすると誰かが気づいて手動再起動するまでそのワーカーが
+  # 担当するキューの処理が完全に止まってしまう。on-failureで自動復帰させる。
   queue-worker:
     build:
       target: dev
     volumes:
       - ./backend:/var/www/html
       - backend-vendor:/var/www/html/vendor
+    restart: on-failure
 
   queue-worker-heavy:
     build:
@@ -36,6 +44,7 @@ services:
     volumes:
       - ./backend:/var/www/html
       - backend-vendor:/var/www/html/vendor
+    restart: on-failure
 
   queue-worker-external:
     build:
@@ -43,6 +52,7 @@ services:
     volumes:
       - ./backend:/var/www/html
       - backend-vendor:/var/www/html/vendor
+    restart: on-failure
 
   scheduler:
     build:

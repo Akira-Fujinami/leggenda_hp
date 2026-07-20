@@ -42,8 +42,7 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
     public function __construct(
         public readonly int $analysisId,
         public readonly int $websiteAnalysisId,
-    ) {
-    }
+    ) {}
 
     abstract public function jobType(): JobType;
 
@@ -100,6 +99,38 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
             $pipeline->maybeFinalizeWebsiteAnalysis($this->websiteAnalysisId);
             $pipeline->updateAnalysisProgress($this->analysisId);
         }
+    }
+
+    /**
+     * Laravelのキュー基盤自身がジョブを終了させた場合(例: $timeoutを超過した、
+     * または$triesを使い切った後の再スケジュール失敗)に呼ばれる。この経路は
+     * handle()内のtry/catchを経由せず直接プロセスが終了させられるため、
+     * ここでmarkFailed()しておかないとAnalysisJob.statusが「running」のまま
+     * 永久に残り、maybeFinalizeWebsiteAnalysis()の「全Job終端待ち」が
+     * 完了せず、WebsiteAnalysis/Analysisの確定(partial/failed判定含む)が
+     * 永久に止まってしまう。
+     */
+    public function failed(\Throwable $exception): void
+    {
+        report($exception);
+
+        $pipeline = app(AnalysisPipeline::class);
+
+        $record = AnalysisJobRecord::query()
+            ->where('analysis_id', $this->analysisId)
+            ->where('website_analysis_id', $this->websiteAnalysisId)
+            ->where('job_type', $this->jobType())
+            ->first();
+
+        if ($record === null || $record->status->isTerminal()) {
+            return;
+        }
+
+        $pipeline->markFailed($record, AnalysisErrorCode::UnknownError, 'ジョブがタイムアウトしたか、想定外のエラーで終了しました。');
+
+        $pipeline->updateWebsiteAnalysisProgress($this->websiteAnalysisId);
+        $pipeline->maybeFinalizeWebsiteAnalysis($this->websiteAnalysisId);
+        $pipeline->updateAnalysisProgress($this->analysisId);
     }
 
     private function canRelease(): bool

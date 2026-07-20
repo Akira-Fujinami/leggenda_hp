@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>E2E Fixture Site Partial</title>
+  <meta name="description" content="E2Eテスト用のfixtureサイト。robots.txtへのリクエストのみ意図的に接続をリセットし、fetch_robotsだけを確実に失敗させることでpartialシナリオを再現する。">
+  <meta name="robots" content="index, follow">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+  <h1>Partial fixture site</h1>
+  <p>
+    このページ自体(/)とsitemap.xml等の他のパスは正常に応答するが、
+    /robots.txt へのリクエストだけは意図的に接続をリセットする。これにより
+    fetch_robotsジョブのみが確実に失敗し、他のジョブは成功する
+    「一部失敗」の状態を確定的に再現できる。
+  </p>
+  <a href="/pricing">料金プラン</a>
+</body>
+</html>

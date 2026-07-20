@@ -83,11 +83,11 @@ test("start an analysis and reach the results page", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "分析の進捗" })).toBeVisible();
 
   // ジョブパイプライン全体(静的取得/robots/sitemap/レンダリング/スクリーンショット/
-  // Lighthouse/技術検出/SEO解析/確定)が終端状態に達するまで待つ。
-  await expect(page.getByRole("button", { name: "結果を見る" })).toBeVisible({ timeout: 120_000 });
-
-  await page.getByRole("button", { name: "結果を見る" }).click();
-  await expect(page).toHaveURL(/\/analyses\/\d+\/results$/);
+  // Lighthouse/技術検出/SEO解析/確定)が終端状態(completed/partial/failed)に
+  // 達すると、進捗画面から結果画面へ自動的に遷移する(手動クリックは不要)。
+  // 実サイトへのネットワーク依存でcompleted/partialいずれになるか変わり得る
+  // ため、ボタン文言までは断定せずURL遷移の完了のみを待つ。
+  await expect(page).toHaveURL(/\/analyses\/\d+\/results$/, { timeout: 130_000 });
   await expect(page.getByRole("heading", { name: "分析結果" })).toBeVisible();
   // 測定カバー率によって「総合スコア」または「参考スコア」のいずれかを表示する
   // (実サイトへのネットワーク依存で結果が変わり得るため、両方を許容する)。

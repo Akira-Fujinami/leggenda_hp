@@ -20,6 +20,17 @@ export interface Analysis {
 export interface AnalysisJobProgress {
   job_type: string;
   status: AnalysisJobStatus;
+  error_message: string | null;
+}
+
+export interface JobStatusSummary {
+  total: number;
+  completed: number;
+  failed: number;
+  running: number;
+  pending: number;
+  skipped: number;
+  finished: number;
 }
 
 export interface WebsiteAnalysisProgress {
@@ -28,6 +39,7 @@ export interface WebsiteAnalysisProgress {
   website_name: string | null;
   status: WebsiteAnalysisStatus;
   progress: number;
+  job_summary: JobStatusSummary;
   jobs: AnalysisJobProgress[];
 }
 
@@ -37,6 +49,7 @@ export interface AnalysisProgress {
   progress: number;
   started_at: string | null;
   completed_at: string | null;
+  jobs: JobStatusSummary;
   websites: WebsiteAnalysisProgress[];
 }
 

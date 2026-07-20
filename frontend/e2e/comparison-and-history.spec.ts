@@ -59,9 +59,10 @@ async function startAnalysisAndWaitForResults(page: import("@playwright/test").P
   await page.getByRole("button", { name: "開始する" }).click();
 
   await expect(page).toHaveURL(/\/analyses\/\d+$/);
-  await expect(page.getByRole("button", { name: "結果を見る" })).toBeVisible({ timeout: 120_000 });
-  await page.getByRole("button", { name: "結果を見る" }).click();
-  await expect(page).toHaveURL(/\/analyses\/\d+\/results$/);
+  // terminal status(completed/partial/failed)到達後、進捗画面から結果画面へ
+  // 自動的に遷移する(手動クリックは不要)。実サイト依存でcompleted/partial
+  // いずれになるか変わり得るため、ボタン文言までは断定せずURL遷移を待つ。
+  await expect(page).toHaveURL(/\/analyses\/\d+\/results$/, { timeout: 130_000 });
   // スクリーンショット画像等の読み込みによるレイアウトシフトが収まってから
   // 次の操作に移ることで、クリックの不安定さを避ける。
   // 測定カバー率によって「総合スコア」または「参考スコア」のいずれかを表示する。

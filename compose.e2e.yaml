@@ -3,13 +3,19 @@
 #
 # register-project-website.spec.ts / comparison-and-history.spec.ts は実際に
 # example.com/example.org へネットワークアクセスするが、営業・コンバージョン系
-# Metricの検出内容(料金/FAQ/導入事例リンク・固定CTA・フォーム入力負担等)は
-# 外部サイトのコンテンツに依存すると再現性が無い。そのため、e2e-fixture-a/b
-# という2つのローカルfixtureサイト(内容はfrontend/e2e/fixtures配下で固定)を
+# Metricの検出内容(料金/FAQ/導入事例リンク・固定CTA・フォーム入力負担等)や
+# 進捗画面の自動遷移シナリオ(completed/partial)は外部サイトのコンテンツ・
+# 可用性に依存すると再現性が無い。そのため、ローカルfixtureサイトを
 # Docker Compose内部に用意し、analyzer/backend側のSSRF許可リスト
 # (SSRF_TEST_ALLOWLIST)に明示的に登録することで、通常のSSRF対策を維持した
 # まま分析対象として到達できるようにする(production環境ではこの設定自体を
 # 無視するガードが analyzer/backend 双方に入っている)。
+#
+# e2e-fixture-a/b: 営業・コンバージョン系Metricの検出テスト用(内容固定)。
+# e2e-fixture-partial: 進捗画面の自動遷移テスト用。/robots.txtへのリクエストだけ
+#   意図的に応答しないことで、fetch_robotsジョブだけを確実にタイムアウト
+#   失敗させ、他は成功する「partial」状態を決定論的に再現する
+#   (busybox httpdは経路ごとの応答を出し分けられないためNode製)。
 services:
   e2e-fixture-a:
     image: busybox:stable
@@ -25,21 +31,29 @@ services:
       - ./frontend/e2e/fixtures/site-b:/www:ro
     networks: [app-network]
 
+  e2e-fixture-partial:
+    image: node:20-alpine
+    command: ["node", "/fixture/server.js"]
+    volumes:
+      - ./frontend/e2e/fixtures/site-partial:/fixture:ro
+    networks: [app-network]
+
   analyzer:
     environment:
-      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080"
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-partial:8080"
     depends_on:
       - e2e-fixture-a
       - e2e-fixture-b
+      - e2e-fixture-partial
 
   backend:
     environment:
-      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080"
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-partial:8080"
 
   queue-worker:
     environment:
-      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080"
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-partial:8080"
 
   queue-worker-heavy:
     environment:
-      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080"
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-partial:8080"

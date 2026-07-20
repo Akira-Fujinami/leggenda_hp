@@ -42,9 +42,8 @@ async function registerSiteAndAnalyze(page: import("@playwright/test").Page, url
   await page.getByRole("button", { name: "開始する" }).click();
 
   await expect(page).toHaveURL(/\/analyses\/\d+$/);
-  await expect(page.getByRole("button", { name: "結果を見る" })).toBeVisible({ timeout: 120_000 });
-  await page.getByRole("button", { name: "結果を見る" }).click();
-  await expect(page).toHaveURL(/\/analyses\/\d+\/results$/);
+  // terminal status到達後、進捗画面から結果画面へ自動的に遷移する。
+  await expect(page).toHaveURL(/\/analyses\/\d+\/results$/, { timeout: 130_000 });
   await expect(page.getByText(/^(総合スコア|参考スコア)$/).first()).toBeVisible();
 }
 
