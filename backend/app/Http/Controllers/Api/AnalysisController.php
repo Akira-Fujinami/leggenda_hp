@@ -77,6 +77,7 @@ class AnalysisController extends Controller
             'websiteAnalyses.jobs',
             'websiteAnalyses.screenshots',
             'websiteAnalyses.metricResults.metricDefinition',
+            'websiteAnalyses.recommendations',
         ]);
 
         return $this->success(new AnalysisResultsResource($analysis));

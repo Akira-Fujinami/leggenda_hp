@@ -5,6 +5,7 @@ namespace App\Http\Resources;
 use App\Enums\AnalysisJobStatus;
 use App\Enums\PageType;
 use App\Models\CategoryDefinition;
+use App\Services\Scoring\MetricScorer;
 use App\Services\Scoring\OverallScoreCalculator;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -12,7 +13,9 @@ use Illuminate\Http\Resources\Json\JsonResource;
 /**
  * 分析結果画面向けの詳細レスポンス。
  * 生HTML・Lighthouseの生JSON・スクリーンショットのbase64は一切含めない
- * (正規化済みデータとストレージURLのみ)。
+ * (正規化済みデータとストレージURLのみ)。MetricResult.raw_valueは
+ * HtmlSeoAnalyzer等が抽出済みの小さな構造化データ(件数・真偽値・短い文字列)
+ * のみであり、ページ全文やAPI生レスポンスではないため含めてよい。
  *
  * @mixin \App\Models\Analysis
  */
@@ -67,9 +70,74 @@ class AnalysisResultsResource extends JsonResource
                             'error_code' => $job->error_code,
                             'error_message' => $job->error_message,
                         ])->values(),
+                    'metrics' => $this->metricList($wa),
+                    'recommendations' => $wa->recommendations
+                        ->sortByDesc('sort_score')
+                        ->map(fn ($r) => [
+                            'id' => $r->id,
+                            'category_key' => $r->category_key,
+                            'title' => $r->title,
+                            'description' => $r->description,
+                            'evidence' => $r->evidence,
+                            'current_value' => $r->current_value,
+                            'recommended_value' => $r->recommended_value,
+                            'priority' => $r->priority->value,
+                            'impact' => $r->impact->value,
+                            'effort' => $r->effort->value,
+                            'confidence' => (float) $r->confidence,
+                            'status' => $r->status->value,
+                            'source' => $r->source->value,
+                            'sort_score' => (float) $r->sort_score,
+                        ])->values(),
                 ];
             })->values(),
         ];
+    }
+
+    /**
+     * カテゴリ別評価カード・SEO/コンテンツ/集客/表示速度/技術/外部SEOの各詳細
+     * セクションが個別に組み立てられるよう、有効なMetricDefinitionに紐づく
+     * 全MetricResultを構造化して返す。
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function metricList($websiteAnalysis): array
+    {
+        $scorer = app(MetricScorer::class);
+
+        return $websiteAnalysis->metricResults
+            ->filter(fn ($r) => $r->metricDefinition !== null && $r->metricDefinition->is_active)
+            ->map(function ($r) use ($scorer) {
+                $definition = $r->metricDefinition;
+                $outcome = $scorer->score($definition, $r);
+
+                return [
+                    'key' => $definition->key,
+                    'name' => $definition->name,
+                    'category_key' => $definition->category_key,
+                    'unit' => $definition->unit,
+                    'scoring_type' => $definition->scoring_type,
+                    'status' => $r->status->value,
+                    'value' => $r->normalized_value['value'] ?? null,
+                    'raw_value' => $r->raw_value,
+                    'min_value' => $definition->minimum_value !== null ? (float) $definition->minimum_value : null,
+                    'target_value' => $definition->target_value !== null ? (float) $definition->target_value : null,
+                    'max_value' => $definition->maximum_value !== null ? (float) $definition->maximum_value : null,
+                    'higher_is_better' => (bool) $definition->higher_is_better,
+                    'confidence' => $r->confidence !== null ? (float) $r->confidence : null,
+                    'source_type' => $definition->source_type,
+                    'measured_at' => $r->measured_at?->toIso8601String(),
+                    'error_code' => $r->error_code,
+                    'error_message' => $r->error_message,
+                    // counts_toward_score=falseの項目(unavailable/error/not_applicable/
+                    // not_scored等)はscore/max_scoreをnullのまま返す(0点にしない)。
+                    'counts_toward_score' => $outcome->countsTowardScore,
+                    'score' => $outcome->score,
+                    'max_score' => $outcome->maxScore,
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     /**

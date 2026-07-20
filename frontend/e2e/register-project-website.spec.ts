@@ -89,5 +89,14 @@ test("start an analysis and reach the results page", async ({ page }) => {
   await page.getByRole("button", { name: "結果を見る" }).click();
   await expect(page).toHaveURL(/\/analyses\/\d+\/results$/);
   await expect(page.getByRole("heading", { name: "分析結果" })).toBeVisible();
-  await expect(page.getByText("総合スコア")).toBeVisible();
+  // 測定カバー率によって「総合スコア」または「参考スコア」のいずれかを表示する
+  // (実サイトへのネットワーク依存で結果が変わり得るため、両方を許容する)。
+  await expect(page.getByText(/^(総合スコア|参考スコア)$/).first()).toBeVisible();
+
+  // 結果画面の再構成(分析サマリー・優先改善項目・SEO/コンテンツ/集客詳細)が
+  // クラッシュせず表示されることを確認する。
+  await expect(page.getByText("分析サマリー").first()).toBeVisible();
+  await expect(page.getByText("優先改善項目").first()).toBeVisible();
+  await expect(page.getByText("SEO基本情報").first()).toBeVisible();
+  await expect(page.getByText("集客・コンバージョン導線").first()).toBeVisible();
 });

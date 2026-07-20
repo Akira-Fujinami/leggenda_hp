@@ -64,7 +64,8 @@ async function startAnalysisAndWaitForResults(page: import("@playwright/test").P
   await expect(page).toHaveURL(/\/analyses\/\d+\/results$/);
   // スクリーンショット画像等の読み込みによるレイアウトシフトが収まってから
   // 次の操作に移ることで、クリックの不安定さを避ける。
-  await expect(page.getByText("総合スコア").first()).toBeVisible();
+  // 測定カバー率によって「総合スコア」または「参考スコア」のいずれかを表示する。
+  await expect(page.getByText(/^(総合スコア|参考スコア)$/).first()).toBeVisible();
 }
 
 test("analyze a primary site and a competitor, then view the comparison and recommendations screens", async ({
@@ -79,7 +80,7 @@ test("analyze a primary site and a competitor, then view the comparison and reco
 
   await startAnalysisAndWaitForResults(page);
 
-  await page.getByRole("link", { name: "サイト比較・改善提案を見る" }).click();
+  await page.getByRole("link", { name: "他サイトと比較する" }).first().click();
   await expect(page).toHaveURL(/\/analyses\/\d+\/comparison$/, { timeout: 30_000 });
   await expect(page.getByRole("heading", { name: "サイト比較" })).toBeVisible();
 
@@ -102,7 +103,7 @@ test("analyze the same project twice and view the history comparison screen", as
   await page.goto(projectUrl);
   await startAnalysisAndWaitForResults(page);
 
-  await page.getByRole("link", { name: "サイト比較・改善提案を見る" }).click();
+  await page.getByRole("link", { name: "他サイトと比較する" }).first().click();
   await expect(page).toHaveURL(/\/analyses\/\d+\/comparison$/, { timeout: 30_000 });
   // ランキングセクションの表示を待ってから遷移することで、比較データの
   // 読み込み中に発生するレイアウトシフトによるクリックの不安定さを避ける。

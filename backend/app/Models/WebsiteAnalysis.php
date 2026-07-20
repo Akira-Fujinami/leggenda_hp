@@ -78,6 +78,14 @@ class WebsiteAnalysis extends Model
         return $this->hasMany(Screenshot::class);
     }
 
+    /**
+     * @return HasMany<Recommendation, $this>
+     */
+    public function recommendations(): HasMany
+    {
+        return $this->hasMany(Recommendation::class);
+    }
+
     public function homepage(): HasOne
     {
         return $this->hasOne(AnalysisPage::class)->where('page_type', 'homepage');

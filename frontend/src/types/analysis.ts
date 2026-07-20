@@ -99,6 +99,48 @@ export interface AnalysisJobError {
   error_message: string | null;
 }
 
+export type MetricEvaluationStatus = "success" | "not_found" | "unavailable" | "not_applicable" | "error";
+
+export interface MetricEvaluation {
+  key: string;
+  name: string;
+  category_key: string;
+  unit: string | null;
+  scoring_type: string;
+  status: MetricEvaluationStatus;
+  value: boolean | number | string | null;
+  raw_value: Record<string, unknown> | null;
+  min_value: number | null;
+  target_value: number | null;
+  max_value: number | null;
+  higher_is_better: boolean;
+  confidence: number | null;
+  source_type: string;
+  measured_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  counts_toward_score: boolean;
+  score: number | null;
+  max_score: number | null;
+}
+
+export interface ResultRecommendation {
+  id: number;
+  category_key: string;
+  title: string;
+  description: string | null;
+  evidence: Record<string, unknown> | null;
+  current_value: unknown;
+  recommended_value: unknown;
+  priority: "critical" | "high" | "medium" | "low";
+  impact: "high" | "medium" | "low";
+  effort: "small" | "medium" | "large";
+  confidence: number;
+  status: "open" | "resolved" | "dismissed";
+  source: "rule" | "external_api" | "ai" | "manual";
+  sort_score: number;
+}
+
 export interface WebsiteAnalysisResult {
   website_analysis_id: number;
   website_id: number;
@@ -113,6 +155,8 @@ export interface WebsiteAnalysisResult {
   technology: TechnologySummary;
   screenshots: AnalysisScreenshot[];
   errors: AnalysisJobError[];
+  metrics: MetricEvaluation[];
+  recommendations: ResultRecommendation[];
 }
 
 export interface AnalysisResults {
