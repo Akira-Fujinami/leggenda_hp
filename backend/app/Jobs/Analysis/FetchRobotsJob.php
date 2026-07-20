@@ -80,7 +80,7 @@ class FetchRobotsJob extends BaseWebsiteAnalysisJob
             $this->websiteAnalysisId,
             'robots_fetched',
             MetricResultStatus::Success,
-            achievedRatio: 1.0,
+            normalizedValue: true,
             rawValue: ['exists' => $exists, 'http_status' => $result->httpStatus] + $parsed,
             evidence: ['url' => $robotsUrl, 'parsed' => $parsed],
             analysisPageId: $page->id,

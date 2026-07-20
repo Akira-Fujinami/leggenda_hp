@@ -37,6 +37,13 @@ services:
       - ./backend:/var/www/html
       - backend-vendor:/var/www/html/vendor
 
+  queue-worker-external:
+    build:
+      target: dev
+    volumes:
+      - ./backend:/var/www/html
+      - backend-vendor:/var/www/html/vendor
+
   scheduler:
     build:
       target: dev

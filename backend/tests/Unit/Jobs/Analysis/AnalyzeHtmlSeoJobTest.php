@@ -12,6 +12,7 @@ use App\Models\MetricResult;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
+use Database\Seeders\CategoryDefinitionSeeder;
 use Database\Seeders\MetricDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
@@ -24,6 +25,7 @@ class AnalyzeHtmlSeoJobTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->seed(CategoryDefinitionSeeder::class);
         $this->seed(MetricDefinitionSeeder::class);
         Storage::fake('analysis');
     }

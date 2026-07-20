@@ -14,6 +14,8 @@ use App\Models\Screenshot;
 use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
+use App\Services\Scoring\MetricScorer;
+use Database\Seeders\CategoryDefinitionSeeder;
 use Database\Seeders\MetricDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -27,6 +29,7 @@ class AnalyzerDrivenJobsTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->seed(CategoryDefinitionSeeder::class);
         $this->seed(MetricDefinitionSeeder::class);
         Storage::fake('analysis');
     }
@@ -57,9 +60,12 @@ class AnalyzerDrivenJobsTest extends TestCase
         $job = $websiteAnalysis->jobs()->where('job_type', JobType::RunLighthouse)->first();
         $this->assertSame(AnalysisJobStatus::Completed, $job->status);
 
-        $performance = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'lighthouse_performance'))->first();
+        $performance = MetricResult::query()->with('metricDefinition')->whereHas('metricDefinition', fn ($q) => $q->where('key', 'lighthouse_performance'))->first();
         $this->assertSame(MetricResultStatus::Success, $performance->status);
-        $this->assertEqualsWithDelta(0.8 * (float) $performance->metricDefinition->max_score, (float) $performance->score, 0.01);
+        $this->assertEquals(80, $performance->normalized_value['value']);
+
+        $outcome = (new MetricScorer)->score($performance->metricDefinition, $performance);
+        $this->assertEqualsWithDelta(0.8 * (float) $performance->metricDefinition->max_score, $outcome->score, 0.01);
 
         Storage::disk('analysis')->assertExists("analyses/{$websiteAnalysis->analysis_id}/websites/{$websiteAnalysis->id}/metadata/lighthouse.json");
     }
@@ -86,7 +92,10 @@ class AnalyzerDrivenJobsTest extends TestCase
         Http::fake([
             '*/analyze/technology' => Http::response([
                 'success' => true,
-                'data' => ['technologies' => [['name' => 'WordPress', 'category' => 'cms', 'confidence' => 0.9, 'evidence' => ['generator meta tag']]]],
+                'data' => ['technologies' => [
+                    ['name' => 'WordPress', 'category' => 'cms', 'confidence' => 0.9, 'evidence' => ['generator meta tag']],
+                    ['name' => 'Google Analytics', 'category' => 'analytics', 'confidence' => 0.8, 'evidence' => ['analytics.js']],
+                ]],
             ], 200),
         ]);
 
@@ -96,13 +105,19 @@ class AnalyzerDrivenJobsTest extends TestCase
         $job = $websiteAnalysis->jobs()->where('job_type', JobType::DetectTechnology)->first();
         $this->assertSame(AnalysisJobStatus::Completed, $job->status);
 
-        $result = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'technology_detected'))->first();
-        $this->assertSame(MetricResultStatus::Success, $result->status);
-        $this->assertEquals($result->max_score, $result->score);
-        $this->assertSame('WordPress', $result->raw_value['technologies'][0]['name']);
+        $analytics = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'analytics_configured'))->first();
+        $this->assertSame(MetricResultStatus::Success, $analytics->status);
+        $this->assertTrue($analytics->normalized_value['value']);
+
+        $cms = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'cms_detected'))->first();
+        $this->assertSame(MetricResultStatus::Success, $cms->status);
+        $this->assertSame('WordPress', $cms->normalized_value['value']);
+
+        $ga = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'ga_detected'))->first();
+        $this->assertTrue($ga->normalized_value['value']);
     }
 
-    public function test_technology_job_scores_zero_ratio_when_nothing_detected(): void
+    public function test_technology_job_marks_analytics_not_found_when_nothing_detected(): void
     {
         Http::fake([
             '*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => []]], 200),
@@ -111,9 +126,12 @@ class AnalyzerDrivenJobsTest extends TestCase
         $websiteAnalysis = $this->makeWebsiteAnalysis();
         (new DetectTechnologyJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
 
-        $result = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'technology_detected'))->first();
-        $this->assertSame(MetricResultStatus::Success, $result->status);
-        $this->assertEquals(0.0, (float) $result->score);
+        $analytics = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'analytics_configured'))->first();
+        $this->assertSame(MetricResultStatus::Success, $analytics->status);
+        $this->assertFalse($analytics->normalized_value['value']);
+
+        $cms = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'cms_detected'))->first();
+        $this->assertSame(MetricResultStatus::NotFound, $cms->status);
     }
 
     public function test_screenshot_job_stores_metadata_row(): void

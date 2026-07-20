@@ -40,13 +40,13 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | カテゴリ別配点 (仮スコア。次Phaseで本格的な採点ロジックに差し替える)
+    | 外部SEOデータ (Semrush等)
     |--------------------------------------------------------------------------
+    | 'mock': 開発環境向けの決定論的な擬似データ (is_mock=trueで返す)。
+    | 'semrush': 実際のSemrush APIを呼び出す。SEMRUSH_API_KEY必須。
     */
-    'score_categories' => [
-        'technical_seo' => 35,
-        'content' => 20,
-        'performance' => 35,
-        'technology' => 10,
-    ],
+    'seo_provider' => env('SEO_PROVIDER', 'mock'),
+
+    // ExternalDataSnapshotのキャッシュ有効期間 (時間)。
+    'external_data_cache_hours' => (int) env('EXTERNAL_DATA_CACHE_HOURS', 24),
 ];

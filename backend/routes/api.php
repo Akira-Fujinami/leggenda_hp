@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AnalysisController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\ProjectController;
+use App\Http\Controllers\Api\RecommendationController;
 use App\Http\Controllers\Api\WebsiteController;
 use Illuminate\Support\Facades\Route;
 
@@ -32,6 +33,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/analyses/{analysis}', [AnalysisController::class, 'show']);
     Route::get('/analyses/{analysis}/progress', [AnalysisController::class, 'progress']);
     Route::get('/analyses/{analysis}/results', [AnalysisController::class, 'results']);
+    Route::get('/analyses/{analysis}/comparison', [AnalysisController::class, 'comparison']);
+    Route::get('/analyses/{analysis}/history-comparison', [AnalysisController::class, 'historyComparison']);
+    Route::get('/analyses/{analysis}/recommendations', [RecommendationController::class, 'forAnalysis']);
+    Route::get('/website-analyses/{websiteAnalysis}/recommendations', [RecommendationController::class, 'forWebsiteAnalysis']);
     Route::get('/website-analyses/{websiteAnalysis}/screenshots/{device}', [AnalysisController::class, 'screenshot'])
         ->name('analyses.screenshot');
 });

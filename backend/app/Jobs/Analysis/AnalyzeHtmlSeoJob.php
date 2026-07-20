@@ -14,8 +14,8 @@ use App\Services\Analysis\HtmlSeoAnalyzer;
 use Illuminate\Support\Facades\Storage;
 
 /**
- * FetchStaticPageJobが保存した生HTMLを解析し、technical_seo/contentカテゴリの
- * MetricResultを記録する。
+ * FetchStaticPageJobが保存した生HTMLを解析し、technical_seo/content/
+ * accessibility/conversionカテゴリのMetricResultを記録する。
  *
  * 依存関係: FetchStaticPageJobの成否に関わらず(finally句で)必ず起動される。
  * HTMLが取得できていない場合は「失敗」ではなく「測定不能」として全指標を
@@ -30,7 +30,20 @@ class AnalyzeHtmlSeoJob extends BaseWebsiteAnalysisJob
 
     public $timeout = 20;
 
-    private const WORD_COUNT_TARGET = 300;
+    /**
+     * このJobが担当する全MetricDefinitionキー(HTMLが取得できなかった場合に
+     * まとめてunavailableにするため)。
+     */
+    private const ALL_KEYS = [
+        'title_present', 'title_length_optimal', 'meta_description_present', 'meta_description_length_optimal',
+        'h1_single', 'canonical_present', 'canonical_self_referencing', 'robots_meta_indexable',
+        'viewport_present', 'lang_present', 'favicon_present', 'structured_data_present', 'ogp_present',
+        'word_count_sufficient', 'img_alt_coverage', 'internal_link_sufficient', 'heading_structure_present',
+        'external_link_present',
+        'a11y_lang_present', 'a11y_form_label_present', 'a11y_button_name_present', 'a11y_heading_order_ok',
+        'form_present', 'tel_or_mailto_present', 'contact_cta_present', 'reservation_cta_present',
+        'document_request_cta_present', 'sns_link_present', 'cta_count_sufficient',
+    ];
 
     public function jobType(): JobType
     {
@@ -64,72 +77,112 @@ class AnalyzeHtmlSeoJob extends BaseWebsiteAnalysisJob
             'word_count' => $result['content']['word_count'],
         ]);
 
-        $this->recordMetric(
-            $this->websiteAnalysisId, 'title_present', MetricResultStatus::Success,
-            achievedRatio: $result['title']['present'] ? 1.0 : 0.0,
-            rawValue: $result['title'], analysisPageId: $page->id,
-        );
+        $this->recordTechnicalSeo($result, $pageUrl, $page->id);
+        $this->recordContent($result, $page->id);
+        $this->recordAccessibility($result, $page->id);
+        $this->recordConversion($result, $page->id);
+    }
 
-        $this->recordMetric(
-            $this->websiteAnalysisId, 'meta_description_present', MetricResultStatus::Success,
-            achievedRatio: $result['meta_description']['present'] ? 1.0 : 0.0,
-            rawValue: $result['meta_description'], analysisPageId: $page->id,
-        );
+    private function recordTechnicalSeo(array $result, string $pageUrl, int $pageId): void
+    {
+        $this->recordMetric($this->websiteAnalysisId, 'title_present', MetricResultStatus::Success, normalizedValue: $result['title']['present'], rawValue: $result['title'], analysisPageId: $pageId);
 
-        $this->recordMetric(
-            $this->websiteAnalysisId, 'h1_single', MetricResultStatus::Success,
-            achievedRatio: $result['h1']['count'] === 1 ? 1.0 : 0.0,
-            rawValue: $result['h1'], analysisPageId: $page->id,
-        );
+        $titleLength = $result['title']['length'];
+        $this->recordMetric($this->websiteAnalysisId, 'title_length_optimal', $titleLength === null ? MetricResultStatus::NotFound : MetricResultStatus::Success, normalizedValue: $titleLength, rawValue: $result['title'], analysisPageId: $pageId);
 
-        $this->recordMetric(
-            $this->websiteAnalysisId, 'canonical_present', MetricResultStatus::Success,
-            achievedRatio: $result['canonical']['present'] ? 1.0 : 0.0,
-            rawValue: $result['canonical'], analysisPageId: $page->id,
-        );
+        $this->recordMetric($this->websiteAnalysisId, 'meta_description_present', MetricResultStatus::Success, normalizedValue: $result['meta_description']['present'], rawValue: $result['meta_description'], analysisPageId: $pageId);
 
-        $this->recordMetric(
-            $this->websiteAnalysisId, 'https', MetricResultStatus::Success,
-            achievedRatio: parse_url($pageUrl, PHP_URL_SCHEME) === 'https' ? 1.0 : 0.0,
-            rawValue: ['url' => $pageUrl], analysisPageId: $page->id,
-        );
+        $descLength = $result['meta_description']['length'];
+        $this->recordMetric($this->websiteAnalysisId, 'meta_description_length_optimal', $descLength === null ? MetricResultStatus::NotFound : MetricResultStatus::Success, normalizedValue: $descLength, rawValue: $result['meta_description'], analysisPageId: $pageId);
 
-        $this->recordMetric(
-            $this->websiteAnalysisId, 'viewport_present', MetricResultStatus::Success,
-            achievedRatio: $result['content']['viewport_present'] ? 1.0 : 0.0,
-            rawValue: $result['content'], analysisPageId: $page->id,
-        );
+        $this->recordMetric($this->websiteAnalysisId, 'h1_single', MetricResultStatus::Success, normalizedValue: $result['h1']['count'] === 1, rawValue: $result['h1'], analysisPageId: $pageId);
+
+        $this->recordMetric($this->websiteAnalysisId, 'canonical_present', MetricResultStatus::Success, normalizedValue: $result['canonical']['present'], rawValue: $result['canonical'], analysisPageId: $pageId);
+
+        $canonicalStatus = $result['canonical']['present'] ? MetricResultStatus::Success : MetricResultStatus::NotFound;
+        $this->recordMetric($this->websiteAnalysisId, 'canonical_self_referencing', $canonicalStatus, normalizedValue: (bool) ($result['canonical']['is_self_referencing'] ?? false), rawValue: $result['canonical'], analysisPageId: $pageId);
+
+        $this->recordMetric($this->websiteAnalysisId, 'robots_meta_indexable', MetricResultStatus::Success, normalizedValue: $result['robots_meta']['index'], rawValue: $result['robots_meta'], analysisPageId: $pageId);
+
+        $this->recordMetric($this->websiteAnalysisId, 'viewport_present', MetricResultStatus::Success, normalizedValue: $result['content']['viewport_present'], rawValue: $result['content'], analysisPageId: $pageId);
+
+        $this->recordMetric($this->websiteAnalysisId, 'lang_present', MetricResultStatus::Success, normalizedValue: $result['content']['lang'] !== null, rawValue: ['lang' => $result['content']['lang']], analysisPageId: $pageId);
+
+        $this->recordMetric($this->websiteAnalysisId, 'favicon_present', MetricResultStatus::Success, normalizedValue: $result['content']['favicon_present'], rawValue: $result['content'], analysisPageId: $pageId);
+
+        $structuredDataPresent = $result['structured_data']['count'] > 0;
+        $this->recordMetric($this->websiteAnalysisId, 'structured_data_present', $structuredDataPresent ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $structuredDataPresent, rawValue: $result['structured_data'], analysisPageId: $pageId);
+
+        $ogpPresent = ($result['ogp']['title'] ?? null) !== null;
+        $this->recordMetric($this->websiteAnalysisId, 'ogp_present', $ogpPresent ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $ogpPresent, rawValue: $result['ogp'], analysisPageId: $pageId);
+    }
+
+    private function recordContent(array $result, int $pageId): void
+    {
+        $wordCount = $result['content']['word_count'];
+        $this->recordMetric($this->websiteAnalysisId, 'word_count_sufficient', MetricResultStatus::Success, normalizedValue: $wordCount, rawValue: ['word_count' => $wordCount], analysisPageId: $pageId);
 
         $altCoverage = $result['images']['alt_coverage'];
+        $this->recordMetric($this->websiteAnalysisId, 'img_alt_coverage', MetricResultStatus::Success, normalizedValue: $altCoverage ?? 1.0, rawValue: $result['images'], analysisPageId: $pageId);
+
+        $this->recordMetric($this->websiteAnalysisId, 'internal_link_sufficient', MetricResultStatus::Success, normalizedValue: $result['links']['internal'], rawValue: $result['links'], analysisPageId: $pageId);
+
+        $headingPresent = $result['h1']['count'] > 0;
+        $this->recordMetric($this->websiteAnalysisId, 'heading_structure_present', $headingPresent ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $headingPresent, rawValue: $result['h1'], analysisPageId: $pageId);
+
+        $externalPresent = $result['links']['external'] > 0;
+        $this->recordMetric($this->websiteAnalysisId, 'external_link_present', $externalPresent ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $externalPresent, rawValue: $result['links'], analysisPageId: $pageId);
+    }
+
+    private function recordAccessibility(array $result, int $pageId): void
+    {
+        $this->recordMetric($this->websiteAnalysisId, 'a11y_lang_present', MetricResultStatus::Success, normalizedValue: $result['content']['lang'] !== null, rawValue: ['lang' => $result['content']['lang']], analysisPageId: $pageId);
+
+        $a11y = $result['accessibility'];
+
         $this->recordMetric(
-            $this->websiteAnalysisId, 'img_alt_coverage', MetricResultStatus::Success,
-            achievedRatio: $altCoverage ?? 1.0,
-            rawValue: $result['images'], analysisPageId: $page->id,
+            $this->websiteAnalysisId, 'a11y_form_label_present',
+            $a11y['form_label_present'] === null ? MetricResultStatus::NotApplicable : MetricResultStatus::Success,
+            normalizedValue: $a11y['form_label_present'] ?? false, rawValue: $a11y, analysisPageId: $pageId,
         );
 
-        $wordCount = $result['content']['word_count'];
         $this->recordMetric(
-            $this->websiteAnalysisId, 'word_count_sufficient', MetricResultStatus::Success,
-            achievedRatio: min(1.0, $wordCount / self::WORD_COUNT_TARGET),
-            rawValue: ['word_count' => $wordCount, 'target' => self::WORD_COUNT_TARGET], analysisPageId: $page->id,
+            $this->websiteAnalysisId, 'a11y_button_name_present',
+            $a11y['button_name_present'] === null ? MetricResultStatus::NotApplicable : MetricResultStatus::Success,
+            normalizedValue: $a11y['button_name_present'] ?? false, rawValue: $a11y, analysisPageId: $pageId,
         );
 
-        // ogp/structured_data/links/forms は現時点ではスコアに影響しない参考情報として
-        // evidenceのみ保持する (将来カテゴリに組み込む際の土台)。
-        $this->recordMetric(
-            $this->websiteAnalysisId, 'og_and_structured_data_present', MetricResultStatus::Success,
-            achievedRatio: (($result['ogp']['title'] ?? null) !== null || $result['structured_data']['count'] > 0) ? 1.0 : 0.0,
-            rawValue: ['ogp' => $result['ogp'], 'structured_data' => $result['structured_data']],
-            analysisPageId: $page->id,
-        );
+        $this->recordMetric($this->websiteAnalysisId, 'a11y_heading_order_ok', MetricResultStatus::Success, normalizedValue: $a11y['heading_order_ok'], rawValue: $a11y, analysisPageId: $pageId);
+    }
+
+    private function recordConversion(array $result, int $pageId): void
+    {
+        $forms = $result['forms'];
+        $links = $result['links'];
+
+        $formPresent = $forms['form_count'] > 0;
+        $this->recordMetric($this->websiteAnalysisId, 'form_present', $formPresent ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $formPresent, rawValue: $forms, analysisPageId: $pageId);
+
+        $telOrMail = $links['tel'] > 0 || $links['mailto'] > 0;
+        $this->recordMetric($this->websiteAnalysisId, 'tel_or_mailto_present', $telOrMail ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $telOrMail, rawValue: $links, analysisPageId: $pageId);
+
+        $contactCta = $links['contact_like'] > 0 || $forms['contact_like'];
+        $this->recordMetric($this->websiteAnalysisId, 'contact_cta_present', $contactCta ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $contactCta, rawValue: ['links' => $links, 'forms' => $forms], analysisPageId: $pageId);
+
+        $this->recordMetric($this->websiteAnalysisId, 'reservation_cta_present', $forms['reservation_like'] ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $forms['reservation_like'], rawValue: $forms, analysisPageId: $pageId);
+
+        $this->recordMetric($this->websiteAnalysisId, 'document_request_cta_present', $forms['document_request_like'] ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $forms['document_request_like'], rawValue: $forms, analysisPageId: $pageId);
+
+        $snsPresent = $links['sns'] > 0;
+        $this->recordMetric($this->websiteAnalysisId, 'sns_link_present', $snsPresent ? MetricResultStatus::Success : MetricResultStatus::NotFound, normalizedValue: $snsPresent, rawValue: $links, analysisPageId: $pageId);
+
+        $ctaCount = $links['contact_like'] + $links['tel'] + $links['mailto'] + ($forms['reservation_like'] ? 1 : 0) + ($forms['document_request_like'] ? 1 : 0);
+        $this->recordMetric($this->websiteAnalysisId, 'cta_count_sufficient', MetricResultStatus::Success, normalizedValue: $ctaCount, rawValue: ['cta_count' => $ctaCount], analysisPageId: $pageId);
     }
 
     private function recordAllUnavailable(): void
     {
-        foreach ([
-            'title_present', 'meta_description_present', 'h1_single', 'canonical_present', 'https',
-            'viewport_present', 'img_alt_coverage', 'word_count_sufficient', 'og_and_structured_data_present',
-        ] as $key) {
+        foreach (self::ALL_KEYS as $key) {
             $this->recordMetric($this->websiteAnalysisId, $key, MetricResultStatus::Unavailable);
         }
     }

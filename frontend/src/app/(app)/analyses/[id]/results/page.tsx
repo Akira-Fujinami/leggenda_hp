@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import Link from "next/link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +9,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisStatusBadge } from "@/features/analysis/analysis-status-badge";
 import { useAnalysisResults } from "@/features/analysis/hooks";
 import type { WebsiteAnalysisResult } from "@/types/analysis";
+
+const TECHNOLOGY_LABELS: Record<string, string> = {
+  cms_detected: "CMS",
+  ga_detected: "Google Analytics",
+  gtm_detected: "Google Tag Manager",
+  clarity_detected: "Microsoft Clarity",
+  meta_pixel_detected: "Meta Pixel",
+  recaptcha_detected: "reCAPTCHA",
+  cdn_detected: "CDN",
+};
 
 export default function AnalysisResultsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -35,9 +46,14 @@ export default function AnalysisResultsPage({ params }: { params: Promise<{ id: 
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">分析結果</h1>
-        <AnalysisStatusBadge status={analysis.status} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold tracking-tight">分析結果</h1>
+          <AnalysisStatusBadge status={analysis.status} />
+        </div>
+        <Link href={`/analyses/${analysisId}/comparison`} className="text-sm text-muted-foreground hover:underline">
+          サイト比較・改善提案を見る
+        </Link>
       </div>
 
       <div className="space-y-6">
@@ -66,22 +82,22 @@ function WebsiteResultCard({ website }: { website: WebsiteAnalysisResult }) {
           <div className="rounded-md border p-4">
             <p className="text-sm text-muted-foreground">総合スコア</p>
             <p className="text-2xl font-semibold">
-              {score.total_score} <span className="text-sm font-normal text-muted-foreground">/ {score.max_available_score}</span>
+              {score.display_score} <span className="text-sm font-normal text-muted-foreground">/ {score.configured_max_score}</span>
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              測定カバー率: {Math.round(score.coverage_rate * 100)}%
-              {score.failed_metric_count > 0 && ` ・失敗: ${score.failed_metric_count}件`}
-              {score.unavailable_metric_count > 0 && ` ・測定不可: ${score.unavailable_metric_count}件`}
+              測定カバー率: {Math.round(score.coverage_rate)}% ・信頼度: {Math.round(score.confidence_rate)}%
+              {score.metric_summary.error > 0 && ` ・失敗: ${score.metric_summary.error}件`}
+              {score.metric_summary.unavailable > 0 && ` ・測定不可: ${score.metric_summary.unavailable}件`}
             </p>
           </div>
           <div className="rounded-md border p-4">
             <p className="text-sm text-muted-foreground">カテゴリ別スコア</p>
             <ul className="mt-1 space-y-0.5 text-sm">
-              {Object.entries(score.categories).map(([key, value]) => (
-                <li key={key} className="flex justify-between">
-                  <span className="text-muted-foreground">{key}</span>
+              {score.category_scores.map((category) => (
+                <li key={category.key} className="flex justify-between">
+                  <span className="text-muted-foreground">{category.name}</span>
                   <span>
-                    {value.score} / {value.max_score}
+                    {category.score} / {category.configured_max_score}
                   </span>
                 </li>
               ))}
@@ -105,21 +121,23 @@ function WebsiteResultCard({ website }: { website: WebsiteAnalysisResult }) {
             <p className="text-sm font-medium">Lighthouse</p>
             <ul className="mt-1 space-y-0.5 text-sm text-muted-foreground">
               <li>Performance: {website.lighthouse.scores.performance ?? "-"}</li>
-              <li>SEO: {website.lighthouse.scores.seo ?? "-"}</li>
               <li>Accessibility: {website.lighthouse.scores.accessibility ?? "-"}</li>
+              <li>Best Practices: {website.lighthouse.scores.best_practices ?? "-"}</li>
             </ul>
           </div>
           <div>
             <p className="text-sm font-medium">使用技術</p>
             <div className="mt-1 flex flex-wrap gap-1">
-              {website.technology.length === 0 ? (
+              {Object.entries(website.technology).filter(([, detected]) => detected).length === 0 ? (
                 <span className="text-sm text-muted-foreground">検出なし</span>
               ) : (
-                website.technology.map((tech) => (
-                  <Badge key={tech.name} variant="outline">
-                    {tech.name}
-                  </Badge>
-                ))
+                Object.entries(website.technology)
+                  .filter(([, detected]) => detected)
+                  .map(([key, value]) => (
+                    <Badge key={key} variant="outline">
+                      {key === "cms_detected" && typeof value === "string" ? value : TECHNOLOGY_LABELS[key] ?? key}
+                    </Badge>
+                  ))
               )}
             </div>
           </div>

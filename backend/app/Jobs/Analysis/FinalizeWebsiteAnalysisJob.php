@@ -5,17 +5,19 @@ namespace App\Jobs\Analysis;
 use App\Enums\AnalysisJobStatus;
 use App\Enums\JobType;
 use App\Models\AnalysisJob as AnalysisJobRecord;
+use App\Models\CategoryDefinition;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStatusResolver;
+use App\Services\Recommendation\RecommendationGenerator;
 
 /**
  * サイト単位の全ジョブが終端状態になった後に、WebsiteAnalysisの最終ステータス
- * (completed/partial/failed)を確定する。
+ * (completed/partial/failed)を確定し、改善提案(Recommendation)を生成する。
  *
  * スコア(score/max_available_score/coverage_rate等)はWebsiteAnalysisに
  * 非正規化して保存せず、結果取得時にMetricResultから都度計算する
- * (ScoreCalculator参照)。理由: MetricResultが唯一の正データであり、
+ * (OverallScoreCalculator参照)。理由: MetricResultが唯一の正データであり、
  * 保存されたスコアが後から古くなる(MetricDefinitionの配点変更等)リスクを
  * 避けるため。計算コストはDB1クエリ+メモリ内計算のみで軽量。
  */
@@ -48,8 +50,18 @@ class FinalizeWebsiteAnalysisJob extends BaseWebsiteAnalysisJob
             'completed_at' => now(),
         ]);
 
+        $this->generateRecommendations($websiteAnalysis);
+
         // このWebsiteAnalysisが、Analysis配下で最後に終端状態へ到達したサイトの
         // 場合、Analysis全体の集計(FinalizeAnalysisJob)をここで起動する。
         $pipeline->maybeFinalizeAnalysis($this->analysisId);
+    }
+
+    private function generateRecommendations(WebsiteAnalysis $websiteAnalysis): void
+    {
+        $results = $websiteAnalysis->metricResults()->with('metricDefinition')->get();
+        $categories = CategoryDefinition::query()->where('is_active', true)->get();
+
+        app(RecommendationGenerator::class)->generate($websiteAnalysis, $results, $categories);
     }
 }

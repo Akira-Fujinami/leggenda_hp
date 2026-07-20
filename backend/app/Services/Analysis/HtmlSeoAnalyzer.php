@@ -52,7 +52,63 @@ class HtmlSeoAnalyzer
             'links' => $this->analyzeLinks($xpath, $pageHost),
             'content' => $this->analyzeContent($dom, $xpath),
             'forms' => $this->analyzeForms($xpath),
+            'accessibility' => $this->analyzeAccessibilityHeuristics($xpath),
         ];
+    }
+
+    /**
+     * アクセシビリティの簡易判定。厳密なDOM順序検証やlabel/inputの
+     * 個別対応チェックまでは行わず、MVPとして粗い判定に留める。
+     */
+    private function analyzeAccessibilityHeuristics(\DOMXPath $xpath): array
+    {
+        $labelCount = $xpath->query('//label')?->length ?? 0;
+        $inputCount = $xpath->query('//input[not(@type="hidden")]')?->length ?? 0;
+
+        $submits = $xpath->query('//input[translate(@type, "SUBMIT", "submit")="submit"] | //button[translate(@type, "SUBMIT", "submit")="submit" or not(@type)]');
+        $buttonsWithoutName = 0;
+        foreach ($submits ?? [] as $node) {
+            $text = trim($node->textContent);
+            $ariaLabel = $node instanceof \DOMElement ? trim($node->getAttribute('aria-label')) : '';
+            $value = $node instanceof \DOMElement ? trim($node->getAttribute('value')) : '';
+            if ($text === '' && $ariaLabel === '' && $value === '') {
+                $buttonsWithoutName++;
+            }
+        }
+
+        return [
+            'heading_order_ok' => $this->isHeadingOrderValid($xpath),
+            'form_label_present' => $inputCount === 0 ? null : $labelCount > 0,
+            'button_name_present' => ($submits?->length ?? 0) === 0 ? null : $buttonsWithoutName === 0,
+        ];
+    }
+
+    /**
+     * 見出し(h1〜h6)を文書順に並べ、レベルが一度に2段以上飛ばないかを確認する
+     * (例: h1→h3のようなスキップを「順序が乱れている」とみなす簡易判定)。
+     */
+    private function isHeadingOrderValid(\DOMXPath $xpath): bool
+    {
+        $nodes = $xpath->query('//h1 | //h2 | //h3 | //h4 | //h5 | //h6');
+
+        if ($nodes === false || $nodes->length === 0) {
+            return true;
+        }
+
+        $levels = [];
+        foreach ($nodes as $node) {
+            $levels[] = (int) substr($node->nodeName, 1);
+        }
+
+        $previous = 0;
+        foreach ($levels as $level) {
+            if ($previous > 0 && $level > $previous + 1) {
+                return false;
+            }
+            $previous = $level;
+        }
+
+        return true;
     }
 
     private function analyzeTitle(\DOMXPath $xpath): array

@@ -8,17 +8,17 @@ use App\Models\MetricResult;
 
 /**
  * MetricDefinition.keyを指定してMetricResult行をupsertするための共通処理。
- * 配点(max_score)は必ずMetricDefinitionから取得し、Job側にハードコードしない。
+ *
+ * 採点(score/max_score)はここでは行わない ―― Phase 3以降、採点は
+ * MetricScorerによる読み取り時計算に一本化されており(MetricDefinition/
+ * CategoryDefinitionの配点変更を過去のAnalysisにも反映できるようにするため)、
+ * ここでは実測値をnormalized_value(標準化された値)として保存するだけに留める。
  */
 trait RecordsMetricResults
 {
     /**
-     * @param  array<string, mixed>|null  $rawValue
-     * @param  array<string, mixed>|null  $evidence
-     */
-    /**
-     * @param  float  $achievedRatio  0.0〜1.0。配点(max_score)に対する達成率。
-     *                                真偽のみのメトリクスは1.0(満点)または0.0を渡す。
+     * @param  mixed  $normalizedValue  MetricScorerが解釈する標準化された値
+     *                                  (bool/number)。status=Successのときのみ意味を持つ。
      * @param  array<string, mixed>|null  $rawValue
      * @param  array<string, mixed>|null  $evidence
      */
@@ -26,12 +26,13 @@ trait RecordsMetricResults
         int $websiteAnalysisId,
         string $key,
         MetricResultStatus $status,
-        float $achievedRatio = 1.0,
+        mixed $normalizedValue = null,
         ?array $rawValue = null,
         ?array $evidence = null,
         ?string $errorCode = null,
         ?string $errorMessage = null,
         ?int $analysisPageId = null,
+        float $confidence = 1.0,
     ): void {
         $definition = MetricDefinition::query()->where('key', $key)->where('is_active', true)->first();
 
@@ -39,20 +40,15 @@ trait RecordsMetricResults
             return;
         }
 
-        $maxScore = $status === MetricResultStatus::Success ? (float) $definition->max_score : null;
-        $score = $status === MetricResultStatus::Success
-            ? round(max(0.0, min(1.0, $achievedRatio)) * (float) $definition->max_score, 2)
-            : null;
-
         MetricResult::query()->updateOrCreate(
             ['website_analysis_id' => $websiteAnalysisId, 'metric_definition_id' => $definition->id],
             [
                 'analysis_page_id' => $analysisPageId,
                 'raw_value' => $rawValue,
-                'score' => $score,
-                'max_score' => $maxScore,
+                'normalized_value' => $normalizedValue !== null ? ['value' => $normalizedValue] : null,
                 'status' => $status,
                 'evidence' => $evidence,
+                'confidence' => $confidence,
                 'error_code' => $errorCode,
                 'error_message' => $errorMessage,
                 'measured_at' => now(),

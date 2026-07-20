@@ -40,13 +40,32 @@ export interface AnalysisProgress {
   websites: WebsiteAnalysisProgress[];
 }
 
-export interface AnalysisScore {
-  total_score: number;
+export interface CategoryScore {
+  key: string;
+  name: string;
+  score: number;
   max_available_score: number;
+  configured_max_score: number;
   coverage_rate: number;
-  failed_metric_count: number;
-  unavailable_metric_count: number;
-  categories: Record<string, { score: number; available_max_score: number; max_score: number }>;
+}
+
+export interface MetricSummary {
+  success: number;
+  not_found: number;
+  unavailable: number;
+  error: number;
+  not_applicable: number;
+}
+
+export interface AnalysisScore {
+  overall_score: number;
+  display_score: number;
+  available_score: number;
+  configured_max_score: number;
+  coverage_rate: number;
+  confidence_rate: number;
+  category_scores: CategoryScore[];
+  metric_summary: MetricSummary;
 }
 
 export interface AnalysisSeoSummary {
@@ -59,18 +78,13 @@ export interface AnalysisSeoSummary {
 export interface LighthouseSummary {
   scores: {
     performance: number | null;
-    seo: number | null;
     accessibility: number | null;
+    best_practices: number | null;
   };
   metrics: Record<string, number | null> | null;
 }
 
-export interface TechnologyMatch {
-  name: string;
-  category: string;
-  confidence: number;
-  evidence: string[];
-}
+export type TechnologySummary = Record<string, boolean | string | null>;
 
 export interface AnalysisScreenshot {
   device: "desktop" | "mobile";
@@ -96,7 +110,7 @@ export interface WebsiteAnalysisResult {
   score: AnalysisScore;
   seo: AnalysisSeoSummary | null;
   lighthouse: LighthouseSummary;
-  technology: TechnologyMatch[];
+  technology: TechnologySummary;
   screenshots: AnalysisScreenshot[];
   errors: AnalysisJobError[];
 }

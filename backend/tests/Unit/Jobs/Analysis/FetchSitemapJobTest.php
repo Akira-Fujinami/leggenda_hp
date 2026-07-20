@@ -10,6 +10,7 @@ use App\Models\MetricResult;
 use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
+use Database\Seeders\CategoryDefinitionSeeder;
 use Database\Seeders\MetricDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -23,6 +24,7 @@ class FetchSitemapJobTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->seed(CategoryDefinitionSeeder::class);
         $this->seed(MetricDefinitionSeeder::class);
         Storage::fake('analysis');
     }

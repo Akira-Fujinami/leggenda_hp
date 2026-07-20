@@ -15,6 +15,9 @@ use Illuminate\Support\Facades\Storage;
 /**
  * Lighthouseの実行。生のLighthouseレポートはAPIレスポンスに含めず、
  * ストレージにのみ保存する。取得できなかった指標はnullのまま(0にしない)。
+ * normalized_valueには生の値(スコアは0-100、コアウェブバイタルは実測値)を
+ * 保存し、採点(0-1への変換)はMetricScorer(lighthouse/inverse_linear/threshold
+ * strategy)側で行う。
  */
 class RunLighthouseJob extends BaseWebsiteAnalysisJob
 {
@@ -48,33 +51,50 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
 
         $scores = $data['scores'] ?? [];
         $metrics = $data['metrics'] ?? [];
+        $evidence = ['url' => $website->normalized_url];
 
-        $performance = $scores['performance'] ?? null;
+        $this->recordScore('lighthouse_performance', $scores['performance'] ?? null, ['scores' => $scores], $evidence);
+        $this->recordScore('lighthouse_accessibility', $scores['accessibility'] ?? null, ['scores' => $scores], $evidence);
+        $this->recordScore('lighthouse_best_practices', $scores['best_practices'] ?? null, ['scores' => $scores], $evidence);
+
+        $this->recordMetricValue('fcp', $metrics['fcp_ms'] ?? null, $metrics, $evidence);
+        $this->recordMetricValue('lcp', $metrics['lcp_ms'] ?? null, $metrics, $evidence);
+        $this->recordMetricValue('cls', $metrics['cls'] ?? null, $metrics, $evidence);
+        $this->recordMetricValue('speed_index', $metrics['speed_index_ms'] ?? null, $metrics, $evidence);
+        $this->recordMetricValue('tbt', $metrics['tbt_ms'] ?? null, $metrics, $evidence);
+    }
+
+    /**
+     * @param  array<string, mixed>  $rawValue
+     * @param  array<string, mixed>  $evidence
+     */
+    private function recordScore(string $key, ?float $value, array $rawValue, array $evidence): void
+    {
         $this->recordMetric(
             $this->websiteAnalysisId,
-            'lighthouse_performance',
-            $performance !== null ? MetricResultStatus::Success : MetricResultStatus::Unavailable,
-            achievedRatio: $performance !== null ? max(0.0, min(1.0, $performance / 100)) : 0.0,
-            rawValue: ['scores' => $scores, 'metrics' => $metrics],
-            evidence: ['url' => $website->normalized_url],
+            $key,
+            $value !== null ? MetricResultStatus::Success : MetricResultStatus::Unavailable,
+            normalizedValue: $value,
+            rawValue: $rawValue,
+            evidence: $evidence,
+            confidence: 0.95,
         );
+    }
 
-        $seo = $scores['seo'] ?? null;
+    /**
+     * @param  array<string, mixed>  $rawValue
+     * @param  array<string, mixed>  $evidence
+     */
+    private function recordMetricValue(string $key, mixed $value, array $rawValue, array $evidence): void
+    {
         $this->recordMetric(
             $this->websiteAnalysisId,
-            'lighthouse_seo',
-            $seo !== null ? MetricResultStatus::Success : MetricResultStatus::Unavailable,
-            achievedRatio: $seo !== null ? max(0.0, min(1.0, $seo / 100)) : 0.0,
-            rawValue: ['score' => $seo],
-        );
-
-        $accessibility = $scores['accessibility'] ?? null;
-        $this->recordMetric(
-            $this->websiteAnalysisId,
-            'lighthouse_accessibility',
-            $accessibility !== null ? MetricResultStatus::Success : MetricResultStatus::Unavailable,
-            achievedRatio: $accessibility !== null ? max(0.0, min(1.0, $accessibility / 100)) : 0.0,
-            rawValue: ['score' => $accessibility],
+            $key,
+            $value !== null ? MetricResultStatus::Success : MetricResultStatus::Unavailable,
+            normalizedValue: $value,
+            rawValue: $rawValue,
+            evidence: $evidence,
+            confidence: 0.95,
         );
     }
 }

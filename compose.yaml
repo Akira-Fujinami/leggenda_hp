@@ -20,6 +20,12 @@ x-backend-env: &backend-env
   ANALYZER_TOKEN: ${ANALYZER_TOKEN:-}
   ANALYSIS_STORAGE_PATH: ${ANALYSIS_STORAGE_PATH:-/var/analysis-storage}
   CRAWLER_USER_AGENT: ${CRAWLER_USER_AGENT:-WebsiteComparisonBot/0.1 (+https://example.com/bot)}
+  SEO_PROVIDER: ${SEO_PROVIDER:-mock}
+  SEMRUSH_API_KEY: ${SEMRUSH_API_KEY:-}
+  SEMRUSH_DATABASE: ${SEMRUSH_DATABASE:-jp}
+  SEMRUSH_TIMEOUT: ${SEMRUSH_TIMEOUT:-30}
+  SEMRUSH_MAX_RETRIES: ${SEMRUSH_MAX_RETRIES:-1}
+  SEMRUSH_DAILY_UNIT_LIMIT: ${SEMRUSH_DAILY_UNIT_LIMIT:-}
 
 services:
   frontend:
@@ -72,7 +78,34 @@ services:
       <<: *backend-env
     volumes:
       - analysis-storage:/var/analysis-storage
-    command: ["php", "artisan", "queue:work", "redis", "--queue=default,analysis,external-api,reports", "--sleep=3", "--tries=3", "--timeout=300"]
+    command: ["php", "artisan", "queue:work", "redis", "--queue=default,analysis,reports", "--sleep=3", "--tries=3", "--timeout=300"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [app-network]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'queue:work' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Semrush等の外部API呼び出しは専用キュー(external-api)・専用ワーカーへ隔離する。
+  # 外部APIのレート制限・障害・タイムアウトが、通常のanalysisキューの処理
+  # (ページ取得・レンダリング等)に波及しないようにするため。
+  queue-worker-external:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - backend/.env
+    environment:
+      <<: *backend-env
+    volumes:
+      - analysis-storage:/var/analysis-storage
+    command: ["php", "artisan", "queue:work", "redis", "--queue=external-api", "--sleep=3", "--tries=2", "--timeout=60"]
     depends_on:
       postgres:
         condition: service_healthy

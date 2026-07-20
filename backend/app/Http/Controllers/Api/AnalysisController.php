@@ -13,6 +13,8 @@ use App\Models\Project;
 use App\Models\Screenshot;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisService;
+use App\Services\Comparison\ComparisonAssembler;
+use App\Services\History\HistoryComparisonService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -21,8 +23,11 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AnalysisController extends Controller
 {
-    public function __construct(private readonly AnalysisService $analyses)
-    {
+    public function __construct(
+        private readonly AnalysisService $analyses,
+        private readonly ComparisonAssembler $comparisonAssembler,
+        private readonly HistoryComparisonService $historyComparisonService,
+    ) {
     }
 
     public function index(Request $request, Project $project): JsonResponse
@@ -75,6 +80,24 @@ class AnalysisController extends Controller
         ]);
 
         return $this->success(new AnalysisResultsResource($analysis));
+    }
+
+    public function comparison(Request $request, Analysis $analysis): JsonResponse
+    {
+        $this->authorize('view', $analysis);
+
+        return $this->success($this->comparisonAssembler->assemble($analysis));
+    }
+
+    public function historyComparison(Request $request, Analysis $analysis): JsonResponse
+    {
+        $this->authorize('view', $analysis);
+
+        $previousAnalysisId = $request->filled('previous_analysis_id') ? $request->integer('previous_analysis_id') : null;
+
+        $result = $this->historyComparisonService->compare($analysis, $previousAnalysisId, $request->user());
+
+        return $this->success($result);
     }
 
     /**

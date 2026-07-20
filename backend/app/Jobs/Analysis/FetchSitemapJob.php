@@ -83,7 +83,7 @@ class FetchSitemapJob extends BaseWebsiteAnalysisJob
             $this->websiteAnalysisId,
             'sitemap_fetched',
             MetricResultStatus::Success,
-            achievedRatio: 1.0,
+            normalizedValue: true,
             rawValue: ['exists' => $exists, 'http_status' => $result->httpStatus] + $parsed,
             evidence: ['url' => $sitemapUrl, 'parsed' => $parsed],
             analysisPageId: $page->id,

@@ -37,21 +37,21 @@ class ProgressCalculatorTest extends TestCase
     public function test_it_sums_weights_of_completed_jobs(): void
     {
         $jobs = collect([
-            $this->job(JobType::FetchStaticPage, AnalysisJobStatus::Completed), // 15
+            $this->job(JobType::FetchStaticPage, AnalysisJobStatus::Completed), // 13
             $this->job(JobType::FetchRobots, AnalysisJobStatus::Completed), // 5
             $this->job(JobType::RunLighthouse, AnalysisJobStatus::Running), // not counted
         ]);
 
-        $this->assertSame(20, $this->calculator->forWebsiteAnalysis($jobs));
+        $this->assertSame(18, $this->calculator->forWebsiteAnalysis($jobs));
     }
 
     public function test_failed_jobs_still_count_toward_progress(): void
     {
         $jobs = collect([
-            $this->job(JobType::FetchStaticPage, AnalysisJobStatus::Failed), // 15, counted as "done"
+            $this->job(JobType::FetchStaticPage, AnalysisJobStatus::Failed), // 13, counted as "done"
         ]);
 
-        $this->assertSame(15, $this->calculator->forWebsiteAnalysis($jobs));
+        $this->assertSame(13, $this->calculator->forWebsiteAnalysis($jobs));
     }
 
     public function test_all_website_level_jobs_completed_reaches_100(): void

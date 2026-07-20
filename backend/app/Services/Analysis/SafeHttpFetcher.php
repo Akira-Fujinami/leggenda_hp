@@ -93,6 +93,7 @@ class SafeHttpFetcher
                 body: $body,
                 contentType: $contentType,
                 durationMs: (int) round((microtime(true) - $started) * 1000),
+                redirectCount: $redirectCount,
             );
         }
 

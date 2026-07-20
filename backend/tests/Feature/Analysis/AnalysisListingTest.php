@@ -96,22 +96,23 @@ class AnalysisListingTest extends TestCase
             'website_id' => $website->id,
         ]);
 
+        $this->seed(\Database\Seeders\CategoryDefinitionSeeder::class);
+
         $definition = MetricDefinition::query()->where('key', 'title_present')->first()
-            ?? MetricDefinition::factory()->create(['key' => 'title_present', 'category' => 'technical_seo', 'max_score' => 8]);
+            ?? MetricDefinition::factory()->create(['key' => 'title_present', 'category_key' => 'technical_seo', 'scoring_type' => 'boolean', 'max_score' => 8]);
 
         MetricResult::factory()->create([
             'website_analysis_id' => $websiteAnalysis->id,
             'metric_definition_id' => $definition->id,
             'status' => MetricResultStatus::Success,
-            'score' => 8,
-            'max_score' => 8,
+            'normalized_value' => ['value' => true],
         ]);
 
         $response = $this->actingAs($user)->getJson("/api/analyses/{$analysis->id}/results");
 
         $response->assertOk();
         $response->assertJsonPath('data.websites.0.website_analysis_id', $websiteAnalysis->id);
-        $response->assertJsonStructure(['data' => ['websites' => [['score' => ['total_score', 'max_available_score', 'coverage_rate']]]]]);
+        $response->assertJsonStructure(['data' => ['websites' => [['score' => ['overall_score', 'available_score', 'coverage_rate', 'confidence_rate', 'category_scores', 'metric_summary']]]]]);
 
         $raw = $response->getContent();
         $this->assertStringNotContainsString('raw_report', $raw);

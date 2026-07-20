@@ -11,6 +11,7 @@ readonly class FetchResult
         public string $body,
         public ?string $contentType,
         public int $durationMs,
+        public int $redirectCount = 0,
     ) {
     }
 }

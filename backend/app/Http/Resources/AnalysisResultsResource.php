@@ -4,8 +4,8 @@ namespace App\Http\Resources;
 
 use App\Enums\AnalysisJobStatus;
 use App\Enums\PageType;
-use App\Models\MetricDefinition;
-use App\Services\Analysis\ScoreCalculator;
+use App\Models\CategoryDefinition;
+use App\Services\Scoring\OverallScoreCalculator;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -23,8 +23,8 @@ class AnalysisResultsResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        $activeDefinitions = MetricDefinition::query()->where('is_active', true)->get();
-        $calculator = app(ScoreCalculator::class);
+        $activeCategories = CategoryDefinition::query()->where('is_active', true)->orderBy('display_order')->get();
+        $calculator = app(OverallScoreCalculator::class);
 
         return [
             'id' => $this->id,
@@ -32,22 +32,20 @@ class AnalysisResultsResource extends JsonResource
             'progress' => $this->progress,
             'started_at' => $this->started_at?->toIso8601String(),
             'completed_at' => $this->completed_at?->toIso8601String(),
-            'websites' => $this->websiteAnalyses->map(function ($wa) use ($activeDefinitions, $calculator) {
+            'websites' => $this->websiteAnalyses->map(function ($wa) use ($activeCategories, $calculator) {
                 $homepage = $wa->pages->firstWhere('page_type', PageType::Homepage);
-                $score = $calculator->calculate($wa->metricResults, $activeDefinitions);
-                $technologyResult = $wa->metricResults->first(
-                    fn ($r) => $r->metricDefinition?->key === 'technology_detected'
-                );
+                $score = $calculator->calculate($activeCategories, $wa->metricResults);
 
                 return [
                     'website_analysis_id' => $wa->id,
                     'website_id' => $wa->website_id,
                     'website_name' => $wa->website?->name,
                     'url' => $wa->website?->normalized_url,
+                    'is_primary' => (bool) $wa->website?->is_primary,
                     'status' => $wa->status->value,
                     'http_status' => $wa->http_status,
                     'final_url' => $wa->final_url,
-                    'score' => $score,
+                    'score' => $score->toArray(),
                     'seo' => $homepage === null ? null : [
                         'title' => $homepage->title,
                         'meta_description' => $homepage->meta_description,
@@ -55,7 +53,7 @@ class AnalysisResultsResource extends JsonResource
                         'word_count' => $homepage->word_count,
                     ],
                     'lighthouse' => $this->lighthouseSummary($wa),
-                    'technology' => $technologyResult?->raw_value['technologies'] ?? [],
+                    'technology' => $this->technologySummary($wa),
                     'screenshots' => $wa->screenshots->map(fn ($s) => [
                         'device' => $s->device->value,
                         'url' => route('analyses.screenshot', ['websiteAnalysis' => $wa->id, 'device' => $s->device->value]),
@@ -79,21 +77,46 @@ class AnalysisResultsResource extends JsonResource
      */
     private function lighthouseSummary($websiteAnalysis): array
     {
-        $result = collect(['performance', 'seo', 'accessibility'])->mapWithKeys(function (string $name) use ($websiteAnalysis) {
+        $scores = collect(['performance', 'accessibility', 'best_practices'])->mapWithKeys(function (string $name) use ($websiteAnalysis) {
             $metric = $websiteAnalysis->metricResults->first(
                 fn ($r) => $r->metricDefinition?->key === "lighthouse_{$name}"
             );
 
-            return [$name => $metric?->raw_value['scores'][$name] ?? $metric?->raw_value['score'] ?? null];
+            return [$name => $metric?->normalized_value['value'] ?? null];
         });
 
-        $metricsSource = $websiteAnalysis->metricResults->first(
-            fn ($r) => $r->metricDefinition?->key === 'lighthouse_performance'
-        );
+        $metrics = collect(['fcp', 'lcp', 'cls', 'speed_index', 'tbt'])->mapWithKeys(function (string $key) use ($websiteAnalysis) {
+            $metric = $websiteAnalysis->metricResults->first(
+                fn ($r) => $r->metricDefinition?->key === $key
+            );
+
+            return [$key => $metric?->normalized_value['value'] ?? null];
+        });
 
         return [
-            'scores' => $result->all(),
-            'metrics' => $metricsSource?->raw_value['metrics'] ?? null,
+            'scores' => $scores->all(),
+            'metrics' => $metrics->all(),
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function technologySummary($websiteAnalysis): array
+    {
+        $keys = ['cms_detected', 'ga_detected', 'gtm_detected', 'clarity_detected', 'meta_pixel_detected', 'recaptcha_detected', 'cdn_detected'];
+
+        $detected = [];
+        foreach ($keys as $key) {
+            $metric = $websiteAnalysis->metricResults->first(fn ($r) => $r->metricDefinition?->key === $key);
+
+            if ($metric === null) {
+                continue;
+            }
+
+            $detected[$key] = $metric->normalized_value['value'] ?? null;
+        }
+
+        return $detected;
     }
 }

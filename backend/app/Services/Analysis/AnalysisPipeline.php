@@ -9,6 +9,7 @@ use App\Enums\JobType;
 use App\Jobs\Analysis\AnalyzeHtmlSeoJob;
 use App\Jobs\Analysis\CaptureScreenshotJob;
 use App\Jobs\Analysis\DetectTechnologyJob;
+use App\Jobs\Analysis\FetchExternalSeoDataJob;
 use App\Jobs\Analysis\FetchRobotsJob;
 use App\Jobs\Analysis\FetchSitemapJob;
 use App\Jobs\Analysis\FetchStaticPageJob;
@@ -72,6 +73,7 @@ class AnalysisPipeline
         CaptureScreenshotJob::dispatch($analysisId, $websiteAnalysisId, Device::Mobile)->onQueue(JobType::CaptureScreenshotMobile->queueName());
         RunLighthouseJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::RunLighthouse->queueName());
         DetectTechnologyJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::DetectTechnology->queueName());
+        FetchExternalSeoDataJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::FetchExternalSeoData->queueName());
     }
 
     public function dispatchHtmlSeoAnalysis(int $analysisId, int $websiteAnalysisId): void
