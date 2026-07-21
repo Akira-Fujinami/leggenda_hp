@@ -236,6 +236,7 @@ function registerAnalyzeRoutes(
         scores: result.scores,
         metrics: result.metrics,
         raw_report: result.rawReport,
+        metadata: result.metadata,
       },
       error: null,
     });

@@ -21,6 +21,32 @@ export interface LighthouseResult {
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   rawReport: any;
+  metadata: {
+    run_count: number;
+    device_profile: string | null;
+    throttling_method: string | null;
+    measured_at: string | null;
+    lighthouse_version: string | null;
+    timeout_ms: number;
+  };
+}
+
+/**
+ * Lighthouseの生レポート(lhr)から、単発計測であることの開示に使う
+ * metadataを組み立てる純粋関数(テスト容易化のためrunLighthouseから分離)。
+ * Lighthouse自身が申告する設定値のみを転記し、存在しない設定を捏造しない。
+ * run_countは現状常に1(3回計測・中央値化は将来課題として未実装)。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function buildLighthouseMetadata(lhr: any, timeoutMs: number): LighthouseResult["metadata"] {
+  return {
+    run_count: 1,
+    device_profile: lhr?.configSettings?.formFactor ?? null,
+    throttling_method: lhr?.configSettings?.throttlingMethod ?? null,
+    measured_at: lhr?.fetchTime ?? null,
+    lighthouse_version: lhr?.lighthouseVersion ?? null,
+    timeout_ms: timeoutMs,
+  };
 }
 
 /**
@@ -88,6 +114,7 @@ export async function runLighthouse(url: string, timeoutMs: number): Promise<Lig
         transfer_size_bytes: auditValue("total-byte-weight"),
       },
       rawReport: lhr,
+      metadata: buildLighthouseMetadata(lhr, timeoutMs),
     };
   } finally {
     await chrome.kill();

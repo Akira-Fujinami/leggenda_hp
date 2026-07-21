@@ -71,7 +71,8 @@ class HtmlSeoAnalyzerTest extends TestCase
         $result = $this->analyzer->analyze($this->sampleHtml(), 'https://example.com/');
 
         $this->assertSame(1, $result['h1']['count']);
-        $this->assertSame(['メインタイトル'], $result['h1']['texts']);
+        $this->assertSame(1, $result['h1']['valid_count']);
+        $this->assertSame('メインタイトル', $result['h1']['primary_text']);
     }
 
     public function test_it_detects_self_referencing_canonical(): void
@@ -106,6 +107,43 @@ class HtmlSeoAnalyzerTest extends TestCase
         $this->assertSame(1, $result['images']['with_alt']);
         $this->assertSame(1, $result['images']['empty_alt']);
         $this->assertSame(1, $result['images']['missing_alt']);
+        $this->assertEqualsWithDelta(0.3333, $result['images']['alt_coverage'], 0.001);
+    }
+
+    public function test_it_excludes_decorative_images_from_alt_coverage_denominator(): void
+    {
+        $html = '<html><body>'
+            .'<img src="a.png" alt="説明あり">'
+            .'<img src="deco1.png" role="presentation">'
+            .'<img src="deco2.png" aria-hidden="true">'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertSame(3, $result['images']['total']);
+        $this->assertSame(2, $result['images']['decorative_count']);
+        $this->assertSame(1, $result['images']['with_alt']);
+        $this->assertSame(0, $result['images']['missing_alt']);
+        $this->assertSame(0, $result['images']['empty_alt']);
+        // 分母は装飾2枚を除いた1枚のみ ―― 100%(装飾画像を違反扱いしない)。
+        $this->assertEqualsWithDelta(1.0, $result['images']['alt_coverage'], 0.001);
+    }
+
+    public function test_it_reports_empty_alt_separately_from_missing_alt(): void
+    {
+        $html = '<html><body>'
+            .'<img src="a.png" alt="説明あり">'
+            .'<img src="b.png" alt="">'
+            .'<img src="c.png">'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertSame(1, $result['images']['with_alt']);
+        $this->assertSame(1, $result['images']['empty_alt']);
+        $this->assertSame(1, $result['images']['missing_alt']);
+        $this->assertSame(0, $result['images']['decorative_count']);
+        // empty_altは分母に残るが分子には入らない(装飾候補だが完全に適切とは断定しない)。
         $this->assertEqualsWithDelta(0.3333, $result['images']['alt_coverage'], 0.001);
     }
 
@@ -167,11 +205,14 @@ class HtmlSeoAnalyzerTest extends TestCase
         $this->assertFalse($result['title']['present']);
     }
 
-    public function test_it_excludes_an_unevaluated_template_placeholder_from_h1_texts_but_keeps_the_count_accurate(): void
+    public function test_it_excludes_ad_marker_and_template_placeholder_h1_but_keeps_the_count_accurate(): void
     {
-        // 実サイトで観測された実例: サーバーサイドテンプレートが正しく評価されず、
-        // h1の中身がプレースホルダーのまま配信されているケース。要素自体は
-        // 実在するためcountには含めるが、texts(表示用)には採用しない。
+        // 実サイト(楽天トラベル)で観測された実例そのもの: h1が3件あり、1件は
+        // 広告見出し(【PR】)、1件は未評価のテンプレートプレースホルダー、
+        // 1件が実際にページ主題を表す見出し。count(実在するh1要素数)は3の
+        // ままだが、有効なH1(valid_count)は1件のみで、その1件が代表値
+        // (primary_text)として採用されなければならない ―― 「count=3なのに
+        // H1なし」という内部矛盾の直接の回帰テスト。
         $html = '<html><body>'
             .'<h1>【PR】</h1>'
             .'<h1>ホテル・旅館ランキング</h1>'
@@ -181,8 +222,87 @@ class HtmlSeoAnalyzerTest extends TestCase
         $result = $this->analyzer->analyze($html, 'https://example.com/');
 
         $this->assertSame(3, $result['h1']['count']);
-        $this->assertSame(['【PR】', 'ホテル・旅館ランキング'], $result['h1']['texts']);
-        $this->assertSame('【PR】', $result['h1']['primary_text']);
+        $this->assertSame(1, $result['h1']['valid_count']);
+        $this->assertSame('ホテル・旅館ランキング', $result['h1']['primary_text']);
+
+        $reasons = array_column($result['h1']['entries'], 'excluded_reason', 'text');
+        $this->assertSame('ad_marker', $reasons['【PR】']);
+        $this->assertSame('template_placeholder', $reasons['${titleSection.mainTitle}']);
+    }
+
+    public function test_it_excludes_hidden_h1_via_style_attribute_from_valid_count(): void
+    {
+        $html = '<html><body>'
+            .'<h1 style="display:none">隠しH1</h1>'
+            .'<h1>実際の見出し</h1>'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertSame(2, $result['h1']['count']);
+        $this->assertSame(1, $result['h1']['visible_count']);
+        $this->assertSame(1, $result['h1']['valid_count']);
+        $this->assertSame('実際の見出し', $result['h1']['primary_text']);
+    }
+
+    public function test_it_excludes_hidden_h1_via_hidden_attribute_and_aria_hidden(): void
+    {
+        $html = '<html><body>'
+            .'<h1 hidden>隠し属性</h1>'
+            .'<h1 aria-hidden="true">aria非表示</h1>'
+            .'<h1>可視の見出し</h1>'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertSame(3, $result['h1']['count']);
+        $this->assertSame(1, $result['h1']['visible_count']);
+        $this->assertSame(1, $result['h1']['valid_count']);
+        $this->assertSame('可視の見出し', $result['h1']['primary_text']);
+    }
+
+    public function test_it_excludes_symbol_only_h1_text(): void
+    {
+        $html = '<html><body>'
+            .'<h1>---</h1>'
+            .'<h1>実際の見出し</h1>'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertSame(1, $result['h1']['valid_count']);
+        $this->assertSame('実際の見出し', $result['h1']['primary_text']);
+    }
+
+    public function test_it_does_not_exclude_short_brand_names_from_valid_h1(): void
+    {
+        // 短いブランド名・サービス名を文字数だけで無効化しないことの確認
+        // (「PR」等の広告語完全一致とは区別する)。
+        $html = '<html><body><h1>楽天</h1></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertSame(1, $result['h1']['valid_count']);
+        $this->assertSame('楽天', $result['h1']['primary_text']);
+    }
+
+    public function test_it_counts_multiple_valid_h1(): void
+    {
+        $html = '<html><body><h1>見出しA</h1><h1>見出しB</h1></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertSame(2, $result['h1']['count']);
+        $this->assertSame(2, $result['h1']['valid_count']);
+    }
+
+    public function test_it_reports_zero_valid_count_when_no_h1_present(): void
+    {
+        $result = $this->analyzer->analyze('<html><body><p>本文のみ</p></body></html>', 'https://example.com/');
+
+        $this->assertSame(0, $result['h1']['count']);
+        $this->assertSame(0, $result['h1']['valid_count']);
+        $this->assertNull($result['h1']['primary_text']);
     }
 
     public function test_it_detects_business_links_with_confidence_when_href_and_text_both_match(): void
@@ -394,7 +514,90 @@ class HtmlSeoAnalyzerTest extends TestCase
         $result = $this->analyzer->analyze($html, 'https://example.com/');
 
         $this->assertTrue($result['sns_links']['detected']);
-        $this->assertSame('Instagram', $result['sns_links']['platforms'][0]['text']);
+        $this->assertSame('Instagram', $result['sns_links']['platforms'][0]['label']);
+        $this->assertSame('href_host', $result['sns_links']['platforms'][0]['source']);
+        $this->assertEqualsWithDelta(0.95, $result['sns_links']['platforms'][0]['confidence'], 0.001);
+    }
+
+    public function test_it_detects_sns_from_aria_label_alone_without_a_matching_href_domain(): void
+    {
+        $html = '<html><body><a href="https://redirect.example.com/out?id=1" aria-label="Facebookはこちら"></a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['sns_links']['detected']);
+        $this->assertSame('facebook', $result['sns_links']['platforms'][0]['platform']);
+        $this->assertSame('aria_label', $result['sns_links']['platforms'][0]['source']);
+    }
+
+    public function test_it_detects_sns_from_title_attribute_alone(): void
+    {
+        $html = '<html><body><a href="https://redirect.example.com/out" title="Instagram公式アカウント"></a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['sns_links']['detected']);
+        $this->assertSame('instagram', $result['sns_links']['platforms'][0]['platform']);
+        $this->assertSame('title', $result['sns_links']['platforms'][0]['source']);
+    }
+
+    public function test_it_detects_sns_from_nested_img_alt_alone(): void
+    {
+        $html = '<html><body><a href="https://redirect.example.com/out"><img src="icon.png" alt="YouTubeチャンネル"></a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['sns_links']['detected']);
+        $this->assertSame('youtube', $result['sns_links']['platforms'][0]['platform']);
+        $this->assertSame('img_alt', $result['sns_links']['platforms'][0]['source']);
+    }
+
+    public function test_it_detects_sns_from_a_redirect_url_query_parameter_alone(): void
+    {
+        $html = '<html><body><a href="https://track.example.com/click?to=https%3A%2F%2Fwww.facebook.com%2Fexample"></a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['sns_links']['detected']);
+        $this->assertSame('facebook', $result['sns_links']['platforms'][0]['platform']);
+        $this->assertSame('href_query_param', $result['sns_links']['platforms'][0]['source']);
+    }
+
+    public function test_it_does_not_detect_sns_from_a_class_name_alone(): void
+    {
+        // class="x"のような短い汎用トークンは、他の主要証拠(href/aria-label/
+        // title/img alt等)が無い限り単独ではSNSと確定しない。
+        $html = '<html><body>'
+            .'<a href="https://redirect.example.com/out" class="x">リンク</a>'
+            .'<a href="https://redirect.example.com/out2" class="icon-facebook">リンク2</a>'
+            .'</body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertFalse($result['sns_links']['detected']);
+        $this->assertSame(0, $result['sns_links']['count']);
+    }
+
+    public function test_it_boosts_confidence_when_class_token_corroborates_a_primary_signal(): void
+    {
+        $html = '<html><body><a href="https://www.facebook.com/example" class="icon-facebook">Facebook</a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertGreaterThan(0.95, $result['sns_links']['platforms'][0]['confidence']);
+    }
+
+    public function test_it_detects_five_sns_platforms_via_mixed_signals(): void
+    {
+        // Fixture Aで求められる「異なるシグナルによる5種類検出」の確認。
+        $html = '<html><body>'
+            .'<a href="https://www.facebook.com/example">Facebook</a>'
+            .'<a href="https://redirect.example.com/out" aria-label="Xで最新情報"></a>'
+            .'<a href="https://redirect.example.com/out2"><img src="ig.png" alt="Instagram"></a>'
+            .'<a href="https://redirect.example.com/out3" title="公式LINEアカウント"></a>'
+            .'<a href="https://track.example.com/click?to=https%3A%2F%2Fwww.youtube.com%2Fexample"></a>'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['sns_links']['detected']);
+        $this->assertSame(5, $result['sns_links']['count']);
+        $platforms = array_column($result['sns_links']['platforms'], 'platform');
+        $this->assertEqualsCanonicalizing(['facebook', 'x', 'instagram', 'line', 'youtube'], $platforms);
     }
 
     public function test_it_detects_company_info_via_expanded_japanese_keywords(): void
@@ -465,5 +668,69 @@ class HtmlSeoAnalyzerTest extends TestCase
         $result = $this->analyzer->analyze($html, 'https://example.com/');
 
         $this->assertFalse($result['business_links']['pricing']['present']);
+    }
+
+    public function test_it_detects_help_center_link_separately_from_faq(): void
+    {
+        $html = '<html><body><a href="/help/">ヘルプ</a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['business_links']['help_center']['present']);
+        $this->assertFalse($result['business_links']['faq']['present']);
+    }
+
+    public function test_it_detects_faq_link_separately_from_help_center(): void
+    {
+        $html = '<html><body><a href="/faq/">よくある質問</a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['business_links']['faq']['present']);
+        $this->assertFalse($result['business_links']['help_center']['present']);
+    }
+
+    public function test_it_detects_a_chatbot_widget_via_known_script_host(): void
+    {
+        $html = '<html><head><script src="https://embed.tawk.to/abc123/default"></script></head><body></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['chatbot']['detected']);
+    }
+
+    public function test_it_detects_a_chatbot_widget_via_element_class_token(): void
+    {
+        $html = '<html><body><div class="chat-widget-container"></div></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['chatbot']['detected']);
+    }
+
+    public function test_it_does_not_detect_a_chatbot_widget_when_absent(): void
+    {
+        $html = '<html><body><div class="content"></div></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertFalse($result['chatbot']['detected']);
+    }
+
+    public function test_it_detects_a_product_price_card_when_price_and_cta_are_co_located(): void
+    {
+        $html = '<html><body>'
+            .'<div class="plan-card"><p>宿泊プラン A 10,000円〜</p><a href="/book/plan-a">このプランを予約する</a></div>'
+            .'</body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['product_price_cards']['present']);
+        $this->assertSame(1, $result['product_price_cards']['count']);
+    }
+
+    public function test_it_does_not_flag_a_bare_yen_mention_in_body_text_as_a_pricing_card(): void
+    {
+        // 本文中に「円」があるだけでは料金導線ありと断定しない
+        // (価格表記+予約/プランCTA/キーワードの共存が必要)。
+        $html = '<html><body><div class="footer-note"><p>送料は全国一律500円です。詳しくはこちら。</p></div></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertFalse($result['product_price_cards']['present']);
+        $this->assertSame(0, $result['product_price_cards']['count']);
     }
 }

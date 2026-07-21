@@ -55,6 +55,53 @@ class RecommendationGenerator
         'tel_or_mailto_present' => 'contact_cta_present',
     ];
 
+    /**
+     * 完全抑制ではないが、ライブ対応に近い代替導線(チャット・ヘルプ)が
+     * ある場合に提案自体は生成しつつpriorityをLowへ強制するテーブル。
+     * FAQだけの場合はこちらには含めない(SOFTENED_WHEN_SATISFIEDへ)
+     * ―― FAQのみで緊急度を下げてしまうと、実際に電話・問い合わせ導線が
+     * 無い事実が見えなくなるため。
+     *
+     * @var array<string, list<string>>
+     */
+    private const DOWNGRADED_WHEN_SATISFIED = [
+        'tel_or_mailto_present' => ['chatbot_detected', 'help_center_link_present'],
+        'contact_cta_present' => ['chatbot_detected', 'help_center_link_present'],
+        'form_present' => ['chatbot_detected', 'help_center_link_present'],
+    ];
+
+    /**
+     * priorityは変えず、説明文にのみ代替導線への言及を追記して断定を
+     * 弱めるテーブル(FAQのみが存在する場合)。
+     *
+     * @var array<string, list<string>>
+     */
+    private const SOFTENED_WHEN_SATISFIED = [
+        'tel_or_mailto_present' => ['faq_link_present'],
+        'contact_cta_present' => ['faq_link_present'],
+        'form_present' => ['faq_link_present'],
+    ];
+
+    private const ALTERNATIVE_CHANNEL_LABELS = [
+        'chatbot_detected' => 'チャットサポート',
+        'help_center_link_present' => 'ヘルプ・サポートページ',
+        'faq_link_present' => 'FAQ',
+    ];
+
+    /**
+     * ratio(scoring_type=ratio)の優先度をmetricキーごとに個別設定する
+     * ためのテーブル。scoring_type全体に一律適用しない(将来別のratio指標
+     * (例: 他の充足率系メトリクス)に、alt用に調整した閾値が意図せず流用
+     * されるのを防ぐため、キーを明示的に列挙する設計とする)。
+     * 該当キーが無い場合は既存のclassifyPriority(impact基準)にフォール
+     * バックする。
+     *
+     * @var array<string, array{low: float, medium: float, high: float}>
+     */
+    private const RATIO_PRIORITY_THRESHOLDS = [
+        'img_alt_coverage' => ['low' => 0.95, 'medium' => 0.80, 'high' => 0.50],
+    ];
+
     public function __construct(
         private readonly MetricScorer $scorer,
         private readonly RecommendationPriorityCalculator $priorityCalculator,
@@ -95,8 +142,22 @@ class RecommendationGenerator
 
             $impact = $this->classifyImpact($definition, $categoryWeight);
             $effort = self::EFFORT_BY_CATEGORY[$definition->category_key] ?? RecommendationEffort::Medium;
-            $priority = $this->classifyPriority($impact, $ratio);
             $confidence = $result->confidence !== null ? (float) $result->confidence : 1.0;
+            $priority = isset(self::RATIO_PRIORITY_THRESHOLDS[$definition->key])
+                ? $this->classifyRatioAwarePriority($ratio, self::RATIO_PRIORITY_THRESHOLDS[$definition->key])
+                : $this->classifyPriority($impact, $ratio, $confidence);
+            $description = $this->resolveDescription($definition, $result);
+
+            $downgradedBy = $this->satisfiedAlternatives($definition->key, $results, self::DOWNGRADED_WHEN_SATISFIED);
+            if ($downgradedBy !== []) {
+                $priority = RecommendationPriority::Low;
+                $description .= $this->downgradeSuffix($downgradedBy);
+            } else {
+                $softenedBy = $this->satisfiedAlternatives($definition->key, $results, self::SOFTENED_WHEN_SATISFIED);
+                if ($softenedBy !== []) {
+                    $description .= $this->softenSuffix($softenedBy);
+                }
+            }
 
             $sortScore = $this->priorityCalculator->calculate(
                 impact: $impact,
@@ -112,7 +173,7 @@ class RecommendationGenerator
                 [
                     'category_key' => $definition->category_key,
                     'title' => $definition->name,
-                    'description' => $definition->recommendation_template,
+                    'description' => $description,
                     'evidence' => $result->evidence,
                     'current_value' => $result->normalized_value,
                     'recommended_value' => $this->recommendedValue($definition),
@@ -144,6 +205,53 @@ class RecommendationGenerator
         return (bool) ($satisfyingResult?->normalized_value['value'] ?? false);
     }
 
+    /**
+     * $table内で$keyに対応する候補キーのうち、実際にtrueとして記録されて
+     * いるものの一覧を返す(OR条件。1つでも満たされていれば該当)。
+     *
+     * @param  array<string, list<string>>  $table
+     * @param  Collection<int, MetricResult>  $results
+     * @return list<string>
+     */
+    private function satisfiedAlternatives(string $key, Collection $results, array $table): array
+    {
+        $satisfied = [];
+
+        foreach ($table[$key] ?? [] as $candidateKey) {
+            $candidateResult = $results->first(fn (MetricResult $r) => $r->metricDefinition?->key === $candidateKey);
+
+            if ((bool) ($candidateResult?->normalized_value['value'] ?? false)) {
+                $satisfied[] = $candidateKey;
+            }
+        }
+
+        return $satisfied;
+    }
+
+    /**
+     * @param  list<string>  $keys
+     */
+    private function downgradeSuffix(array $keys): string
+    {
+        return '(なお、'.$this->joinAlternativeLabels($keys).'が確認できるため、緊急度は低めです。)';
+    }
+
+    /**
+     * @param  list<string>  $keys
+     */
+    private function softenSuffix(array $keys): string
+    {
+        return '(なお、'.$this->joinAlternativeLabels($keys).'が確認できます。分かりやすいか合わせてご確認ください。)';
+    }
+
+    /**
+     * @param  list<string>  $keys
+     */
+    private function joinAlternativeLabels(array $keys): string
+    {
+        return implode('・', array_map(fn (string $key) => self::ALTERNATIVE_CHANNEL_LABELS[$key] ?? $key, $keys));
+    }
+
     private function classifyImpact(MetricDefinition $definition, float $categoryWeight): RecommendationImpact
     {
         $maxScore = (float) $definition->max_score;
@@ -159,10 +267,16 @@ class RecommendationGenerator
         return RecommendationImpact::Low;
     }
 
-    private function classifyPriority(RecommendationImpact $impact, float $ratio): RecommendationPriority
+    /**
+     * confidenceが低い(例: Lighthouse単発計測由来で0.75など)場合、
+     * ratio<=0.01だけでCriticalへ引き上げない ―― 単発計測の極端な値を
+     * 無条件に「確定的な緊急事態」と断定しないための、Lighthouse専用では
+     * ない汎用のconfidenceベースの安全弁。
+     */
+    private function classifyPriority(RecommendationImpact $impact, float $ratio, float $confidence = 1.0): RecommendationPriority
     {
         if ($impact === RecommendationImpact::High) {
-            return $ratio <= 0.01 ? RecommendationPriority::Critical : RecommendationPriority::High;
+            return ($ratio <= 0.01 && $confidence >= 0.85) ? RecommendationPriority::Critical : RecommendationPriority::High;
         }
 
         if ($impact === RecommendationImpact::Medium) {
@@ -170,6 +284,49 @@ class RecommendationGenerator
         }
 
         return RecommendationPriority::Low;
+    }
+
+    /**
+     * RATIO_PRIORITY_THRESHOLDSに登録されたmetricキー専用の優先度判定。
+     * 他のscoring_type=ratio指標には影響しない。
+     *
+     * @param  array{low: float, medium: float, high: float}  $thresholds
+     */
+    private function classifyRatioAwarePriority(float $ratio, array $thresholds): RecommendationPriority
+    {
+        if ($ratio >= $thresholds['low']) {
+            return RecommendationPriority::Low;
+        }
+
+        if ($ratio >= $thresholds['medium']) {
+            return RecommendationPriority::Medium;
+        }
+
+        if ($ratio >= $thresholds['high']) {
+            return RecommendationPriority::High;
+        }
+
+        return RecommendationPriority::Critical;
+    }
+
+    /**
+     * metricキー別に、MetricDefinition.recommendation_templateだけでは
+     * 表現できない状態別の文言を返す。h1_singleはvalid_count===0(H1なし)と
+     * valid_count>=2(主要H1が複数)を同じデフォルト文言で扱うと紛らわしいため、
+     * ここでのみ複数検出時の文言を上書きする。該当しないmetricは
+     * デフォルトのrecommendation_templateをそのまま返す。
+     */
+    private function resolveDescription(MetricDefinition $definition, MetricResult $result): string
+    {
+        if ($definition->key === 'h1_single') {
+            $validCount = (int) ($result->raw_value['valid_count'] ?? 0);
+
+            if ($validCount >= 2) {
+                return '主要なH1が複数検出されました。ページの主見出し構造を確認してください。';
+            }
+        }
+
+        return $definition->recommendation_template;
     }
 
     /**

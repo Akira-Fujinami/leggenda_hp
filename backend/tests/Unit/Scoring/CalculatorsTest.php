@@ -95,4 +95,29 @@ class CalculatorsTest extends TestCase
         $this->assertSame(2, $score->metricSummary['success']);
         $this->assertSame(1, $score->metricSummary['unavailable']);
     }
+
+    public function test_overall_score_calculator_separates_scored_from_informational_unavailable(): void
+    {
+        $category = CategoryDefinition::factory()->create(['key' => 'technology', 'weight' => 10, 'display_order' => 1]);
+        $scoredMetric = MetricDefinition::factory()->create(['category_key' => 'technology', 'scoring_type' => 'boolean', 'max_score' => 3]);
+        $informationalMetric = MetricDefinition::factory()->create(['category_key' => 'technology', 'scoring_type' => 'not_scored', 'max_score' => 0]);
+
+        // 技術検出ジョブが全滅した状況を模す: 採点対象1件・情報項目1件がどちらもError。
+        MetricResult::factory()->create(['metric_definition_id' => $scoredMetric->id, 'status' => MetricResultStatus::Error]);
+        MetricResult::factory()->create(['metric_definition_id' => $informationalMetric->id, 'status' => MetricResultStatus::Error]);
+
+        $results = MetricResult::query()->with('metricDefinition')->get();
+        $calculator = new OverallScoreCalculator(
+            new MetricScorer,
+            new CategoryScoreCalculator(new CoverageCalculator),
+            new CoverageCalculator,
+            new \App\Services\Scoring\ConfidenceCalculator,
+        );
+
+        $score = $calculator->calculate(collect([$category]), $results);
+
+        $this->assertSame(2, $score->metricSummary['error']);
+        $this->assertSame(1, $score->metricSummary['scored_unavailable']);
+        $this->assertSame(1, $score->metricSummary['informational_unavailable']);
+    }
 }

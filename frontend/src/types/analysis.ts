@@ -68,6 +68,10 @@ export interface MetricSummary {
   unavailable: number;
   error: number;
   not_applicable: number;
+  /** 採点対象の指標のうち、未取得(unavailable/error)だった件数。 */
+  scored_unavailable: number;
+  /** 情報表示専用(scoring_type=not_scored)の指標のうち、未取得だった件数。 */
+  informational_unavailable: number;
 }
 
 export interface AnalysisScore {
@@ -98,6 +102,13 @@ export interface LighthouseSummary {
 }
 
 export type TechnologySummary = Record<string, boolean | string | null>;
+
+export interface HtmlAnalysisSource {
+  source: "static" | "rendered" | null;
+  fallback_used: boolean;
+  render_job_status: string | null;
+  reanalysis_job_status: string | null;
+}
 
 export interface AnalysisScreenshot {
   device: "desktop" | "mobile";
@@ -137,6 +148,8 @@ export interface MetricEvaluation {
   counts_toward_score: boolean;
   score: number | null;
   max_score: number | null;
+  /** 'static'|'rendered'|null。HtmlSeoAnalyzer由来のMetricのみ意味を持つ。 */
+  source?: string | null;
 }
 
 export interface ResultRecommendation {
@@ -171,6 +184,7 @@ export interface WebsiteAnalysisResult {
   seo: AnalysisSeoSummary | null;
   lighthouse: LighthouseSummary;
   technology: TechnologySummary;
+  html_analysis_source: HtmlAnalysisSource;
   screenshots: AnalysisScreenshot[];
   errors: AnalysisJobError[];
   metrics: MetricEvaluation[];

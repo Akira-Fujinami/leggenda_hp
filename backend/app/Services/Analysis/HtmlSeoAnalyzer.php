@@ -19,6 +19,41 @@ class HtmlSeoAnalyzer
         'pinterest' => ['pinterest.com', 'pinterest.jp'],
     ];
 
+    /**
+     * SNS判定における主要証拠(単独でplatform確定可)用のテキストキーワード。
+     * aria-label/title/img alt/svg title/svg aria-labelに対して単語境界
+     * (\b)付きで照合する。'x'は単独では曖昧すぎるため、href host
+     * (x.com/twitter.com)・aria-label等の短いラベル文字列に対してのみ
+     * 単語単位で使う(本文中の"x"のような偶然の一致は対象にしていない)。
+     */
+    private const SNS_TEXT_KEYWORDS = [
+        'facebook' => ['facebook'],
+        'instagram' => ['instagram'],
+        'x' => ['twitter', 'x'],
+        'line' => ['line'],
+        'youtube' => ['youtube'],
+        'tiktok' => ['tiktok'],
+        'linkedin' => ['linkedin'],
+        'pinterest' => ['pinterest'],
+    ];
+
+    /**
+     * SNS判定における補助証拠(単独ではplatform確定に使わない。主要証拠と
+     * 共起した場合のみconfidenceを加点する)用のclass名トークン。
+     * 'x'は`class="x"`のような汎用ユーティリティクラスと衝突しやすいため
+     * 意図的に含めない(Xの検出はhref host/aria-label/title/img alt等で行う)。
+     */
+    private const SNS_CLASS_TOKEN_PLATFORM = [
+        'facebook' => 'facebook',
+        'instagram' => 'instagram',
+        'twitter' => 'x',
+        'line' => 'line',
+        'youtube' => 'youtube',
+        'tiktok' => 'tiktok',
+        'linkedin' => 'linkedin',
+        'pinterest' => 'pinterest',
+    ];
+
     private const CONTACT_KEYWORDS = ['contact', 'inquiry', 'お問い合わせ', 'お問合せ', '問い合わせ'];
 
     private const RESERVATION_KEYWORDS = ['reserve', 'reservation', 'booking', '予約'];
@@ -27,7 +62,43 @@ class HtmlSeoAnalyzer
 
     private const PRICING_KEYWORDS = ['price', 'pricing', 'plan', 'fee', 'cost', '料金', '価格', 'プラン', '費用'];
 
-    private const FAQ_KEYWORDS = ['faq', 'q&a', 'よくある質問', 'ヘルプ', 'help'];
+    private const FAQ_KEYWORDS = ['faq', 'q&a', 'よくある質問'];
+
+    /**
+     * 「ヘルプ・サポート」系の導線をFAQと区別して検出するためのキーワード。
+     * FAQ_KEYWORDSから分離した理由: Recommendation側で「チャット・ヘルプが
+     * あれば緊急度を下げる」「FAQのみなら文言を弱めるに留める」という
+     * 段階の異なる扱いをする必要があるため。
+     */
+    private const HELP_CENTER_KEYWORDS = ['ヘルプ', 'help', 'サポート', 'support', '使い方'];
+
+    /**
+     * チャットボット導入の目安となる既知ベンダーのスクリプトホスト。
+     * 網羅的ではなく、確実にチャットウィジェットと分かるホストのみに限定する。
+     */
+    private const CHATBOT_SCRIPT_HOSTS = [
+        'tawk.to', 'intercomcdn.com', 'zdassets.com', 'karte.io', 'chatplus.jp', 'crisp.chat', 'tidiochat.com',
+    ];
+
+    private const CHATBOT_ELEMENT_TOKENS = ['chatbot', 'chat-widget', 'livechat'];
+
+    /**
+     * 固定料金ページ(PRICING_KEYWORDS)とは別に、価格付き商品・プラン・
+     * 予約カードの検出に用いる語。旅行・EC系サイトのように「固定の料金
+     * ページ」は無くても、商品カード上に価格表示がある業態を正しく評価
+     * するためのもの。
+     */
+    private const PRODUCT_PRICE_CARD_KEYWORDS = [
+        '料金', '価格', '宿泊料金', 'プラン', '宿泊プラン', 'ツアー', 'クーポン', 'キャンペーン', '最安',
+        'price', 'pricing', 'plan', 'package', 'deal', 'coupon',
+    ];
+
+    /**
+     * H1の代表値として採用しない広告見出しマーカー。文中一致(部分一致)は
+     * 「Advertisement industry trends」のような正当な見出しを誤って除外して
+     * しまうため、括弧を除いた全文一致でのみ判定する。
+     */
+    private const H1_AD_MARKER_KEYWORDS = ['PR', '広告', 'AD', 'Sponsored', 'Advertisement'];
 
     /**
      * 導入事例・お客様の声として確度の高い語のみ。「取り組み」「実績」「story」
@@ -99,6 +170,10 @@ class HtmlSeoAnalyzer
 
         $xpath = new \DOMXPath($dom);
 
+        // チャットボット埋め込みスクリプトのホスト判定は、script要素そのものが
+        // 除去される前(stripNonContentElements実行前)に行う必要がある。
+        $chatbotScriptMatch = $this->matchChatbotScriptHost($xpath);
+
         // script/style/template/noscript配下は解析対象から除外する。libxml2の
         // HTMLパーサーは、script内のJSテンプレートリテラル(例:
         // `<a href="...">${tagHTML}</a>`)に含まれるタグ様の文字列を実際のDOM
@@ -121,6 +196,8 @@ class HtmlSeoAnalyzer
             'links' => $this->analyzeLinks($xpath, $pageHost),
             'sns_links' => $this->analyzeSnsLinks($xpath, $pageUrl),
             'business_links' => $this->analyzeBusinessLinks($xpath, $pageHost),
+            'chatbot' => $this->analyzeChatbotWidget($xpath, $chatbotScriptMatch),
+            'product_price_cards' => $this->analyzeProductPriceCards($xpath),
             'third_party_reservation' => $this->analyzeThirdPartyReservationService($xpath),
             'content' => $this->analyzeContent($dom, $xpath),
             'forms' => $this->analyzeForms($xpath),
@@ -218,6 +295,7 @@ class HtmlSeoAnalyzer
         $categories = [
             'pricing' => self::PRICING_KEYWORDS,
             'faq' => self::FAQ_KEYWORDS,
+            'help_center' => self::HELP_CENTER_KEYWORDS,
             'case_study' => self::CASE_STUDY_KEYWORDS,
             'company_info' => self::COMPANY_INFO_KEYWORDS,
             'privacy_policy' => self::PRIVACY_POLICY_KEYWORDS,
@@ -595,28 +673,135 @@ class HtmlSeoAnalyzer
     }
 
     /**
-     * H1のテキストも、リンクテキストと同様に未評価のテンプレートプレースホルダー
-     * (`${...}`等)が残っていないかsanitizeする。これは解析側の誤検出だけでなく、
-     * 対象サイト自身のテンプレートがサーバーサイドで正しく評価されずに配信
-     * されているケース(実在)にも対応するため ―― count(実際に存在するh1要素数)
-     * は正しく保つが、表示用のtexts配列には採用しない。
+     * H1を「有効な代表見出し候補」と「非表示・広告見出し・記号のみ等の
+     * 除外対象」に分けて集計する。count(実際に存在するh1要素数)は常に
+     * 正しく保ち、有効件数(valid_count)が0でもcountが0とは限らないという
+     * 矛盾([count=3なのにH1なし]のような表示)を起こさないことが目的。
+     *
+     * 除外理由(excluded_reason)は以下の4種類のみ:
+     *   - empty / template_placeholder: 空文字、または未評価のテンプレート
+     *     プレースホルダー(sanitizeCandidateText参照)
+     *   - hidden: hidden属性、aria-hidden="true"、style属性内の
+     *     display:none/visibility:hiddenのいずれか(isStaticallyVisible参照)
+     *   - ad_marker: 【PR】等の広告見出しマーカーとの全文一致
+     *   - symbol_only: 記号・空白のみで構成される文字列
+     * 文字数による除外は行わない(短いブランド名・サービス名を誤って
+     * 無効化しないため)。
+     *
+     * 可視性判定は静的DOM解析の限界として、hidden属性・aria-hidden・
+     * インラインstyleのみを見る。CSSクラス経由や外部スタイルシートによる
+     * 非表示は(静的HTML/レンダリング後HTMLの文字列からは)判定できない。
+     *
+     * @return array{count: int, entries: list<array{text: string, visible: bool, valid: bool, excluded_reason: ?string}>, visible_count: int, valid_count: int, primary_text: ?string}
      */
     private function analyzeH1(\DOMXPath $xpath): array
     {
         $nodes = $xpath->query('//h1');
-        $texts = [];
+        $entries = [];
+        $visibleCount = 0;
+        $validCount = 0;
+        $primaryText = null;
+
         foreach ($nodes ?? [] as $node) {
-            $sanitized = $this->sanitizeCandidateText(trim($node->textContent));
-            if ($sanitized !== null) {
-                $texts[] = $sanitized;
+            $rawText = trim($node->textContent);
+            $visible = $node instanceof \DOMElement ? $this->isStaticallyVisible($node) : true;
+
+            if ($visible) {
+                $visibleCount++;
+            }
+
+            $sanitized = $this->sanitizeCandidateText($rawText);
+            $valid = true;
+            $excludedReason = null;
+
+            if ($sanitized === null) {
+                $valid = false;
+                $excludedReason = $rawText === '' ? 'empty' : 'template_placeholder';
+            } elseif (! $visible) {
+                $valid = false;
+                $excludedReason = 'hidden';
+            } elseif ($this->isAdMarkerText($sanitized)) {
+                $valid = false;
+                $excludedReason = 'ad_marker';
+            } elseif ($this->isSymbolOnlyText($sanitized)) {
+                $valid = false;
+                $excludedReason = 'symbol_only';
+            }
+
+            $displayText = $sanitized ?? $rawText;
+
+            $entries[] = [
+                'text' => $displayText,
+                'visible' => $visible,
+                'valid' => $valid,
+                'excluded_reason' => $excludedReason,
+            ];
+
+            if ($valid) {
+                $validCount++;
+                if ($primaryText === null) {
+                    $primaryText = $displayText;
+                }
             }
         }
 
         return [
             'count' => $nodes?->length ?? 0,
-            'texts' => $texts,
-            'primary_text' => $texts[0] ?? null,
+            'entries' => $entries,
+            'visible_count' => $visibleCount,
+            'valid_count' => $validCount,
+            'primary_text' => $primaryText,
         ];
+    }
+
+    /**
+     * hidden属性・aria-hidden="true"・インラインstyleのdisplay:none/
+     * visibility:hiddenのみを見る静的DOM解析ベースの可視性判定。CSSクラスや
+     * 外部スタイルシートによる非表示は判定できない(静的HTML文字列からは
+     * 実際の計算済みスタイルにアクセスできないため)。
+     */
+    private function isStaticallyVisible(\DOMElement $node): bool
+    {
+        if ($node->hasAttribute('hidden')) {
+            return false;
+        }
+
+        if (mb_strtolower(trim($node->getAttribute('aria-hidden'))) === 'true') {
+            return false;
+        }
+
+        $style = mb_strtolower($node->getAttribute('style'));
+        if ($style !== '' && preg_match('/display\s*:\s*none|visibility\s*:\s*hidden/', $style)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * 括弧([]/【】/())を除いた全文が広告見出しマーカーと一致する場合のみ
+     * 広告見出しとみなす。部分一致(文中一致)は正当な見出しの誤除外に
+     * つながるため行わない。
+     */
+    private function isAdMarkerText(string $text): bool
+    {
+        $normalized = trim((string) preg_replace('/^[\【\[\(]+|[\】\]\)]+$/u', '', $text));
+
+        foreach (self::H1_AD_MARKER_KEYWORDS as $marker) {
+            if (mb_strtolower($normalized) === mb_strtolower($marker)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 記号・空白のみで構成される文字列かどうか(文字数では判定しない)。
+     */
+    private function isSymbolOnlyText(string $text): bool
+    {
+        return (bool) preg_match('/^[\s\p{P}\p{S}]+$/u', $text);
     }
 
     private function analyzeCanonical(\DOMXPath $xpath, string $pageUrl): array
@@ -696,6 +881,20 @@ class HtmlSeoAnalyzer
         ];
     }
 
+    /**
+     * alt属性を5つのバケットに分離して集計する(一律に「装飾画像」として
+     * 除外・適切扱いしない)。
+     *   - missing_alt: alt属性そのものが無い(明確な違反候補)
+     *   - empty_alt: alt=""(「装飾画像候補」。role=presentation/aria-hidden
+     *     のように装飾と確定はできないため、分母には残し分子には含めない
+     *     ―― 完全に適切とは断定しない)
+     *   - decorative_count: role="presentation"またはaria-hidden="true"
+     *     (装飾と確定できるため分母・分子から除外する)
+     *   - with_alt: 有効なaltテキストあり(分子にカウント)
+     * alt_coverage = with_alt / (total - decorative_count)。empty_altは
+     * 分母には含まれるが分子には含まれない(現状同様スコアには反映されるが、
+     * raw_value上はmissing_altと明確に区別して報告する)。
+     */
     private function analyzeImages(\DOMXPath $xpath): array
     {
         $nodes = $xpath->query('//img');
@@ -703,8 +902,21 @@ class HtmlSeoAnalyzer
         $withAlt = 0;
         $emptyAlt = 0;
         $missingAlt = 0;
+        $decorativeCount = 0;
 
         foreach ($nodes ?? [] as $node) {
+            if (! $node instanceof \DOMElement) {
+                continue;
+            }
+
+            $role = mb_strtolower(trim($node->getAttribute('role')));
+            $ariaHidden = mb_strtolower(trim($node->getAttribute('aria-hidden')));
+            if ($role === 'presentation' || $ariaHidden === 'true') {
+                $decorativeCount++;
+
+                continue;
+            }
+
             if (! $node->hasAttribute('alt')) {
                 $missingAlt++;
 
@@ -720,12 +932,15 @@ class HtmlSeoAnalyzer
             $withAlt++;
         }
 
+        $scoredDenominator = $total - $decorativeCount;
+
         return [
             'total' => $total,
             'with_alt' => $withAlt,
             'empty_alt' => $emptyAlt,
             'missing_alt' => $missingAlt,
-            'alt_coverage' => $total > 0 ? round($withAlt / $total, 4) : null,
+            'decorative_count' => $decorativeCount,
+            'alt_coverage' => $scoredDenominator > 0 ? round($withAlt / $scoredDenominator, 4) : null,
         ];
     }
 
@@ -792,12 +1007,18 @@ class HtmlSeoAnalyzer
     }
 
     /**
-     * SNSリンクをプラットフォーム別に検出する。判定は実際のa[href]の遷移先
-     * ホスト名のみに基づき、本文中に「Instagram」等の語があるだけでは
-     * 検出しない。protocol-relative URL(//instagram.com/...)はページと
-     * 同じschemeとして解決し、サブドメイン(m.facebook.com等)も許容する。
+     * SNSリンクをプラットフォーム別に検出する。判定はクリック可能な
+     * a[href]要素のみを起点とし、本文中に「Instagram」等の語があるだけでは
+     * 検出しない(この安全策は変更しない)。
      *
-     * @return array{detected: bool, count: int, platforms: list<array{platform: string, url: string, text: ?string}>}
+     * href host一致だけでは検出漏れが生じる(例: 短縮URL・独自ドメイン経由の
+     * リダイレクト、テキストのみでhrefが直接SNSドメインを指さないアイコン
+     * リンク等)ため、a要素ごとに複数のシグナルを「主要証拠(単独でplatform
+     * 確定可)」と「補助証拠(単独では確定不可、主要証拠と共起した場合のみ
+     * confidenceを加点)」に分けて評価する。class名のような短い汎用トークン
+     * (例: class="x")は誤検知しやすいため補助証拠に留める。
+     *
+     * @return array{detected: bool, count: int, platforms: list<array{platform: string, url: string, label: string, source: string, confidence: float}>}
      */
     private function analyzeSnsLinks(\DOMXPath $xpath, string $pageUrl): array
     {
@@ -807,6 +1028,10 @@ class HtmlSeoAnalyzer
         $seenPlatforms = [];
 
         foreach ($nodes ?? [] as $node) {
+            if (! $node instanceof \DOMElement) {
+                continue;
+            }
+
             $href = trim($node->getAttribute('href'));
             if ($href === '') {
                 continue;
@@ -815,30 +1040,67 @@ class HtmlSeoAnalyzer
             $resolvedHref = str_starts_with($href, '//') ? "{$pageScheme}:{$href}" : $href;
             $host = strtolower((string) parse_url($resolvedHref, PHP_URL_HOST));
 
-            if ($host === '') {
-                continue;
-            }
-
-            $platform = null;
-            foreach (self::SNS_PLATFORMS as $platformKey => $hosts) {
-                foreach ($hosts as $snsHost) {
-                    if (str_ends_with($host, $snsHost)) {
-                        $platform = $platformKey;
-                        break 2;
-                    }
-                }
-            }
-
-            if ($platform === null || isset($seenPlatforms[$platform])) {
-                continue; // 未知のホスト、または同一プラットフォームの2件目以降はスキップ(代表1件のみ記録)。
-            }
-
             $text = $this->sanitizeCandidateText(trim($node->textContent)) ?? '';
-            $ariaLabel = $node instanceof \DOMElement ? ($this->sanitizeCandidateText(trim($node->getAttribute('aria-label'))) ?? '') : '';
-            $label = $text !== '' ? $text : ($ariaLabel !== '' ? $ariaLabel : ucfirst($platform));
+            $ariaLabel = $this->sanitizeCandidateText(trim($node->getAttribute('aria-label'))) ?? '';
+            $title = $this->sanitizeCandidateText(trim($node->getAttribute('title'))) ?? '';
+            $imgAlt = $this->descendantAttributeText($xpath, $node, './/img', 'alt');
+            $svgTitle = $this->descendantText($xpath, $node, './/svg/title');
+            $svgAriaLabel = $this->descendantAttributeText($xpath, $node, './/svg', 'aria-label');
 
-            $seenPlatforms[$platform] = true;
-            $found[] = ['platform' => $platform, 'url' => $href, 'text' => mb_substr($label, 0, 50)];
+            $primary = null;
+
+            if ($host !== '' && ($platform = $this->matchSnsHost($host)) !== null) {
+                $primary = ['platform' => $platform, 'source' => 'href_host', 'confidence' => 0.95];
+            }
+
+            if ($primary === null && ($platform = $this->matchSnsQueryParamHost($href)) !== null) {
+                $primary = ['platform' => $platform, 'source' => 'href_query_param', 'confidence' => 0.80];
+            }
+
+            if ($primary === null && $ariaLabel !== '' && ($platform = $this->matchSnsKeyword($ariaLabel)) !== null) {
+                $primary = ['platform' => $platform, 'source' => 'aria_label', 'confidence' => 0.70];
+            }
+
+            if ($primary === null && $title !== '' && ($platform = $this->matchSnsKeyword($title)) !== null) {
+                $primary = ['platform' => $platform, 'source' => 'title', 'confidence' => 0.70];
+            }
+
+            if ($primary === null && $svgTitle !== '' && ($platform = $this->matchSnsKeyword($svgTitle)) !== null) {
+                $primary = ['platform' => $platform, 'source' => 'svg_title', 'confidence' => 0.65];
+            }
+
+            if ($primary === null && $svgAriaLabel !== '' && ($platform = $this->matchSnsKeyword($svgAriaLabel)) !== null) {
+                $primary = ['platform' => $platform, 'source' => 'svg_aria_label', 'confidence' => 0.65];
+            }
+
+            if ($primary === null && $imgAlt !== '' && ($platform = $this->matchSnsKeyword($imgAlt)) !== null) {
+                $primary = ['platform' => $platform, 'source' => 'img_alt', 'confidence' => 0.60];
+            }
+
+            if ($primary === null) {
+                continue; // 補助証拠(class名・data属性)単独ではplatformを確定しない。
+            }
+
+            if (isset($seenPlatforms[$primary['platform']])) {
+                continue; // 同一プラットフォームの2件目以降はスキップ(代表1件のみ記録)。
+            }
+
+            // 補助証拠は、主要証拠が既に成立している同一platformの場合のみconfidenceを加点する。
+            if ($this->matchSnsClassToken($node->getAttribute('class'), $primary['platform'])
+                || $this->matchSnsKeyword($this->dataAttributeValuesText($node)) === $primary['platform']) {
+                $primary['confidence'] = min(1.0, $primary['confidence'] + 0.03);
+            }
+
+            $label = $text !== '' ? $text : ($ariaLabel !== '' ? $ariaLabel : ucfirst($primary['platform']));
+
+            $seenPlatforms[$primary['platform']] = true;
+            $found[] = [
+                'platform' => $primary['platform'],
+                'url' => $href,
+                'label' => mb_substr($label, 0, 50),
+                'source' => $primary['source'],
+                'confidence' => $primary['confidence'],
+            ];
         }
 
         return [
@@ -846,6 +1108,153 @@ class HtmlSeoAnalyzer
             'count' => count($found),
             'platforms' => array_values($found),
         ];
+    }
+
+    private function matchSnsHost(string $host): ?string
+    {
+        foreach (self::SNS_PLATFORMS as $platformKey => $hosts) {
+            foreach ($hosts as $snsHost) {
+                if (str_ends_with($host, $snsHost)) {
+                    return $platformKey;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * href内のクエリパラメータ値(リダイレクトURL等)をURLデコードし、
+     * その遷移先ホストがSNSと一致するかを見る(例: 独自の外部リンク計測
+     * リダイレクタ経由でSNSへ遷移するケース)。
+     */
+    private function matchSnsQueryParamHost(string $href): ?string
+    {
+        $query = (string) parse_url($href, PHP_URL_QUERY);
+        if ($query === '') {
+            return null;
+        }
+
+        parse_str($query, $params);
+        foreach ($params as $value) {
+            if (! is_string($value) || $value === '') {
+                continue;
+            }
+
+            $decoded = urldecode($value);
+            $host = strtolower((string) parse_url($decoded, PHP_URL_HOST));
+            if ($host === '') {
+                continue;
+            }
+
+            $platform = $this->matchSnsHost($host);
+            if ($platform !== null) {
+                return $platform;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * aria-label/title/img alt/svg title等の短いラベル文字列に対して
+     * SNSプラットフォーム名を照合する。日本語混在テキストではPCREの`\b`が
+     * (UTF-8モードでは平仮名等も`\w`とみなされるため)期待通りに機能しない
+     * ため使わない。「x」のような1文字の曖昧なキーワードのみ、ASCII英数字
+     * との連続を除外する簡易的な境界判定を行い、"next"等への誤爆を防ぐ。
+     * それ以外のキーワード(facebook/instagram等)は十分に長く誤検知しにくい
+     * ため単純な部分一致で判定する。
+     */
+    private function matchSnsKeyword(string $text): ?string
+    {
+        if ($text === '') {
+            return null;
+        }
+
+        $lower = mb_strtolower($text);
+        foreach (self::SNS_TEXT_KEYWORDS as $platformKey => $keywords) {
+            foreach ($keywords as $keyword) {
+                $keywordLower = mb_strtolower($keyword);
+
+                if (mb_strlen($keywordLower) <= 1) {
+                    if (preg_match('/(?<![a-z0-9])'.preg_quote($keywordLower, '/').'(?![a-z0-9])/u', $lower)) {
+                        return $platformKey;
+                    }
+
+                    continue;
+                }
+
+                if (str_contains($lower, $keywordLower)) {
+                    return $platformKey;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 補助証拠。class属性を空白/ハイフン/アンダースコアで分割したトークンが
+     * 指定platformのトークンと完全一致するかのみを見る(部分一致は誤検知の元)。
+     */
+    private function matchSnsClassToken(string $classAttribute, string $platform): bool
+    {
+        if ($classAttribute === '') {
+            return false;
+        }
+
+        $tokens = preg_split('/[\s\-_]+/u', mb_strtolower($classAttribute)) ?: [];
+        foreach ($tokens as $token) {
+            if ((self::SNS_CLASS_TOKEN_PLATFORM[$token] ?? null) === $platform) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function dataAttributeValuesText(\DOMElement $node): string
+    {
+        $values = [];
+        foreach ($node->attributes ?? [] as $attribute) {
+            if ($attribute instanceof \DOMAttr && str_starts_with($attribute->name, 'data-')) {
+                $values[] = $attribute->value;
+            }
+        }
+
+        return implode(' ', $values);
+    }
+
+    /**
+     * $contextの子孫要素($relativeQueryで指定)から、最初に見つかった
+     * 空でない属性値を返す(未評価テンプレートプレースホルダーはsanitize)。
+     */
+    private function descendantAttributeText(\DOMXPath $xpath, \DOMElement $context, string $relativeQuery, string $attribute): string
+    {
+        $nodes = $xpath->query($relativeQuery, $context);
+        foreach ($nodes ?? [] as $node) {
+            if ($node instanceof \DOMElement) {
+                $value = $this->sanitizeCandidateText(trim($node->getAttribute($attribute)));
+                if ($value !== null && $value !== '') {
+                    return $value;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    private function descendantText(\DOMXPath $xpath, \DOMElement $context, string $relativeQuery): string
+    {
+        $nodes = $xpath->query($relativeQuery, $context);
+        foreach ($nodes ?? [] as $node) {
+            $value = $this->sanitizeCandidateText(trim($node->textContent));
+            if ($value !== null && $value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
     }
 
     private function analyzeContent(\DOMDocument $dom, \DOMXPath $xpath): array
@@ -906,6 +1315,170 @@ class HtmlSeoAnalyzer
             'reservation_like' => $this->containsAny($bodyTextLower, self::RESERVATION_KEYWORDS),
             'document_request_like' => $this->containsAny($bodyTextLower, self::DOCUMENT_REQUEST_KEYWORDS),
         ];
+    }
+
+    /**
+     * script[src]の既知ベンダーホストを判定する。stripNonContentElements()が
+     * script要素自体を除去してしまう前に呼び出す必要がある。
+     */
+    private function matchChatbotScriptHost(\DOMXPath $xpath): ?string
+    {
+        foreach ($xpath->query('//script[@src]') ?? [] as $node) {
+            if (! $node instanceof \DOMElement) {
+                continue;
+            }
+
+            $host = strtolower((string) parse_url(trim($node->getAttribute('src')), PHP_URL_HOST));
+            if ($host === '') {
+                continue;
+            }
+
+            foreach (self::CHATBOT_SCRIPT_HOSTS as $chatbotHost) {
+                if (str_ends_with($host, $chatbotHost)) {
+                    return $chatbotHost;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * チャットサポート導入の目安を、script[src]の既知ベンダーホスト
+     * (matchChatbotScriptHostで事前に判定済み)、または要素id/classの
+     * 既知トークンから検出する。
+     *
+     * @return array{detected: bool, matched: ?string}
+     */
+    private function analyzeChatbotWidget(\DOMXPath $xpath, ?string $scriptMatch): array
+    {
+        if ($scriptMatch !== null) {
+            return ['detected' => true, 'matched' => $scriptMatch];
+        }
+
+        foreach ($xpath->query('//*[@id or @class]') ?? [] as $node) {
+            if (! $node instanceof \DOMElement) {
+                continue;
+            }
+
+            $haystack = mb_strtolower($node->getAttribute('id').' '.$node->getAttribute('class'));
+            foreach (self::CHATBOT_ELEMENT_TOKENS as $chatbotToken) {
+                if (str_contains($haystack, $chatbotToken)) {
+                    return ['detected' => true, 'matched' => $chatbotToken];
+                }
+            }
+        }
+
+        return ['detected' => false, 'matched' => null];
+    }
+
+    /**
+     * 固定の料金ページリンクとは別に、価格表記(¥/円)と予約・プランCTAが
+     * 同一コンテナ要素内に共存する箇所を検出する(旅行・EC系サイトのように
+     * 固定料金ページが無くても商品カード上に価格がある業態のため)。
+     * 本文中に「円」が単独で出るだけではpresent=trueにしない。
+     *
+     * ヒューリスティックであり網羅的な精度は保証しない(コンテナ判定は
+     * 直近のli/div/article/section祖先を使う簡易的なものである)。
+     *
+     * @return array{present: bool, count: int, confidence: ?float, sample_text: ?string}
+     */
+    private function analyzeProductPriceCards(\DOMXPath $xpath): array
+    {
+        $priceCandidates = [];
+        foreach ($xpath->query('//text()') ?? [] as $textNode) {
+            $text = trim($textNode->textContent);
+            if ($text === '' || ! preg_match('/[¥￥]\s?[\d,]+|[\d,]+\s?円/u', $text)) {
+                continue;
+            }
+
+            $container = $this->nearestContainerAncestor($textNode);
+            if ($container !== null) {
+                $priceCandidates[spl_object_id($container)] = $container;
+            }
+        }
+
+        $matchedContainers = [];
+        $bestConfidence = 0.0;
+        $sampleText = null;
+
+        foreach ($priceCandidates as $container) {
+            $duplicate = false;
+            foreach ($matchedContainers as $existing) {
+                if ($existing === $container
+                    || $this->isDescendantOf($container, $existing)
+                    || $this->isDescendantOf($existing, $container)) {
+                    $duplicate = true;
+
+                    break;
+                }
+            }
+
+            if ($duplicate) {
+                continue;
+            }
+
+            $hasCta = false;
+            foreach ($xpath->query('.//a | .//button', $container) ?? [] as $ctaNode) {
+                $ctaText = mb_strtolower($this->sanitizeCandidateText(trim($ctaNode->textContent)) ?? '');
+                $ctaLabel = $ctaNode instanceof \DOMElement
+                    ? mb_strtolower($this->sanitizeCandidateText(trim($ctaNode->getAttribute('aria-label'))) ?? '')
+                    : '';
+
+                if ($this->containsAny($ctaText, self::PRODUCT_PRICE_CARD_KEYWORDS) || $this->containsAny($ctaLabel, self::PRODUCT_PRICE_CARD_KEYWORDS)) {
+                    $hasCta = true;
+
+                    break;
+                }
+            }
+
+            $containerText = trim($container->textContent);
+            $hasKeywordNearby = $this->containsAny(mb_strtolower($containerText), self::PRODUCT_PRICE_CARD_KEYWORDS);
+
+            if (! $hasCta && ! $hasKeywordNearby) {
+                continue;
+            }
+
+            $matchedContainers[] = $container;
+            $bestConfidence = max($bestConfidence, $hasCta ? 0.85 : 0.6);
+            $sampleText ??= mb_substr($containerText, 0, 100);
+        }
+
+        return [
+            'present' => $matchedContainers !== [],
+            'count' => count($matchedContainers),
+            'confidence' => $matchedContainers !== [] ? $bestConfidence : null,
+            'sample_text' => $sampleText,
+        ];
+    }
+
+    private function nearestContainerAncestor(\DOMNode $node): ?\DOMElement
+    {
+        $containerTags = ['li', 'div', 'article', 'section'];
+        $parent = $node->parentNode;
+
+        while ($parent !== null) {
+            if ($parent instanceof \DOMElement && in_array(strtolower($parent->tagName), $containerTags, true)) {
+                return $parent;
+            }
+            $parent = $parent->parentNode;
+        }
+
+        return null;
+    }
+
+    private function isDescendantOf(\DOMNode $node, \DOMNode $ancestor): bool
+    {
+        $parent = $node->parentNode;
+
+        while ($parent !== null) {
+            if ($parent === $ancestor) {
+                return true;
+            }
+            $parent = $parent->parentNode;
+        }
+
+        return false;
     }
 
     /**

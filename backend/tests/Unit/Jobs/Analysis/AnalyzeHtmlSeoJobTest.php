@@ -214,6 +214,81 @@ class AnalyzeHtmlSeoJobTest extends TestCase
         $this->assertSame(MetricResultStatus::Unavailable, $resultFor('heading_structure_present')->status);
     }
 
+    public function test_h1_single_is_not_found_not_unavailable_when_only_invalid_h1_exists_on_a_normal_page(): void
+    {
+        // 本文は十分にあるページ(body_is_effectively_emptyではない)で、
+        // H1が広告見出しのみの場合、valid_count=0なのでNotFound(設置していない)
+        // として扱う ―― Unavailable(そもそも判定不能)と混同しないことの確認。
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        $html = '<html><head><title>Example</title></head><body>'
+            .'<h1>【PR】</h1>'
+            .'<p>'.str_repeat('本文コンテンツ ', 30).'</p>'
+            .'</body></html>';
+
+        $rawHtmlPath = app(AnalysisStoragePaths::class)->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'homepage.html');
+        Storage::disk('analysis')->put($rawHtmlPath, $html);
+
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'final_url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+            'http_status' => 200,
+            'raw_html_path' => $rawHtmlPath,
+            'fetched_at' => now(),
+        ]);
+
+        (new AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $h1 = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'h1_single'))
+            ->where('website_analysis_id', $websiteAnalysis->id)->first();
+        $heading = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'heading_structure_present'))
+            ->where('website_analysis_id', $websiteAnalysis->id)->first();
+
+        $this->assertSame(MetricResultStatus::NotFound, $h1->status);
+        $this->assertFalse($h1->normalized_value['value']);
+        $this->assertSame(0, $h1->raw_value['valid_count']);
+        $this->assertSame(MetricResultStatus::NotFound, $heading->status);
+        $this->assertFalse($heading->normalized_value['value']);
+    }
+
+    public function test_h1_single_stays_success_with_multiple_valid_h1_even_though_normalized_value_is_false(): void
+    {
+        // status(success/not_found)とnormalized_value(採点専用の
+        // 「ちょうど1件か」)の意味が別であることの回帰テスト。有効なH1が
+        // 2件ある場合、count>0をfalse扱いしてはいけない(status=Successの
+        // まま)が、normalized_value(=exactly one)はfalseになってよい。
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        $html = '<html><head><title>Example</title></head><body>'
+            .'<h1>見出しA</h1><h1>見出しB</h1>'
+            .'<p>'.str_repeat('本文コンテンツ ', 30).'</p>'
+            .'</body></html>';
+
+        $rawHtmlPath = app(AnalysisStoragePaths::class)->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'homepage.html');
+        Storage::disk('analysis')->put($rawHtmlPath, $html);
+
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'final_url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+            'http_status' => 200,
+            'raw_html_path' => $rawHtmlPath,
+            'fetched_at' => now(),
+        ]);
+
+        (new AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $h1 = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'h1_single'))
+            ->where('website_analysis_id', $websiteAnalysis->id)->first();
+
+        $this->assertSame(MetricResultStatus::Success, $h1->status);
+        $this->assertFalse($h1->normalized_value['value']);
+        $this->assertSame(2, $h1->raw_value['valid_count']);
+    }
+
     public function test_prefers_rendered_html_over_static_html_when_both_are_available(): void
     {
         $websiteAnalysis = WebsiteAnalysis::factory()->create();
@@ -251,6 +326,40 @@ class AnalyzeHtmlSeoJobTest extends TestCase
         $this->assertTrue($h1->normalized_value['value']);
         $this->assertTrue($viewport->normalized_value['value']);
         $this->assertSame('rendered', $h1->raw_value['html_source']);
+    }
+
+    public function test_records_all_metrics_as_error_when_html_analysis_itself_fails(): void
+    {
+        // HTMLは取得できているが解析処理自体が例外を投げた場合、
+        // recordAllUnavailable(取得不能)ではなくrecordAllError(解析失敗)として
+        // 全指標(h1_singleを含む)を記録する ―― H1のerror状態が到達可能で
+        // あることの確認。
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        $rawHtmlPath = app(AnalysisStoragePaths::class)->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'homepage.html');
+        Storage::disk('analysis')->put($rawHtmlPath, '<html><body><h1>Hello</h1></body></html>');
+
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'final_url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+            'http_status' => 200,
+            'raw_html_path' => $rawHtmlPath,
+            'fetched_at' => now(),
+        ]);
+
+        $this->mock(\App\Services\Analysis\HtmlSeoAnalyzer::class, function ($mock) {
+            $mock->shouldReceive('analyze')->andThrow(new \RuntimeException('DOM parse failed'));
+        });
+
+        (new AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $h1 = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'h1_single'))
+            ->where('website_analysis_id', $websiteAnalysis->id)->first();
+
+        $this->assertSame(MetricResultStatus::Error, $h1->status);
+        $this->assertSame('DOM parse failed', $h1->error_message);
     }
 
     public function test_records_form_input_burden_as_not_found_when_there_is_no_form(): void

@@ -7,6 +7,7 @@ export const JOB_TYPE_LABELS: Record<string, string> = {
   capture_screenshot_mobile: "スクリーンショット(モバイル)",
   run_lighthouse: "Lighthouse計測",
   analyze_html_seo: "SEO解析",
+  reanalyze_rendered_html: "レンダリング後の再解析",
   detect_technology: "使用技術検出",
   fetch_external_seo_data: "外部SEOデータ取得",
   finalize_website_analysis: "サイト分析の確定",

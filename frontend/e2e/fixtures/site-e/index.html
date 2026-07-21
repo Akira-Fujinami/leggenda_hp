@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>E2E Fixture Site E | JS描画型fixture</title>
+  <meta name="description" content="E2Eテスト用のfixtureサイトE。静的HTMLの一次解析では何も検出されず、JavaScript実行後のレンダリング済みHTMLに対する二次解析でH1・SNS・価格カード・固定CTA・チャットボットが検出されることを確認する。">
+  <link rel="canonical" href="http://e2e-fixture-e:8080/">
+  <meta name="robots" content="index, follow">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="/favicon.ico">
+</head>
+<body>
+  <p id="loading-placeholder">
+    Loading... このコンテンツはJavaScript実行後に動的に構築されます。
+    静的HTML(JS実行前)の時点ではH1・SNSリンク・価格カード・固定CTA・チャットボットの
+    いずれも存在しません。
+  </p>
+  <div id="app"></div>
+
+  <script>
+    // JS実行後にのみDOMへ挿入されるコンテンツ(静的HTML取得では検出できない)。
+    document.addEventListener('DOMContentLoaded', function () {
+      var app = document.getElementById('app');
+      app.innerHTML =
+        '<h1>JS描画された宿泊プランランキング</h1>' +
+        '<nav>' +
+        '  <a href="https://www.facebook.com/example">Facebook公式ページ</a>' +
+        '  <a href="https://redirect.example.com/out?id=1" aria-label="Xで最新情報をチェック"></a>' +
+        '  <a href="https://redirect.example.com/out2"><img src="/icons/instagram.png" alt="Instagram公式アカウント"></a>' +
+        '  <a href="https://redirect.example.com/out3" title="公式LINEアカウントはこちら"></a>' +
+        '  <a href="https://track.example.com/click?to=https%3A%2F%2Fwww.youtube.com%2Fexample">動画チャンネル</a>' +
+        '</nav>' +
+        '<div class="plan-card">' +
+        '  <p>JS描画プランA 15,000円〜(2名1室利用時)</p>' +
+        '  <a href="/book/room-a">予約する</a>' +
+        '</div>' +
+        '<p>' + Array(20).fill('本文コンテンツ').join(' ') + '</p>';
+
+      var fixedCta = document.createElement('a');
+      fixedCta.href = '/contact';
+      fixedCta.textContent = 'お問い合わせ';
+      fixedCta.setAttribute('aria-label', 'お問い合わせ');
+      fixedCta.style.position = 'fixed';
+      fixedCta.style.bottom = '16px';
+      fixedCta.style.right = '16px';
+      fixedCta.style.width = '140px';
+      fixedCta.style.height = '48px';
+      fixedCta.style.display = 'block';
+      fixedCta.style.background = '#2563eb';
+      fixedCta.style.color = '#fff';
+      document.body.appendChild(fixedCta);
+
+      var chatbot = document.createElement('div');
+      chatbot.id = 'chat-widget-container';
+      chatbot.className = 'chat-widget';
+      chatbot.textContent = 'チャットでお問い合わせ';
+      document.body.appendChild(chatbot);
+
+      document.getElementById('loading-placeholder').remove();
+    });
+  </script>
+</body>
+</html>

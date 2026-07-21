@@ -21,6 +21,13 @@ trait RecordsMetricResults
      *                                  (bool/number)。status=Successのときのみ意味を持つ。
      * @param  array<string, mixed>|null  $rawValue
      * @param  array<string, mixed>|null  $evidence
+     * @param  ?string  $source  静的HTML解析('static')かレンダリング済みHTML
+     *                           解析('rendered')かの区別。nullを渡す呼び出し元
+     *                           (Lighthouse/技術検出等、source優先度の概念が
+     *                           無いジョブ)は従来通り無条件に上書きする
+     *                           (挙動変化なし)。非nullを渡す場合のみ、既存行の
+     *                           sourceより優先度が低ければ書き込みをスキップし、
+     *                           renderedの結果をstaticが後から巻き戻すことを防ぐ。
      */
     private function recordMetric(
         int $websiteAnalysisId,
@@ -33,11 +40,23 @@ trait RecordsMetricResults
         ?string $errorMessage = null,
         ?int $analysisPageId = null,
         float $confidence = 1.0,
+        ?string $source = null,
     ): void {
         $definition = MetricDefinition::query()->where('key', $key)->where('is_active', true)->first();
 
         if ($definition === null) {
             return;
+        }
+
+        if ($source !== null) {
+            $existing = MetricResult::query()
+                ->where('website_analysis_id', $websiteAnalysisId)
+                ->where('metric_definition_id', $definition->id)
+                ->first();
+
+            if ($existing !== null && $this->metricSourceRank($source) < $this->metricSourceRank($existing->source)) {
+                return;
+            }
         }
 
         MetricResult::query()->updateOrCreate(
@@ -48,11 +67,24 @@ trait RecordsMetricResults
                 'normalized_value' => $normalizedValue !== null ? ['value' => $normalizedValue] : null,
                 'status' => $status,
                 'evidence' => $evidence,
+                'source' => $source,
                 'confidence' => $confidence,
                 'error_code' => $errorCode,
                 'error_message' => $errorMessage,
                 'measured_at' => now(),
             ],
         );
+    }
+
+    /**
+     * rendered > static > (未設定)。数値が大きいほど優先度が高い。
+     */
+    private function metricSourceRank(?string $source): int
+    {
+        return match ($source) {
+            'rendered' => 2,
+            'static' => 1,
+            default => 0,
+        };
     }
 }

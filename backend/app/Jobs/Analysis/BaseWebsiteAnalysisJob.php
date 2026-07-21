@@ -48,11 +48,34 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
 
     /**
      * 実際の処理。想定内の失敗はAnalysisExceptionを投げること。
-     * 成功/失敗によらず後続ジョブの起動が必要な場合は、process()内で
-     * 自前のtry/finallyを使い$pipelineを使って行うこと
-     * (例: FetchStaticPageJob → AnalyzeHtmlSeoJob)。
+     * 成功/失敗によらず後続ジョブの起動が必要な場合(例: FetchStaticPageJob →
+     * AnalyzeHtmlSeoJob)は、process()内で自前のtry/finallyを使わず、
+     * onWebsiteJobTerminal()をオーバーライドして行うこと(下記docblock参照)。
      */
     abstract protected function process(AnalysisJobRecord $record, WebsiteAnalysis $websiteAnalysis, AnalysisPipeline $pipeline): void;
+
+    /**
+     * このジョブ自身のAnalysisJob行が実際に終端状態(Completed/Failed)へ
+     * 確定した瞬間にのみ、通る経路によらず正確に1回呼び出されるフック。
+     * 後続ジョブのdispatch(カスケード起動)はここで行うこと。
+     *
+     * process()自身のtry/finallyでカスケードdispatchを行ってはいけない
+     * ―― process()のfinallyは、リトライのためrelease()される試行でも
+     * 無条件に実行されてしまう。後続ジョブは(ShouldBeUnique+
+     * AnalysisPipeline::markRunning()の終端状態チェックにより)一度
+     * Completedになると二度と実行されないため、「まだ結果が確定していない
+     * 試行」で後続を起動してしまうと、後続がno-op相当の結果を記録して
+     * 終端化し、その後の再試行が実際に成功しても結果が反映されない
+     * (サイレントなデータロス)まま放置される。このフックはhandle()の
+     * 3箇所(成功時markCompleted後、AnalysisException非リトライ時の
+     * markFailed後、汎用\Throwableのmarkfailed後)と、failed()の
+     * markFailed後の計4箇所――いずれも「本当にterminalへ確定した後」
+     * ――からのみ呼ばれ、release()で戻る2箇所からは呼ばれない。
+     */
+    protected function onWebsiteJobTerminal(AnalysisPipeline $pipeline): void
+    {
+        // 既定はno-op。
+    }
 
     public function uniqueId(): string
     {
@@ -76,6 +99,7 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
         try {
             $this->process($record, $websiteAnalysis, $pipeline);
             $pipeline->markCompleted($record);
+            $this->onWebsiteJobTerminal($pipeline);
         } catch (AnalysisException $e) {
             if ($e->errorCode->isRetryable() && $this->attempts() < $this->tries && $this->canRelease()) {
                 $this->release($this->nextBackoffSeconds());
@@ -84,6 +108,7 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
             }
 
             $pipeline->markFailed($record, $e->errorCode, $e->getMessage());
+            $this->onWebsiteJobTerminal($pipeline);
         } catch (\Throwable $e) {
             report($e);
 
@@ -94,6 +119,7 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
             }
 
             $pipeline->markFailed($record, AnalysisErrorCode::UnknownError, '予期しないエラーが発生しました。');
+            $this->onWebsiteJobTerminal($pipeline);
         } finally {
             $pipeline->updateWebsiteAnalysisProgress($this->websiteAnalysisId);
             $pipeline->maybeFinalizeWebsiteAnalysis($this->websiteAnalysisId);
@@ -127,6 +153,7 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
         }
 
         $pipeline->markFailed($record, AnalysisErrorCode::UnknownError, 'ジョブがタイムアウトしたか、想定外のエラーで終了しました。');
+        $this->onWebsiteJobTerminal($pipeline);
 
         $pipeline->updateWebsiteAnalysisProgress($this->websiteAnalysisId);
         $pipeline->maybeFinalizeWebsiteAnalysis($this->websiteAnalysisId);

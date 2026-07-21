@@ -5,8 +5,8 @@ import type { MetricEvaluation } from "@/types/analysis";
 
 function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation {
   return {
-    key: "pricing_info_link_present", name: "料金情報リンク", category_key: "content", unit: null,
-    scoring_type: "boolean", status: "not_found", value: false, raw_value: null, min_value: null,
+    key: "pricing_info_link_present", name: "料金情報リンク", category_key: "content", value_type: "boolean", unit: null,
+    scoring_type: "boolean", status: "not_found", value: false, raw_value: null, evidence: null, min_value: null,
     target_value: null, max_value: null, higher_is_better: true, confidence: 1, source_type: "static_html",
     measured_at: null, error_code: null, error_message: null, counts_toward_score: false, score: null, max_score: null,
     ...overrides,
@@ -51,5 +51,30 @@ describe("ContentDetails", () => {
     render(<ContentDetails metrics={[metric]} />);
 
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("shows a priced product/plan card as distinct from a fixed pricing page link", () => {
+    const priceCardMetric = makeMetric({
+      key: "pricing_card_or_product_price_present", name: "価格付き商品・プラン", scoring_type: "not_scored",
+      status: "success", value: true,
+      raw_value: { present: true, count: 3, confidence: 0.85, sample_text: "宿泊プランA 10,000円〜" },
+    });
+
+    render(<ContentDetails metrics={[priceCardMetric]} />);
+
+    expect(screen.getByText("価格付き商品・プラン")).toBeInTheDocument();
+    expect(screen.getByText(/宿泊プランA 10,000円〜/)).toBeInTheDocument();
+  });
+
+  it("shows a help center row separately from FAQ", () => {
+    const helpCenterMetric = makeMetric({
+      key: "help_center_link_present", name: "ヘルプ・サポート導線", scoring_type: "not_scored",
+      status: "success", value: true,
+      raw_value: { url: "https://example.com/help", text: "ヘルプ", confidence: 0.75, link_type: "internal" },
+    });
+
+    render(<ContentDetails metrics={[helpCenterMetric]} />);
+
+    expect(screen.getByText("ヘルプ・サポート導線")).toBeInTheDocument();
   });
 });

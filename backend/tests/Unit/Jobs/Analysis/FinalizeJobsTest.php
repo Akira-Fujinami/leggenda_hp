@@ -106,6 +106,53 @@ class FinalizeJobsTest extends TestCase
         $this->assertSame(WebsiteAnalysisStatus::Failed, $websiteAnalysis->refresh()->status);
     }
 
+    /**
+     * static/rendered競合修正の統合確認: ReanalyzeRenderedHtmlJobがterminalに
+     * なるまでFinalizeWebsiteAnalysisJobが起動しないこと、起動後は
+     * レンダリング済みHTMLに基づく最終結果でRecommendationが生成される
+     * ことを確認する。
+     */
+    public function test_finalize_waits_for_reanalyze_rendered_html_job_before_running(): void
+    {
+        Queue::fake([FinalizeWebsiteAnalysisJob::class]);
+
+        $websiteAnalysis = WebsiteAnalysis::factory()->create(['status' => WebsiteAnalysisStatus::Running]);
+        $pipeline = app(AnalysisPipeline::class);
+
+        // ReanalyzeRenderedHtml以外を全て終端状態にする。
+        foreach (JobType::websiteFanOutTypes() as $jobType) {
+            if ($jobType === JobType::ReanalyzeRenderedHtml) {
+                AnalysisJob::factory()->create([
+                    'analysis_id' => $websiteAnalysis->analysis_id,
+                    'website_analysis_id' => $websiteAnalysis->id,
+                    'job_type' => $jobType,
+                    'status' => AnalysisJobStatus::Pending,
+                ]);
+
+                continue;
+            }
+
+            AnalysisJob::factory()->create([
+                'analysis_id' => $websiteAnalysis->analysis_id,
+                'website_analysis_id' => $websiteAnalysis->id,
+                'job_type' => $jobType,
+                'status' => AnalysisJobStatus::Completed,
+            ]);
+        }
+
+        $pipeline->maybeFinalizeWebsiteAnalysis($websiteAnalysis->id);
+        Queue::assertNotPushed(FinalizeWebsiteAnalysisJob::class);
+
+        // ReanalyzeRenderedHtmlJobが終端になって初めてFinalizeが起動する。
+        AnalysisJob::query()
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('job_type', JobType::ReanalyzeRenderedHtml)
+            ->update(['status' => AnalysisJobStatus::Completed]);
+
+        $pipeline->maybeFinalizeWebsiteAnalysis($websiteAnalysis->id);
+        Queue::assertPushed(FinalizeWebsiteAnalysisJob::class, 1);
+    }
+
     public function test_pipeline_triggers_finalize_only_after_all_fan_out_jobs_are_terminal(): void
     {
         Queue::fake([FinalizeWebsiteAnalysisJob::class]);

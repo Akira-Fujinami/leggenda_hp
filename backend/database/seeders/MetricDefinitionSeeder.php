@@ -140,6 +140,11 @@ class MetricDefinitionSeeder extends Seeder
             ['key' => 'company_info_link_present', 'name' => '会社概要リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 80],
             ['key' => 'privacy_policy_link_present', 'name' => 'プライバシーポリシーリンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 90],
             ['key' => 'faq_link_present', 'name' => 'FAQ/よくある質問リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 100],
+            ['key' => 'help_center_link_present', 'name' => 'ヘルプ・サポート導線', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 105],
+            // 固定料金ページ(pricing_info_link_present)とは別に、価格付き商品・
+            // プラン・予約カードの有無を情報表示する(旅行・EC系サイトのように
+            // 固定料金ページが無くても価格表示のある業態を正しく評価するため)。
+            ['key' => 'pricing_card_or_product_price_present', 'name' => '価格付き商品・プラン', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 65],
         ];
     }
 
@@ -203,6 +208,8 @@ class MetricDefinitionSeeder extends Seeder
             // 予約手段(自社フォームか外部予約サービスか)は事業内容によって優劣がつくものではないため採点対象外。
             ['key' => 'external_reservation_service_detected', 'name' => '外部予約サービス利用', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 100],
             ['key' => 'recruit_link_present', 'name' => '採用情報リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 110],
+            // チャットサポートの有無は事業内容によって優劣がつくものではないため採点対象外。
+            ['key' => 'chatbot_detected', 'name' => 'チャットサポート', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 115],
             // ページ全体のフォーム数・入力項目総数・代表フォーム自体の項目数は、
             // 「フォーム入力負担」(=代表フォームの必須項目数)とは別の情報として
             // 表示する(採点はform_input_burdenのみで行い、二重採点しない)。

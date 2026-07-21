@@ -4,6 +4,26 @@ import { findMetric } from "@/features/analysis/results/metric-lookup";
 import type { MetricEvaluation } from "@/types/analysis";
 
 const BURDEN_TIER_LABEL: Record<string, string> = { small: "少ない", medium: "普通", large: "多い" };
+
+const SNS_PLATFORM_LABELS: Record<string, string> = {
+  facebook: "Facebook",
+  instagram: "Instagram",
+  x: "X",
+  line: "LINE",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+  linkedin: "LinkedIn",
+  pinterest: "Pinterest",
+};
+
+interface SnsPlatformRaw {
+  platform: string;
+  url: string;
+  label?: string;
+  source?: string;
+  confidence?: number;
+}
+
 const REPRESENTATIVE_FORM_REASON_LABEL: Record<string, string> = {
   form_attributes: "問い合わせ・相談を示すフォーム属性から判定",
   nearby_heading: "直前の見出し(問い合わせ・相談等)から判定",
@@ -27,8 +47,13 @@ export function ConversionDetails({ metrics }: { metrics: MetricEvaluation[] }) 
   const representativeFieldCount = findMetric(metrics, "representative_form_field_count");
   const externalReservation = findMetric(metrics, "external_reservation_service_detected");
   const recruit = findMetric(metrics, "recruit_link_present");
+  const chatbot = findMetric(metrics, "chatbot_detected");
 
   const fixedCtaRaw = fixedCta?.raw_value as { text?: string | null; href?: string | null; position?: string | null } | null;
+  const snsRaw = sns?.raw_value as { platforms?: SnsPlatformRaw[] } | null;
+  const snsPlatformNames = snsRaw?.platforms?.length
+    ? snsRaw.platforms.map((p) => SNS_PLATFORM_LABELS[p.platform] ?? p.platform).join("、")
+    : null;
   const burdenRaw = formBurden?.raw_value as { tier?: string | null; representative_form_reason?: string | null } | null;
   const tierLabel = burdenRaw?.tier ? (BURDEN_TIER_LABEL[burdenRaw.tier] ?? burdenRaw.tier) : null;
   const reasonLabel = burdenRaw?.representative_form_reason
@@ -46,7 +71,24 @@ export function ConversionDetails({ metrics }: { metrics: MetricEvaluation[] }) 
         {contact && <MetricEvaluationCard metric={contact} label="問い合わせ導線" />}
         {reservation && <MetricEvaluationCard metric={reservation} label="予約導線" />}
         {documentRequest && <MetricEvaluationCard metric={documentRequest} label="資料請求導線" />}
-        {sns && <MetricEvaluationCard metric={sns} label="SNSリンク" />}
+        {sns && (
+          <div className="space-y-1">
+            <MetricEvaluationCard metric={sns} label="SNSリンク" description={snsPlatformNames ?? undefined} />
+            {snsRaw?.platforms && snsRaw.platforms.length > 0 && (
+              <details className="rounded-md border p-2 text-xs text-muted-foreground">
+                <summary className="cursor-pointer">SNSリンクのURLを表示({snsRaw.platforms.length}件)</summary>
+                <ul className="mt-1 space-y-0.5">
+                  {snsRaw.platforms.map((p) => (
+                    <li key={p.platform} className="truncate">
+                      {SNS_PLATFORM_LABELS[p.platform] ?? p.platform}: {p.url}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+        {chatbot && <MetricEvaluationCard metric={chatbot} label="チャットサポート" />}
         {ctaCount && <MetricEvaluationCard metric={ctaCount} label="CTA数(合計)" />}
         {fixedCta && (
           <MetricEvaluationCard

@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisStatusBadge } from "@/features/analysis/analysis-status-badge";
 import { useAnalysisResults } from "@/features/analysis/hooks";
+import { jobTypeLabel } from "@/features/analysis/job-labels";
 import { AnalysisSummary } from "@/features/analysis/results/analysis-summary";
 import { CategoryScoreCard } from "@/features/analysis/results/category-score-card";
 import { ContentDetails } from "@/features/analysis/results/content-details";
@@ -58,7 +59,21 @@ export default function AnalysisResultsPage({ params }: { params: Promise<{ id: 
 
       {analysis.status === "partial" && (
         <Alert>
-          <AlertDescription>一部の分析項目を取得できませんでした。取得済みの結果を表示しています。</AlertDescription>
+          <AlertDescription>
+            <p>一部の分析項目を取得できませんでした。取得済みの結果を表示しています。</p>
+            <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+              {analysis.websites.map((website) => (
+                <li key={website.website_analysis_id}>
+                  {website.website_name ?? `サイト #${website.website_id}`}:{" "}
+                  {website.status === "partial"
+                    ? `一部完了${website.errors[0] ? `(${jobTypeLabel(website.errors[0].job_type)}に失敗)` : ""}`
+                    : website.status === "completed"
+                      ? "完了"
+                      : website.status}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
         </Alert>
       )}
 
@@ -108,11 +123,16 @@ function WebsiteResultSections({ website, generatedAt }: { website: WebsiteAnaly
           <div>
             <CardTitle>{website.website_name ?? `サイト #${website.website_id}`}</CardTitle>
             {website.url && <p className="text-xs text-muted-foreground">{website.url}</p>}
+            {website.status === "partial" && website.errors[0] && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {jobTypeLabel(website.errors[0].job_type)}に失敗したため、一部の分析項目が未取得です。
+              </p>
+            )}
           </div>
           <AnalysisStatusBadge status={website.status} />
         </CardHeader>
         <CardContent>
-          <DataQualityNotice score={score} />
+          <DataQualityNotice score={score} htmlAnalysisSource={website.html_analysis_source} />
         </CardContent>
       </Card>
 
@@ -121,6 +141,7 @@ function WebsiteResultSections({ website, generatedAt }: { website: WebsiteAnaly
         websiteName={website.website_name}
         score={score}
         recommendations={website.recommendations}
+        metrics={metrics}
         generatedAt={generatedAt}
       />
 

@@ -25,8 +25,11 @@ export function ContentDetails({ metrics }: { metrics: MetricEvaluation[] }) {
   const companyInfo = findMetric(metrics, "company_info_link_present");
   const privacyPolicy = findMetric(metrics, "privacy_policy_link_present");
   const faq = findMetric(metrics, "faq_link_present");
+  const helpCenter = findMetric(metrics, "help_center_link_present");
+  const priceCard = findMetric(metrics, "pricing_card_or_product_price_present");
 
   const altRaw = altCoverage?.raw_value as { total?: number; with_alt?: number; missing_alt?: number } | null;
+  const priceCardRaw = priceCard?.raw_value as { count?: number; sample_text?: string | null } | null;
 
   return (
     <Card>
@@ -50,10 +53,22 @@ export function ContentDetails({ metrics }: { metrics: MetricEvaluation[] }) {
         {externalLinks && <MetricEvaluationCard metric={externalLinks} label="外部リンク" />}
         {headingStructure && <MetricEvaluationCard metric={headingStructure} label="見出し構造" />}
         {pricing && <MetricEvaluationCard metric={pricing} label="料金情報リンク" link={businessLink(pricing)} />}
+        {priceCard && (
+          <MetricEvaluationCard
+            metric={priceCard}
+            label="価格付き商品・プラン"
+            description={
+              priceCardRaw?.sample_text
+                ? `例: ${priceCardRaw.sample_text}(検出数: ${priceCardRaw.count ?? "-"}件)`
+                : "固定の料金ページが無くても、商品・プランカード上の価格表示を検出した場合はここに表示されます。"
+            }
+          />
+        )}
         {caseStudy && <MetricEvaluationCard metric={caseStudy} label="導入事例・お客様の声" link={businessLink(caseStudy)} />}
         {companyInfo && <MetricEvaluationCard metric={companyInfo} label="会社概要リンク" link={businessLink(companyInfo)} />}
         {privacyPolicy && <MetricEvaluationCard metric={privacyPolicy} label="プライバシーポリシー" link={businessLink(privacyPolicy)} />}
         {faq && <MetricEvaluationCard metric={faq} label="FAQ/よくある質問" link={businessLink(faq)} />}
+        {helpCenter && <MetricEvaluationCard metric={helpCenter} label="ヘルプ・サポート導線" link={businessLink(helpCenter)} />}
       </CardContent>
     </Card>
   );

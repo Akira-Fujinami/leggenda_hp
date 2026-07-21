@@ -51,27 +51,32 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
 
         $scores = $data['scores'] ?? [];
         $metrics = $data['metrics'] ?? [];
-        $evidence = ['url' => $website->normalized_url];
+        $metadata = $data['metadata'] ?? null;
+        $evidence = ['url' => $website->normalized_url, 'metadata' => $metadata];
+        // run_countが1(単発計測)の場合、外部広告・ネットワーク状況・Cookie
+        // 表示等の影響を受けた1回限りの結果である可能性があるため、
+        // 通常より低いconfidenceで記録する(3回計測・中央値化は将来課題)。
+        $confidence = (($metadata['run_count'] ?? 1) <= 1) ? 0.75 : 0.95;
 
-        $this->recordScore('lighthouse_performance', $scores['performance'] ?? null, ['scores' => $scores], $evidence);
-        $this->recordScore('lighthouse_accessibility', $scores['accessibility'] ?? null, ['scores' => $scores], $evidence);
-        $this->recordScore('lighthouse_best_practices', $scores['best_practices'] ?? null, ['scores' => $scores], $evidence);
-        $this->recordScore('lighthouse_seo_score', $scores['seo'] ?? null, ['scores' => $scores], $evidence);
+        $this->recordScore('lighthouse_performance', $scores['performance'] ?? null, ['scores' => $scores], $evidence, $confidence);
+        $this->recordScore('lighthouse_accessibility', $scores['accessibility'] ?? null, ['scores' => $scores], $evidence, $confidence);
+        $this->recordScore('lighthouse_best_practices', $scores['best_practices'] ?? null, ['scores' => $scores], $evidence, $confidence);
+        $this->recordScore('lighthouse_seo_score', $scores['seo'] ?? null, ['scores' => $scores], $evidence, $confidence);
 
-        $this->recordMetricValue('fcp', $metrics['fcp_ms'] ?? null, $metrics, $evidence);
-        $this->recordMetricValue('lcp', $metrics['lcp_ms'] ?? null, $metrics, $evidence);
-        $this->recordMetricValue('cls', $metrics['cls'] ?? null, $metrics, $evidence);
-        $this->recordMetricValue('speed_index', $metrics['speed_index_ms'] ?? null, $metrics, $evidence);
-        $this->recordMetricValue('tbt', $metrics['tbt_ms'] ?? null, $metrics, $evidence);
-        $this->recordMetricValue('lighthouse_request_count', $metrics['request_count'] ?? null, $metrics, $evidence);
-        $this->recordMetricValue('lighthouse_transfer_size', $metrics['transfer_size_bytes'] ?? null, $metrics, $evidence);
+        $this->recordMetricValue('fcp', $metrics['fcp_ms'] ?? null, $metrics, $evidence, $confidence);
+        $this->recordMetricValue('lcp', $metrics['lcp_ms'] ?? null, $metrics, $evidence, $confidence);
+        $this->recordMetricValue('cls', $metrics['cls'] ?? null, $metrics, $evidence, $confidence);
+        $this->recordMetricValue('speed_index', $metrics['speed_index_ms'] ?? null, $metrics, $evidence, $confidence);
+        $this->recordMetricValue('tbt', $metrics['tbt_ms'] ?? null, $metrics, $evidence, $confidence);
+        $this->recordMetricValue('lighthouse_request_count', $metrics['request_count'] ?? null, $metrics, $evidence, $confidence);
+        $this->recordMetricValue('lighthouse_transfer_size', $metrics['transfer_size_bytes'] ?? null, $metrics, $evidence, $confidence);
     }
 
     /**
      * @param  array<string, mixed>  $rawValue
      * @param  array<string, mixed>  $evidence
      */
-    private function recordScore(string $key, ?float $value, array $rawValue, array $evidence): void
+    private function recordScore(string $key, ?float $value, array $rawValue, array $evidence, float $confidence): void
     {
         $this->recordMetric(
             $this->websiteAnalysisId,
@@ -80,7 +85,7 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
             normalizedValue: $value,
             rawValue: $rawValue,
             evidence: $evidence,
-            confidence: 0.95,
+            confidence: $confidence,
         );
     }
 
@@ -88,7 +93,7 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
      * @param  array<string, mixed>  $rawValue
      * @param  array<string, mixed>  $evidence
      */
-    private function recordMetricValue(string $key, mixed $value, array $rawValue, array $evidence): void
+    private function recordMetricValue(string $key, mixed $value, array $rawValue, array $evidence, float $confidence): void
     {
         $this->recordMetric(
             $this->websiteAnalysisId,
@@ -97,7 +102,7 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
             normalizedValue: $value,
             rawValue: $rawValue,
             evidence: $evidence,
-            confidence: 0.95,
+            confidence: $confidence,
         );
     }
 }

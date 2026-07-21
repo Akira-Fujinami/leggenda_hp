@@ -32,8 +32,8 @@ describe("CategoryScoreCard", () => {
     };
     const metrics: MetricEvaluation[] = [
       {
-        key: "authority_score", name: "Authority Score", category_key: "authority", unit: null, scoring_type: "threshold",
-        status: "unavailable", value: null, raw_value: null, min_value: null, target_value: null, max_value: null,
+        key: "authority_score", name: "Authority Score", category_key: "authority", value_type: "number", unit: null, scoring_type: "threshold",
+        status: "unavailable", value: null, raw_value: null, evidence: null, min_value: null, target_value: null, max_value: null,
         higher_is_better: true, confidence: null, source_type: "semrush", measured_at: null, error_code: "SEMRUSH_NOT_CONFIGURED",
         error_message: null, counts_toward_score: false, score: null, max_score: null,
       },

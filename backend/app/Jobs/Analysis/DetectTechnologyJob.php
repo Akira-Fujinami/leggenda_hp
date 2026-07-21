@@ -8,6 +8,7 @@ use App\Enums\PageType;
 use App\Jobs\Analysis\Concerns\RecordsMetricResults;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\AnalysisPage;
+use App\Models\MetricResult;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalyzerClient;
@@ -44,6 +45,14 @@ class DetectTechnologyJob extends BaseWebsiteAnalysisJob
 
     private const CMS_OR_FRAMEWORK_CATEGORIES = ['cms', 'framework'];
 
+    /**
+     * このJobが担当する全MetricDefinitionキー(recordAllErrorで使う)。
+     */
+    private const ALL_KEYS = [
+        'analytics_configured', 'cms_detected',
+        'ga_detected', 'gtm_detected', 'clarity_detected', 'meta_pixel_detected', 'recaptcha_detected', 'cdn_detected',
+    ];
+
     public function jobType(): JobType
     {
         return JobType::DetectTechnology;
@@ -68,7 +77,18 @@ class DetectTechnologyJob extends BaseWebsiteAnalysisJob
 
         /** @var AnalyzerClient $client */
         $client = app(AnalyzerClient::class);
-        $data = $client->technology($website->normalized_url, $html);
+
+        try {
+            $data = $client->technology($website->normalized_url, $html);
+        } catch (\Throwable $e) {
+            // HTMLは取得できているが技術検出そのものが失敗したケース。
+            // 「未取得0件なのに技術セクションが空」という矛盾を避けるため、
+            // 全指標を明示的にError状態で記録してからジョブの
+            // retry/backoff/markFailedの既存挙動を保つために再throwする。
+            $this->recordAllError($e->getMessage());
+
+            throw $e;
+        }
 
         $technologies = $data['technologies'] ?? [];
         $names = array_column($technologies, 'name');
@@ -105,6 +125,32 @@ class DetectTechnologyJob extends BaseWebsiteAnalysisJob
                 normalizedValue: $detected !== [],
                 rawValue: ['detected' => $detected],
             );
+        }
+    }
+
+    /**
+     * 技術検出そのものが失敗した際、対象の全キーをError状態で記録する。
+     * ただし、この同一Analysisの同一websiteAnalysisIdに対して既にSuccessで
+     * 記録済みのキー(過去の試行やretryで正しく取得できていたもの)は
+     * 上書きしない ―― 一時的な失敗で過去の有効なデータを消してしまわない
+     * ようにするため。
+     */
+    private function recordAllError(string $message): void
+    {
+        $existingStatuses = MetricResult::query()
+            ->where('website_analysis_id', $this->websiteAnalysisId)
+            ->whereHas('metricDefinition', fn ($q) => $q->whereIn('key', self::ALL_KEYS))
+            ->with('metricDefinition:id,key')
+            ->get()
+            ->keyBy(fn (MetricResult $result) => $result->metricDefinition?->key)
+            ->map(fn (MetricResult $result) => $result->status);
+
+        foreach (self::ALL_KEYS as $key) {
+            if (($existingStatuses[$key] ?? null) === MetricResultStatus::Success) {
+                continue;
+            }
+
+            $this->recordMetric($this->websiteAnalysisId, $key, MetricResultStatus::Error, errorMessage: $message);
         }
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Services\Scoring;
 
 use App\Enums\MetricResultStatus;
+use App\Enums\ScoringType;
 use App\Models\CategoryDefinition;
 use App\Support\Scoring\WebsiteScoreResult;
 use Illuminate\Support\Collection;
@@ -31,7 +32,14 @@ class OverallScoreCalculator
     public function calculate(Collection $activeCategories, Collection $results): WebsiteScoreResult
     {
         $outcomesByResultId = [];
-        $summary = ['success' => 0, 'not_found' => 0, 'unavailable' => 0, 'error' => 0, 'not_applicable' => 0];
+        $summary = [
+            'success' => 0, 'not_found' => 0, 'unavailable' => 0, 'error' => 0, 'not_applicable' => 0,
+            // 「未取得」の内訳: 採点対象(スコアに影響する)か、情報表示専用
+            // (scoring_type=not_scored)かを分離する。技術検出失敗のように
+            // 情報項目が丸ごとunavailable/errorになっても、採点対象の
+            // 未取得件数が0のままになり得るため、両者を明確に区別する。
+            'scored_unavailable' => 0, 'informational_unavailable' => 0,
+        ];
 
         foreach ($results as $result) {
             $definition = $result->metricDefinition;
@@ -50,6 +58,11 @@ class OverallScoreCalculator
                 MetricResultStatus::NotApplicable => 'not_applicable',
             };
             $summary[$key]++;
+
+            if (in_array($result->status, [MetricResultStatus::Unavailable, MetricResultStatus::Error], true)) {
+                $isInformational = ScoringType::tryFrom((string) $definition->scoring_type) === ScoringType::NotScored;
+                $summary[$isInformational ? 'informational_unavailable' : 'scored_unavailable']++;
+            }
         }
 
         $categoryScores = $this->categoryCalculator->calculate($activeCategories, $results, $outcomesByResultId);

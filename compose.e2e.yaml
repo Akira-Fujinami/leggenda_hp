@@ -31,6 +31,33 @@ services:
       - ./frontend/e2e/fixtures/site-b:/www:ro
     networks: [app-network]
 
+  # H1の内部矛盾(count>0なのに「なし」表示)・SNS多段階検出・代替サポート
+  # 導線・価格付き商品カードの汎用ロジック検証用(Fixture A相当)。
+  e2e-fixture-c:
+    image: busybox:stable
+    command: ["httpd", "-f", "-p", "8080", "-h", "/www"]
+    volumes:
+      - ./frontend/e2e/fixtures/site-c:/www:ro
+    networks: [app-network]
+
+  # H1/SNS/問い合わせ/料金のいずれも検出されないnot_found判定の検証用(Fixture B相当)。
+  e2e-fixture-d:
+    image: busybox:stable
+    command: ["httpd", "-f", "-p", "8080", "-h", "/www"]
+    volumes:
+      - ./frontend/e2e/fixtures/site-d:/www:ro
+    networks: [app-network]
+
+  # 静的HTML(一次解析)にはH1/SNS/価格カード/固定CTA/チャットボットが
+  # 一切存在せず、JavaScript実行後(レンダリング済みHTMLの二次解析)にのみ
+  # すべて出現するfixture。static/rendered競合修正の検証用。
+  e2e-fixture-e:
+    image: busybox:stable
+    command: ["httpd", "-f", "-p", "8080", "-h", "/www"]
+    volumes:
+      - ./frontend/e2e/fixtures/site-e:/www:ro
+    networks: [app-network]
+
   e2e-fixture-partial:
     image: node:20-alpine
     command: ["node", "/fixture/server.js"]
@@ -40,20 +67,23 @@ services:
 
   analyzer:
     environment:
-      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-partial:8080"
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-c:8080,e2e-fixture-d:8080,e2e-fixture-e:8080,e2e-fixture-partial:8080"
     depends_on:
       - e2e-fixture-a
       - e2e-fixture-b
+      - e2e-fixture-c
+      - e2e-fixture-d
+      - e2e-fixture-e
       - e2e-fixture-partial
 
   backend:
     environment:
-      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-partial:8080"
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-c:8080,e2e-fixture-d:8080,e2e-fixture-e:8080,e2e-fixture-partial:8080"
 
   queue-worker:
     environment:
-      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-partial:8080"
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-c:8080,e2e-fixture-d:8080,e2e-fixture-e:8080,e2e-fixture-partial:8080"
 
   queue-worker-heavy:
     environment:
-      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-partial:8080"
+      SSRF_TEST_ALLOWLIST: "e2e-fixture-a:8080,e2e-fixture-b:8080,e2e-fixture-c:8080,e2e-fixture-d:8080,e2e-fixture-e:8080,e2e-fixture-partial:8080"

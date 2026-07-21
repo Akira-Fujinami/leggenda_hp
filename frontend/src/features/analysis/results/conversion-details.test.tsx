@@ -74,6 +74,40 @@ describe("ConversionDetails", () => {
     expect(screen.getByText(/35項目/)).toBeInTheDocument();
   });
 
+  it("shows the detected SNS platform names and a collapsible URL list", () => {
+    const metric = makeMetric({
+      key: "sns_link_present", name: "SNSリンク", value_type: "boolean", scoring_type: "boolean",
+      status: "success", value: true, counts_toward_score: true, score: 1, max_score: 1,
+      raw_value: {
+        detected: true,
+        count: 5,
+        platforms: [
+          { platform: "facebook", url: "https://www.facebook.com/example", label: "Facebook", source: "href_host", confidence: 0.95 },
+          { platform: "x", url: "https://x.com/example", label: "X", source: "href_host", confidence: 0.95 },
+          { platform: "instagram", url: "https://www.instagram.com/example", label: "Instagram", source: "href_host", confidence: 0.95 },
+          { platform: "line", url: "https://line.me/example", label: "LINE", source: "href_host", confidence: 0.95 },
+          { platform: "youtube", url: "https://www.youtube.com/example", label: "YouTube", source: "href_host", confidence: 0.95 },
+        ],
+      },
+    });
+
+    render(<ConversionDetails metrics={[metric]} />);
+
+    expect(screen.getByText("Facebook、X、Instagram、LINE、YouTube")).toBeInTheDocument();
+    expect(screen.getByText(/SNSリンクのURLを表示/)).toBeInTheDocument();
+  });
+
+  it("shows a chatbot support row when detected", () => {
+    const metric = makeMetric({
+      key: "chatbot_detected", name: "チャットサポート", value_type: "boolean", scoring_type: "not_scored",
+      status: "success", value: true, raw_value: { detected: true, matched: "tawk.to" },
+    });
+
+    render(<ConversionDetails metrics={[metric]} />);
+
+    expect(screen.getByText("チャットサポート")).toBeInTheDocument();
+  });
+
   it("distinguishes a genuinely-absent third-party reservation service from unmeasured", () => {
     const metric = makeMetric({
       key: "external_reservation_service_detected", name: "外部予約サービス利用", value_type: "boolean",

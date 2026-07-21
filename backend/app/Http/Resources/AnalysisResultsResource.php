@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Enums\AnalysisJobStatus;
+use App\Enums\JobType;
 use App\Enums\PageType;
 use App\Models\Analysis;
 use App\Models\CategoryDefinition;
@@ -58,6 +59,7 @@ class AnalysisResultsResource extends JsonResource
                     ],
                     'lighthouse' => $this->lighthouseSummary($wa),
                     'technology' => $this->technologySummary($wa),
+                    'html_analysis_source' => $this->resolveHtmlAnalysisSource($wa),
                     'screenshots' => $wa->screenshots->map(fn ($s) => [
                         'device' => $s->device->value,
                         'url' => route('analyses.screenshot', ['websiteAnalysis' => $wa->id, 'device' => $s->device->value]),
@@ -151,10 +153,42 @@ class AnalysisResultsResource extends JsonResource
                     'counts_toward_score' => $outcome->countsTowardScore,
                     'score' => $outcome->score,
                     'max_score' => $outcome->maxScore,
+                    'source' => $r->source,
                 ];
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * HtmlSeoAnalyzer由来の解析(H1/SNS/料金導線等)が、静的HTMLとレンダリング
+     * 済みHTMLのどちらを最終的に使ったかを、常に記録される'title_present'
+     * メトリクスのsource列(RecordsMetricResults::recordMetric参照)と、
+     * RenderPageJob/ReanalyzeRenderedHtmlJobのAnalysisJobステータスから
+     * 算出する。source=null(この列が導入される前の既存Analysis)は素直に
+     * nullを返し、Frontend側は後方互換のデフォルト表示にする
+     * (既存Analysisのデータを書き換え・補完しない)。
+     *
+     * @return array<string, mixed>
+     */
+    private function resolveHtmlAnalysisSource($websiteAnalysis): array
+    {
+        $representative = $websiteAnalysis->metricResults->first(
+            fn ($r) => $r->metricDefinition?->key === 'title_present'
+        );
+
+        $renderJob = $websiteAnalysis->jobs->first(fn ($j) => $j->job_type === JobType::RenderPage);
+        $reanalysisJob = $websiteAnalysis->jobs->first(fn ($j) => $j->job_type === JobType::ReanalyzeRenderedHtml);
+
+        $source = $representative?->source;
+        $renderTerminal = $renderJob !== null && $renderJob->status->isTerminal();
+
+        return [
+            'source' => $source,
+            'fallback_used' => $source === 'static' && $renderTerminal,
+            'render_job_status' => $renderJob?->status->value,
+            'reanalysis_job_status' => $reanalysisJob?->status->value,
+        ];
     }
 
     /**

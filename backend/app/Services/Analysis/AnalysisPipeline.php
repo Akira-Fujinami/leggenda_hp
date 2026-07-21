@@ -15,6 +15,7 @@ use App\Jobs\Analysis\FetchSitemapJob;
 use App\Jobs\Analysis\FetchStaticPageJob;
 use App\Jobs\Analysis\FinalizeAnalysisJob;
 use App\Jobs\Analysis\FinalizeWebsiteAnalysisJob;
+use App\Jobs\Analysis\ReanalyzeRenderedHtmlJob;
 use App\Jobs\Analysis\RenderPageJob;
 use App\Jobs\Analysis\RunLighthouseJob;
 use App\Models\Analysis;
@@ -79,6 +80,16 @@ class AnalysisPipeline
     public function dispatchHtmlSeoAnalysis(int $analysisId, int $websiteAnalysisId): void
     {
         AnalyzeHtmlSeoJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::AnalyzeHtmlSeo->queueName());
+    }
+
+    /**
+     * RenderPageJobの終端(成功・失敗いずれも)から必ず呼び出す。
+     * ReanalyzeRenderedHtmlJob側で「レンダリング済みHTMLが利用可能か」を
+     * 判定するため、ここでは無条件にdispatchしてよい。
+     */
+    public function dispatchReanalysis(int $analysisId, int $websiteAnalysisId): void
+    {
+        ReanalyzeRenderedHtmlJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::ReanalyzeRenderedHtml->queueName());
     }
 
     /**

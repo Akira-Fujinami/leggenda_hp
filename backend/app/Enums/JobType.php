@@ -13,18 +13,21 @@ enum JobType: string
     case CaptureScreenshotMobile = 'capture_screenshot_mobile';
     case RunLighthouse = 'run_lighthouse';
     case AnalyzeHtmlSeo = 'analyze_html_seo';
+    case ReanalyzeRenderedHtml = 'reanalyze_rendered_html';
     case DetectTechnology = 'detect_technology';
     case FetchExternalSeoData = 'fetch_external_seo_data';
     case FinalizeWebsiteAnalysis = 'finalize_website_analysis';
     case FinalizeAnalysis = 'finalize_analysis';
 
     /**
-     * WebsiteAnalysisの進捗(0-100)に対する重み。サイト単位のジョブ11種で
+     * WebsiteAnalysisの進捗(0-100)に対する重み。サイト単位のジョブ12種で
      * 合計100になるようにしてある (Start/FinalizeAnalysisはAnalysis単位の
      * オーケストレーション用ジョブのため重みを持たない)。
      *
      * Phase 3でFetchExternalSeoData(Semrush等)を追加したため、既存の重みを
      * 比例的に少しずつ下げて11点分を確保した(合計は引き続き100)。
+     * 静的/レンダリング済みHTML競合修正でReanalyzeRenderedHtmlを追加した際は、
+     * RenderPageの重みから4点を移した(RenderPageの後続処理という位置づけ)。
      */
     public function weight(): int
     {
@@ -32,11 +35,12 @@ enum JobType: string
             self::FetchStaticPage => 13,
             self::FetchRobots => 5,
             self::FetchSitemap => 5,
-            self::RenderPage => 13,
+            self::RenderPage => 9,
             self::CaptureScreenshotDesktop => 9,
             self::CaptureScreenshotMobile => 9,
             self::RunLighthouse => 17,
             self::AnalyzeHtmlSeo => 9,
+            self::ReanalyzeRenderedHtml => 4,
             self::DetectTechnology => 4,
             self::FetchExternalSeoData => 11,
             self::FinalizeWebsiteAnalysis => 5,
@@ -50,6 +54,8 @@ enum JobType: string
      * 呼び出す重い処理で、専用ワーカー(queue-worker-heavy)に隔離する。
      * external-api: Semrush等の外部SEO API呼び出し(通常のanalysisキューとは
      * 分離し、外部APIのレート制限・障害が他ジョブに波及しないようにする)。
+     * ReanalyzeRenderedHtmlは外部呼び出しを行わず、既に取得済みのレンダリング後
+     * HTMLをディスクから読んで再解析するだけの軽量CPU処理のためanalysisキュー。
      */
     public function queueName(): string
     {
@@ -80,6 +86,7 @@ enum JobType: string
             self::CaptureScreenshotMobile,
             self::RunLighthouse,
             self::AnalyzeHtmlSeo,
+            self::ReanalyzeRenderedHtml,
             self::DetectTechnology,
             self::FetchExternalSeoData,
             self::FinalizeWebsiteAnalysis,

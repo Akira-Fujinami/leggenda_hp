@@ -171,6 +171,8 @@ class ComparisonAssembler
             'external_count' => $externalCount,
             'unavailable_count' => $summary['unavailable'],
             'error_count' => $summary['error'],
+            'scored_unavailable_count' => $summary['scored_unavailable'],
+            'informational_unavailable_count' => $summary['informational_unavailable'],
             'mock_count' => $mockCount,
             'last_fetched_at' => $lastFetchedAt?->toIso8601String(),
             'warnings' => $this->buildWarnings($entry, $mockCount),

@@ -226,6 +226,86 @@ class AnalyzerDrivenJobsTest extends TestCase
         $this->assertFalse($fixedCta->normalized_value['value']);
     }
 
+    public function test_technology_job_records_all_metrics_as_error_when_detection_fails(): void
+    {
+        // 「未取得0件なのに技術セクションが空」という矛盾の直接の回帰テスト。
+        // 技術検出そのものが失敗した場合、8つの技術系Metricは全てError状態で
+        // 記録され(空のまま放置されない)、ジョブ自体は既存通りFailedになる。
+        Http::fake([
+            '*/analyze/technology' => Http::response([], 500),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        (new DetectTechnologyJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $job = $websiteAnalysis->jobs()->where('job_type', JobType::DetectTechnology)->first();
+        $this->assertSame(AnalysisJobStatus::Failed, $job->status);
+
+        foreach (['analytics_configured', 'cms_detected', 'ga_detected', 'gtm_detected', 'clarity_detected', 'meta_pixel_detected', 'recaptcha_detected', 'cdn_detected'] as $key) {
+            $result = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', $key))
+                ->where('website_analysis_id', $websiteAnalysis->id)->first();
+            $this->assertNotNull($result, "expected a MetricResult row for {$key}");
+            $this->assertSame(MetricResultStatus::Error, $result->status);
+        }
+    }
+
+    public function test_technology_job_does_not_overwrite_an_existing_success_result_on_failure(): void
+    {
+        // 冪等性・部分成功保持の確認: 過去の試行で既にSuccess記録済みの
+        // キーは、後続の失敗によってErrorへ上書きされない。
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        $analyticsDefinition = \App\Models\MetricDefinition::query()->where('key', 'analytics_configured')->firstOrFail();
+        MetricResult::factory()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'metric_definition_id' => $analyticsDefinition->id,
+            'status' => MetricResultStatus::Success,
+            'normalized_value' => ['value' => true],
+        ]);
+
+        Http::fake(['*/analyze/technology' => Http::response([], 500)]);
+
+        (new DetectTechnologyJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $analytics = MetricResult::query()->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('metric_definition_id', $analyticsDefinition->id)->first();
+        $this->assertSame(MetricResultStatus::Success, $analytics->status);
+
+        $cms = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'cms_detected'))
+            ->where('website_analysis_id', $websiteAnalysis->id)->first();
+        $this->assertSame(MetricResultStatus::Error, $cms->status);
+    }
+
+    public function test_technology_job_updates_a_prior_error_result_to_success_on_a_fresh_analysis_run(): void
+    {
+        // recordMetricはupdateOrCreateで冪等なため、同一website_analysis_id
+        // に対してError記録後に(例えば手動再実行等で)成功データが記録
+        // されれば、Errorの行はSuccessへ正しく上書きされる
+        // (recordAllErrorのスキップ条件はSuccessのみを保護し、Error自体は
+        // 保護しないことの確認)。
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        $cmsDefinition = \App\Models\MetricDefinition::query()->where('key', 'cms_detected')->firstOrFail();
+        MetricResult::factory()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'metric_definition_id' => $cmsDefinition->id,
+            'status' => MetricResultStatus::Error,
+            'error_message' => '前回の失敗',
+        ]);
+
+        Http::fake([
+            '*/analyze/technology' => Http::response([
+                'success' => true,
+                'data' => ['technologies' => [['name' => 'WordPress', 'category' => 'cms', 'confidence' => 0.9, 'evidence' => []]]],
+            ], 200),
+        ]);
+
+        (new DetectTechnologyJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $cms = MetricResult::query()->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('metric_definition_id', $cmsDefinition->id)->first();
+        $this->assertSame(MetricResultStatus::Success, $cms->status);
+        $this->assertSame('WordPress', $cms->normalized_value['value']);
+    }
+
     public function test_analyzer_unavailable_marks_job_failed(): void
     {
         Http::fake([

@@ -5,8 +5,8 @@ import type { MetricEvaluation } from "@/types/analysis";
 
 function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation {
   return {
-    key: "lighthouse_performance", name: "Lighthouse Performance", category_key: "performance", unit: "pt",
-    scoring_type: "lighthouse", status: "unavailable", value: null, raw_value: null, min_value: null,
+    key: "lighthouse_performance", name: "Lighthouse Performance", category_key: "performance", value_type: "score", unit: "pt",
+    scoring_type: "lighthouse", status: "unavailable", value: null, raw_value: null, evidence: null, min_value: null,
     target_value: null, max_value: null, higher_is_better: true, confidence: null, source_type: "lighthouse",
     measured_at: null, error_code: "ANALYZER_LIGHTHOUSE_FAILED", error_message: "Lighthouse計測に失敗しました。",
     counts_toward_score: false, score: null, max_score: null,
@@ -44,6 +44,30 @@ describe("PerformanceDetails", () => {
 
     expect(screen.getByText("SEO")).toBeInTheDocument();
     expect(screen.getByText("95pt")).toBeInTheDocument();
+  });
+
+  it("shows a single-run measurement warning when run_count is 1", () => {
+    const metrics = [
+      makeMetric({
+        status: "success", value: 82, counts_toward_score: true, score: 8.2, max_score: 10, error_message: null,
+        evidence: { metadata: { run_count: 1 } },
+      }),
+    ];
+
+    render(<PerformanceDetails metrics={metrics} />);
+
+    expect(screen.getByText(/単発計測/)).toBeInTheDocument();
+    expect(screen.getByText(/再計測を推奨/)).toBeInTheDocument();
+  });
+
+  it("does not show the single-run warning when evidence has no run_count metadata", () => {
+    const metrics = [
+      makeMetric({ status: "success", value: 82, counts_toward_score: true, score: 8.2, max_score: 10, error_message: null }),
+    ];
+
+    render(<PerformanceDetails metrics={metrics} />);
+
+    expect(screen.queryByText(/単発計測/)).not.toBeInTheDocument();
   });
 
   it("shows request count and transfer size as reference info, converting bytes to KB", () => {

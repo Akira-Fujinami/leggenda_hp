@@ -8,7 +8,7 @@ readonly class WebsiteScoreResult
 {
     /**
      * @param  Collection<int, CategoryScoreResult>  $categoryScores
-     * @param  array{success: int, not_found: int, unavailable: int, error: int, not_applicable: int}  $metricSummary
+     * @param  array{success: int, not_found: int, unavailable: int, error: int, not_applicable: int, scored_unavailable: int, informational_unavailable: int}  $metricSummary
      */
     public function __construct(
         public float $overallScore,

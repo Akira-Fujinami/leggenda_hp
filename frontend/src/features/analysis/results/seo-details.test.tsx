@@ -31,17 +31,21 @@ describe("SeoDetails", () => {
     expect(screen.getByText(/サンプルタイトル/)).toBeInTheDocument();
   });
 
-  it("shows H1 as needing improvement when zero H1 tags are present", () => {
+  it("shows H1 as not found when valid_count is 0", () => {
     const metrics: MetricEvaluation[] = [
-      makeMetric({ key: "h1_single", name: "H1タグ(1件)", value: false, status: "not_found", score: 0, max_score: 3 }),
+      makeMetric({
+        key: "h1_single", name: "H1タグ(1件)", value: false, status: "not_found", score: 0, max_score: 3,
+        raw_value: { count: 0, valid_count: 0, visible_count: 0, primary_text: null },
+      }),
     ];
 
     render(<SeoDetails metrics={metrics} seo={null} />);
 
-    expect(screen.getByText("要改善")).toBeInTheDocument();
+    expect(screen.getByText("検出されませんでした")).toBeInTheDocument();
+    expect(screen.getByText(/有効なH1: 0件/)).toBeInTheDocument();
   });
 
-  it("shows the actual H1 content and count without auto-judging topic relevance", () => {
+  it("shows a single H1 as good and displays its content without auto-judging topic relevance", () => {
     const metrics: MetricEvaluation[] = [
       makeMetric({
         key: "h1_single",
@@ -49,14 +53,79 @@ describe("SeoDetails", () => {
         value: true,
         score: 3,
         max_score: 3,
-        raw_value: { count: 1, texts: ["ホテル・旅館ランキング"], primary_text: "ホテル・旅館ランキング" },
+        raw_value: { count: 1, valid_count: 1, visible_count: 1, primary_text: "ホテル・旅館ランキング" },
       }),
     ];
 
     render(<SeoDetails metrics={metrics} seo={null} />);
 
-    expect(screen.getByText(/H1: 1件/)).toBeInTheDocument();
-    expect(screen.getByText(/ホテル・旅館ランキング/)).toBeInTheDocument();
-    expect(screen.getByText(/内容をご確認ください/)).toBeInTheDocument();
+    expect(screen.getByText(/有効なH1: 1件/)).toBeInTheDocument();
+    expect(screen.getByText(/代表H1: ホテル・旅館ランキング/)).toBeInTheDocument();
+    expect(screen.getByText(/確認してください/)).toBeInTheDocument();
+  });
+
+  it("shows multiple H1 without falling back to a not-found badge, even though normalized_value is false", () => {
+    // 今回報告された内部矛盾の回帰テスト: raw_value.count/valid_count > 0
+    // なのに、normalized_value(採点専用のboolean)がfalseであることを理由に
+    // 「検出されませんでした」/「なし」のようなバッジ・文言を表示しては
+    // いけない。
+    const metrics: MetricEvaluation[] = [
+      makeMetric({
+        key: "h1_single",
+        name: "H1タグ(1件)",
+        value: false,
+        status: "success",
+        score: 0,
+        max_score: 3,
+        raw_value: { count: 3, valid_count: 2, visible_count: 3, primary_text: "見出しA" },
+      }),
+    ];
+
+    render(<SeoDetails metrics={metrics} seo={null} />);
+
+    expect(screen.queryByText("検出されませんでした")).not.toBeInTheDocument();
+    expect(screen.getByText(/有効なH1: 2件/)).toBeInTheDocument();
+    expect(screen.getByText(/検出したH1: 3件/)).toBeInTheDocument();
+    expect(screen.getByText(/広告・非主要見出し: 1件/)).toBeInTheDocument();
+    expect(screen.getByText(/主要なH1が2件検出されました/)).toBeInTheDocument();
+  });
+
+  it("falls back to raw_value.count for pre-existing analyses recorded before valid_count existed", () => {
+    // 既存Analysis互換性の回帰テスト: valid_countフィールド導入前の古い
+    // raw_value(count/texts/primary_textのみ)でも、実在するH1を
+    // 誤って「検出されませんでした」と表示してはいけない。
+    const metrics: MetricEvaluation[] = [
+      makeMetric({
+        key: "h1_single",
+        name: "H1タグ(1件)",
+        value: true,
+        score: 3,
+        max_score: 3,
+        raw_value: { count: 1, texts: ["旧形式の見出し"], primary_text: "旧形式の見出し" },
+      }),
+    ];
+
+    render(<SeoDetails metrics={metrics} seo={null} />);
+
+    expect(screen.queryByText("検出されませんでした")).not.toBeInTheDocument();
+    expect(screen.getByText(/有効なH1: 1件/)).toBeInTheDocument();
+  });
+
+  it("does not show ad or hidden H1 text as the representative content", () => {
+    const metrics: MetricEvaluation[] = [
+      makeMetric({
+        key: "h1_single",
+        name: "H1タグ(1件)",
+        value: true,
+        score: 3,
+        max_score: 3,
+        raw_value: { count: 3, valid_count: 1, visible_count: 3, primary_text: "ホテル・旅館ランキング" },
+      }),
+    ];
+
+    render(<SeoDetails metrics={metrics} seo={null} />);
+
+    expect(screen.getByText(/代表H1: ホテル・旅館ランキング/)).toBeInTheDocument();
+    expect(screen.queryByText(/【PR】/)).not.toBeInTheDocument();
   });
 });

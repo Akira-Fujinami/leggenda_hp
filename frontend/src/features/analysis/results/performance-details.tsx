@@ -29,6 +29,10 @@ function formatInfoValue(metric: MetricEvaluation): string {
   return typeof metric.value === "number" && metric.unit ? `${metric.value}${metric.unit}` : String(metric.value);
 }
 
+interface LighthouseEvidence {
+  metadata?: { run_count?: number } | null;
+}
+
 export function PerformanceDetails({ metrics }: { metrics: MetricEvaluation[] }) {
   const performance = findMetric(metrics, "lighthouse_performance");
   const succeeded = performance?.status === "success";
@@ -36,6 +40,8 @@ export function PerformanceDetails({ metrics }: { metrics: MetricEvaluation[] })
   const infoMetrics = INFO_METRIC_KEYS.map((key) => findMetric(metrics, key)).filter(
     (m): m is MetricEvaluation => m !== undefined && m.value !== null
   );
+  const evidence = performance?.evidence as LighthouseEvidence | null;
+  const runCount = evidence?.metadata?.run_count;
 
   return (
     <Card>
@@ -44,17 +50,26 @@ export function PerformanceDetails({ metrics }: { metrics: MetricEvaluation[] })
       </CardHeader>
       <CardContent className="space-y-3">
         {succeeded ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {lighthouseMetrics.map((metric) => (
-              <div key={metric.key} className="rounded-md border p-3 text-center">
-                <p className="text-xs text-muted-foreground">{METRIC_LABELS[metric.key] ?? metric.name}</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {metric.value ?? "-"}
-                  {metric.unit && metric.value !== null ? metric.unit : ""}
-                </p>
-              </div>
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {lighthouseMetrics.map((metric) => (
+                <div key={metric.key} className="rounded-md border p-3 text-center">
+                  <p className="text-xs text-muted-foreground">{METRIC_LABELS[metric.key] ?? metric.name}</p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {metric.value ?? "-"}
+                    {metric.unit && metric.value !== null ? metric.unit : ""}
+                  </p>
+                </div>
+              ))}
+            </div>
+            {runCount === 1 && (
+              <Alert>
+                <AlertDescription className="text-xs text-muted-foreground">
+                  この値はローカル環境での単発計測(1回のみの実行)です。外部広告・ネットワーク状況・Cookie表示等の影響を受けるため、確定的な実ユーザー評価とはせず、再計測を推奨します。
+                </AlertDescription>
+              </Alert>
+            )}
+          </>
         ) : (
           <Alert variant="destructive">
             <AlertDescription>

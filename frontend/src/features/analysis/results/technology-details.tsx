@@ -1,3 +1,4 @@
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { classifyMetric, EVALUATION_BADGE_VARIANT, EVALUATION_LABELS } from "@/features/analysis/metric-evaluation";
@@ -44,6 +45,11 @@ function TechRow({
 export function TechnologyDetails({ metrics }: { metrics: MetricEvaluation[] }) {
   const cms = findMetric(metrics, "cms_detected");
   const analytics = findMetric(metrics, "analytics_configured");
+  const infoMetrics = INFO_KEYS.map(({ key }) => findMetric(metrics, key));
+
+  const techMetrics = [cms, analytics, ...infoMetrics].filter((m): m is MetricEvaluation => m !== undefined);
+  const allFailed = techMetrics.length > 0 && techMetrics.every((m) => m.status === "error" || m.status === "unavailable");
+  const firstErrorMessage = techMetrics.find((m) => m.error_message)?.error_message;
 
   return (
     <Card>
@@ -51,15 +57,29 @@ export function TechnologyDetails({ metrics }: { metrics: MetricEvaluation[] }) 
         <CardTitle className="text-base">技術・計測環境</CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        <TechRow label="CMS / フレームワーク" metric={cms} valueLabel={typeof cms?.value === "string" ? cms.value : undefined} />
-        <TechRow
-          label="一般的なアクセス解析タグの検出"
-          metric={analytics}
-          description="Google Analytics/Google Tag Manager等の一般的なタグを検出できませんでした。独自計測や同意後読み込みを利用している場合、実際には計測が行われている可能性があります。"
-        />
-        {INFO_KEYS.map(({ key, label }) => (
-          <TechRow key={key} label={label} metric={findMetric(metrics, key)} />
-        ))}
+        {allFailed ? (
+          <Alert variant="destructive">
+            <AlertDescription>
+              <p className="font-medium">技術・計測環境の検出に失敗しました。CMS、計測タグ、CDN等を判定できませんでした。</p>
+              {firstErrorMessage && <p className="mt-1 text-sm">{firstErrorMessage}</p>}
+              <p className="mt-1 text-xs text-muted-foreground">再分析することで再取得できる可能性があります。</p>
+            </AlertDescription>
+          </Alert>
+        ) : techMetrics.length === 0 ? (
+          <p className="text-sm text-muted-foreground">技術・計測環境のデータがありません。</p>
+        ) : (
+          <>
+            <TechRow label="CMS / フレームワーク" metric={cms} valueLabel={typeof cms?.value === "string" ? cms.value : undefined} />
+            <TechRow
+              label="一般的なアクセス解析タグの検出"
+              metric={analytics}
+              description="Google Analytics/Google Tag Manager等の一般的なタグを検出できませんでした。独自計測や同意後読み込みを利用している場合、実際には計測が行われている可能性があります。"
+            />
+            {INFO_KEYS.map(({ key, label }) => (
+              <TechRow key={key} label={label} metric={findMetric(metrics, key)} />
+            ))}
+          </>
+        )}
       </CardContent>
     </Card>
   );
