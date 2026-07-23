@@ -37,9 +37,14 @@ class CorsOrigins
 
     /**
      * production相当の環境でCORS許可Originが空のまま起動しないようにする。
-     * config/cors.php から呼ばれるため、`php artisan config:cache` 実行時にも
-     * 検知できる(=デプロイのconfig:cacheステップ自体が失敗し、CORSが事実上
-     * 無効化されたまま本番稼働してしまう事態を防ぐ)。
+     *
+     * 【重要】config/cors.php からは呼ばない。config読み込みは
+     * `composer dump-autoload`(→`artisan package:discover`)経由でDockerビルド時にも
+     * 実行され、その時点ではFRONTEND_URL等のRuntime Environment Variablesが
+     * まだ存在しないため、ここで例外を投げるとDockerビルド自体が失敗してしまう
+     * (実際にこの不具合が発生した)。実行時(コンテナ起動時)の検証は
+     * App\Support\ProductionEnvironmentValidator (php artisan app:validate-production-env)
+     * がconfig()の値を見て呼び出す。
      *
      * local/testingのみ、未設定時にlocalhostへ暗黙フォールバックすることを許容する
      * (呼び出し側のconfig/cors.phpでフォールバックを行う)。それ以外の環境

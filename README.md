@@ -276,12 +276,14 @@ NEXT_PUBLIC_API_URL=https://api.example.com
 - `SANCTUM_STATEFUL_DOMAINS`にはscheme(`https://`)を含めない。`FRONTEND_URL`にはscheme
   を含める(2つの用途・書式が異なるため混同しないこと)。
 - `SESSION_SAME_SITE=none`のときは`SESSION_SECURE_COOKIE=true`が必須
-  (Secure属性のないSameSite=noneはブラウザに拒否される)。設定を誤ると
-  `php artisan config:cache`実行時に例外で検知される。
+  (Secure属性のないSameSite=noneはブラウザに拒否される)。
 - `CORS_ALLOWED_ORIGINS`が空でも、`FRONTEND_URL`さえ設定されていれば
   production環境は正常に起動する。逆に`FRONTEND_URL`未設定のままproduction環境で
-  起動しようとすると、`php artisan config:cache`実行時に例外で検知される
-  (localhostへ黙ってフォールバックすることはない)。
+  起動しようとすると、コンテナ起動時(nginx/php-fpm起動前・queue worker起動前)に
+  実行される`php artisan app:validate-production-env`が失敗し、起動しない
+  (localhostへ黙ってフォールバックすることはない)。設定ファイル自体
+  (`config/cors.php`・`config/session.php`)は副作用のない純粋な配列生成のみを行い、
+  例外は投げない(`composer dump-autoload`のDockerビルド時にも安全に読み込めるようにするため)。
 - 設定変更後は、frontend・backend(Web Service + 3種のqueue worker)の**両方を再デプロイ**
   する必要がある。特に`NEXT_PUBLIC_API_URL`はNext.jsのビルド時にJSバンドルへ
   焼き込まれるため、値を変えたら必ずfrontendを再ビルドすること。

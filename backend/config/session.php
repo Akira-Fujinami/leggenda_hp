@@ -1,15 +1,15 @@
 <?php
 
-use App\Support\SessionCookiePolicy;
 use Illuminate\Support\Str;
 
-// frontend/backendを別ドメイン(別Origin)で運用する場合、SameSite=noneが必要になるが、
-// Secure属性のないSameSite=noneはブラウザに拒否されるため、その組み合わせを
-// config:cache実行時にも検知できるようにする(=デプロイ時に気付ける)。
-SessionCookiePolicy::assertSecureWhenSameSiteIsNone(
-    env('SESSION_SAME_SITE', 'lax'),
-    env('SESSION_SECURE_COOKIE'),
-);
+// 【重要】このファイルは副作用のない純粋な配列生成のみを行う。
+// SESSION_SAME_SITE=none かつ SESSION_SECURE_COOKIE 未設定/false という
+// 矛盾した組み合わせの検証は、config読み込み時ではなく実行時(コンテナ起動時)に
+// App\Support\ProductionEnvironmentValidator (php artisan app:validate-production-env)
+// が config('session.same_site') / config('session.secure') を見て行う
+// (composer dump-autoload → artisan package:discover はDockerビルド時にも実行され、
+// その時点ではRenderのRuntime Environment Variablesが存在しないため、
+// ここで例外を投げるとDockerビルド自体が失敗してしまう)。
 
 return [
 

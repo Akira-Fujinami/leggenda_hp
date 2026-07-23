@@ -14,6 +14,13 @@ su -s /bin/sh www-data -c '
     php artisan config:cache
     php artisan route:cache
     php artisan view:cache
+    php artisan app:validate-production-env
 '
+# このステージはBackend用php-fpm(ローカルcomposeのnginx分離構成)と、
+# Render Background Worker(Docker Commandでphp artisan queue:work ...を上書き)の
+# 両方で共有されるentrypoint。ここで検証しておくことで、Worker側のRender設定
+# (Docker Command)を一切変更せずに、Workerでも起動前検証が効く。
+# 検証が失敗した場合、上のsuブロックが非0で終了し、set -eによりこのexecには
+# 到達しない(=queue:work等の実プロセスは一切起動しない)。
 
 exec "$@"

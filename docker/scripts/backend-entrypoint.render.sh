@@ -17,7 +17,11 @@ su -s /bin/sh www-data -c '
     php artisan config:cache
     php artisan route:cache
     php artisan view:cache
+    php artisan app:validate-production-env
 '
+# 上のsuブロックが失敗した場合(app:validate-production-envの検証失敗を含む)、
+# set -euo pipefail によりこの行より下(nginx/php-fpmの起動)は実行されず、
+# このentrypoint自体が非0で終了する。
 
 # nginx設定ファイル内では環境変数を直接展開できないため、
 # テンプレートからenvsubstで生成する。置換対象は明示的に${PORT}のみに限定し、
