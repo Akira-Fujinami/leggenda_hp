@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProjects } from "@/features/projects/hooks";
 import { ProjectCard } from "@/features/projects/project-card";
+import { describeApiError } from "@/lib/api-error-message";
 
 export default function DashboardPage() {
   const [page, setPage] = useState(1);
-  const { data, isLoading, isError } = useProjects(page);
+  const { data, isLoading, isError, error, refetch } = useProjects(page);
 
   const projects = data?.data ?? [];
   const pagination = data?.meta.pagination;
@@ -33,11 +34,30 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {isError && (
-        <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-          プロジェクトの読み込みに失敗しました。時間をおいて再度お試しください。
-        </p>
-      )}
+      {isError &&
+        (() => {
+          const description = describeApiError(error);
+
+          return (
+            <div className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+              <p>{description.message}</p>
+              <div className="flex items-center gap-3">
+                {description.isUnauthenticated ? (
+                  <Button render={<Link href="/login" />} nativeButton={false} size="sm" variant="outline">
+                    ログイン画面へ
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => refetch()}>
+                    再試行する
+                  </Button>
+                )}
+              </div>
+              {description.requestId && (
+                <p className="text-xs text-muted-foreground">問い合わせ番号: {description.requestId}</p>
+              )}
+            </div>
+          );
+        })()}
 
       {!isLoading && !isError && projects.length === 0 && (
         <div className="rounded-lg border border-dashed p-12 text-center">

@@ -48,7 +48,9 @@ return [
 
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+    // X-Request-Id: frontendがエラー発生時にconsole/監視ログへ出し、Backendログと
+    // 突き合わせられるようにするため、ブラウザから読めるよう明示的に公開する。
+    'exposed_headers' => ['X-Request-Id'],
 
     'max_age' => 0,
 

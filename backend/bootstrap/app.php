@@ -1,6 +1,7 @@
 <?php
 
 use App\Exceptions\Analysis\AnalysisAlreadyRunningException;
+use App\Http\Middleware\AssignRequestId;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -18,6 +19,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
+        // 障害調査時にBackendログとFrontendのエラー表示を突き合わせられるよう、
+        // 全APIリクエストにリクエストID(UUID)を付与する(X-Request-Idレスポンスヘッダー
+        // として返す。frontend側で読めるようconfig/cors.phpのexposed_headersにも追加済み)。
+        $middleware->api(prepend: [AssignRequestId::class]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

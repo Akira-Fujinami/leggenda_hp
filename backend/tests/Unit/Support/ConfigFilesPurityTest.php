@@ -26,35 +26,69 @@ class ConfigFilesPurityTest extends TestCase
     ];
 
     /** @var array<string, string|false> */
-    private array $originalEnv = [];
+    private array $originalGetenv = [];
+
+    /** @var array<string, string|null> */
+    private array $originalEnvSuper = [];
+
+    /** @var array<string, string|null> */
+    private array $originalServerSuper = [];
 
     protected function setUp(): void
     {
         parent::setUp();
 
+        // Laravelのenv()(Illuminate\Support\Env::getRepository())は、
+        // $_SERVER → $_ENV → getenv()/putenv() の順で読む。このリポジトリは
+        // プロセス内で1度だけ構築されキャッシュされるため、他のテスト
+        // (実アプリを起動するFeature test)が本物のbackend/.envを既に読み込み、
+        // $_ENV['FRONTEND_URL']等へ書き込んでいる場合、putenv()だけでは
+        // 上書きできない。そのため3つの表現すべてを直接書き換える。
         foreach (self::ENV_KEYS as $key) {
-            $this->originalEnv[$key] = getenv($key);
+            $this->originalGetenv[$key] = getenv($key);
+            $this->originalEnvSuper[$key] = $_ENV[$key] ?? null;
+            $this->originalServerSuper[$key] = $_SERVER[$key] ?? null;
         }
     }
 
     protected function tearDown(): void
     {
-        foreach ($this->originalEnv as $key => $value) {
-            if ($value === false) {
+        foreach (self::ENV_KEYS as $key) {
+            $original = $this->originalGetenv[$key];
+            if ($original === false) {
                 putenv($key);
             } else {
-                putenv("{$key}={$value}");
+                putenv("{$key}={$original}");
+            }
+
+            if ($this->originalEnvSuper[$key] === null) {
+                unset($_ENV[$key]);
+            } else {
+                $_ENV[$key] = $this->originalEnvSuper[$key];
+            }
+
+            if ($this->originalServerSuper[$key] === null) {
+                unset($_SERVER[$key]);
+            } else {
+                $_SERVER[$key] = $this->originalServerSuper[$key];
             }
         }
 
         parent::tearDown();
     }
 
+    private function setEnv(string $key, string $value): void
+    {
+        putenv("{$key}={$value}");
+        $_ENV[$key] = $value;
+        $_SERVER[$key] = $value;
+    }
+
     public function test_cors_config_does_not_throw_when_frontend_url_is_empty_in_production(): void
     {
-        putenv('APP_ENV=production');
-        putenv('FRONTEND_URL=');
-        putenv('CORS_ALLOWED_ORIGINS=');
+        $this->setEnv('APP_ENV', 'production');
+        $this->setEnv('FRONTEND_URL', '');
+        $this->setEnv('CORS_ALLOWED_ORIGINS', '');
 
         $config = require __DIR__.'/../../../config/cors.php';
 
@@ -65,9 +99,9 @@ class ConfigFilesPurityTest extends TestCase
 
     public function test_cors_config_does_not_throw_when_wildcard_is_supplied(): void
     {
-        putenv('APP_ENV=production');
-        putenv('FRONTEND_URL=*');
-        putenv('CORS_ALLOWED_ORIGINS=*');
+        $this->setEnv('APP_ENV', 'production');
+        $this->setEnv('FRONTEND_URL', '*');
+        $this->setEnv('CORS_ALLOWED_ORIGINS', '*');
 
         $config = require __DIR__.'/../../../config/cors.php';
 
@@ -77,8 +111,8 @@ class ConfigFilesPurityTest extends TestCase
 
     public function test_session_config_does_not_throw_when_same_site_none_without_secure(): void
     {
-        putenv('SESSION_SAME_SITE=none');
-        putenv('SESSION_SECURE_COOKIE');
+        $this->setEnv('SESSION_SAME_SITE', 'none');
+        $this->setEnv('SESSION_SECURE_COOKIE', '');
 
         $config = require __DIR__.'/../../../config/session.php';
 

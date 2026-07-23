@@ -5,11 +5,66 @@ namespace Tests\Feature;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 class ProjectTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_unauthenticated_user_cannot_list_projects(): void
+    {
+        $response = $this->getJson('/api/projects');
+
+        $response->assertStatus(401);
+    }
+
+    public function test_project_list_returns_200_with_empty_array_when_user_has_no_projects(): void
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->getJson('/api/projects');
+
+        $response->assertOk();
+        $response->assertJsonCount(0, 'data');
+        $response->assertJsonPath('meta.pagination.total', 0);
+    }
+
+    public function test_project_list_logs_structured_context_and_returns_a_safe_response_on_database_exception(): void
+    {
+        // production相当(APP_DEBUG=false)でSQLやスタックトレースがブラウザへ
+        // 漏れないことを確認する。テスト環境の既定はAPP_DEBUG=trueのため明示的に上書きする。
+        Config::set('app.debug', false);
+        Log::spy();
+
+        $user = User::factory()->create();
+
+        // projectsテーブルを一時的に落として、DB例外発生時の挙動を検証する
+        // (RefreshDatabaseがテストをトランザクションで包んでおり、テスト終了後は元に戻る)。
+        Schema::drop('projects');
+
+        $response = $this->actingAs($user)->getJson('/api/projects');
+
+        $response->assertStatus(500);
+        $this->assertStringNotContainsString('SQLSTATE', $response->getContent());
+        $this->assertStringNotContainsString('no such table', $response->getContent());
+        $this->assertStringNotContainsString('relation "projects"', $response->getContent());
+
+        Log::shouldHaveReceived('error')
+            ->once()
+            ->withArgs(function (string $message, array $context) use ($user) {
+                $contextJson = json_encode($context);
+
+                return $message === 'projects.index_failed'
+                    && $context['endpoint'] === 'GET /api/projects'
+                    && $context['user_id'] === $user->id
+                    && $context['status'] === 500
+                    && ! str_contains($contextJson, 'APP_KEY')
+                    && ! str_contains($contextJson, $user->password);
+            });
+    }
 
     public function test_user_can_create_a_project(): void
     {

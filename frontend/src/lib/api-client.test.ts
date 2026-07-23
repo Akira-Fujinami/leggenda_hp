@@ -159,6 +159,37 @@ describe("api-client", () => {
     await expect(api.get("/api/user")).rejects.toMatchObject({ status: 401, errorCode: "UNAUTHENTICATED" });
   });
 
+  it("captures the X-Request-Id response header on ApiError for backend/frontend log correlation", async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ message: "Server Error" }), {
+          status: 500,
+          headers: { "X-Request-Id": "11111111-1111-1111-1111-111111111111" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { api, ApiError } = await loadApiClient("https://backend.example.com");
+
+    await expect(api.get("/api/projects")).rejects.toMatchObject({
+      status: 500,
+      requestId: "11111111-1111-1111-1111-111111111111",
+      endpoint: "/api/projects",
+    } satisfies Partial<InstanceType<typeof ApiError>>);
+  });
+
+  it("throws ApiNetworkError (not ApiError) when fetch itself fails, e.g. network outage or CORS block", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", fetchMock);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { api, ApiNetworkError } = await loadApiClient("https://backend.example.com");
+
+    await expect(api.get("/api/projects")).rejects.toBeInstanceOf(ApiNetworkError);
+    expect(consoleErrorSpy).toHaveBeenCalled();
+  });
+
   it("sends credentials:include on logout (mutating, authenticated) requests", async () => {
     setCookie("XSRF-TOKEN", "token-abc");
     const fetchMock = vi

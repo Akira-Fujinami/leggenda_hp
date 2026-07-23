@@ -12,13 +12,41 @@ export class ApiError extends Error {
   readonly status: number;
   readonly errors: Record<string, string[]>;
   readonly errorCode: string | null;
+  /** Backendが AssignRequestId ミドルウェアで付与する X-Request-Id。障害調査でBackendログと突き合わせるためのもの。 */
+  readonly requestId: string | null;
+  readonly endpoint: string;
 
-  constructor(status: number, message: string, errors: Record<string, string[]>, errorCode: string | null) {
+  constructor(
+    status: number,
+    message: string,
+    errors: Record<string, string[]>,
+    errorCode: string | null,
+    requestId: string | null,
+    endpoint: string,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.errors = errors;
     this.errorCode = errorCode;
+    this.requestId = requestId;
+    this.endpoint = endpoint;
+  }
+}
+
+/**
+ * fetch()自体が失敗した場合(真のネットワーク断、またはCORSでブロックされた場合)。
+ * ブラウザの仕様上、fetch()はセキュリティ上の理由でネットワークエラーとCORSエラーを
+ * 区別する情報をJavaScriptへ渡さない(どちらも同じTypeErrorになる)ため、
+ * このクラスでは両者をまとめて扱う。
+ */
+export class ApiNetworkError extends Error {
+  readonly endpoint: string;
+
+  constructor(endpoint: string) {
+    super("ネットワークエラーが発生しました。接続状況をご確認のうえ、時間をおいて再度お試しください。");
+    this.name = "ApiNetworkError";
+    this.endpoint = endpoint;
   }
 }
 
@@ -56,13 +84,24 @@ async function apiFetch<T>(path: string, options: ApiFetchOptions = {}, isRetry 
     ...(isMutation ? { "X-XSRF-TOKEN": getCookie("XSRF-TOKEN") ?? "" } : {}),
   };
 
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    method,
-    headers,
-    credentials: "include",
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      method,
+      headers,
+      credentials: "include",
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    });
+  } catch (cause) {
+    // ネットワーク断・CORSブロックはここに来る(ブラウザはJSへ区別を渡さない)。
+    // ユーザーには秘密情報を出さず、開発者向けにはconsoleへ詳細を残す。
+    console.error(`[api] network error: ${method} ${path}`, cause);
+    throw new ApiNetworkError(path);
+  }
+
+  const requestId = response.headers.get("X-Request-Id");
 
   if (response.status === 204) {
     return undefined as T;
@@ -79,11 +118,22 @@ async function apiFetch<T>(path: string, options: ApiFetchOptions = {}, isRetry 
   const body = await response.json().catch(() => null);
 
   if (!response.ok) {
+    // 開発者向け: statusコード・endpoint・request ID・error code・response messageを
+    // consoleへ出す(ユーザー向けUIには表示しない)。監視ログ収集サービスがあれば
+    // ここから送信する拡張ポイントにもなる。
+    console.error(`[api] ${response.status} ${method} ${path}`, {
+      requestId,
+      errorCode: body?.error_code ?? null,
+      message: body?.message ?? null,
+    });
+
     throw new ApiError(
       response.status,
       body?.message ?? "エラーが発生しました。",
       body?.errors ?? {},
       body?.error_code ?? null,
+      requestId,
+      path,
     );
   }
 

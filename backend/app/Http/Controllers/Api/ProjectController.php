@@ -11,6 +11,8 @@ use App\Models\Project;
 use App\Services\ProjectService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class ProjectController extends Controller
 {
@@ -20,11 +22,25 @@ class ProjectController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $paginator = $request->user()
-            ->projects()
-            ->withCount('websites')
-            ->orderByDesc('updated_at')
-            ->paginate(12);
+        try {
+            $paginator = $request->user()
+                ->projects()
+                ->withCount('websites')
+                ->orderByDesc('updated_at')
+                ->paginate(12);
+        } catch (Throwable $e) {
+            // Cookie値・セッションID・DBパスワード等の機微情報は含めない。
+            // request_idはAssignRequestIdミドルウェアがLog::withContext()で
+            // 全ログ行に自動付与するため、ここで明示的に含める必要はない。
+            Log::error('projects.index_failed', [
+                'endpoint' => 'GET /api/projects',
+                'user_id' => $request->user()?->id,
+                'exception' => $e::class,
+                'status' => 500,
+            ]);
+
+            throw $e;
+        }
 
         return $this->success(
             ProjectResource::collection($paginator->items()),
