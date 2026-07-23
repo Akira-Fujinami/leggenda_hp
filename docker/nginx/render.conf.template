@@ -1,0 +1,43 @@
+server {
+    listen ${PORT} default_server;
+    server_name _;
+    root /var/www/html/public;
+    index index.php;
+
+    client_max_body_size 20M;
+
+    # Renderのログ収集はコンテナのstdout/stderrを読むため、
+    # nginxのアクセス/エラーログもファイルではなくそこへ出す。
+    access_log /dev/stdout;
+    error_log /dev/stderr warn;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # nginxは正規表現locationを記述順で最初に一致したものを採用するため、
+    # 拒否ルールは "\.php$" より必ず前に置く (でないと /vendor/foo.php 等が
+    # 先にPHPへfastcgi_passされてしまい、拒否ルールへ到達しない)。
+
+    # 隠しファイル (.env含む) は拒否。.well-known だけは許可 (ACME等で使用)。
+    location ~ /\.(?!well-known) {
+        deny all;
+    }
+
+    # public/ 配下に紛れ込んだ場合の保険として、Laravel内部ディレクトリ・
+    # Composerメタファイルへの直接アクセスを明示的に拒否する。
+    location ~* ^/(vendor|storage|composer\.(json|lock|phar))(/|$) {
+        deny all;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_read_timeout 300;
+    }
+}

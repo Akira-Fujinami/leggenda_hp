@@ -91,6 +91,45 @@ RUN chmod +x /usr/local/bin/backend-entrypoint.sh
 # entrypointはroot権限で名前付きVolumeの所有権を修正した後、
 # www-dataに権限を落としてアプリを起動する (php-fpm本体はcontainer内でrootのまま
 # 待機し、workerプロセスはwww.confの設定通りwww-dataとしてforkされる)。
+#
+# このprodステージ自体はphp-fpmのみを起動しHTTPを直接待受けない
+# (fastcgi:9000のみ)。Render Background Worker (queue:work) や
+# ローカルcomposeのnginx分離構成 (compose.prod.yaml) はこのステージをそのまま使う。
+# Render Web Serviceのように単一プロセスが0.0.0.0:$PORTでHTTPを
+# 待ち受ける必要がある場合は、下のrenderステージを使うこと。
 EXPOSE 9000
 ENTRYPOINT ["/usr/local/bin/backend-entrypoint.sh"]
 CMD ["php-fpm"]
+
+# ---- Render Web Service用ステージ (nginx + php-fpmを1コンテナに同梱) ----
+# RenderのWeb Serviceは単一コンテナが0.0.0.0:$PORTで直接HTTPを待ち受けることを
+# 要求するため、prodステージ(php-fpmのみ、fastcgi:9000)の前段にnginxを
+# 同じコンテナ内で追加起動する。Background Worker用イメージを太らせない/
+# 壊さないよう、nginx関連の追加は独立したこのステージにのみ行う。
+FROM prod AS render
+
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        nginx \
+        gettext-base \
+    ; \
+    rm -rf /var/lib/apt/lists/*; \
+    # Debianのnginxパッケージが標準で有効化するport 80のデフォルトsiteを外す。
+    # $PORT以外を意図せずlistenしないようにするため。
+    rm -f /etc/nginx/sites-enabled/default
+
+COPY docker/nginx/render.conf.template /etc/nginx/templates/default.conf.template
+COPY docker/scripts/backend-entrypoint.render.sh /usr/local/bin/backend-entrypoint.render.sh
+RUN chmod +x /usr/local/bin/backend-entrypoint.render.sh
+
+ENV PORT=10000
+EXPOSE 10000
+
+# ベースのphp-fpmイメージは STOPSIGNAL SIGQUIT を設定している
+# (php-fpm単体をPID1として直接動かす想定のため)。このrenderステージの
+# PID1はentrypointスクリプト(bash)であり、SIGTERMをtrapしてnginx/php-fpm
+# 双方へgraceful stopを配る設計のため、Renderや `docker stop` が送る
+# 標準のSIGTERMで正しく終了するよう明示的に上書きする。
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["/usr/local/bin/backend-entrypoint.render.sh"]
