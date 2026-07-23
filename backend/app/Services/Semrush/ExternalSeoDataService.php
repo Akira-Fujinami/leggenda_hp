@@ -37,7 +37,7 @@ class ExternalSeoDataService
         $lookupDomain = $normalizedDomain->domainForLookup();
         $scope = $normalizedDomain->scope();
 
-        $cached = $this->findFreshCache($provider->name(), $lookupDomain, $database);
+        $cached = $this->findFreshCache($provider->name(), $provider->isMock(), $lookupDomain, $database, $scope);
 
         if ($cached !== null) {
             return ExternalDataSnapshot::query()->updateOrCreate(
@@ -126,13 +126,21 @@ class ExternalSeoDataService
         );
     }
 
-    private function findFreshCache(string $provider, string $domain, string $database): ?ExternalDataSnapshot
+    /**
+     * providerだけでなくis_mock/scopeも明示的に絞り込むことで、
+     * 「provider名とis_mockの対応が常に1:1」という前提が将来崩れた場合や、
+     * サブドメインスコープが実装された場合にも、異なる種類のデータを
+     * キャッシュとして誤って再利用しないようにする(防御的な二重チェック)。
+     */
+    private function findFreshCache(string $provider, bool $isMock, string $domain, string $database, string $scope): ?ExternalDataSnapshot
     {
         return ExternalDataSnapshot::query()
             ->where('provider', $provider)
+            ->where('is_mock', $isMock)
             ->where('operation', self::OPERATION)
             ->where('domain', $domain)
             ->where('database', $database)
+            ->where('scope', $scope)
             ->where('status', 'success')
             ->where('expires_at', '>', now())
             ->latest('fetched_at')

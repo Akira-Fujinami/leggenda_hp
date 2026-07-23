@@ -103,6 +103,46 @@ class ComparisonTest extends TestCase
         $response->assertJsonPath('data.ranking.0.score_gap_vs_primary', null);
     }
 
+    public function test_mock_only_authority_category_is_reported_as_unavailable_not_a_fabricated_score(): void
+    {
+        $user = User::factory()->create();
+        ['analysis' => $analysis, 'primaryWa' => $primaryWa, 'competitorWa' => $competitorWa] = $this->makeAnalysisWithTwoSites($user);
+
+        $authorityDefinition = MetricDefinition::factory()->create([
+            'key' => 'authority_score', 'category_key' => 'authority', 'scoring_type' => 'threshold', 'max_score' => 15,
+        ]);
+
+        foreach ([$primaryWa, $competitorWa] as $websiteAnalysis) {
+            MetricResult::factory()->create([
+                'website_analysis_id' => $websiteAnalysis->id, 'metric_definition_id' => $authorityDefinition->id,
+                'status' => MetricResultStatus::NotApplicable, 'score' => null, 'confidence' => 0,
+                'normalized_value' => ['value' => 42],
+            ]);
+        }
+
+        $response = $this->actingAs($user)->getJson("/api/analyses/{$analysis->id}/comparison");
+
+        $response->assertOk();
+        $categories = collect($response->json('data.categories'));
+        $authority = $categories->firstWhere('key', 'authority');
+
+        $this->assertNotNull($authority);
+        foreach ($authority['sites'] as $site) {
+            $this->assertEquals(0.0, $site['max_available_score']);
+            $this->assertEquals(0.0, $site['coverage_rate']);
+        }
+
+        // Mock-onlyのauthorityは強み・弱みのどちらにも出てこないこと。
+        $strengths = collect($response->json('data.strengths'))->flatMap(fn ($group) => $group['items']);
+        $weaknesses = collect($response->json('data.weaknesses'))->flatMap(fn ($group) => $group['items']);
+        $this->assertFalse($strengths->contains('category_key', 'authority'));
+        $this->assertFalse($weaknesses->contains('category_key', 'authority'));
+
+        // ランキングはtechnical_seoの差分(1件目のtitle_presentのみ)に基づいたままであること。
+        $ranking = collect($response->json('data.ranking'));
+        $this->assertSame($primaryWa->id, $ranking->firstWhere('rank', 1)['website_analysis_id']);
+    }
+
     public function test_other_user_cannot_view_comparison(): void
     {
         $owner = User::factory()->create();

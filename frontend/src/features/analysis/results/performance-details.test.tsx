@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { PerformanceDetails } from "@/features/analysis/results/performance-details";
 import type { MetricEvaluation } from "@/types/analysis";
 
@@ -70,7 +71,8 @@ describe("PerformanceDetails", () => {
     expect(screen.queryByText(/単発計測/)).not.toBeInTheDocument();
   });
 
-  it("shows request count and transfer size as reference info, converting bytes to KB", () => {
+  it("shows request count and transfer size as reference info, converting bytes to KB, behind the detail expand", async () => {
+    const user = userEvent.setup();
     const metrics = [
       makeMetric({ status: "success", value: 82, counts_toward_score: true, score: 8.2, max_score: 10, error_message: null }),
       { ...makeMetric({ status: "success" }), key: "lighthouse_request_count", name: "リクエスト数", scoring_type: "not_scored", unit: "requests", value: 42, counts_toward_score: false },
@@ -78,6 +80,9 @@ describe("PerformanceDetails", () => {
     ];
 
     render(<PerformanceDetails metrics={metrics} />);
+
+    expect(screen.queryByText(/リクエスト数: 42requests/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /詳細指標を表示/ }));
 
     expect(screen.getByText(/リクエスト数: 42requests/)).toBeInTheDocument();
     expect(screen.getByText(/転送量: 500 KB/)).toBeInTheDocument();

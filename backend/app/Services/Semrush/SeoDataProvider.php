@@ -20,4 +20,11 @@ interface SeoDataProvider
     public function fetch(string $domain, string $database): SeoProviderResult;
 
     public function name(): string;
+
+    /**
+     * このProviderが返すSeoProviderResultが常にisMock=trueかどうか。
+     * キャッシュ検索(ExternalSeoDataService::findFreshCache)で、
+     * provider名だけでなくis_mockも明示的に絞り込むために使う。
+     */
+    public function isMock(): bool;
 }

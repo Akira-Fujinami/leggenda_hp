@@ -1,4 +1,11 @@
+"use client";
+
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { isJobRetryable, jobTypeLabel } from "@/features/analysis/job-labels";
 import type { AnalysisJobError } from "@/types/analysis";
@@ -17,6 +24,7 @@ const IMPACT_BY_JOB: Record<string, string> = {
 };
 
 export function FailedAnalysisItems({ errors }: { errors: AnalysisJobError[] }) {
+  const [open, setOpen] = useState(false);
   if (errors.length === 0) return null;
 
   return (
@@ -24,29 +32,43 @@ export function FailedAnalysisItems({ errors }: { errors: AnalysisJobError[] }) 
       <CardHeader>
         <CardTitle className="text-base">分析できなかった項目</CardTitle>
       </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>分析項目</TableHead>
-              <TableHead>原因</TableHead>
-              <TableHead>影響範囲</TableHead>
-              <TableHead>再実行</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {errors.map((error) => (
-              <TableRow key={error.job_type}>
-                <TableCell className="font-medium">{jobTypeLabel(error.job_type)}</TableCell>
-                <TableCell className="text-muted-foreground">{error.error_message ?? error.error_code ?? "不明なエラー"}</TableCell>
-                <TableCell className="text-muted-foreground">{IMPACT_BY_JOB[error.job_type] ?? "一部の評価項目に影響します。"}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {isJobRetryable(error.job_type) ? "再分析で再取得できる可能性があります" : "-"}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <CardContent className="space-y-2">
+        <Alert variant="destructive">
+          <AlertDescription>
+            分析失敗: {errors.length}件({errors.map((e) => jobTypeLabel(e.job_type)).join("、")})
+          </AlertDescription>
+        </Alert>
+
+        <Collapsible open={open} onOpenChange={setOpen}>
+          <CollapsibleTrigger render={<Button variant="ghost" size="sm" className="gap-1" />}>
+            <ChevronDown className={`size-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+            {open ? "詳細を閉じる" : "詳細を見る"}
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-2">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>分析項目</TableHead>
+                  <TableHead>原因</TableHead>
+                  <TableHead>影響範囲</TableHead>
+                  <TableHead>再実行</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {errors.map((error) => (
+                  <TableRow key={error.job_type}>
+                    <TableCell className="font-medium">{jobTypeLabel(error.job_type)}</TableCell>
+                    <TableCell className="text-muted-foreground">{error.error_message ?? error.error_code ?? "不明なエラー"}</TableCell>
+                    <TableCell className="text-muted-foreground">{IMPACT_BY_JOB[error.job_type] ?? "一部の評価項目に影響します。"}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {isJobRetryable(error.job_type) ? "再分析で再取得できる可能性があります" : "-"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
   );

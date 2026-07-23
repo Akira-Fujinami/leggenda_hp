@@ -1,9 +1,17 @@
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { findMetric } from "@/features/analysis/results/metric-lookup";
 import type { MetricEvaluation } from "@/types/analysis";
 
-const LIGHTHOUSE_METRIC_KEYS = ["lighthouse_performance", "lighthouse_accessibility", "lighthouse_best_practices", "lighthouse_seo_score", "fcp", "lcp", "cls", "speed_index", "tbt"];
+/** 常時表示するLighthouseの4カテゴリスコア(単発計測でも全体像がすぐ把握できる最小限)。 */
+const CATEGORY_SCORE_KEYS = ["lighthouse_performance", "lighthouse_accessibility", "lighthouse_best_practices", "lighthouse_seo_score"];
+
+/** Core Web Vitals等の生データ指標。詳細を開いたときのみ表示する。 */
+const DETAIL_METRIC_KEYS = ["fcp", "lcp", "cls", "speed_index", "tbt"];
 
 const INFO_METRIC_KEYS = ["lighthouse_request_count", "lighthouse_transfer_size"];
 
@@ -34,14 +42,17 @@ interface LighthouseEvidence {
 }
 
 export function PerformanceDetails({ metrics }: { metrics: MetricEvaluation[] }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const performance = findMetric(metrics, "lighthouse_performance");
   const succeeded = performance?.status === "success";
-  const lighthouseMetrics = LIGHTHOUSE_METRIC_KEYS.map((key) => findMetric(metrics, key)).filter((m): m is MetricEvaluation => m !== undefined);
+  const categoryScoreMetrics = CATEGORY_SCORE_KEYS.map((key) => findMetric(metrics, key)).filter((m): m is MetricEvaluation => m !== undefined);
+  const detailMetrics = DETAIL_METRIC_KEYS.map((key) => findMetric(metrics, key)).filter((m): m is MetricEvaluation => m !== undefined);
   const infoMetrics = INFO_METRIC_KEYS.map((key) => findMetric(metrics, key)).filter(
     (m): m is MetricEvaluation => m !== undefined && m.value !== null
   );
   const evidence = performance?.evidence as LighthouseEvidence | null;
   const runCount = evidence?.metadata?.run_count;
+  const hasDetail = detailMetrics.length > 0 || infoMetrics.length > 0;
 
   return (
     <Card>
@@ -52,7 +63,7 @@ export function PerformanceDetails({ metrics }: { metrics: MetricEvaluation[] })
         {succeeded ? (
           <>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {lighthouseMetrics.map((metric) => (
+              {categoryScoreMetrics.map((metric) => (
                 <div key={metric.key} className="rounded-md border p-3 text-center">
                   <p className="text-xs text-muted-foreground">{METRIC_LABELS[metric.key] ?? metric.name}</p>
                   <p className="mt-1 text-lg font-semibold">
@@ -69,6 +80,38 @@ export function PerformanceDetails({ metrics }: { metrics: MetricEvaluation[] })
                 </AlertDescription>
               </Alert>
             )}
+            {hasDetail && (
+              <Collapsible open={detailOpen} onOpenChange={setDetailOpen}>
+                <CollapsibleTrigger render={<Button variant="ghost" size="sm" className="gap-1" />}>
+                  <ChevronDown className={`size-3.5 transition-transform ${detailOpen ? "rotate-180" : ""}`} />
+                  詳細指標を表示(Core Web Vitals等){runCount === 1 && "・単発計測"}
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-3 pt-2">
+                  {detailMetrics.length > 0 && (
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                      {detailMetrics.map((metric) => (
+                        <div key={metric.key} className="rounded-md border p-3 text-center">
+                          <p className="text-xs text-muted-foreground">{METRIC_LABELS[metric.key] ?? metric.name}</p>
+                          <p className="mt-1 text-lg font-semibold">
+                            {metric.value ?? "-"}
+                            {metric.unit && metric.value !== null ? metric.unit : ""}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {infoMetrics.length > 0 && (
+                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                      {infoMetrics.map((metric) => (
+                        <span key={metric.key}>
+                          {METRIC_LABELS[metric.key] ?? metric.name}: {formatInfoValue(metric)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+            )}
           </>
         ) : (
           <Alert variant="destructive">
@@ -80,15 +123,6 @@ export function PerformanceDetails({ metrics }: { metrics: MetricEvaluation[] })
               </p>
             </AlertDescription>
           </Alert>
-        )}
-        {infoMetrics.length > 0 && (
-          <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-            {infoMetrics.map((metric) => (
-              <span key={metric.key}>
-                {METRIC_LABELS[metric.key] ?? metric.name}: {formatInfoValue(metric)}
-              </span>
-            ))}
-          </div>
         )}
       </CardContent>
     </Card>

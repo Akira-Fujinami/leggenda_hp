@@ -1,6 +1,8 @@
-import { Badge } from "@/components/ui/badge";
+import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { classifyMetric, EVALUATION_BADGE_VARIANT, EVALUATION_LABELS } from "@/features/analysis/metric-evaluation";
+import { classifyMetric, isGoodEvaluationState } from "@/features/analysis/metric-evaluation";
+import { EvaluationBadge } from "@/features/analysis/results/evaluation-badge";
+import { GoodItemsCollapsible } from "@/features/analysis/results/good-items-collapsible";
 import { MetricEvaluationCard } from "@/features/analysis/results/metric-evaluation-card";
 import { findMetric } from "@/features/analysis/results/metric-lookup";
 import type { AnalysisSeoSummary, MetricEvaluation } from "@/types/analysis";
@@ -29,7 +31,7 @@ function LengthCard({
     <div className="rounded-md border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium">{label}</p>
-        <Badge variant={EVALUATION_BADGE_VARIANT[state]}>{EVALUATION_LABELS[state]}</Badge>
+        <EvaluationBadge state={state} />
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
         現在値: {typeof lengthMetric?.value === "number" ? `${lengthMetric.value}文字` : presenceMetric?.value ? "設定あり" : "未設定"}
@@ -56,19 +58,25 @@ interface H1RawValue {
  * 使うと「H1: 3件」と同時に「現在値: なし」が表示される矛盾を再現して
  * しまう。ここでは必ずraw_value.valid_countのみからH1の状態を導出する。
  */
-function classifyH1Badge(
-  validCount: number,
-  totalCount: number,
-): { label: string; variant: "default" | "secondary" | "outline" } {
-  if (validCount === 0) return { label: "検出されませんでした", variant: "outline" };
-  if (validCount === 1 && totalCount === validCount) return { label: "良好", variant: "default" };
-  return { label: "要確認", variant: "secondary" };
+function classifyH1Badge(validCount: number, totalCount: number): ReturnType<typeof classifyMetric> {
+  if (validCount === 0) return "not_found";
+  if (validCount === 1 && totalCount === validCount) return "good";
+  return "review";
 }
 
 function h1Note(validCount: number): string {
   if (validCount === 0) return "ページの主題を表すH1見出しを設定することが推奨されます。";
   if (validCount === 1) return "代表H1の内容がページの主題と一致しているか確認してください。";
   return `主要なH1が${validCount}件検出されました。ページの主題を1つに絞ることを推奨します。`;
+}
+
+/** H1Card内で実際に表示される状態と一致させ、良好項目の折りたたみ判定にそのまま使う。 */
+function classifyH1RowState(metric: MetricEvaluation): ReturnType<typeof classifyMetric> {
+  if (metric.status === "error" || metric.status === "unavailable") return classifyMetric(metric);
+  const raw = metric.raw_value as H1RawValue | null;
+  const validCount = raw?.valid_count ?? raw?.count ?? 0;
+  const totalCount = raw?.count ?? 0;
+  return classifyH1Badge(validCount, totalCount);
 }
 
 function H1Card({ metric }: { metric: MetricEvaluation }) {
@@ -80,7 +88,7 @@ function H1Card({ metric }: { metric: MetricEvaluation }) {
       <div className="rounded-md border p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-medium">H1タグ</p>
-          <Badge variant={EVALUATION_BADGE_VARIANT[state]}>{EVALUATION_LABELS[state]}</Badge>
+          <EvaluationBadge state={state} />
         </div>
         {metric.error_message && <p className="mt-1 text-xs text-muted-foreground">{metric.error_message}</p>}
       </div>
@@ -95,13 +103,13 @@ function H1Card({ metric }: { metric: MetricEvaluation }) {
   const validCount = raw?.valid_count ?? raw?.count ?? 0;
   const totalCount = raw?.count ?? 0;
   const excludedCount = Math.max(0, totalCount - validCount);
-  const badge = classifyH1Badge(validCount, totalCount);
+  const badgeState = classifyH1Badge(validCount, totalCount);
 
   return (
     <div className="rounded-md border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium">H1タグ</p>
-        <Badge variant={badge.variant}>{badge.label}</Badge>
+        <EvaluationBadge state={badgeState} />
       </div>
       <div className="mt-1 space-y-0.5 text-sm text-muted-foreground">
         <p>有効なH1: {validCount}件</p>
@@ -112,6 +120,12 @@ function H1Card({ metric }: { metric: MetricEvaluation }) {
       <p className="mt-1 text-xs text-muted-foreground">{h1Note(validCount)}</p>
     </div>
   );
+}
+
+interface SeoRow {
+  key: string;
+  state: ReturnType<typeof classifyMetric>;
+  node: ReactNode;
 }
 
 export function SeoDetails({ metrics, seo }: { metrics: MetricEvaluation[]; seo: AnalysisSeoSummary | null }) {
@@ -125,6 +139,64 @@ export function SeoDetails({ metrics, seo }: { metrics: MetricEvaluation[]; seo:
   const favicon = findMetric(metrics, "favicon_present");
   const robotsTxt = findMetric(metrics, "robots_fetched");
   const sitemapXml = findMetric(metrics, "sitemap_fetched");
+  const h1 = findMetric(metrics, "h1_single");
+
+  const rows: SeoRow[] = [];
+
+  const titleMetric = findMetric(metrics, "title_length_optimal") ?? findMetric(metrics, "title_present");
+  if (titleMetric) {
+    rows.push({
+      key: "title",
+      state: classifyMetric(titleMetric),
+      node: (
+        <LengthCard
+          label="タイトル(title)"
+          presenceMetric={findMetric(metrics, "title_present")}
+          lengthMetric={findMetric(metrics, "title_length_optimal")}
+          text={seo?.title ?? null}
+        />
+      ),
+    });
+  }
+
+  const metaMetric = findMetric(metrics, "meta_description_length_optimal") ?? findMetric(metrics, "meta_description_present");
+  if (metaMetric) {
+    rows.push({
+      key: "meta_description",
+      state: classifyMetric(metaMetric),
+      node: (
+        <LengthCard
+          label="meta description"
+          presenceMetric={findMetric(metrics, "meta_description_present")}
+          lengthMetric={findMetric(metrics, "meta_description_length_optimal")}
+          text={seo?.meta_description ?? null}
+        />
+      ),
+    });
+  }
+
+  if (h1) {
+    rows.push({ key: "h1", state: classifyH1RowState(h1), node: <H1Card metric={h1} /> });
+  }
+
+  const simpleRows: Array<[MetricEvaluation | undefined, string]> = [
+    [canonical ? (canonicalSelf ?? canonical) : undefined, "canonicalタグ"],
+    [robotsMeta, "robots meta(インデックス可否)"],
+    [ogp, "OGP(SNSシェア表示)"],
+    [jsonLd, "構造化データ(JSON-LD)"],
+    [lang, "lang属性"],
+    [viewport, "viewport(モバイル表示設定)"],
+    [favicon, "favicon"],
+    [robotsTxt, "robots.txt"],
+    [sitemapXml, "sitemap.xml"],
+  ];
+  for (const [metric, label] of simpleRows) {
+    if (!metric) continue;
+    rows.push({ key: label, state: classifyMetric(metric), node: <MetricEvaluationCard metric={metric} label={label} /> });
+  }
+
+  const visibleRows = rows.filter((r) => !isGoodEvaluationState(r.state));
+  const goodRows = rows.filter((r) => isGoodEvaluationState(r.state));
 
   return (
     <Card>
@@ -132,30 +204,14 @@ export function SeoDetails({ metrics, seo }: { metrics: MetricEvaluation[]; seo:
         <CardTitle className="text-base">SEO基本情報</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-3 sm:grid-cols-2">
-        <LengthCard
-          label="タイトル(title)"
-          presenceMetric={findMetric(metrics, "title_present")}
-          lengthMetric={findMetric(metrics, "title_length_optimal")}
-          text={seo?.title ?? null}
-        />
-        <LengthCard
-          label="meta description"
-          presenceMetric={findMetric(metrics, "meta_description_present")}
-          lengthMetric={findMetric(metrics, "meta_description_length_optimal")}
-          text={seo?.meta_description ?? null}
-        />
-        {findMetric(metrics, "h1_single") && (
-          <H1Card metric={findMetric(metrics, "h1_single")!} />
-        )}
-        {canonical && <MetricEvaluationCard metric={canonicalSelf ?? canonical} label="canonicalタグ" />}
-        {robotsMeta && <MetricEvaluationCard metric={robotsMeta} label="robots meta(インデックス可否)" />}
-        {ogp && <MetricEvaluationCard metric={ogp} label="OGP(SNSシェア表示)" />}
-        {jsonLd && <MetricEvaluationCard metric={jsonLd} label="構造化データ(JSON-LD)" />}
-        {lang && <MetricEvaluationCard metric={lang} label="lang属性" />}
-        {viewport && <MetricEvaluationCard metric={viewport} label="viewport(モバイル表示設定)" />}
-        {favicon && <MetricEvaluationCard metric={favicon} label="favicon" />}
-        {robotsTxt && <MetricEvaluationCard metric={robotsTxt} label="robots.txt" />}
-        {sitemapXml && <MetricEvaluationCard metric={sitemapXml} label="sitemap.xml" />}
+        {visibleRows.map((r) => (
+          <div key={r.key}>{r.node}</div>
+        ))}
+        <GoodItemsCollapsible count={goodRows.length}>
+          {goodRows.map((r) => (
+            <div key={r.key}>{r.node}</div>
+          ))}
+        </GoodItemsCollapsible>
       </CardContent>
     </Card>
   );

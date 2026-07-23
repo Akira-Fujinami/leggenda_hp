@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ConversionDetails } from "@/features/analysis/results/conversion-details";
 import type { MetricEvaluation } from "@/types/analysis";
+
+async function openGoodItems() {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /良好な項目を表示/ }));
+}
 
 function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation {
   return {
@@ -14,7 +20,7 @@ function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation
 }
 
 describe("ConversionDetails", () => {
-  it("shows the detected fixed CTA's text, position, and link", () => {
+  it("shows the detected fixed CTA's text, position, and link", async () => {
     const metric = makeMetric({
       status: "success",
       value: true,
@@ -25,6 +31,7 @@ describe("ConversionDetails", () => {
     });
 
     render(<ConversionDetails metrics={[metric]} />);
+    await openGoodItems();
 
     expect(screen.getByText("position: fixed")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "お問い合わせ" })).toHaveAttribute("href", "/contact");
@@ -59,7 +66,7 @@ describe("ConversionDetails", () => {
     expect(screen.queryByText(/入力負担: 少ない/)).not.toBeInTheDocument();
   });
 
-  it("shows page-wide form/input counts separately from the representative form's own field count", () => {
+  it("shows page-wide form/input counts separately from the representative form's own field count", async () => {
     const metrics = [
       makeMetric({ key: "page_form_count", name: "ページ内フォーム数", value_type: "number", unit: "count", scoring_type: "not_scored", value: 12 }),
       makeMetric({ key: "page_input_count", name: "ページ内入力項目総数", value_type: "number", unit: "fields", scoring_type: "not_scored", value: 134 }),
@@ -71,10 +78,13 @@ describe("ConversionDetails", () => {
     expect(screen.getByText("ページ内フォーム数")).toBeInTheDocument();
     expect(screen.getByText(/12件/)).toBeInTheDocument();
     expect(screen.getByText(/134項目/)).toBeInTheDocument();
+
+    // representative_form_field_count(status success)は「良好」扱いとなり折りたたまれるため、開いてから確認する。
+    await openGoodItems();
     expect(screen.getByText(/35項目/)).toBeInTheDocument();
   });
 
-  it("shows the detected SNS platform names and a collapsible URL list", () => {
+  it("shows the detected SNS platform names and a collapsible URL list", async () => {
     const metric = makeMetric({
       key: "sns_link_present", name: "SNSリンク", value_type: "boolean", scoring_type: "boolean",
       status: "success", value: true, counts_toward_score: true, score: 1, max_score: 1,
@@ -92,18 +102,20 @@ describe("ConversionDetails", () => {
     });
 
     render(<ConversionDetails metrics={[metric]} />);
+    await openGoodItems();
 
     expect(screen.getByText("Facebook、X、Instagram、LINE、YouTube")).toBeInTheDocument();
     expect(screen.getByText(/SNSリンクのURLを表示/)).toBeInTheDocument();
   });
 
-  it("shows a chatbot support row when detected", () => {
+  it("shows a chatbot support row when detected", async () => {
     const metric = makeMetric({
       key: "chatbot_detected", name: "チャットサポート", value_type: "boolean", scoring_type: "not_scored",
       status: "success", value: true, raw_value: { detected: true, matched: "tawk.to" },
     });
 
     render(<ConversionDetails metrics={[metric]} />);
+    await openGoodItems();
 
     expect(screen.getByText("チャットサポート")).toBeInTheDocument();
   });

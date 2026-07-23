@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { HelpCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +10,16 @@ import { MetricEvaluationCard } from "@/features/analysis/results/metric-evaluat
 import { metricsByCategory } from "@/features/analysis/results/metric-lookup";
 import type { CategoryScore, MetricEvaluation } from "@/types/analysis";
 
-export function CategoryScoreCard({ category, metrics }: { category: CategoryScore; metrics: MetricEvaluation[] }) {
+export function CategoryScoreCard({
+  category,
+  metrics,
+  onViewDetails,
+}: {
+  category: CategoryScore;
+  metrics: MetricEvaluation[];
+  /** 指定すると「詳細を見る」はページ内の対応セクションへの遷移になり、ローカル展開は行わない(概要カテゴリ一覧用)。 */
+  onViewDetails?: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const categoryMetrics = metricsByCategory(metrics, category.key);
   const isUnavailable = category.max_available_score <= 0;
@@ -23,7 +33,10 @@ export function CategoryScoreCard({ category, metrics }: { category: CategorySco
       <CardHeader className="flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base">{category.name}</CardTitle>
         {isUnavailable ? (
-          <Badge variant="outline">評価不可</Badge>
+          <Badge variant="outline" className="gap-1">
+            <HelpCircle className="size-3" />
+            評価不可
+          </Badge>
         ) : (
           <span className="text-sm text-muted-foreground">
             {category.score} / {category.configured_max_score}点(カバー率{Math.round(category.coverage_rate)}%)
@@ -43,11 +56,16 @@ export function CategoryScoreCard({ category, metrics }: { category: CategorySco
           </div>
         )}
 
-        <Button variant="ghost" size="sm" onClick={() => setExpanded((v) => !v)}>
-          {expanded ? "詳細を閉じる" : "詳細を開く"}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onViewDetails ?? (() => setExpanded((v) => !v))}
+          aria-expanded={onViewDetails ? undefined : expanded}
+        >
+          {onViewDetails ? "詳細を見る" : expanded ? "詳細を閉じる" : "詳細を開く"}
         </Button>
 
-        {expanded && (
+        {!onViewDetails && expanded && (
           <div className="grid gap-2 sm:grid-cols-2">
             {categoryMetrics.map((metric) => (
               <MetricEvaluationCard key={metric.key} metric={metric} />

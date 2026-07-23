@@ -19,7 +19,9 @@ describe("TechnologyDetails", () => {
 
     render(<TechnologyDetails metrics={metrics} />);
 
-    expect(screen.getByText("検出されませんでした")).toBeInTheDocument();
+    expect(screen.getByText("未検出")).toBeInTheDocument();
+    expect(screen.getByText("Google Analytics")).toBeInTheDocument();
+    expect(screen.queryByText("検出済み")).not.toBeInTheDocument();
   });
 
   it("shows a detected badge distinct from a good/bad judgment (no CMS bias)", () => {

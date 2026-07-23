@@ -28,6 +28,19 @@ async function registerAndCreateProject(page: import("@playwright/test").Page, l
   await expect(page).toHaveURL(/\/projects\/\d+$/);
 }
 
+const SECTION_NAV_LABEL: Record<string, string> = { content: "コンテンツ", conversion: "集客・CTA", seo: "SEO" };
+
+// 複数セクションを同時に開くと「良好な項目を表示」トリガーがページ全体に
+// 複数存在し得るため、対象セクションのAccordionItem(id指定)内に絞って操作する。
+async function openSectionAndGoodItems(page: import("@playwright/test").Page, sectionId: keyof typeof SECTION_NAV_LABEL) {
+  await page.getByRole("button", { name: `${SECTION_NAV_LABEL[sectionId]}セクションへ移動`, exact: true }).click();
+  const section = page.locator(`#${sectionId}`);
+  const trigger = section.getByRole("button", { name: /良好な項目を表示/ });
+  if ((await trigger.count()) > 0) {
+    await trigger.first().click();
+  }
+}
+
 async function registerSiteAndAnalyze(page: import("@playwright/test").Page, url: string) {
   const nameField = page.getByLabel("サイト名");
   await nameField.fill("自社サイト");
@@ -53,12 +66,16 @@ test("detects business/conversion signals on a content-rich fixture site", async
   await registerAndCreateProject(page, "site-a");
   await registerSiteAndAnalyze(page, "http://e2e-fixture-a:8080");
 
+  // コンテンツ・集客セクションはページ内ナビからの展開でのみDOMに現れる。
+  // 良好判定の項目はさらに「良好な項目を表示」の折りたたみの中にある。
+  await openSectionAndGoodItems(page, "content");
   // 料金/導入事例リンクは検出され、実際に検出したリンクのURL・テキストも
   // 表示される(カードの見出しと検出リンクのテキストが同じ文言になり得るため
   // .first()で曖昧さを避ける)。
   await expect(page.getByText("料金情報リンク").first()).toBeVisible();
   await expect(page.getByRole("link", { name: "導入事例・お客様の声" })).toHaveAttribute("href", "/case-study");
 
+  await openSectionAndGoodItems(page, "conversion");
   // 固定表示CTA(画面右下に常時表示される問い合わせボタン)がレンダリング後DOMから検出される。
   await expect(page.getByText("固定表示CTA(常時追従)")).toBeVisible();
 
@@ -72,11 +89,13 @@ test("detects a heavy input burden and absent business links on a thin fixture s
   await registerAndCreateProject(page, "site-b");
   await registerSiteAndAnalyze(page, "http://e2e-fixture-b:8080");
 
+  await openSectionAndGoodItems(page, "content");
   // 料金・導入事例ページへのリンクが存在しないサイトでは「検出されませんでした」と表示され、
   // 0点や「未取得」と誤って表示されない(exclude方針により減点対象からも外れる)。
   const contentSection = page.locator("text=コンテンツ分析").locator("..").locator("..");
   await expect(contentSection.getByText("検出されませんでした").first()).toBeVisible();
 
+  await openSectionAndGoodItems(page, "conversion");
   // 必須項目11個の大規模フォーム: 入力負担は「多い」。
   await expect(page.getByText(/負担: 多い/)).toBeVisible();
 });

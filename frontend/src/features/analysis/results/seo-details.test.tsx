@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { SeoDetails } from "@/features/analysis/results/seo-details";
 import type { MetricEvaluation } from "@/types/analysis";
+
+async function openGoodItems() {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /良好な項目を表示/ }));
+}
 
 function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation {
   return {
@@ -14,7 +20,7 @@ function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation
 }
 
 describe("SeoDetails", () => {
-  it("evaluates the title with its recommended character-length range", () => {
+  it("evaluates the title with its recommended character-length range", async () => {
     const metrics: MetricEvaluation[] = [
       makeMetric({ key: "title_present", value: true }),
       makeMetric({
@@ -24,6 +30,8 @@ describe("SeoDetails", () => {
     ];
 
     render(<SeoDetails metrics={metrics} seo={{ title: "サンプルタイトル", meta_description: null, h1_count: 1, word_count: 100 }} />);
+    // 満点に近い(良好)ため、良好項目の折りたたみを開いてから確認する。
+    await openGoodItems();
 
     expect(screen.getByText("タイトル(title)")).toBeInTheDocument();
     expect(screen.getByText(/50文字/)).toBeInTheDocument();
@@ -45,7 +53,7 @@ describe("SeoDetails", () => {
     expect(screen.getByText(/有効なH1: 0件/)).toBeInTheDocument();
   });
 
-  it("shows a single H1 as good and displays its content without auto-judging topic relevance", () => {
+  it("shows a single H1 as good and displays its content without auto-judging topic relevance", async () => {
     const metrics: MetricEvaluation[] = [
       makeMetric({
         key: "h1_single",
@@ -58,6 +66,7 @@ describe("SeoDetails", () => {
     ];
 
     render(<SeoDetails metrics={metrics} seo={null} />);
+    await openGoodItems();
 
     expect(screen.getByText(/有効なH1: 1件/)).toBeInTheDocument();
     expect(screen.getByText(/代表H1: ホテル・旅館ランキング/)).toBeInTheDocument();
@@ -90,7 +99,7 @@ describe("SeoDetails", () => {
     expect(screen.getByText(/主要なH1が2件検出されました/)).toBeInTheDocument();
   });
 
-  it("falls back to raw_value.count for pre-existing analyses recorded before valid_count existed", () => {
+  it("falls back to raw_value.count for pre-existing analyses recorded before valid_count existed", async () => {
     // 既存Analysis互換性の回帰テスト: valid_countフィールド導入前の古い
     // raw_value(count/texts/primary_textのみ)でも、実在するH1を
     // 誤って「検出されませんでした」と表示してはいけない。
@@ -106,12 +115,15 @@ describe("SeoDetails", () => {
     ];
 
     render(<SeoDetails metrics={metrics} seo={null} />);
+    await openGoodItems();
 
     expect(screen.queryByText("検出されませんでした")).not.toBeInTheDocument();
     expect(screen.getByText(/有効なH1: 1件/)).toBeInTheDocument();
   });
 
   it("does not show ad or hidden H1 text as the representative content", () => {
+    // validCount(1) !== totalCount(3)のため「要確認」扱いとなり、良好項目の
+    // 折りたたみには入らず直接表示される。
     const metrics: MetricEvaluation[] = [
       makeMetric({
         key: "h1_single",

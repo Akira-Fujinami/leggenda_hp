@@ -93,10 +93,14 @@ test("start an analysis and reach the results page", async ({ page }) => {
   // (実サイトへのネットワーク依存で結果が変わり得るため、両方を許容する)。
   await expect(page.getByText(/^(総合スコア|参考スコア)$/).first()).toBeVisible();
 
-  // 結果画面の再構成(分析サマリー・優先改善項目・SEO/コンテンツ/集客詳細)が
-  // クラッシュせず表示されることを確認する。
+  // 結果画面の再構成(分析サマリー・優先改善項目・カテゴリ一覧は常時表示、
+  // SEO/集客詳細はセクションナビからの展開でクラッシュせず表示されること)を確認する。
   await expect(page.getByText("分析サマリー").first()).toBeVisible();
   await expect(page.getByText("優先改善項目").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "SEOセクションへ移動", exact: true }).click();
   await expect(page.getByText("SEO基本情報").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "集客・CTAセクションへ移動", exact: true }).click();
   await expect(page.getByText("集客・コンバージョン導線").first()).toBeVisible();
 });

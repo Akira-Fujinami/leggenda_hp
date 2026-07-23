@@ -56,6 +56,15 @@ export function classifyMetric(metric: MetricEvaluation): EvaluationState {
   return "improve";
 }
 
+/**
+ * 「良好」扱いの状態(good/info)のみを折りたたみ対象にするための判定。
+ * problem/unavailable系(review/improve/not_found/unavailable/not_applicable/failed)は
+ * 件数が少なく確認優先度が高いため、常に直接表示する対象として扱う。
+ */
+export function isGoodEvaluationState(state: EvaluationState): boolean {
+  return state === "good" || state === "info";
+}
+
 export function formatMetricValue(metric: MetricEvaluation): string {
   const { value, unit, value_type: valueType } = metric;
 

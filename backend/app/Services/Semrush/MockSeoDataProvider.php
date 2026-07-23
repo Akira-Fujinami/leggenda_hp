@@ -20,6 +20,11 @@ class MockSeoDataProvider implements SeoDataProvider
         return 'mock';
     }
 
+    public function isMock(): bool
+    {
+        return true;
+    }
+
     public function fetch(string $domain, string $database): SeoProviderResult
     {
         $seed = crc32($domain);

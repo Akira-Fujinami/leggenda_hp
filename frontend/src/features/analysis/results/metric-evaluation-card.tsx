@@ -1,5 +1,5 @@
-import { Badge } from "@/components/ui/badge";
-import { classifyMetric, EVALUATION_BADGE_VARIANT, EVALUATION_LABELS, formatMetricValue } from "@/features/analysis/metric-evaluation";
+import { classifyMetric, formatMetricValue } from "@/features/analysis/metric-evaluation";
+import { EvaluationBadge } from "@/features/analysis/results/evaluation-badge";
 import type { MetricEvaluation } from "@/types/analysis";
 
 // 分析対象サイトのHTMLから抽出したhrefをそのままリンク化する前に、
@@ -34,7 +34,7 @@ export function MetricEvaluationCard({
     <div className="rounded-md border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium">{label ?? metric.name}</p>
-        <Badge variant={EVALUATION_BADGE_VARIANT[state]}>{EVALUATION_LABELS[state]}</Badge>
+        <EvaluationBadge state={state} />
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
         現在値: {formatMetricValue(metric)}

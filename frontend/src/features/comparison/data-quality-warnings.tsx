@@ -9,8 +9,16 @@ const WARNING_LABELS: Record<string, string> = {
   partial_html_fetch: "ページ取得が一部失敗しており、結果が不完全な可能性があります。",
 };
 
+// Mockデータの警告は`ExternalSeoMockNotice`がAnalysis単位で一度だけ表示するため、
+// サイトごとの品質警告からは除外し、同じ内容の重複表示を避ける。
+function nonMockWarnings(warnings: string[]): string[] {
+  return warnings.filter((w) => w !== "contains_mock_data");
+}
+
 export function DataQualityWarnings({ ranking, dataQuality }: { ranking: RankingEntry[]; dataQuality: DataQuality[] }) {
-  const withWarnings = dataQuality.filter((dq) => dq.warnings.length > 0);
+  const withWarnings = dataQuality
+    .map((dq) => ({ ...dq, warnings: nonMockWarnings(dq.warnings) }))
+    .filter((dq) => dq.warnings.length > 0);
   if (withWarnings.length === 0) return null;
 
   const nameOf = (websiteAnalysisId: number) =>

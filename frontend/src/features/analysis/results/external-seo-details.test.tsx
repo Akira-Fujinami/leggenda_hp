@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ExternalSeoDetails } from "@/features/analysis/results/external-seo-details";
 import type { MetricEvaluation } from "@/types/analysis";
 
@@ -55,5 +56,19 @@ describe("ExternalSeoDetails", () => {
     expect(screen.getByText("デモデータ")).toBeInTheDocument();
     expect(screen.getByText(/Provider: Mock/)).toBeInTheDocument();
     expect(screen.queryByText(/Provider: semrush/)).not.toBeInTheDocument();
+  });
+
+  it("collapses the score grid by default for mock data, revealing it only on expand", async () => {
+    const user = userEvent.setup();
+    const metric = makeMetric({ status: "not_applicable", value: 37, confidence: 0 });
+
+    render(<ExternalSeoDetails metrics={[metric]} />);
+
+    expect(screen.queryByText("37")).not.toBeInTheDocument();
+    expect(screen.getByText(/総合スコアには未反映/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /総合スコアには未反映/ }));
+
+    expect(screen.getByText("37")).toBeInTheDocument();
   });
 });

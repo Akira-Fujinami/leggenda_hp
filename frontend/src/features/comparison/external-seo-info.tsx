@@ -1,3 +1,4 @@
+import { CheckCircle2, FlaskConical } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -44,7 +45,10 @@ export function ExternalSeoInfoPanel({ ranking, externalSeo }: { ranking: Rankin
                 <TableCell>
                   {info.status === "success" ? (
                     <div className="flex items-center gap-1.5">
-                      <Badge variant={info.is_mock ? "outline" : "secondary"}>{info.is_mock ? "デモデータ" : "実データ"}</Badge>
+                      <Badge variant={info.is_mock ? "outline" : "secondary"} className="gap-1">
+                        {info.is_mock ? <FlaskConical className="size-3" /> : <CheckCircle2 className="size-3" />}
+                        {info.is_mock ? "デモデータ" : "実データ"}
+                      </Badge>
                     </div>
                   ) : (
                     <span className="text-muted-foreground">

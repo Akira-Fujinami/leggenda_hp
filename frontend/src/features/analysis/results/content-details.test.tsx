@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ContentDetails } from "@/features/analysis/results/content-details";
 import type { MetricEvaluation } from "@/types/analysis";
+
+async function openGoodItems() {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /良好な項目を表示/ }));
+}
 
 function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation {
   return {
@@ -14,7 +20,7 @@ function makeMetric(overrides: Partial<MetricEvaluation> = {}): MetricEvaluation
 }
 
 describe("ContentDetails", () => {
-  it("shows the detected link URL and text as a safe clickable link", () => {
+  it("shows the detected link URL and text as a safe clickable link", async () => {
     const metric = makeMetric({
       status: "success",
       value: true,
@@ -25,6 +31,7 @@ describe("ContentDetails", () => {
     });
 
     render(<ContentDetails metrics={[metric]} />);
+    await openGoodItems();
 
     const link = screen.getByRole("link", { name: "料金プラン" });
     expect(link).toHaveAttribute("href", "https://example.com/pricing");
@@ -53,7 +60,7 @@ describe("ContentDetails", () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
-  it("shows a priced product/plan card as distinct from a fixed pricing page link", () => {
+  it("shows a priced product/plan card as distinct from a fixed pricing page link", async () => {
     const priceCardMetric = makeMetric({
       key: "pricing_card_or_product_price_present", name: "価格付き商品・プラン", scoring_type: "not_scored",
       status: "success", value: true,
@@ -61,12 +68,13 @@ describe("ContentDetails", () => {
     });
 
     render(<ContentDetails metrics={[priceCardMetric]} />);
+    await openGoodItems();
 
     expect(screen.getByText("価格付き商品・プラン")).toBeInTheDocument();
     expect(screen.getByText(/宿泊プランA 10,000円〜/)).toBeInTheDocument();
   });
 
-  it("shows a help center row separately from FAQ", () => {
+  it("shows a help center row separately from FAQ", async () => {
     const helpCenterMetric = makeMetric({
       key: "help_center_link_present", name: "ヘルプ・サポート導線", scoring_type: "not_scored",
       status: "success", value: true,
@@ -74,6 +82,7 @@ describe("ContentDetails", () => {
     });
 
     render(<ContentDetails metrics={[helpCenterMetric]} />);
+    await openGoodItems();
 
     expect(screen.getByText("ヘルプ・サポート導線")).toBeInTheDocument();
   });

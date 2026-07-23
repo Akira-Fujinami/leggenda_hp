@@ -27,6 +27,11 @@ class SemrushSeoDataProvider implements SeoDataProvider
         return 'semrush';
     }
 
+    public function isMock(): bool
+    {
+        return false;
+    }
+
     public function fetch(string $domain, string $database): SeoProviderResult
     {
         $apiKey = (string) config('services.semrush.api_key');

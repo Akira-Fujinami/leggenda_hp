@@ -1,5 +1,9 @@
+import { useState } from "react";
+import { CheckCircle2, ChevronDown, FlaskConical, HelpCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { formatMetricValue } from "@/features/analysis/metric-evaluation";
 import { findMetric } from "@/features/analysis/results/metric-lookup";
 import type { MetricEvaluation } from "@/types/analysis";
@@ -39,7 +43,10 @@ function deriveDataState(authorityMetrics: MetricEvaluation[]): "real" | "mock" 
   return "unavailable";
 }
 
+const DATA_STATE_ICON = { real: CheckCircle2, mock: FlaskConical, unavailable: HelpCircle };
+
 export function ExternalSeoDetails({ metrics }: { metrics: MetricEvaluation[] }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const authorityMetrics = DISPLAY_KEYS.map(({ key }) => findMetric(metrics, key)).filter((m): m is MetricEvaluation => m !== undefined);
   const dataState = deriveDataState(authorityMetrics);
   const firstUnavailable = authorityMetrics.find((m) => m.status === "unavailable");
@@ -51,12 +58,30 @@ export function ExternalSeoDetails({ metrics }: { metrics: MetricEvaluation[] })
   const providerMetric = authorityMetrics.find((m) => (m.evidence as AuthorityEvidence | null)?.provider);
   const evidence = providerMetric?.evidence as AuthorityEvidence | null;
   const isMock = evidence?.is_mock ?? dataState === "mock";
+  const DataStateIcon = DATA_STATE_ICON[dataState];
+
+  const valueGrid = (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {DISPLAY_KEYS.map(({ key, label }) => {
+        const metric = findMetric(metrics, key);
+        if (!metric || metric.status === "unavailable") return null;
+
+        return (
+          <div key={key} className="rounded-md border p-3">
+            <p className="text-xs text-muted-foreground">{label}</p>
+            <p className="mt-1 text-sm font-medium">{formatMetricValue(metric)}</p>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base">外部SEO・ドメイン評価</CardTitle>
-        <Badge variant={dataState === "real" ? "secondary" : "outline"}>
+        <Badge variant={dataState === "real" ? "secondary" : "outline"} className="gap-1">
+          <DataStateIcon className="size-3" />
           {dataState === "real" ? "実データ" : dataState === "mock" ? "デモデータ" : "未取得"}
         </Badge>
       </CardHeader>
@@ -73,20 +98,16 @@ export function ExternalSeoDetails({ metrics }: { metrics: MetricEvaluation[] })
           <p className="text-sm text-muted-foreground">
             {firstUnavailable?.error_code ? UNAVAILABLE_REASON_LABELS[firstUnavailable.error_code] ?? firstUnavailable.error_message : "外部SEOデータを取得できていません。"}
           </p>
+        ) : dataState === "mock" ? (
+          <Collapsible open={detailOpen} onOpenChange={setDetailOpen}>
+            <CollapsibleTrigger render={<Button variant="ghost" size="sm" className="gap-1" />}>
+              <ChevronDown className={`size-3.5 transition-transform ${detailOpen ? "rotate-180" : ""}`} />
+              デモデータのため総合スコアには未反映です。詳細を見る
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-2">{valueGrid}</CollapsibleContent>
+          </Collapsible>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {DISPLAY_KEYS.map(({ key, label }) => {
-              const metric = findMetric(metrics, key);
-              if (!metric || metric.status === "unavailable") return null;
-
-              return (
-                <div key={key} className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">{label}</p>
-                  <p className="mt-1 text-sm font-medium">{formatMetricValue(metric)}</p>
-                </div>
-              );
-            })}
-          </div>
+          valueGrid
         )}
       </CardContent>
     </Card>
