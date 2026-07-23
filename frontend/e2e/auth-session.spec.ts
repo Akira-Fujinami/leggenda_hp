@@ -2,13 +2,16 @@ import { expect, test } from "@playwright/test";
 
 // frontend(http://localhost:3000)とbackend(http://localhost:8000)が実際に
 // 別Originで動くdocker compose環境に対して、Cookieベースの認証フルフロー
-// (preflight → csrf-cookie → login → reload後も認証維持 → 認証済みAPI → logout →
-// logout後401 → 未許可Originの拒否)を検証する。
+// (preflight → csrf-cookie → login → dashboardでproject一覧表示 → reload後も
+// 認証・project一覧が維持 → 認証済みAPI → logout → logout後401 →
+// 未許可Originの拒否)を検証する。
 const API_BASE_URL = process.env.E2E_API_BASE_URL ?? "http://localhost:8000";
 const FRONTEND_ORIGIN = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 
 test.describe("cross-origin cookie authentication", () => {
-  test("register, reload keeps the session, authenticated API, logout, then 401", async ({ page }) => {
+  test("register, dashboard shows the project list, reload keeps the session, authenticated API, logout, then 401", async ({
+    page,
+  }) => {
     const unique = Date.now();
     const email = `e2e-session-${unique}@example.com`;
 
@@ -20,9 +23,28 @@ test.describe("cross-origin cookie authentication", () => {
     await page.getByRole("button", { name: "登録する" }).click();
     await expect(page).toHaveURL(/\/dashboard$/);
 
-    // reloadしてもCookieベースのセッションが維持され、ダッシュボードに留まること。
+    // dashboardが実際にproject一覧APIを呼び、結果(0件の空状態)を表示できること。
+    // (register直後はprojectが無いため空状態メッセージが出る。読み込み失敗の
+    // 汎用エラーメッセージが出ていないことも合わせて確認する。)
+    await expect(page.getByText("まだ比較プロジェクトがありません。")).toBeVisible();
+    await expect(page.getByText("プロジェクトの読み込みに失敗しました")).not.toBeVisible();
+
+    await page.getByRole("button", { name: "新規比較プロジェクト作成" }).first().click();
+    await page.getByLabel("プロジェクト名").fill("E2Eセッション確認プロジェクト");
+    await page.getByRole("button", { name: "作成する" }).click();
+    await expect(page).toHaveURL(/\/projects\/\d+$/);
+
+    await page.goto("/dashboard");
+    await expect(page.getByText("E2Eセッション確認プロジェクト")).toBeVisible();
+
+    // reloadしてもCookieベースのセッションが維持され、ダッシュボードとproject一覧が
+    // そのまま表示されること(「少し時間を置いてから再アクセスしても認証維持」の
+    // 実用的な等価テストとして、reload=新しいリクエストサイクルでの再検証を用いる。
+    // 実時間でのSESSION_LIFETIME境界そのものは対象外)。
     await page.reload();
     await expect(page).toHaveURL(/\/dashboard$/);
+    await expect(page.getByText("E2Eセッション確認プロジェクト")).toBeVisible();
+    await expect(page.getByText("プロジェクトの読み込みに失敗しました")).not.toBeVisible();
 
     // 認証済みAPI: ブラウザcontextのCookieを共有する page.request で直接backendを叩く。
     const meRes = await page.request.get(`${API_BASE_URL}/api/user`, {
@@ -31,6 +53,13 @@ test.describe("cross-origin cookie authentication", () => {
     expect(meRes.status()).toBe(200);
     const meBody = await meRes.json();
     expect(meBody.data.email).toBe(email);
+
+    const projectsRes = await page.request.get(`${API_BASE_URL}/api/projects`, {
+      headers: { Accept: "application/json" },
+    });
+    expect(projectsRes.status()).toBe(200);
+    const projectsBody = await projectsRes.json();
+    expect(projectsBody.data).toHaveLength(1);
 
     // logout: frontendのapi-clientと同じ手順(CSRF Cookieの値をX-XSRF-TOKENとして送る)。
     const cookies = await page.context().cookies();

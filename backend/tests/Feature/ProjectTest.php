@@ -52,7 +52,12 @@ class ProjectTest extends TestCase
         $this->assertStringNotContainsString('no such table', $response->getContent());
         $this->assertStringNotContainsString('relation "projects"', $response->getContent());
 
+        // Laravelの既定の例外ハンドラも、rethrowした例外自体を独自にreport()経由でログ出力する
+        // (別メッセージ・別contextで)ため、ここでは「自前の構造化ログが最低1回、
+        // 期待した内容で出力されたか」のみを検証する(atLeast()->once()。ちょうど1回である
+        // ことまでは要求しない)。
         Log::shouldHaveReceived('error')
+            ->atLeast()
             ->once()
             ->withArgs(function (string $message, array $context) use ($user) {
                 $contextJson = json_encode($context);
