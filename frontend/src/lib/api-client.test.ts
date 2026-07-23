@@ -143,13 +143,14 @@ describe("api-client", () => {
   });
 
   it("throws an ApiError with status 401 on unauthenticated responses", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
+    // Responseのbodyは一度しか読めないため、呼び出しごとに新しいインスタンスを返す
+    // (mockResolvedValueで同一インスタンスを使い回すと、2回目の.json()が空になる)。
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
         new Response(JSON.stringify({ message: "ログインが必要です。", error_code: "UNAUTHENTICATED" }), {
           status: 401,
         }),
-      );
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const { api, ApiError } = await loadApiClient("https://backend.example.com");

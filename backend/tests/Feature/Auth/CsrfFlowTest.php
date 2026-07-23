@@ -2,17 +2,13 @@
 
 namespace Tests\Feature\Auth;
 
-use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Hash;
-use Tests\Concerns\InteractsAsSpaFrontend;
 use Tests\TestCase;
 
 class CsrfFlowTest extends TestCase
 {
     use RefreshDatabase;
-    use InteractsAsSpaFrontend;
 
     protected function setUp(): void
     {
@@ -38,42 +34,16 @@ class CsrfFlowTest extends TestCase
         $this->assertContains(config('session.cookie'), $cookieNames);
     }
 
-    public function test_mutation_without_csrf_token_returns_419(): void
-    {
-        $response = $this->withHeaders(['Origin' => 'http://localhost:3000'])
-            ->postJson('/api/login', [
-                'email' => 'test@example.com',
-                'password' => 'password123',
-            ]);
-
-        $response->assertStatus(419);
-    }
-
-    public function test_retrying_after_refetching_the_csrf_cookie_succeeds(): void
-    {
-        User::factory()->create([
-            'email' => 'test@example.com',
-            'password' => Hash::make('password123'),
-        ]);
-
-        // 1回目: CSRF Cookie無しで送るとCSRFトークン不一致(419)になる
-        // (フロントエンドのapi-clientが419時に行う「CSRF Cookie再取得→再試行」の
-        // 前半部分に相当)。
-        $first = $this->withHeaders(['Origin' => 'http://localhost:3000'])
-            ->postJson('/api/login', [
-                'email' => 'test@example.com',
-                'password' => 'password123',
-            ]);
-
-        $first->assertStatus(419);
-
-        // 2回目: csrf-cookieを取得し、正しいX-XSRF-TOKENを添えて再試行すると成功する。
-        $response = $this->jsonAsFrontend('POST', '/api/login', [
-            'email' => 'test@example.com',
-            'password' => 'password123',
-        ]);
-
-        $response->assertOk();
-        $response->assertJsonPath('data.email', 'test@example.com');
-    }
+    // 419(CSRFトークン不一致)の実HTTPレスポンスは、この場所(phpunit経由の
+    // Feature test)では意図的に再現できない。LaravelのCSRF検証ミドルウェア
+    // (PreventRequestForgery::handle())は
+    // `runningInConsole() && runningUnitTests()` (=APP_ENV=testing かつ CLI実行)
+    // のとき常にCSRF検証そのものをスキップする仕様のため
+    // (vendor/laravel/framework/.../PreventRequestForgery.php)、
+    // phpunit.xmlでAPP_ENV=testingを強制しているテストスイート内では
+    // X-XSRF-TOKENの有無に関わらず全リクエストがCSRFチェックを素通りする。
+    // そのため419応答および「419→CSRF再取得→再試行成功」のクライアント契約は
+    // frontend/src/lib/api-client.test.ts 側でfetchをモックして検証している。
+    // ここではSanctumのCSRF検証ミドルウェア自体が正しく組み込まれていること
+    // (=/sanctum/csrf-cookie がXSRF-TOKEN/セッションCookieを発行すること)を検証する。
 }

@@ -210,6 +210,82 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d
   `docker compose -f compose.yaml -f compose.prod.yaml build frontend` を実行すること
   (コンテナ起動時の環境変数だけでは反映されない)。
 
+## Render本番デプロイ: CORS / Sanctum Cookie認証
+
+frontendとbackendを別ドメインのRender Web Serviceとして運用する場合、Cookieベースの
+Sanctum SPA認証(セッションCookie + XSRF-TOKEN)を機能させるための環境変数を
+正しく設定する必要がある。コード側(`backend/config/cors.php` / `sanctum.php` / `session.php`)は
+env値のみで両構成に切り替えられるようになっており、コード変更は不要。
+
+### パターンA: Render標準URL同士 (`*.onrender.com`)
+
+```env
+APP_URL=https://<backend-service>.onrender.com
+FRONTEND_URL=https://<frontend-service>.onrender.com
+# 複数フロントエンド(ステージング等)を追加で許可したい場合のみ、カンマ区切りで設定する。
+# 単一フロントエンドのみなら空でよい。
+CORS_ALLOWED_ORIGINS=
+
+SANCTUM_STATEFUL_DOMAINS=<frontend-service>.onrender.com
+SESSION_DOMAIN=
+SESSION_SECURE_COOKIE=true
+SESSION_SAME_SITE=none
+```
+
+frontend側:
+
+```env
+NEXT_PUBLIC_API_URL=https://<backend-service>.onrender.com
+```
+
+> **注意: サードパーティCookie制限の影響を受ける可能性がある。**
+> `<frontend-service>.onrender.com` と `<backend-service>.onrender.com` は
+> 2nd-level domainが異なり(`onrender.com`自体は共有できる親ドメインとして
+> 使えない)、Cookieを機能させるには`SESSION_SAME_SITE=none`が必須になる。
+> この構成はSafariのITPやChromeの将来的なサードパーティCookie制限強化の
+> 影響を受けるリスクがあるため、恒久運用ではなく動作確認目的の暫定構成と
+> 位置づけ、本番運用には下記のカスタムドメイン構成を推奨する。
+
+### パターンB: カスタムドメイン (推奨)
+
+frontend: `app.example.com` / backend: `api.example.com` のように、frontendとbackendが
+同じ親ドメイン(`example.com`)のサブドメインになる構成。
+
+```env
+APP_URL=https://api.example.com
+FRONTEND_URL=https://app.example.com
+CORS_ALLOWED_ORIGINS=
+
+SANCTUM_STATEFUL_DOMAINS=app.example.com
+SESSION_DOMAIN=.example.com
+SESSION_SECURE_COOKIE=true
+SESSION_SAME_SITE=lax
+```
+
+frontend側:
+
+```env
+NEXT_PUBLIC_API_URL=https://api.example.com
+```
+
+親ドメインを`SESSION_DOMAIN`で共有するため、`SameSite=lax`のままサードパーティCookie
+制限の影響を受けずに運用できる。
+
+### 設定上の注意点
+
+- `SANCTUM_STATEFUL_DOMAINS`にはscheme(`https://`)を含めない。`FRONTEND_URL`にはscheme
+  を含める(2つの用途・書式が異なるため混同しないこと)。
+- `SESSION_SAME_SITE=none`のときは`SESSION_SECURE_COOKIE=true`が必須
+  (Secure属性のないSameSite=noneはブラウザに拒否される)。設定を誤ると
+  `php artisan config:cache`実行時に例外で検知される。
+- `CORS_ALLOWED_ORIGINS`が空でも、`FRONTEND_URL`さえ設定されていれば
+  production環境は正常に起動する。逆に`FRONTEND_URL`未設定のままproduction環境で
+  起動しようとすると、`php artisan config:cache`実行時に例外で検知される
+  (localhostへ黙ってフォールバックすることはない)。
+- 設定変更後は、frontend・backend(Web Service + 3種のqueue worker)の**両方を再デプロイ**
+  する必要がある。特に`NEXT_PUBLIC_API_URL`はNext.jsのビルド時にJSバンドルへ
+  焼き込まれるため、値を変えたら必ずfrontendを再ビルドすること。
+
 ## テスト
 
 ```bash

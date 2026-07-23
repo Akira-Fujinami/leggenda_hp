@@ -41,7 +41,13 @@ class CorsPreflightTest extends TestCase
 
     public function test_preflight_from_an_unlisted_origin_receives_no_allow_origin_header(): void
     {
-        Config::set('cors.allowed_origins', ['https://frontend.example']);
+        // fruitcake/php-cors (LaravelのHandleCorsが内部で使う実装) は、許可Originが
+        // ちょうど1件だけの場合、リクエストのOriginと突き合わせず常にその1件を
+        // Access-Control-Allow-Originとして返す最適化を行う(isSingleOriginAllowed())。
+        // これは安全である(ブラウザ側がACAOの値と実際のページOriginを比較し、
+        // 一致しなければレスポンスを読めないようブロックするため)が、
+        // 「未許可Originを弾く」経路を検証するには許可Originを2件以上にする必要がある。
+        Config::set('cors.allowed_origins', ['https://frontend.example', 'https://staging.example']);
 
         $response = $this->withHeaders([
             'Origin' => 'https://evil.example',
