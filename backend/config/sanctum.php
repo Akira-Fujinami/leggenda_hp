@@ -18,12 +18,28 @@ return [
     |
     */
 
-    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', sprintf(
-        '%s%s',
-        'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1',
-        Sanctum::currentApplicationUrlWithPort(),
-        // Sanctum::currentRequestHost(),
-    ))),
+    'stateful' => (static function (): array {
+        $raw = env('SANCTUM_STATEFUL_DOMAINS', sprintf(
+            '%s%s',
+            'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1',
+            Sanctum::currentApplicationUrlWithPort(),
+        ));
+
+        $domains = [];
+
+        foreach (explode(',', (string) $raw) as $domain) {
+            // schemeが誤って含まれていても取り除き、Sanctumが期待する
+            // "host" または "host:port" 形式(schemeなし)へ正規化する。
+            // port付きlocalhost(例: localhost:3000)はそのまま扱われる。
+            $domain = preg_replace('#^https?://#i', '', trim($domain)) ?? '';
+
+            if ($domain !== '' && ! in_array($domain, $domains, true)) {
+                $domains[] = $domain;
+            }
+        }
+
+        return $domains;
+    })(),
 
     /*
     |--------------------------------------------------------------------------

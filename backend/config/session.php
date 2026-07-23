@@ -1,6 +1,15 @@
 <?php
 
+use App\Support\SessionCookiePolicy;
 use Illuminate\Support\Str;
+
+// frontend/backendを別ドメイン(別Origin)で運用する場合、SameSite=noneが必要になるが、
+// Secure属性のないSameSite=noneはブラウザに拒否されるため、その組み合わせを
+// config:cache実行時にも検知できるようにする(=デプロイ時に気付ける)。
+SessionCookiePolicy::assertSecureWhenSameSiteIsNone(
+    env('SESSION_SAME_SITE', 'lax'),
+    env('SESSION_SECURE_COOKIE'),
+);
 
 return [
 
