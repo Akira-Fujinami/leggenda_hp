@@ -44,12 +44,15 @@ services:
       args:
         # NEXT_PUBLIC_*はビルド時にJSバンドルへ焼き込まれるため、
         # containerの environment: だけでは本番ビルドに反映されない。
-        # 本番でドメインが変わる場合は、ルートの.envでNEXT_PUBLIC_API_URLを
-        # 直接上書きすること (例: https://api.example.com)。
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${BACKEND_PORT:-8000}}
+        # 同一Origin BFFプロキシ(frontend/src/app/backend/[...path]/route.ts)経由で
+        # backendへアクセスするため、常に"/backend"を指す(直接backendのURLは指さない)。
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/backend}
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${BACKEND_PORT:-8000}}
-      INTERNAL_API_URL: http://backend:8000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/backend}
+      # BACKEND_URL/FRONTEND_ORIGINはRoute Handlerがサーバーサイドでのみ使う値
+      # (NEXT_PUBLIC_を付けないため、ブラウザ/JSバンドルには一切含まれない)。
+      BACKEND_URL: http://backend:8000
+      FRONTEND_ORIGIN: http://localhost:${FRONTEND_PORT:-3000}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     networks: [app-network]

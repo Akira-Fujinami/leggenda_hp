@@ -210,73 +210,64 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d
   `docker compose -f compose.yaml -f compose.prod.yaml build frontend` を実行すること
   (コンテナ起動時の環境変数だけでは反映されない)。
 
-## Render本番デプロイ: CORS / Sanctum Cookie認証
+## Render本番デプロイ: 同一Origin BFFプロキシ / Sanctum Cookie認証
 
-frontendとbackendを別ドメインのRender Web Serviceとして運用する場合、Cookieベースの
-Sanctum SPA認証(セッションCookie + XSRF-TOKEN)を機能させるための環境変数を
-正しく設定する必要がある。コード側(`backend/config/cors.php` / `sanctum.php` / `session.php`)は
-env値のみで両構成に切り替えられるようになっており、コード変更は不要。
+frontendとbackendは別々のRender Web Service(別onrender.comサブドメイン)として動くが、
+ブラウザは常に **frontendと同じOrigin** にしかアクセスしない。frontendの
+`frontend/src/app/backend/[...path]/route.ts` (Next.js Route Handler) が
+同一Origin BFFプロキシとして、ブラウザからの `/backend/*` へのリクエストを
+サーバーサイドでLaravel backendへ転送する。
 
-### パターンA: Render標準URL同士 (`*.onrender.com`)
+```text
+ブラウザ
+  → https://<frontend-service>.onrender.com/backend/api/login  (同一Origin)
+  → Next.js Route Handler (サーバーサイド)
+  → https://<backend-service>.onrender.com/api/login            (別Origin, サーバー間通信)
+```
+
+この構成のため、XSRF-TOKEN/セッションCookieはいずれも**frontendのOriginの
+ファーストパーティCookie**として保存される。別ドメインのXSRF-TOKEN Cookieを
+ブラウザJSから読めない問題が解消され、`SameSite=None`もカスタムドメインも不要になる
+(サーバー間のOrigin/Refererヘッダーは、Route Handlerが`FRONTEND_ORIGIN`の値で
+明示的に付与し、Sanctumのstateful判定を成立させている)。
+
+### env設定
+
+backend側:
 
 ```env
 APP_URL=https://<backend-service>.onrender.com
 FRONTEND_URL=https://<frontend-service>.onrender.com
-# 複数フロントエンド(ステージング等)を追加で許可したい場合のみ、カンマ区切りで設定する。
-# 単一フロントエンドのみなら空でよい。
 CORS_ALLOWED_ORIGINS=
 
 SANCTUM_STATEFUL_DOMAINS=<frontend-service>.onrender.com
-SESSION_DOMAIN=
-SESSION_SECURE_COOKIE=true
-SESSION_SAME_SITE=none
-```
 
-frontend側:
-
-```env
-NEXT_PUBLIC_API_URL=https://<backend-service>.onrender.com
-```
-
-> **注意: サードパーティCookie制限の影響を受ける可能性がある。**
-> `<frontend-service>.onrender.com` と `<backend-service>.onrender.com` は
-> 2nd-level domainが異なり(`onrender.com`自体は共有できる親ドメインとして
-> 使えない)、Cookieを機能させるには`SESSION_SAME_SITE=none`が必須になる。
-> この構成はSafariのITPやChromeの将来的なサードパーティCookie制限強化の
-> 影響を受けるリスクがあるため、恒久運用ではなく動作確認目的の暫定構成と
-> 位置づけ、本番運用には下記のカスタムドメイン構成を推奨する。
-
-### パターンB: カスタムドメイン (推奨)
-
-frontend: `app.example.com` / backend: `api.example.com` のように、frontendとbackendが
-同じ親ドメイン(`example.com`)のサブドメインになる構成。
-
-```env
-APP_URL=https://api.example.com
-FRONTEND_URL=https://app.example.com
-CORS_ALLOWED_ORIGINS=
-
-SANCTUM_STATEFUL_DOMAINS=app.example.com
-SESSION_DOMAIN=.example.com
 SESSION_SECURE_COOKIE=true
 SESSION_SAME_SITE=lax
+# SESSION_DOMAINは設定しない(env自体を作らない)。
 ```
 
 frontend側:
 
 ```env
-NEXT_PUBLIC_API_URL=https://api.example.com
+NEXT_PUBLIC_API_URL=/backend
+BACKEND_URL=https://<backend-service>.onrender.com
+FRONTEND_ORIGIN=https://<frontend-service>.onrender.com
 ```
 
-親ドメインを`SESSION_DOMAIN`で共有するため、`SameSite=lax`のままサードパーティCookie
-制限の影響を受けずに運用できる。
+`BACKEND_URL`・`FRONTEND_ORIGIN`には`NEXT_PUBLIC_`を付けない(Route Handler内でのみ
+サーバーサイドで使う値であり、ブラウザ/JSバンドルには一切含めない)。
 
 ### 設定上の注意点
 
-- `SANCTUM_STATEFUL_DOMAINS`にはscheme(`https://`)を含めない。`FRONTEND_URL`にはscheme
-  を含める(2つの用途・書式が異なるため混同しないこと)。
-- `SESSION_SAME_SITE=none`のときは`SESSION_SECURE_COOKIE=true`が必須
-  (Secure属性のないSameSite=noneはブラウザに拒否される)。
+- `SANCTUM_STATEFUL_DOMAINS`にはscheme(`https://`)を含めない。`FRONTEND_URL`・
+  `FRONTEND_ORIGIN`にはschemeを含める(用途・書式が異なるため混同しないこと)。
+- Route Handlerは転送先を`BACKEND_URL`のOriginに固定しており、パス・クエリ・
+  ヘッダーなどユーザー入力から転送先ホストが変わることはない(任意プロキシ化の防止)。
+- Route HandlerはOrigin/Refererヘッダーをブラウザから転送せず、常に`FRONTEND_ORIGIN`の
+  値で明示的に上書きする(不正な外部Originを無条件でLaravelへ転送しないため)。
+- Set-CookieはLaravelが返した複数のCookieを個別に維持しつつ、Domain属性のみを
+  取り除いてfrontendのファーストパーティCookieとして保存されるようにする。
 - `CORS_ALLOWED_ORIGINS`が空でも、`FRONTEND_URL`さえ設定されていれば
   production環境は正常に起動する。逆に`FRONTEND_URL`未設定のままproduction環境で
   起動しようとすると、コンテナ起動時(nginx/php-fpm起動前・queue worker起動前)に

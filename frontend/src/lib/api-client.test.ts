@@ -55,6 +55,32 @@ describe("api-client", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("https://backend.example.com/api/user");
   });
 
+  it("defaults the base URL to the same-origin /backend proxy when NEXT_PUBLIC_API_URL is unset", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "");
+    // 空文字は `?? "/backend"` のnullish coalescingでは既定値へフォールバックしない
+    // (unset/undefinedの場合のみフォールバックする)ため、キー自体を削除して検証する。
+    delete process.env.NEXT_PUBLIC_API_URL;
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    vi.resetModules();
+    const { api } = await import("@/lib/api-client");
+    await api.get("/api/user");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/backend/api/user");
+  });
+
+  it("also normalizes a trailing slash on the default /backend proxy path", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { api } = await loadApiClient("/backend/");
+    await api.get("/api/user");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/backend/api/user");
+  });
+
   it("fetches the CSRF cookie before a mutating request when none is present yet, and sends X-XSRF-TOKEN", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url.endsWith("/sanctum/csrf-cookie")) {
@@ -74,6 +100,32 @@ describe("api-client", () => {
     const [, loginInit] = fetchMock.mock.calls[1];
     expect(loginInit.headers["X-XSRF-TOKEN"]).toBe("token-abc");
     expect(loginInit.credentials).toBe("include");
+  });
+
+  it("URL-decodes the XSRF-TOKEN cookie value before sending it as X-XSRF-TOKEN (Laravel percent-encodes it)", async () => {
+    // LaravelはXSRF-TOKEN CookieをbaseNN風の値でpercent-encodeして返す。
+    // "+"や"="等が%XXとしてCookieに入るため、ヘッダーへ送る前にURLデコードが必要。
+    setCookie("XSRF-TOKEN", "abc%2Bdef%3D");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: {}, meta: {}, message: null }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { api } = await loadApiClient("https://backend.example.com");
+    await api.post("/api/login", { email: "a@example.com", password: "x" });
+
+    const [, loginInit] = fetchMock.mock.calls[0];
+    expect(loginInit.headers["X-XSRF-TOKEN"]).toBe("abc+def=");
+  });
+
+  it("does not send GET/HEAD requests with an X-XSRF-TOKEN header", async () => {
+    setCookie("XSRF-TOKEN", "token-abc");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: {}, meta: {}, message: null }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { api } = await loadApiClient("https://backend.example.com");
+    await api.get("/api/projects");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["X-XSRF-TOKEN"]).toBeUndefined();
   });
 
   it("does not refetch the CSRF cookie when one is already present", async () => {

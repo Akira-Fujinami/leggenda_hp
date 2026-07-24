@@ -1,6 +1,11 @@
-// 末尾スラッシュを正規化する(NEXT_PUBLIC_API_URLに"https://api.example.com/"のように
-// スラッシュ付きで設定されても、パス側は常に"/api/..."から始まるため二重スラッシュにならないようにする)。
-const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
+// frontendと同一Origin上のNext.js Route Handler(/backend/[...path])を経由して
+// Laravel backendへプロキシする(frontend/src/app/backend/[...path]/route.ts)。
+// これにより、ブラウザは常にfrontendと同じOriginにしかアクセスしないため、
+// 別ドメインのXSRF-TOKEN Cookieがdocument.cookieから読めない問題や、
+// SameSite=None運用が不要になる。
+// 末尾スラッシュを正規化する("/backend/"のようにスラッシュ付きで設定されても、
+// パス側は常に"/sanctum/..."/"/api/..."から始まるため二重スラッシュにならないようにする)。
+const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/backend").replace(/\/+$/, "");
 
 // このクライアントはブラウザ(document.cookie)を前提にしたCookieベースの
 // Sanctum SPA認証専用。Server Components/Route Handlersなどサーバー側から
