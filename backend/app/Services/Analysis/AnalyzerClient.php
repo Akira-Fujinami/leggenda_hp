@@ -13,6 +13,17 @@ use Illuminate\Support\Facades\Http;
  */
 class AnalyzerClient
 {
+    /**
+     * Lighthouseは低スペック/無料枠のanalyzerインスタンスで計測に数分かかることが
+     * あるため、他のanalyzer呼び出しより大きく確保する。
+     * RunLighthouseJob::$timeout(360秒)より30秒以上短く保つこと ―― そうしないと
+     * このHTTP timeoutより先にJobのtimeoutが発火し、Workerプロセスごと
+     * 強制終了されてしまう。
+     */
+    public const LIGHTHOUSE_TIMEOUT_SECONDS = 330;
+
+    public const LIGHTHOUSE_CONNECT_TIMEOUT_SECONDS = 15;
+
     public function render(string $url, int $timeoutMs = 60000): array
     {
         return $this->post('/analyze/render', [
@@ -41,9 +52,13 @@ class AnalyzerClient
 
     public function lighthouse(string $url): array
     {
-        return $this->post('/analyze/lighthouse', [
-            'url' => $url,
-        ], AnalysisErrorCode::LighthouseFailed, 180);
+        return $this->post(
+            '/analyze/lighthouse',
+            ['url' => $url],
+            AnalysisErrorCode::LighthouseFailed,
+            self::LIGHTHOUSE_TIMEOUT_SECONDS,
+            self::LIGHTHOUSE_CONNECT_TIMEOUT_SECONDS,
+        );
     }
 
     public function technology(string $url, ?string $html = null): array
@@ -68,7 +83,7 @@ class AnalyzerClient
     /**
      * @return array<string, mixed>
      */
-    private function post(string $path, array $payload, AnalysisErrorCode $defaultErrorCode, int $timeoutSeconds = 60): array
+    private function post(string $path, array $payload, AnalysisErrorCode $defaultErrorCode, int $timeoutSeconds = 60, int $connectTimeoutSeconds = 5): array
     {
         $token = config('services.analyzer.token');
 
@@ -76,7 +91,7 @@ class AnalyzerClient
             $response = Http::baseUrl($this->baseUrl())
                 ->withHeaders($token ? ['X-Analyzer-Token' => $token] : [])
                 ->timeout($timeoutSeconds)
-                ->connectTimeout(5)
+                ->connectTimeout($connectTimeoutSeconds)
                 ->post($path, $payload);
         } catch (ConnectionException $e) {
             throw new AnalysisException(AnalysisErrorCode::AnalyzerUnavailable, 'analyzerに接続できませんでした。', $e);

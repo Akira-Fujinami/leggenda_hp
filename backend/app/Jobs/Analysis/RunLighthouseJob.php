@@ -25,9 +25,13 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
 
     public $tries = 2;
 
-    public $timeout = 180;
+    // AnalyzerClient::LIGHTHOUSE_TIMEOUT_SECONDS(330秒)より30秒以上長く保つこと。
+    // 同値または短いと、AnalyzerClient側のHTTP timeoutより先にLaravelキュー基盤の
+    // ジョブtimeoutが発火し、handle()のtry/catchを経由せずWorkerプロセスごと
+    // 強制終了させてしまう(2026-07-24の本番障害の直接原因)。
+    public $timeout = 360;
 
-    public $backoff = [30, 90];
+    public $backoff = [30, 120];
 
     public function jobType(): JobType
     {
