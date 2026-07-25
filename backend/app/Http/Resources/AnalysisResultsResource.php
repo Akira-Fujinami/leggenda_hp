@@ -67,6 +67,9 @@ class AnalysisResultsResource extends JsonResource
                         'url' => route('analyses.screenshot', ['websiteAnalysis' => $wa->id, 'device' => $s->device->value]),
                         'width' => $s->width,
                         'height' => $s->height,
+                        'truncated' => $s->truncated,
+                        'document_height' => $s->document_height,
+                        'captured_height' => $s->captured_height,
                     ])->values(),
                     'errors' => $wa->jobs
                         ->filter(fn ($job) => $job->status === AnalysisJobStatus::Failed)

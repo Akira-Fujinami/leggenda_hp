@@ -153,7 +153,7 @@ class AnalyzerDrivenJobsTest extends TestCase
         Http::fake([
             '*/analyze/screenshot' => Http::response([
                 'success' => true,
-                'data' => ['storage_path' => 'analyses/1/websites/1/screenshots/abc.png', 'width' => 1440, 'height' => 1000, 'file_size' => 12345, 'mime_type' => 'image/png'],
+                'data' => ['storage_path' => 'analyses/1/websites/1/screenshots/abc.jpg', 'width' => 1440, 'height' => 1000, 'file_size' => 12345, 'mime_type' => 'image/jpeg', 'truncated' => false, 'document_height' => 1000, 'captured_height' => 1000],
             ], 200),
         ]);
 
@@ -165,8 +165,63 @@ class AnalyzerDrivenJobsTest extends TestCase
 
         $screenshot = Screenshot::query()->where('website_analysis_id', $websiteAnalysis->id)->where('device', Device::Desktop)->first();
         $this->assertNotNull($screenshot);
-        $this->assertSame('analyses/1/websites/1/screenshots/abc.png', $screenshot->storage_path);
+        $this->assertSame('analyses/1/websites/1/screenshots/abc.jpg', $screenshot->storage_path);
+        $this->assertSame('image/jpeg', $screenshot->mime_type);
         $this->assertSame(1440, $screenshot->width);
+        $this->assertFalse($screenshot->truncated);
+    }
+
+    public function test_screenshot_job_records_a_truncated_capture_as_a_successful_partial_result(): void
+    {
+        // 巨大ページ(ANALYZER_SCREENSHOT_MAX_HEIGHT超過)ではanalyzerが
+        // truncated=trueの部分成功を返す。撮影自体は成功しているためJobは
+        // 失敗にせず、原因調査用のメタデータのみ保存する。
+        Http::fake([
+            '*/analyze/screenshot' => Http::response([
+                'success' => true,
+                'data' => [
+                    'storage_path' => 'analyses/1/websites/1/screenshots/abc.jpg',
+                    'width' => 1440,
+                    'height' => 10000,
+                    'file_size' => 99999,
+                    'mime_type' => 'image/jpeg',
+                    'truncated' => true,
+                    'document_height' => 45000,
+                    'captured_height' => 10000,
+                ],
+            ], 200),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        (new CaptureScreenshotJob($websiteAnalysis->analysis_id, $websiteAnalysis->id, Device::Desktop))->handle(app(AnalysisPipeline::class));
+
+        $job = $websiteAnalysis->jobs()->where('job_type', JobType::CaptureScreenshotDesktop)->first();
+        $this->assertSame(AnalysisJobStatus::Completed, $job->status);
+
+        $screenshot = Screenshot::query()->where('website_analysis_id', $websiteAnalysis->id)->where('device', Device::Desktop)->first();
+        $this->assertTrue($screenshot->truncated);
+        $this->assertSame(45000, $screenshot->document_height);
+        $this->assertSame(10000, $screenshot->captured_height);
+    }
+
+    public function test_screenshot_timeout_from_analyzer_is_preserved_not_rounded_to_screenshot_failed(): void
+    {
+        // page.screenshot()自体のタイムアウトはSCREENSHOT_TIMEOUTとして専用の
+        // コードで保持されるべきで、SCREENSHOT_FAILED等の汎用コードへ丸めては
+        // ならない(2026-07-25 ユニクロ調査での誤分類バグの回帰テスト)。
+        Http::fake([
+            '*/analyze/screenshot' => Http::response([
+                'success' => false,
+                'error' => ['code' => 'SCREENSHOT_TIMEOUT', 'message' => 'スクリーンショットの生成がタイムアウトしました。', 'retryable' => true],
+            ], 500),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        (new CaptureScreenshotJob($websiteAnalysis->analysis_id, $websiteAnalysis->id, Device::Desktop))->handle(app(AnalysisPipeline::class));
+
+        $job = $websiteAnalysis->jobs()->where('job_type', JobType::CaptureScreenshotDesktop)->first();
+        $this->assertSame(AnalysisJobStatus::Failed, $job->status);
+        $this->assertSame('SCREENSHOT_TIMEOUT', $job->error_code);
     }
 
     public function test_render_job_records_a_detected_fixed_cta(): void

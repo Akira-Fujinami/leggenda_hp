@@ -16,6 +16,27 @@ export interface ClassifiedError {
 
 export type AnalyzerOperation = "render" | "screenshot" | "lighthouse" | "technology";
 
+/**
+ * 同じoperation内でも、どの処理フェーズで例外が発生したかによって
+ * 分類すべきコードが異なる(例: screenshot操作でも、ページ遷移自体は
+ * 完了した後にpage.screenshot()自体がタイムアウトすることがあり、これは
+ * NAVIGATION_TIMEOUTではなくSCREENSHOT_TIMEOUTとして区別すべき)。
+ * "navigation"は既定挙動(従来通りoperation別のOPERATION_TIMEOUT)に委ねるため
+ * 明示的なタグ付けは不要で、"capture"のようなナビゲーション後の後続処理を
+ * 明示的にタグ付けする場合にのみPhaseErrorでラップする。
+ */
+export type OperationPhase = "capture";
+
+export class PhaseError extends Error {
+  constructor(
+    public readonly phase: OperationPhase,
+    public readonly cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = cause instanceof Error ? cause.name : "PhaseError";
+  }
+}
+
 interface Pattern {
   code: string;
   message: string;
@@ -101,6 +122,13 @@ const OPERATION_TIMEOUT: Record<AnalyzerOperation, ClassifiedError> = {
   lighthouse: { code: "LIGHTHOUSE_TIMEOUT", message: "Lighthouse計測がタイムアウトしました。", retryable: true },
 };
 
+// ナビゲーション完了後の後続処理(例: page.screenshot()自体)でタイムアウトした
+// 場合の専用コード。PhaseErrorでタグ付けされた例外にのみ適用され、
+// operationの既定(NAVIGATION_TIMEOUT等)より優先される。
+const PHASE_TIMEOUT: Record<OperationPhase, ClassifiedError> = {
+  capture: { code: "SCREENSHOT_TIMEOUT", message: "スクリーンショットの生成がタイムアウトしました。", retryable: true },
+};
+
 const OPERATION_FALLBACK: Partial<Record<AnalyzerOperation, ClassifiedError>> = {
   screenshot: { code: "SCREENSHOT_FAILED", message: "スクリーンショットの取得に失敗しました。", retryable: true },
   technology: { code: "TECHNOLOGY_FAILED", message: "技術検出に失敗しました。", retryable: true },
@@ -109,7 +137,12 @@ const OPERATION_FALLBACK: Partial<Record<AnalyzerOperation, ClassifiedError>> = 
 const TIMEOUT_PATTERN = /timeout.*exceeded/i;
 
 export function classifyError(error: unknown, operation?: AnalyzerOperation): ClassifiedError {
-  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const phase = error instanceof PhaseError ? error.phase : undefined;
+  // PhaseErrorは元の例外(cause)をラップしているだけなので、DNS/TLS/クラッシュ等の
+  // universalな原因判定は常にcauseの生メッセージに対して行う(タイムアウトで
+  // なければphaseを問わず通常通り分類する)。
+  const unwrapped = error instanceof PhaseError ? error.cause : error;
+  const raw = unwrapped instanceof Error ? `${unwrapped.name}: ${unwrapped.message}` : String(unwrapped);
 
   for (const pattern of UNIVERSAL_PATTERNS) {
     if (pattern.test(raw)) {
@@ -118,6 +151,9 @@ export function classifyError(error: unknown, operation?: AnalyzerOperation): Cl
   }
 
   if (TIMEOUT_PATTERN.test(raw) || raw.includes("Timeout")) {
+    if (phase) {
+      return PHASE_TIMEOUT[phase];
+    }
     return OPERATION_TIMEOUT[operation ?? "render"];
   }
 

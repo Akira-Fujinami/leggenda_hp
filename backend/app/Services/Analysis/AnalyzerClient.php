@@ -33,7 +33,7 @@ class AnalyzerClient
      */
     public const RENDER_TIMEOUT_SECONDS = 90;
 
-    public const SCREENSHOT_TIMEOUT_SECONDS = 60;
+    public const SCREENSHOT_TIMEOUT_SECONDS = 90;
 
     public const TECHNOLOGY_TIMEOUT_SECONDS = 60;
 

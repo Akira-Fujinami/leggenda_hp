@@ -21,6 +21,20 @@ const envSchema = z.object({
   // (無制限なキューイングによるメモリ増加を防ぐ)。
   ANALYZER_QUEUE_MAX_SIZE: z.coerce.number().int().nonnegative().default(4),
   BROWSER_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  // page.screenshot()自体の明示的timeout。Playwrightの既定(暗黙の30秒action
+  // timeout)に任せると、巨大ページのfullPage撮影で"page.screenshot: Timeout
+  // ...exceeded"がpage.goto側のNAVIGATION_TIMEOUTと誤分類される事故が起きる
+  // (2026-07-25 ユニクロ調査)。Backend AnalyzerClient::SCREENSHOT_TIMEOUT_SECONDS
+  // (90秒)より十分短く保つこと。
+  ANALYZER_SCREENSHOT_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(45_000),
+  // fullPageスクリーンショットで撮影する最大高さ(px)。低メモリのRender環境を
+  // 前提に、デスクトップ幅1440pxでも生ビットマップが概ね60MB程度に収まる
+  // 高さとして既定値10000pxとする(1440*10000*4byte ≈ 57.6MB。モバイル幅390pxは
+  // さらに小さく、同じ上限を共有しても安全側になる)。超過するページ
+  // (例: ユニクロ等のECサイトで数万px)はviewport幅×この高さでクリップし、
+  // truncated=trueとして部分成功で返す(無制限のfullPage撮影や画像の
+  // 分割合成は行わない)。
+  ANALYZER_SCREENSHOT_MAX_HEIGHT: z.coerce.number().int().positive().default(10_000),
   MAX_HTML_BYTES: z.coerce.number().int().positive().default(5 * 1024 * 1024),
   MAX_REDIRECTS: z.coerce.number().int().nonnegative().default(3),
   // Laravelと共有するDockerボリュームのマウント先。screenshotの保存先。

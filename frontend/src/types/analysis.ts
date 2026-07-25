@@ -115,6 +115,9 @@ export interface AnalysisScreenshot {
   url: string;
   width: number;
   height: number;
+  truncated: boolean;
+  document_height: number | null;
+  captured_height: number | null;
 }
 
 export interface AnalysisJobError {

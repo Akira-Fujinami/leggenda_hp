@@ -24,6 +24,10 @@ enum AnalysisErrorCode: string
     case AnalyzerGatewayError = 'ANALYZER_GATEWAY_ERROR';
     case RenderFailed = 'RENDER_FAILED';
     case ScreenshotFailed = 'SCREENSHOT_FAILED';
+    // page.screenshot()自体のタイムアウト。ナビゲーション完了後の後続処理で
+    // 発生するため、NAVIGATION_TIMEOUTやSCREENSHOT_FAILEDに丸めず専用コード
+    // として保持する(2026-07-25 ユニクロ調査で判明した誤分類の修正)。
+    case ScreenshotTimeout = 'SCREENSHOT_TIMEOUT';
     case LighthouseFailed = 'LIGHTHOUSE_FAILED';
     case TechnologyDetectionFailed = 'TECHNOLOGY_DETECTION_FAILED';
     case ParseFailed = 'PARSE_FAILED';

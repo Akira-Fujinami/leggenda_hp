@@ -22,20 +22,31 @@ function DevicePane({
   if (screenshot) {
     const alt = `${websiteName ?? ""} (${DEVICE_LABELS[device]})`;
     return (
-      <ScreenshotLightbox
-        src={screenshot.url}
-        alt={alt}
-        trigger={
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={screenshot.url}
-            alt={alt}
-            loading="lazy"
-            style={{ maxHeight: 360 }}
-            className="w-full rounded-md border object-contain"
-          />
-        }
-      />
+      <div className="space-y-1">
+        <ScreenshotLightbox
+          src={screenshot.url}
+          alt={alt}
+          trigger={
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={screenshot.url}
+              alt={alt}
+              loading="lazy"
+              style={{ maxHeight: 360 }}
+              className="w-full rounded-md border object-contain"
+            />
+          }
+        />
+        {screenshot.truncated && (
+          <p className="text-xs text-muted-foreground">
+            ページ全体が長いため、一部のみ撮影しています
+            {screenshot.document_height !== null && screenshot.captured_height !== null
+              ? `(${screenshot.captured_height}px / ${screenshot.document_height}px)`
+              : ""}
+            。
+          </p>
+        )}
+      </div>
     );
   }
 

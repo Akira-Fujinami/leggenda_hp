@@ -21,7 +21,9 @@ describe("ScreenshotSection", () => {
 
   it("opens a lightbox dialog with the full-size image when a thumbnail is clicked", async () => {
     const user = userEvent.setup();
-    const screenshots: AnalysisScreenshot[] = [{ device: "desktop", url: "https://example.com/desktop.png", width: 1280, height: 800 }];
+    const screenshots: AnalysisScreenshot[] = [
+      { device: "desktop", url: "https://example.com/desktop.png", width: 1280, height: 800, truncated: false, document_height: null, captured_height: null },
+    ];
 
     render(<ScreenshotSection screenshots={screenshots} errors={[]} websiteName="サイトA" />);
 
@@ -30,5 +32,24 @@ describe("ScreenshotSection", () => {
 
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByRole("img", { name: "サイトA (PC)" })).toHaveAttribute("src", "https://example.com/desktop.png");
+  });
+
+  it("shows a truncated notice when the screenshot only captured part of a tall page", () => {
+    const screenshots: AnalysisScreenshot[] = [
+      {
+        device: "desktop",
+        url: "https://example.com/desktop.jpg",
+        width: 1440,
+        height: 10000,
+        truncated: true,
+        document_height: 45000,
+        captured_height: 10000,
+      },
+    ];
+
+    render(<ScreenshotSection screenshots={screenshots} errors={[]} websiteName="サイトA" />);
+
+    expect(screen.getAllByText(/一部のみ撮影しています/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/10000px \/ 45000px/).length).toBeGreaterThan(0);
   });
 });

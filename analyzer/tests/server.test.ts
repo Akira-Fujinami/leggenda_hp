@@ -28,6 +28,14 @@ const NEVER_IDLE_HTML = `
   <body><h1>Never idle</h1><script>fetch("/never-ends").catch(() => {});</script></body></html>
 `;
 
+// ANALYZER_SCREENSHOT_MAX_HEIGHT(既定10000px)を超える巨大ページ
+// (大手ECサイト等を模したフィクスチャ)。無制限のfullPage撮影ではなく、
+// viewport幅×上限高さでクリップされ、truncated=trueとして返ることを検証する。
+const TALL_HTML = `
+  <html><head><title>Tall Fixture</title></head>
+  <body><div style="height:20000px;width:100%;">Tall page</div></body></html>
+`;
+
 // env.ts はモジュール読み込み時に process.env を評価するため、fixtureサーバーの
 // ポートが決まった後、server.ts をimportするより前に設定する必要がある。
 // ANALYZER_TOKENは(本番運用中のコンテナ環境変数がテストプロセスにも継承されて
@@ -35,6 +43,7 @@ const NEVER_IDLE_HTML = `
 // (認証自体はauth.test.tsで別途検証済み)。
 const fixture: FixtureServer = await startFixtureServer(FIXTURE_HTML);
 const fixedCtaFixture: FixtureServer = await startFixtureServer(FIXED_CTA_HTML);
+const tallFixture: FixtureServer = await startFixtureServer(TALL_HTML);
 const neverIdleFixture: FixtureServer = await startFixtureServer((req, res) => {
   if (req.url === "/never-ends") {
     // レスポンスを一切終わらせず、接続を張ったままにする
@@ -51,7 +60,7 @@ const neverIdleFixture: FixtureServer = await startFixtureServer((req, res) => {
 const closedFixture: FixtureServer = await startFixtureServer("unused");
 await closedFixture.close();
 process.env.SSRF_TEST_ALLOWLIST =
-  `${fixture.hostAndPort},${fixedCtaFixture.hostAndPort},` +
+  `${fixture.hostAndPort},${fixedCtaFixture.hostAndPort},${tallFixture.hostAndPort},` +
   `${neverIdleFixture.hostAndPort},${closedFixture.hostAndPort}`;
 process.env.ANALYSIS_STORAGE_PATH = "/tmp/analysis-storage-test";
 process.env.ANALYZER_TOKEN = "";
@@ -71,6 +80,7 @@ describe("analyzer routes", () => {
     await closeBrowser();
     await fixture.close();
     await fixedCtaFixture.close();
+    await tallFixture.close();
     await neverIdleFixture.close();
   });
 
@@ -172,10 +182,36 @@ describe("analyzer routes", () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.data.storage_path).toMatch(/^analyses\/1\/websites\/1\/screenshots\/.+\.png$/);
+    expect(body.data.storage_path).toMatch(/^analyses\/1\/websites\/1\/screenshots\/.+\.jpg$/);
+    expect(body.data.mime_type).toBe("image/jpeg");
     expect(body.data.width).toBe(390);
     expect(body.data.height).toBe(844);
     expect(body.data.file_size).toBeGreaterThan(0);
+    expect(body.data.screenshot_status).toBe("ok");
+    expect(body.data.truncated).toBe(false);
+    expect(body.data.captured_height).toBe(844);
+  }, 30_000);
+
+  it("clips a fullPage screenshot of a very tall page instead of capturing it unbounded", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/analyze/screenshot",
+      payload: {
+        url: `${tallFixture.origin}/`,
+        device: "desktop",
+        full_page: true,
+        analysis_id: 1,
+        website_analysis_id: 1,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.data.truncated).toBe(true);
+    expect(body.data.screenshot_status).toBe("partial");
+    expect(body.data.document_height).toBeGreaterThan(10_000);
+    expect(body.data.captured_height).toBe(10_000);
+    expect(body.data.height).toBe(10_000);
   }, 30_000);
 
   it("detects technology signatures on the fixture page's html", async () => {

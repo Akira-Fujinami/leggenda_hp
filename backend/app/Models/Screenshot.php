@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['website_analysis_id', 'device', 'storage_path', 'width', 'height', 'file_size', 'mime_type', 'captured_at'])]
+#[Fillable(['website_analysis_id', 'device', 'storage_path', 'width', 'height', 'file_size', 'mime_type', 'truncated', 'document_height', 'captured_height', 'captured_at'])]
 class Screenshot extends Model
 {
     protected function casts(): array
@@ -17,6 +17,9 @@ class Screenshot extends Model
             'width' => 'integer',
             'height' => 'integer',
             'file_size' => 'integer',
+            'truncated' => 'boolean',
+            'document_height' => 'integer',
+            'captured_height' => 'integer',
             'captured_at' => 'datetime',
         ];
     }

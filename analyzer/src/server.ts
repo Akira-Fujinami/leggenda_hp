@@ -66,6 +66,10 @@ function logOperationOutcome(params: {
   limiter: ConcurrencyLimiter;
   outcome: "success" | "failed" | "too_busy";
   code?: string;
+  // screenshot操作固有の追加フィールド(viewport/document_height/
+  // captured_height/full_page/truncated/output_bytes等)。HTML本文・
+  // Secret・Token・Cookieは絶対に含めないこと。
+  extra?: Record<string, unknown>;
 }): void {
   logger.info(
     {
@@ -78,6 +82,7 @@ function logOperationOutcome(params: {
       active_sessions: params.limiter.activeCount,
       queued_sessions: params.limiter.queuedCount,
       memory: memoryUsageMb(),
+      ...params.extra,
     },
     "analyzer_operation_outcome",
   );
@@ -239,6 +244,11 @@ function registerAnalyzeRoutes(
       throw err;
     }
 
+    const screenshotLogExtra = {
+      device: parsed.data.device,
+      full_page: parsed.data.full_page,
+    };
+
     let result;
     try {
       result = await limiter.run(() =>
@@ -253,16 +263,26 @@ function registerAnalyzeRoutes(
       );
     } catch (err) {
       const classified = classifyError(err, "screenshot");
-      logOperationOutcome({ ...logArgs, outcome: "failed", code: classified.code });
+      logOperationOutcome({ ...logArgs, outcome: "failed", code: classified.code, extra: screenshotLogExtra });
       return sendClassifiedError(reply, err, request.id, "screenshot");
     }
 
     if (result === CONCURRENCY_LIMIT_EXCEEDED) {
-      logOperationOutcome({ ...logArgs, outcome: "too_busy" });
+      logOperationOutcome({ ...logArgs, outcome: "too_busy", extra: screenshotLogExtra });
       return sendTooBusy(reply);
     }
 
-    logOperationOutcome({ ...logArgs, outcome: "success" });
+    logOperationOutcome({
+      ...logArgs,
+      outcome: "success",
+      extra: {
+        ...screenshotLogExtra,
+        document_height: result.documentHeight,
+        captured_height: result.capturedHeight,
+        truncated: result.truncated,
+        output_bytes: result.fileSize,
+      },
+    });
 
     return reply.send({
       success: true,
@@ -274,6 +294,10 @@ function registerAnalyzeRoutes(
         mime_type: result.mimeType,
         navigation_status: result.navigationStatus,
         warning: result.warning,
+        screenshot_status: result.screenshotStatus,
+        truncated: result.truncated,
+        document_height: result.documentHeight,
+        captured_height: result.capturedHeight,
       },
       error: null,
     });

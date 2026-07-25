@@ -9,6 +9,7 @@ use App\Models\Screenshot;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalyzerClient;
+use Illuminate\Support\Facades\Log;
 
 /**
  * デスクトップ/モバイルのスクリーンショット取得。画像本体はanalyzerが
@@ -19,10 +20,10 @@ class CaptureScreenshotJob extends BaseWebsiteAnalysisJob
 {
     public $tries = 2;
 
-    // AnalyzerClient::screenshot()のHTTP timeout(60秒)と同値だと、RunLighthouseJobで
+    // AnalyzerClient::screenshot()のHTTP timeout(90秒)と同値だと、RunLighthouseJobで
     // 実際に発生した障害と同じクラスの不具合(ジョブtimeoutとHTTP timeoutの
     // 競合によるWorkerプロセス強制終了)が起こり得る。30秒以上のマージンを保つ。
-    public $timeout = 90;
+    public $timeout = 120;
 
     public $backoff = [10, 30];
 
@@ -50,6 +51,20 @@ class CaptureScreenshotJob extends BaseWebsiteAnalysisJob
         $client = app(AnalyzerClient::class);
         $data = $client->screenshot($this->analysisId, $this->websiteAnalysisId, $website->normalized_url, $this->device->value);
 
+        // 巨大ページ(例: ECサイトのfullPage)でANALYZER_SCREENSHOT_MAX_HEIGHTを
+        // 超える場合、analyzerはviewport幅×最大高さでクリップした画像を
+        // truncated=trueとして返す。撮影自体は成功しているためJobは失敗に
+        // せず、原因調査できるようwarning logのみ残す。
+        if ($data['truncated'] ?? false) {
+            Log::warning('CaptureScreenshotJob received a truncated screenshot from analyzer', [
+                'analysis_id' => $this->analysisId,
+                'website_analysis_id' => $this->websiteAnalysisId,
+                'device' => $this->device->value,
+                'document_height' => $data['document_height'] ?? null,
+                'captured_height' => $data['captured_height'] ?? null,
+            ]);
+        }
+
         Screenshot::query()->updateOrCreate(
             ['website_analysis_id' => $this->websiteAnalysisId, 'device' => $this->device],
             [
@@ -57,7 +72,10 @@ class CaptureScreenshotJob extends BaseWebsiteAnalysisJob
                 'width' => $data['width'] ?? $this->device->width(),
                 'height' => $data['height'] ?? $this->device->height(),
                 'file_size' => $data['file_size'] ?? 0,
-                'mime_type' => $data['mime_type'] ?? 'image/png',
+                'mime_type' => $data['mime_type'] ?? 'image/jpeg',
+                'truncated' => $data['truncated'] ?? false,
+                'document_height' => $data['document_height'] ?? null,
+                'captured_height' => $data['captured_height'] ?? null,
                 'captured_at' => now(),
             ],
         );

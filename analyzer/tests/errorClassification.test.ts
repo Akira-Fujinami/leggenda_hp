@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyError } from "../src/errorClassification.js";
+import { classifyError, PhaseError } from "../src/errorClassification.js";
 
 describe("classifyError", () => {
   it("classifies a Playwright navigation timeout", () => {
@@ -7,6 +7,23 @@ describe("classifyError", () => {
 
     expect(result.code).toBe("NAVIGATION_TIMEOUT");
     expect(result.message).toContain("タイムアウト");
+  });
+
+  it("classifies a page.screenshot() timeout as SCREENSHOT_TIMEOUT, not NAVIGATION_TIMEOUT", () => {
+    // 本番ログの実例: ナビゲーション・フォント読込は完了済みで、
+    // page.screenshot()自体が30秒でタイムアウトしたケース。
+    const cause = new Error("page.screenshot: Timeout 30000ms exceeded.");
+    const result = classifyError(new PhaseError("capture", cause), "screenshot");
+
+    expect(result.code).toBe("SCREENSHOT_TIMEOUT");
+    expect(result.code).not.toBe("NAVIGATION_TIMEOUT");
+  });
+
+  it("still classifies a DNS/TLS/connection failure correctly even when wrapped in a capture-phase PhaseError", () => {
+    const cause = new Error("net::ERR_CONNECTION_REFUSED");
+    const result = classifyError(new PhaseError("capture", cause), "screenshot");
+
+    expect(result.code).toBe("CONNECTION_REFUSED");
   });
 
   it("classifies an access-denied response", () => {
