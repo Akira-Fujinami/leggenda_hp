@@ -14,6 +14,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Analysis配下の全WebsiteAnalysisが終端状態になった後に、Analysis全体の
@@ -40,6 +41,21 @@ class FinalizeAnalysisJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(AnalysisPipeline $pipeline): void
     {
+        // StartAnalysisJobと同様、analysis_jobs.analysis_idはanalysesへのFK制約
+        // つきのため、親Analysisの存在確認はmarkRunning()(=最初のDB書き込み)より
+        // 前に行う。ここで例外を投げると、FK違反がretry/failed_jobsをただ汚染する
+        // だけで何も回復しないため、warning logのみのno-opにする。
+        $analysis = Analysis::find($this->analysisId);
+
+        if ($analysis === null) {
+            Log::warning('Orphaned FinalizeAnalysisJob: parent Analysis not found, skipping', [
+                'analysis_id' => $this->analysisId,
+                'job_type' => JobType::FinalizeAnalysis->value,
+            ]);
+
+            return;
+        }
+
         $record = $pipeline->markRunning($this->analysisId, null, JobType::FinalizeAnalysis);
 
         if ($record === null) {
@@ -47,14 +63,6 @@ class FinalizeAnalysisJob implements ShouldBeUnique, ShouldQueue
         }
 
         try {
-            $analysis = Analysis::find($this->analysisId);
-
-            if ($analysis === null) {
-                $pipeline->markCompleted($record);
-
-                return;
-            }
-
             $websiteAnalyses = WebsiteAnalysis::query()->where('analysis_id', $this->analysisId)->get();
             $status = app(AnalysisStatusResolver::class)->resolveAnalysisStatus($websiteAnalyses);
 

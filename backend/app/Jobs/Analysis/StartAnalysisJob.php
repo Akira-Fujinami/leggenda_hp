@@ -13,6 +13,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Analysisの起動。対象WebsiteAnalysis行は既にAnalysisService::start()が
@@ -41,6 +42,22 @@ class StartAnalysisJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(AnalysisPipeline $pipeline): void
     {
+        // analysis_jobs.analysis_idはanalysesへのFK(制約あり)のため、親Analysisが
+        // 既に存在しない(例: テスト/開発環境のDBリセット後に残った孤児Job)状態で
+        // markRunning()を呼ぶとfirstOrCreate()がFK違反例外を投げてしまう。
+        // 例外経由のretry/failed_jobs汚染を避けるため、DB書き込みの前に必ず
+        // 親の存在を確認し、無ければ例外を投げずwarning logのみでno-op終了する。
+        $analysis = Analysis::with('websiteAnalyses')->find($this->analysisId);
+
+        if ($analysis === null) {
+            Log::warning('Orphaned StartAnalysisJob: parent Analysis not found, skipping', [
+                'analysis_id' => $this->analysisId,
+                'job_type' => JobType::StartAnalysis->value,
+            ]);
+
+            return;
+        }
+
         $record = $pipeline->markRunning($this->analysisId, null, JobType::StartAnalysis);
 
         if ($record === null) {
@@ -48,14 +65,6 @@ class StartAnalysisJob implements ShouldBeUnique, ShouldQueue
         }
 
         try {
-            $analysis = Analysis::with('websiteAnalyses')->find($this->analysisId);
-
-            if ($analysis === null) {
-                $pipeline->markCompleted($record);
-
-                return;
-            }
-
             $analysis->update(['status' => AnalysisStatus::Running, 'started_at' => now()]);
 
             foreach ($analysis->websiteAnalyses as $websiteAnalysis) {

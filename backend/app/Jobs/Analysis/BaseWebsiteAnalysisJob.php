@@ -14,6 +14,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 
 /**
  * サイト単位で実行されるAnalysisJob(Fetch/Render/Screenshot/Lighthouse/SEO/技術検出)の
@@ -87,6 +88,16 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
         $websiteAnalysis = WebsiteAnalysis::find($this->websiteAnalysisId);
 
         if ($websiteAnalysis === null) {
+            // 親のWebsiteAnalysisが存在しない孤児Job(例: テスト/開発DBのリセット後に
+            // 残ったジョブ)。markRunning()はanalysis_jobs.website_analysis_id/
+            // analysis_idのFK制約に触れるため、書き込みの前にここで安全にno-op
+            // 終了する(例外にせずwarning logのみ、retryは発生させない)。
+            Log::warning('Orphaned website analysis job: parent WebsiteAnalysis not found, skipping', [
+                'analysis_id' => $this->analysisId,
+                'website_analysis_id' => $this->websiteAnalysisId,
+                'job_type' => $this->jobType()->value,
+            ]);
+
             return;
         }
 

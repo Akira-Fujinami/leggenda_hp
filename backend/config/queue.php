@@ -40,7 +40,14 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            // Laravelのdatabase queueは、reserved_atからこの秒数が経過した予約を
+            // 「Workerが死んでいる」とみなし、別のWorker試行に再度取得させる。
+            // RunLighthouseJob(最長360秒のJob timeout)より短いと、ジョブがまだ
+            // 正常に実行中でも他の試行に二重取得されてしまう(特にRenderの
+            // 再デプロイ時、旧Workerが現在のジョブ終了を待っている間に新Workerが
+            // 起動していると起こりやすい)。queue:workの--timeout(既定600秒)より
+            // 十分大きい700秒を既定値とする。
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 700),
             'after_commit' => false,
         ],
 
