@@ -24,14 +24,26 @@ class AnalyzerClient
 
     public const LIGHTHOUSE_CONNECT_TIMEOUT_SECONDS = 15;
 
+    /**
+     * 対応する呼び出し元Job(RenderPageJob/CaptureScreenshotJob/DetectTechnologyJob)の
+     * $timeoutより30秒以上短く保つこと ―― 同値だとanalyzerが応答をハングさせた
+     * 場合にこのHTTP timeoutとJobのtimeout(pcntl_alarm)が競合し、先にJob
+     * timeoutが発火するとWorkerプロセスごと強制終了され得る
+     * (RunLighthouseJobで実際に発生した障害と同じクラスの不具合)。
+     */
+    public const RENDER_TIMEOUT_SECONDS = 90;
+
+    public const SCREENSHOT_TIMEOUT_SECONDS = 60;
+
+    public const TECHNOLOGY_TIMEOUT_SECONDS = 60;
+
     public function render(string $url, int $timeoutMs = 60000): array
     {
         return $this->post('/analyze/render', [
             'url' => $url,
             'timeout_ms' => $timeoutMs,
-            'wait_until' => 'networkidle',
             'max_html_bytes' => config('analysis.http.max_response_bytes'),
-        ], AnalysisErrorCode::RenderFailed, 90);
+        ], AnalysisErrorCode::RenderFailed, self::RENDER_TIMEOUT_SECONDS);
     }
 
     /**
@@ -47,7 +59,7 @@ class AnalyzerClient
             'full_page' => $fullPage,
             'analysis_id' => $analysisId,
             'website_analysis_id' => $websiteAnalysisId,
-        ], AnalysisErrorCode::ScreenshotFailed, 60);
+        ], AnalysisErrorCode::ScreenshotFailed, self::SCREENSHOT_TIMEOUT_SECONDS);
     }
 
     public function lighthouse(string $url): array
@@ -66,7 +78,7 @@ class AnalyzerClient
         return $this->post('/analyze/technology', array_filter([
             'url' => $url,
             'html' => $html,
-        ], fn ($v) => $v !== null), AnalysisErrorCode::TechnologyDetectionFailed, 60);
+        ], fn ($v) => $v !== null), AnalysisErrorCode::TechnologyDetectionFailed, self::TECHNOLOGY_TIMEOUT_SECONDS);
     }
 
     public function isHealthy(): bool

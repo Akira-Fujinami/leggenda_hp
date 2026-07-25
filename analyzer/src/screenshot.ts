@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { withPage } from "./browser.js";
+import { navigateResilient, type NavigationStatus } from "./navigation.js";
 import { ensureDir, relativeStoragePath, screenshotsDir } from "./storage.js";
 
 export type Device = "desktop" | "mobile";
@@ -17,6 +18,8 @@ export interface ScreenshotResult {
   height: number;
   fileSize: number;
   mimeType: string;
+  navigationStatus: NavigationStatus;
+  warning: string | null;
 }
 
 /**
@@ -35,7 +38,7 @@ export async function captureScreenshot(
   const viewport = VIEWPORTS[device];
 
   return withPage({ viewport }, async (page) => {
-    await page.goto(url, { waitUntil: "networkidle", timeout: timeoutMs });
+    const navigation = await navigateResilient(page, url, timeoutMs);
 
     const dir = screenshotsDir(analysisId, websiteAnalysisId);
     await ensureDir(dir);
@@ -53,6 +56,8 @@ export async function captureScreenshot(
       height: viewport.height,
       fileSize: stats.size,
       mimeType: "image/png",
+      navigationStatus: navigation.status,
+      warning: navigation.warning,
     };
   });
 }

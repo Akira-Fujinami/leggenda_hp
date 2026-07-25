@@ -10,7 +10,8 @@ import { renderPage } from "./render.js";
 import { captureScreenshot, type Device } from "./screenshot.js";
 import { runLighthouse } from "./lighthouse.js";
 import { detectTechnologies } from "./technology.js";
-import { classifyError } from "./errorClassification.js";
+import { classifyError, type AnalyzerOperation } from "./errorClassification.js";
+import { getActiveContextCount, isBrowserConnected } from "./browser.js";
 
 const renderRequestSchema = z.object({
   url: z.string().min(1),
@@ -36,6 +37,52 @@ const technologyRequestSchema = z.object({
   html: z.string().optional(),
 });
 
+function safeHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "[unparseable-url]";
+  }
+}
+
+function memoryUsageMb(): { rss_mb: number; heap_used_mb: number } {
+  const mem = process.memoryUsage();
+  return {
+    rss_mb: Math.round(mem.rss / 1024 / 1024),
+    heap_used_mb: Math.round(mem.heapUsed / 1024 / 1024),
+  };
+}
+
+/**
+ * OOM・クラッシュ・Render instance再起動の原因調査用に、operation単位の
+ * 実行結果を構造化ログへ残す。URL全体(query等に機密情報を含み得る)は
+ * 記録せずhostのみとし、HTML本文・Secret・Tokenは一切含めない。
+ */
+function logOperationOutcome(params: {
+  operation: AnalyzerOperation;
+  requestId: string;
+  url: string;
+  startedAt: number;
+  limiter: ConcurrencyLimiter;
+  outcome: "success" | "failed" | "too_busy";
+  code?: string;
+}): void {
+  logger.info(
+    {
+      request_id: params.requestId,
+      operation: params.operation,
+      host: safeHost(params.url),
+      elapsed_ms: Date.now() - params.startedAt,
+      outcome: params.outcome,
+      code: params.code,
+      active_sessions: params.limiter.activeCount,
+      queued_sessions: params.limiter.queuedCount,
+      memory: memoryUsageMb(),
+    },
+    "analyzer_operation_outcome",
+  );
+}
+
 function sendValidationError(reply: FastifyReply, error: z.ZodError) {
   return reply.code(400).send({
     success: false,
@@ -57,14 +104,14 @@ function sendSsrfBlocked(reply: FastifyReply, err: SsrfError) {
  * 応答する。生のエラーメッセージ・スタックトレースはlogger経由でのみ記録し、
  * レスポンスボディには含めない(秘密情報・内部実装の詳細を返さないため)。
  */
-function sendClassifiedError(reply: FastifyReply, err: unknown, requestId: string) {
-  const classified = classifyError(err);
-  logger.error({ err, code: classified.code, requestId }, "analyzer_operation_failed");
+function sendClassifiedError(reply: FastifyReply, err: unknown, requestId: string, operation: AnalyzerOperation) {
+  const classified = classifyError(err, operation);
+  logger.error({ err, code: classified.code, operation, requestId }, "analyzer_operation_failed");
 
   return reply.code(500).send({
     success: false,
     data: null,
-    error: { code: classified.code, message: classified.message },
+    error: { code: classified.code, message: classified.message, retryable: classified.retryable },
   });
 }
 
@@ -77,8 +124,21 @@ export function buildServer() {
 
   app.register(sensible);
 
-  const limiter = new ConcurrencyLimiter(env.ANALYZER_MAX_CONCURRENCY);
+  const limiter = new ConcurrencyLimiter(
+    env.ANALYZER_MAX_CONCURRENCY,
+    env.ANALYZER_QUEUE_MAX_WAIT_MS,
+    env.ANALYZER_QUEUE_MAX_SIZE,
+  );
 
+  // Renderのデフォルトヘルスチェック(GET /)向け。認証不要・副作用無し。
+  // HEAD /はFastifyがGETルートから自動的に応答する。
+  app.get("/", async () => {
+    return { status: "ok", service: "analyzer" };
+  });
+
+  // livenessに近い軽量チェック(プロセスが生きているか)。processが実際に
+  // ブラウザを起動・operationを処理できるかまでは保証しない
+  // (health=200でも分析処理自体は失敗し得る)。Secret・内部パスは含めない。
   app.get("/health", async () => {
     return {
       success: true,
@@ -86,6 +146,9 @@ export function buildServer() {
         status: "ok",
         uptime_seconds: Math.round(process.uptime()),
         active_sessions: limiter.activeCount,
+        queued_sessions: limiter.queuedCount,
+        browser_connected: isBrowserConnected(),
+        active_contexts: getActiveContextCount(),
       },
       error: null,
     };
@@ -116,6 +179,9 @@ function registerAnalyzeRoutes(
     const parsed = renderRequestSchema.safeParse(request.body);
     if (!parsed.success) return sendValidationError(reply, parsed.error);
 
+    const startedAt = Date.now();
+    const logArgs = { operation: "render" as const, requestId: request.id, url: parsed.data.url, startedAt, limiter };
+
     try {
       await assertSafeUrl(parsed.data.url);
     } catch (err) {
@@ -132,16 +198,17 @@ function registerAnalyzeRoutes(
         }),
       );
     } catch (err) {
-      return sendClassifiedError(reply, err, request.id);
+      const classified = classifyError(err, "render");
+      logOperationOutcome({ ...logArgs, outcome: "failed", code: classified.code });
+      return sendClassifiedError(reply, err, request.id, "render");
     }
 
     if (result === CONCURRENCY_LIMIT_EXCEEDED) {
-      return reply.code(503).send({
-        success: false,
-        data: null,
-        error: { code: "TOO_BUSY", message: "analyzerが混雑しています。" },
-      });
+      logOperationOutcome({ ...logArgs, outcome: "too_busy" });
+      return sendTooBusy(reply);
     }
+
+    logOperationOutcome({ ...logArgs, outcome: "success" });
 
     return reply.send({
       success: true,
@@ -151,6 +218,8 @@ function registerAnalyzeRoutes(
         http_status: result.httpStatus,
         load_time_ms: result.loadTimeMs,
         fixed_cta: result.fixedCta,
+        navigation_status: result.navigationStatus,
+        warning: result.warning,
       },
       error: null,
     });
@@ -159,6 +228,9 @@ function registerAnalyzeRoutes(
   app.post("/analyze/screenshot", async (request: FastifyRequest, reply: FastifyReply) => {
     const parsed = screenshotRequestSchema.safeParse(request.body);
     if (!parsed.success) return sendValidationError(reply, parsed.error);
+
+    const startedAt = Date.now();
+    const logArgs = { operation: "screenshot" as const, requestId: request.id, url: parsed.data.url, startedAt, limiter };
 
     try {
       await assertSafeUrl(parsed.data.url);
@@ -180,16 +252,17 @@ function registerAnalyzeRoutes(
         ),
       );
     } catch (err) {
-      return sendClassifiedError(reply, err, request.id);
+      const classified = classifyError(err, "screenshot");
+      logOperationOutcome({ ...logArgs, outcome: "failed", code: classified.code });
+      return sendClassifiedError(reply, err, request.id, "screenshot");
     }
 
     if (result === CONCURRENCY_LIMIT_EXCEEDED) {
-      return reply.code(503).send({
-        success: false,
-        data: null,
-        error: { code: "TOO_BUSY", message: "analyzerが混雑しています。" },
-      });
+      logOperationOutcome({ ...logArgs, outcome: "too_busy" });
+      return sendTooBusy(reply);
     }
+
+    logOperationOutcome({ ...logArgs, outcome: "success" });
 
     return reply.send({
       success: true,
@@ -199,6 +272,8 @@ function registerAnalyzeRoutes(
         height: result.height,
         file_size: result.fileSize,
         mime_type: result.mimeType,
+        navigation_status: result.navigationStatus,
+        warning: result.warning,
       },
       error: null,
     });
@@ -207,6 +282,9 @@ function registerAnalyzeRoutes(
   app.post("/analyze/lighthouse", async (request: FastifyRequest, reply: FastifyReply) => {
     const parsed = lighthouseRequestSchema.safeParse(request.body);
     if (!parsed.success) return sendValidationError(reply, parsed.error);
+
+    const startedAt = Date.now();
+    const logArgs = { operation: "lighthouse" as const, requestId: request.id, url: parsed.data.url, startedAt, limiter };
 
     try {
       await assertSafeUrl(parsed.data.url);
@@ -219,16 +297,17 @@ function registerAnalyzeRoutes(
     try {
       result = await limiter.run(() => runLighthouse(parsed.data.url, parsed.data.timeout_ms));
     } catch (err) {
-      return sendClassifiedError(reply, err, request.id);
+      const classified = classifyError(err, "lighthouse");
+      logOperationOutcome({ ...logArgs, outcome: "failed", code: classified.code });
+      return sendClassifiedError(reply, err, request.id, "lighthouse");
     }
 
     if (result === CONCURRENCY_LIMIT_EXCEEDED) {
-      return reply.code(503).send({
-        success: false,
-        data: null,
-        error: { code: "TOO_BUSY", message: "analyzerが混雑しています。" },
-      });
+      logOperationOutcome({ ...logArgs, outcome: "too_busy" });
+      return sendTooBusy(reply);
     }
+
+    logOperationOutcome({ ...logArgs, outcome: "success" });
 
     return reply.send({
       success: true,
@@ -246,6 +325,9 @@ function registerAnalyzeRoutes(
     const parsed = technologyRequestSchema.safeParse(request.body);
     if (!parsed.success) return sendValidationError(reply, parsed.error);
 
+    const startedAt = Date.now();
+    const logArgs = { operation: "technology" as const, requestId: request.id, url: parsed.data.url, startedAt, limiter };
+
     try {
       await assertSafeUrl(parsed.data.url);
     } catch (err) {
@@ -256,29 +338,50 @@ function registerAnalyzeRoutes(
     let result;
     try {
       result = await limiter.run(async () => {
-        const html = parsed.data.html ?? (await renderPage(parsed.data.url, {
+        if (parsed.data.html !== undefined) {
+          return { technologies: detectTechnologies(parsed.data.html), navigationStatus: null, warning: null };
+        }
+
+        const rendered = await renderPage(parsed.data.url, {
           timeoutMs: env.BROWSER_TIMEOUT_MS,
           maxHtmlBytes: env.MAX_HTML_BYTES,
-        })).html;
+        });
 
-        return detectTechnologies(html);
+        return {
+          technologies: detectTechnologies(rendered.html),
+          navigationStatus: rendered.navigationStatus,
+          warning: rendered.warning,
+        };
       });
     } catch (err) {
-      return sendClassifiedError(reply, err, request.id);
+      const classified = classifyError(err, "technology");
+      logOperationOutcome({ ...logArgs, outcome: "failed", code: classified.code });
+      return sendClassifiedError(reply, err, request.id, "technology");
     }
 
     if (result === CONCURRENCY_LIMIT_EXCEEDED) {
-      return reply.code(503).send({
-        success: false,
-        data: null,
-        error: { code: "TOO_BUSY", message: "analyzerが混雑しています。" },
-      });
+      logOperationOutcome({ ...logArgs, outcome: "too_busy" });
+      return sendTooBusy(reply);
     }
+
+    logOperationOutcome({ ...logArgs, outcome: "success" });
 
     return reply.send({
       success: true,
-      data: { technologies: result },
+      data: {
+        technologies: result.technologies,
+        navigation_status: result.navigationStatus,
+        warning: result.warning,
+      },
       error: null,
     });
+  });
+}
+
+function sendTooBusy(reply: FastifyReply) {
+  return reply.code(503).send({
+    success: false,
+    data: null,
+    error: { code: "TOO_BUSY", message: "analyzerが混雑しています。", retryable: true },
   });
 }

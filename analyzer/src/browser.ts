@@ -5,6 +5,7 @@ import { assertSafeUrl, SsrfError } from "./ssrf.js";
 
 let sharedBrowser: Browser | null = null;
 let launching: Promise<Browser> | null = null;
+let activeContextCount = 0;
 
 async function getBrowser(): Promise<Browser> {
   if (sharedBrowser?.isConnected()) {
@@ -25,11 +26,31 @@ async function getBrowser(): Promise<Browser> {
       .then((browser) => {
         sharedBrowser = browser;
         launching = null;
+
+        // disconnectedはOOM-kill・クラッシュ・closeBrowser()呼び出し等
+        // 様々な理由で発火し得る。次回getBrowser()呼び出し時に
+        // isConnected()===falseとして検知され自動的に再生成されるため、
+        // ここでは原因調査用のログのみ残す(再起動処理自体は不要)。
+        browser.on("disconnected", () => {
+          logger.warn({ event: "browser_disconnected" }, "shared_browser_disconnected");
+          if (sharedBrowser === browser) {
+            sharedBrowser = null;
+          }
+        });
+
         return browser;
       });
   }
 
   return launching;
+}
+
+export function isBrowserConnected(): boolean {
+  return sharedBrowser?.isConnected() ?? false;
+}
+
+export function getActiveContextCount(): number {
+  return activeContextCount;
 }
 
 export async function closeBrowser(): Promise<void> {
@@ -66,6 +87,7 @@ export async function withPage<T>(
     acceptDownloads: false,
     ignoreHTTPSErrors: false,
   });
+  activeContextCount += 1;
 
   try {
     const page = await context.newPage();
@@ -105,6 +127,7 @@ export async function withPage<T>(
     await context.close().catch((err) => {
       logger.error({ err }, "failed_to_close_browser_context");
     });
+    activeContextCount = Math.max(0, activeContextCount - 1);
   }
 }
 

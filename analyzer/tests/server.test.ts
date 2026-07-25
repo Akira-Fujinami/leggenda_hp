@@ -18,6 +18,16 @@ const FIXED_CTA_HTML = `
   </body></html>
 `;
 
+// ページ自身が終わらないfetch("/never-ends")を発行し続ける限り、
+// ブラウザのnetwork活動は0にならずnetworkidleへは絶対に到達しない
+// (大規模ECサイトの解析タグ・定期通信等を模した回帰テスト用フィクスチャ)。
+// domcontentloadedは通常のHTML同様すぐに発火する(fetchは非同期のため
+// パースをブロックしない)。
+const NEVER_IDLE_HTML = `
+  <html><head><title>Never Idle Fixture</title></head>
+  <body><h1>Never idle</h1><script>fetch("/never-ends").catch(() => {});</script></body></html>
+`;
+
 // env.ts はモジュール読み込み時に process.env を評価するため、fixtureサーバーの
 // ポートが決まった後、server.ts をimportするより前に設定する必要がある。
 // ANALYZER_TOKENは(本番運用中のコンテナ環境変数がテストプロセスにも継承されて
@@ -25,17 +35,29 @@ const FIXED_CTA_HTML = `
 // (認証自体はauth.test.tsで別途検証済み)。
 const fixture: FixtureServer = await startFixtureServer(FIXTURE_HTML);
 const fixedCtaFixture: FixtureServer = await startFixtureServer(FIXED_CTA_HTML);
+const neverIdleFixture: FixtureServer = await startFixtureServer((req, res) => {
+  if (req.url === "/never-ends") {
+    // レスポンスを一切終わらせず、接続を張ったままにする
+    // (テスト終了時にサーバーごと閉じるためリークしない)。
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    return;
+  }
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(NEVER_IDLE_HTML);
+});
 // 接続拒否エラーの分類を検証するため、一度起動してすぐ閉じたfixtureサーバーの
 // アドレスを保持しておく(許可リストにはホスト:ポートとして登録済みだが、
 // 実際には何も listen していないため接続が拒否される)。
 const closedFixture: FixtureServer = await startFixtureServer("unused");
 await closedFixture.close();
-process.env.SSRF_TEST_ALLOWLIST = `${fixture.hostAndPort},${fixedCtaFixture.hostAndPort},${closedFixture.hostAndPort}`;
+process.env.SSRF_TEST_ALLOWLIST =
+  `${fixture.hostAndPort},${fixedCtaFixture.hostAndPort},` +
+  `${neverIdleFixture.hostAndPort},${closedFixture.hostAndPort}`;
 process.env.ANALYSIS_STORAGE_PATH = "/tmp/analysis-storage-test";
 process.env.ANALYZER_TOKEN = "";
 
 const { buildServer } = await import("../src/server.js");
-const { closeBrowser } = await import("../src/browser.js");
+const { closeBrowser, getActiveContextCount } = await import("../src/browser.js");
 
 describe("analyzer routes", () => {
   let app: Awaited<ReturnType<typeof buildServer>>;
@@ -49,6 +71,7 @@ describe("analyzer routes", () => {
     await closeBrowser();
     await fixture.close();
     await fixedCtaFixture.close();
+    await neverIdleFixture.close();
   });
 
   it("health check succeeds", async () => {
@@ -166,4 +189,65 @@ describe("analyzer routes", () => {
     const names = response.json().data.technologies.map((t: { name: string }) => t.name);
     expect(names).toContain("WordPress");
   });
+
+  it("renders a page with a never-ending background request without waiting for networkidle", async () => {
+    const startedAt = Date.now();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/analyze/render",
+      // timeout_msをnetworkidle基準では絶対に間に合わない短さにしても、
+      // domcontentloaded基準なら数秒で完了するはず(ユニクロのnavigation
+      // timeout問題の回帰テスト)。
+      payload: { url: `${neverIdleFixture.origin}/`, timeout_ms: 15_000 },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.data.html).toContain("Never idle");
+    expect(body.data.navigation_status).toBe("ok");
+    expect(body.data.warning).toBeNull();
+    // settle delay(2秒)+load待機はあるが、15秒のtimeout一杯を待ってはいない。
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+  }, 20_000);
+
+  it("captures a screenshot on a page with continuous background requests", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/analyze/screenshot",
+      payload: {
+        url: `${neverIdleFixture.origin}/`,
+        device: "desktop",
+        analysis_id: 1,
+        website_analysis_id: 1,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.navigation_status).toBe("ok");
+  }, 20_000);
+
+  it("leaves no leaked browser context after a successful render", async () => {
+    const before = getActiveContextCount();
+
+    await app.inject({
+      method: "POST",
+      url: "/analyze/render",
+      payload: { url: `${fixture.origin}/`, timeout_ms: 10_000 },
+    });
+
+    expect(getActiveContextCount()).toBe(before);
+  }, 20_000);
+
+  it("leaves no leaked browser context after a failed render", async () => {
+    const before = getActiveContextCount();
+
+    await app.inject({
+      method: "POST",
+      url: "/analyze/render",
+      payload: { url: `${closedFixture.origin}/`, timeout_ms: 10_000 },
+    });
+
+    expect(getActiveContextCount()).toBe(before);
+  }, 20_000);
 });

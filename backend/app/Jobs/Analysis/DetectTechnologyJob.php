@@ -30,7 +30,10 @@ class DetectTechnologyJob extends BaseWebsiteAnalysisJob
 
     public $tries = 2;
 
-    public $timeout = 60;
+    // AnalyzerClient::technology()のHTTP timeout(60秒)と同値だと、RunLighthouseJobで
+    // 実際に発生した障害と同じクラスの不具合(ジョブtimeoutとHTTP timeoutの
+    // 競合によるWorkerプロセス強制終了)が起こり得る。30秒以上のマージンを保つ。
+    public $timeout = 90;
 
     public $backoff = [10, 30];
 

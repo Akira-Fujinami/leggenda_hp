@@ -9,16 +9,22 @@ export interface FixtureServer {
 
 /**
  * テスト専用のローカルHTTP fixtureサーバー。127.0.0.1の空きポートにbindし、
- * 固定のHTMLを返す。実際の外部サイトに依存しないことで、テストの
- * 安定性を確保する(analyzer自体のSSRF対策により、テストコード側で
- * env.SSRF_TEST_ALLOWLIST に明示的にこのオリジンを登録する必要がある)。
+ * 固定のHTML(またはカスタムのリクエストハンドラ)を返す。実際の外部サイトに
+ * 依存しないことで、テストの安定性を確保する(analyzer自体のSSRF対策により、
+ * テストコード側で env.SSRF_TEST_ALLOWLIST に明示的にこのオリジンを
+ * 登録する必要がある)。
  */
-export function startFixtureServer(html: string): Promise<FixtureServer> {
+export function startFixtureServer(htmlOrHandler: string | http.RequestListener): Promise<FixtureServer> {
   return new Promise((resolve) => {
-    const server = http.createServer((req, res) => {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(html);
-    });
+    const listener: http.RequestListener =
+      typeof htmlOrHandler === "string"
+        ? (req, res) => {
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(htmlOrHandler);
+          }
+        : htmlOrHandler;
+
+    const server = http.createServer(listener);
 
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address() as AddressInfo;

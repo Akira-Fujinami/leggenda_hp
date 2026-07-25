@@ -2,68 +2,129 @@
  * Playwright/Lighthouse等が投げる例外を、ユーザー向けに分類したエラーコード・
  * 日本語メッセージへ変換する。生のエラーメッセージ・スタックトレースは
  * ログにのみ残し(呼び出し元でlogger経由)、ユーザー向けレスポンスには含めない。
+ *
+ * どの操作(render/screenshot/lighthouse/technology)から発生したかで、同じ
+ * "timeout"という事象でも意味が異なる(例: Lighthouse自身の計測timeoutと
+ * ページ遷移timeoutは原因も対処も別)。operationを渡すことでこれを区別する。
  */
 export interface ClassifiedError {
   code: string;
   message: string;
+  /** true: 同条件で再試行すれば成功し得る。false: 再試行しても変わらない。 */
+  retryable: boolean;
 }
 
-const PATTERNS: Array<{ code: string; message: string; test: (raw: string) => boolean }> = [
-  {
-    code: "NAVIGATION_TIMEOUT",
-    message: "ページの読み込みがタイムアウトしました。",
-    test: (raw) => /timeout.*exceeded/i.test(raw) || raw.includes("Timeout"),
-  },
+export type AnalyzerOperation = "render" | "screenshot" | "lighthouse" | "technology";
+
+interface Pattern {
+  code: string;
+  message: string;
+  retryable: boolean;
+  test: (raw: string) => boolean;
+}
+
+// 操作の種類によらず、原因そのものから一意に分類できるもの。
+// timeoutより先に評価する(timeoutの文言を含むメッセージでも、より具体的な
+// 原因が判明していればそちらを優先するため)。
+const UNIVERSAL_PATTERNS: Pattern[] = [
   {
     code: "ACCESS_DENIED",
     message: "サイトからアクセスを拒否されました(403/429等)。",
+    retryable: false,
     test: (raw) => /\b(403|429)\b/.test(raw) || /forbidden|too many requests/i.test(raw),
   },
   {
     code: "TOO_MANY_REDIRECTS",
     message: "リダイレクトが多すぎるため処理を中断しました。",
+    retryable: false,
     test: (raw) => /too many redirects|ERR_TOO_MANY_REDIRECTS/i.test(raw),
   },
   {
-    code: "SSL_ERROR",
+    code: "TLS_ERROR",
     message: "SSL/TLS証明書の検証に失敗しました。",
+    retryable: false,
     test: (raw) => /ERR_CERT|SSL|certificate/i.test(raw),
   },
   {
     code: "DNS_ERROR",
     message: "ドメイン名を解決できませんでした。",
+    retryable: false,
     test: (raw) => /ERR_NAME_NOT_RESOLVED|ENOTFOUND|getaddrinfo/i.test(raw),
   },
   {
     code: "CONNECTION_REFUSED",
     message: "サイトへの接続が拒否されました。",
+    retryable: true,
     test: (raw) => /ERR_CONNECTION_REFUSED|ECONNREFUSED|ERR_CONNECTION_RESET|ECONNRESET/i.test(raw),
-  },
-  {
-    code: "PAGE_CRASHED",
-    message: "ページの読み込み中にブラウザが異常終了しました。",
-    test: (raw) => /crash/i.test(raw) || /Target (page|crashed)/i.test(raw),
   },
   {
     code: "BROWSER_DISCONNECTED",
     message: "ブラウザとの接続が切断されました。",
-    test: (raw) => /Target page, context or browser has been closed|browser has disconnected/i.test(raw),
+    retryable: true,
+    test: (raw) => /browser has disconnected/i.test(raw),
+  },
+  {
+    // Playwrightの"Target page, context or browser has been closed"は
+    // page/context/browserのどれが実際に閉じられたかを個別に報告しないため、
+    // withPage()がリクエスト単位で管理するcontextの終了を代表として扱う。
+    // TARGET_CRASHEDより先に判定すること ―― "Target page, ..."は
+    // "Target (page|crashed)"のより緩いパターンとも重複し得るため。
+    code: "CONTEXT_CLOSED",
+    message: "処理中にブラウザのコンテキストが終了しました。",
+    retryable: true,
+    test: (raw) => /context or browser has been closed|Execution context was destroyed/i.test(raw),
+  },
+  {
+    code: "PAGE_CLOSED",
+    message: "処理中にページが閉じられました。",
+    retryable: true,
+    test: (raw) => /Target closed/i.test(raw),
+  },
+  {
+    code: "TARGET_CRASHED",
+    message: "ページの読み込み中にブラウザが異常終了しました。",
+    retryable: true,
+    test: (raw) => /crash/i.test(raw),
   },
   {
     code: "BROWSER_LAUNCH_FAILED",
     message: "ブラウザの起動に失敗しました。",
+    retryable: true,
     test: (raw) => /Failed to launch|browserType\.launch/i.test(raw),
   },
 ];
 
-export function classifyError(error: unknown): ClassifiedError {
+const OPERATION_TIMEOUT: Record<AnalyzerOperation, ClassifiedError> = {
+  render: { code: "NAVIGATION_TIMEOUT", message: "ページの読み込みがタイムアウトしました。", retryable: true },
+  screenshot: { code: "NAVIGATION_TIMEOUT", message: "ページの読み込みがタイムアウトしました。", retryable: true },
+  technology: { code: "NAVIGATION_TIMEOUT", message: "ページの読み込みがタイムアウトしました。", retryable: true },
+  lighthouse: { code: "LIGHTHOUSE_TIMEOUT", message: "Lighthouse計測がタイムアウトしました。", retryable: true },
+};
+
+const OPERATION_FALLBACK: Partial<Record<AnalyzerOperation, ClassifiedError>> = {
+  screenshot: { code: "SCREENSHOT_FAILED", message: "スクリーンショットの取得に失敗しました。", retryable: true },
+  technology: { code: "TECHNOLOGY_FAILED", message: "技術検出に失敗しました。", retryable: true },
+};
+
+const TIMEOUT_PATTERN = /timeout.*exceeded/i;
+
+export function classifyError(error: unknown, operation?: AnalyzerOperation): ClassifiedError {
   const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 
-  for (const pattern of PATTERNS) {
+  for (const pattern of UNIVERSAL_PATTERNS) {
     if (pattern.test(raw)) {
-      return { code: pattern.code, message: pattern.message };
+      return { code: pattern.code, message: pattern.message, retryable: pattern.retryable };
     }
   }
 
-  return { code: "UNKNOWN_ANALYZER_ERROR", message: "分析処理中に不明なエラーが発生しました。" };
+  if (TIMEOUT_PATTERN.test(raw) || raw.includes("Timeout")) {
+    return OPERATION_TIMEOUT[operation ?? "render"];
+  }
+
+  const fallback = operation ? OPERATION_FALLBACK[operation] : undefined;
+  if (fallback) {
+    return fallback;
+  }
+
+  return { code: "UNKNOWN_ANALYZER_ERROR", message: "分析処理中に不明なエラーが発生しました。", retryable: false };
 }

@@ -14,6 +14,7 @@ use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\AnalyzerClient;
+use Illuminate\Support\Facades\Log;
 
 /**
  * analyzer(Playwright)によるレンダリング後HTMLの取得。
@@ -39,7 +40,13 @@ class RenderPageJob extends BaseWebsiteAnalysisJob
 
     public $tries = 2;
 
-    public $timeout = 90;
+    // AnalyzerClient::render()のHTTP timeout(90秒)と同値だと、analyzerが
+    // 応答をハングさせた場合にLaravelのHTTP timeoutとLaravelキュー基盤の
+    // ジョブtimeout(pcntl_alarm)が競合し、ジョブtimeoutが先に発火すると
+    // handle()のtry/catchを経由せずWorkerプロセスごと強制終了され得る
+    // (RunLighthouseJobで実際に発生した障害と同じクラスの不具合)。
+    // 30秒以上のマージンを保つ。
+    public $timeout = 120;
 
     public $backoff = [15, 45];
 
@@ -73,6 +80,18 @@ class RenderPageJob extends BaseWebsiteAnalysisJob
             ['rendered_html_path' => $htmlPath],
         );
 
+        // analyzerがpage.gotoのtimeout後もDOM取得済みとして部分成功
+        // (navigation_status=partial)を返すことがある。Job自体は失敗
+        // ではない(HTMLは取得できている)ため成功として扱うが、原因調査
+        // できるようwarning logのみ残す。
+        if (($data['navigation_status'] ?? 'ok') === 'partial') {
+            Log::warning('RenderPageJob received a partial navigation result from analyzer', [
+                'analysis_id' => $this->analysisId,
+                'website_analysis_id' => $this->websiteAnalysisId,
+                'warning' => $data['warning'] ?? null,
+            ]);
+        }
+
         $fixedCta = $data['fixed_cta'] ?? null;
         $detected = (bool) ($fixedCta['detected'] ?? false);
 
@@ -82,6 +101,10 @@ class RenderPageJob extends BaseWebsiteAnalysisJob
             $detected ? MetricResultStatus::Success : MetricResultStatus::NotFound,
             normalizedValue: $detected,
             rawValue: $fixedCta,
+            evidence: [
+                'navigation_status' => $data['navigation_status'] ?? 'ok',
+                'navigation_warning' => $data['warning'] ?? null,
+            ],
         );
     }
 

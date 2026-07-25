@@ -94,6 +94,49 @@ class RenderPageJobTest extends TestCase
     }
 
     /**
+     * analyzerがpage.gotoのtimeout後もDOM取得済みとして部分成功
+     * (navigation_status=partial)を返した場合、Jobは失敗させず
+     * (HTMLは取得できているため)、その旨をevidenceへ残すことの確認。
+     */
+    public function test_partial_navigation_result_is_recorded_but_does_not_fail_the_job(): void
+    {
+        $this->seed(CategoryDefinitionSeeder::class);
+        $this->seed(MetricDefinitionSeeder::class);
+
+        Queue::fake([ReanalyzeRenderedHtmlJob::class]);
+        Http::fake([
+            '*/analyze/render' => Http::response([
+                'success' => true,
+                'data' => [
+                    'html' => '<html><body>Hello</body></html>',
+                    'final_url' => 'https://example.com',
+                    'http_status' => null,
+                    'load_time_ms' => 60000,
+                    'fixed_cta' => ['detected' => false, 'text' => null, 'href' => null, 'position' => null],
+                    'navigation_status' => 'partial',
+                    'warning' => 'NAVIGATION_TIMEOUT',
+                ],
+            ], 200),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+        ]);
+
+        (new RenderPageJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $job = $websiteAnalysis->jobs()->where('job_type', JobType::RenderPage)->first();
+        $this->assertSame(AnalysisJobStatus::Completed, $job->status);
+
+        $result = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'fixed_cta_present'))->first();
+        $this->assertSame('partial', $result->evidence['navigation_status']);
+        $this->assertSame('NAVIGATION_TIMEOUT', $result->evidence['navigation_warning']);
+    }
+
+    /**
      * analyzer呼び出し失敗時にMetricResult行が1件も作られない(=採点対象の
      * 未取得集計から不可視になる)バグの回帰テスト。
      */
