@@ -5,6 +5,8 @@ namespace App\Services\Scoring;
 use App\Enums\MetricResultStatus;
 use App\Enums\ScoringType;
 use App\Models\CategoryDefinition;
+use App\Models\MetricDefinition;
+use App\Models\MetricResult;
 use App\Support\Scoring\WebsiteScoreResult;
 use Illuminate\Support\Collection;
 
@@ -22,14 +24,14 @@ class OverallScoreCalculator
         private readonly CategoryScoreCalculator $categoryCalculator,
         private readonly CoverageCalculator $coverage,
         private readonly ConfidenceCalculator $confidence,
-    ) {
-    }
+    ) {}
 
     /**
      * @param  Collection<int, CategoryDefinition>  $activeCategories
-     * @param  Collection<int, \App\Models\MetricResult>  $results  metricDefinition読み込み済み
+     * @param  Collection<int, MetricDefinition>  $definitions  is_active=trueの全MetricDefinition
+     * @param  Collection<int, MetricResult>  $results  metricDefinition読み込み済み
      */
-    public function calculate(Collection $activeCategories, Collection $results): WebsiteScoreResult
+    public function calculate(Collection $activeCategories, Collection $definitions, Collection $results): WebsiteScoreResult
     {
         $outcomesByResultId = [];
         $summary = [
@@ -39,12 +41,29 @@ class OverallScoreCalculator
             // 情報項目が丸ごとunavailable/errorになっても、採点対象の
             // 未取得件数が0のままになり得るため、両者を明確に区別する。
             'scored_unavailable' => 0, 'informational_unavailable' => 0,
+            // MetricResult行自体が1件も作られなかった(Jobが記録に到達する前に
+            // 失敗した)定義の件数。scored_unavailable/informational_unavailableに
+            // 含めて「未取得」の総数を過小報告しないようにしつつ、既存行の
+            // unavailable/errorとは別に内訳を残す(2026-07-25の障害調査で判明:
+            // RunLighthouseJob/RenderPageJobの失敗によりMetricResult行が全く
+            // 作られず、「採点対象の未取得0件」に誤集計されていた)。
+            'missing' => 0,
         ];
 
-        foreach ($results as $result) {
-            $definition = $result->metricDefinition;
+        $resultsByDefinitionId = $results->keyBy('metric_definition_id');
 
-            if ($definition === null) {
+        foreach ($definitions as $definition) {
+            if (! $definition->is_active) {
+                continue;
+            }
+
+            $isInformational = ScoringType::tryFrom((string) $definition->scoring_type) === ScoringType::NotScored;
+            $result = $resultsByDefinitionId->get($definition->id);
+
+            if ($result === null) {
+                $summary['missing']++;
+                $summary[$isInformational ? 'informational_unavailable' : 'scored_unavailable']++;
+
                 continue;
             }
 
@@ -60,7 +79,6 @@ class OverallScoreCalculator
             $summary[$key]++;
 
             if (in_array($result->status, [MetricResultStatus::Unavailable, MetricResultStatus::Error], true)) {
-                $isInformational = ScoringType::tryFrom((string) $definition->scoring_type) === ScoringType::NotScored;
                 $summary[$isInformational ? 'informational_unavailable' : 'scored_unavailable']++;
             }
         }

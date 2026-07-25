@@ -5,14 +5,15 @@ namespace App\Jobs\Analysis;
 use App\Enums\JobType;
 use App\Enums\MetricResultStatus;
 use App\Enums\PageType;
+use App\Exceptions\Analysis\AnalysisException;
 use App\Jobs\Analysis\Concerns\RecordsMetricResults;
+use App\Jobs\Analysis\Concerns\WritesAnalysisStorage;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\SafeHttpFetcher;
-use Illuminate\Support\Facades\Storage;
 
 /**
  * トップページの静的HTML(JS実行前)を取得して保存する。
@@ -31,11 +32,16 @@ use Illuminate\Support\Facades\Storage;
  */
 class FetchStaticPageJob extends BaseWebsiteAnalysisJob
 {
-    use RecordsMetricResults;
+    use RecordsMetricResults, WritesAnalysisStorage;
 
     public $tries = 3;
 
-    public $timeout = 30;
+    // SafeHttpFetcherのHTTP total_timeout(既定20秒、リダイレクト追従全体で
+    // 単一の締切りを守る設計)より30秒以上のマージンを保つ。同値/近い値だと
+    // HTTP側のtimeoutより先にLaravelキュー基盤のジョブtimeout(pcntl_alarm)が
+    // 発火し、handle()のtry/catchを経由せずWorkerプロセスごと強制終了させて
+    // しまう(2026-07-25の本番障害調査で判明)。
+    public $timeout = 60;
 
     public function jobType(): JobType
     {
@@ -51,18 +57,18 @@ class FetchStaticPageJob extends BaseWebsiteAnalysisJob
         /** @var SafeHttpFetcher $fetcher */
         $fetcher = app(SafeHttpFetcher::class);
 
+        /** @var AnalysisStoragePaths $paths */
+        $paths = app(AnalysisStoragePaths::class);
+        $htmlPath = $paths->rawHtmlPath($this->analysisId, $this->websiteAnalysisId, 'homepage.html');
+
         try {
             $result = $fetcher->fetch($website->normalized_url, ['text/html', 'application/xhtml+xml']);
-        } catch (\App\Exceptions\Analysis\AnalysisException $e) {
+            $this->putToAnalysisStorage($htmlPath, $result->body);
+        } catch (AnalysisException $e) {
             $this->recordAllHttpMetricsUnavailable();
 
             throw $e;
         }
-
-        /** @var AnalysisStoragePaths $paths */
-        $paths = app(AnalysisStoragePaths::class);
-        $htmlPath = $paths->rawHtmlPath($this->analysisId, $this->websiteAnalysisId, 'homepage.html');
-        Storage::disk('analysis')->put($htmlPath, $result->body);
 
         AnalysisPage::query()->updateOrCreate(
             ['website_analysis_id' => $this->websiteAnalysisId, 'page_type' => PageType::Homepage],
@@ -80,7 +86,6 @@ class FetchStaticPageJob extends BaseWebsiteAnalysisJob
             'http_status' => $result->httpStatus,
             'final_url' => $result->finalUrl,
             'response_time_ms' => $result->durationMs,
-            'started_at' => $websiteAnalysis->started_at ?? now(),
         ]);
 
         $isHttps = parse_url($result->finalUrl, PHP_URL_SCHEME) === 'https';

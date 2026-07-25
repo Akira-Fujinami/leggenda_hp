@@ -2,8 +2,10 @@
 
 namespace App\Jobs\Analysis;
 
+use App\Enums\AnalysisErrorCode;
 use App\Enums\JobType;
 use App\Enums\PageType;
+use App\Exceptions\Analysis\AnalysisException;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
@@ -17,10 +19,13 @@ use Illuminate\Support\Facades\Storage;
  * accessibility/conversionカテゴリのMetricResultを記録する一次解析。
  *
  * 依存関係: FetchStaticPageJobの成否に関わらず(onWebsiteJobTerminal経由で)
- * 必ず起動される。HTMLが取得できていない場合は「失敗」ではなく「測定不能」
- * として全指標をunavailableで記録し、正常終了する(取得できなかった原因は
- * FetchStaticPageJob側のAnalysisJobに既に記録されているため、ここで
- * 重複してエラー扱いにはしない)。
+ * 必ず起動される。HTMLが取得できていない場合、全指標をunavailableで記録した上で
+ * AnalysisErrorCode::DependencyUnavailableとしてこのJob自身もFailedにする
+ * (retryはしない ―― $tries=1、かつDependencyUnavailableはisRetryable()=false)。
+ * これによりAnalysisJob.error_codeを見るだけで「解析対象のHTMLが無かった」
+ * ことが分かり、「静的解析はしたが何も見つからなかった」場合(Completed)と
+ * 区別できる。取得できなかった元の原因(接続timeout等)はFetchStaticPageJob側の
+ * AnalysisJobに既に記録されているため、ここで上書きはしない。
  *
  * このジョブは通常RenderPageJobより先に完了するため、多くの場合ここでは
  * 静的HTMLのみで解析する(=一次解析、暫定結果)。RenderPageJobが後から
@@ -70,7 +75,7 @@ class AnalyzeHtmlSeoJob extends BaseWebsiteAnalysisJob
         if ($htmlPath === null) {
             $recorder->recordAllUnavailable($this->websiteAnalysisId);
 
-            return;
+            throw new AnalysisException(AnalysisErrorCode::DependencyUnavailable, '解析対象のHTMLが取得できなかったため、解析をスキップしました。');
         }
 
         $html = $disk->get($htmlPath);

@@ -5,14 +5,15 @@ namespace App\Jobs\Analysis;
 use App\Enums\JobType;
 use App\Enums\MetricResultStatus;
 use App\Enums\PageType;
+use App\Exceptions\Analysis\AnalysisException;
 use App\Jobs\Analysis\Concerns\RecordsMetricResults;
+use App\Jobs\Analysis\Concerns\WritesAnalysisStorage;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\AnalyzerClient;
-use Illuminate\Support\Facades\Storage;
 
 /**
  * analyzer(Playwright)によるレンダリング後HTMLの取得。
@@ -34,7 +35,7 @@ use Illuminate\Support\Facades\Storage;
  */
 class RenderPageJob extends BaseWebsiteAnalysisJob
 {
-    use RecordsMetricResults;
+    use RecordsMetricResults, WritesAnalysisStorage;
 
     public $tries = 2;
 
@@ -53,12 +54,19 @@ class RenderPageJob extends BaseWebsiteAnalysisJob
 
         /** @var AnalyzerClient $client */
         $client = app(AnalyzerClient::class);
-        $data = $client->render($website->normalized_url);
 
         /** @var AnalysisStoragePaths $paths */
         $paths = app(AnalysisStoragePaths::class);
         $htmlPath = $paths->rawHtmlPath($this->analysisId, $this->websiteAnalysisId, 'homepage.rendered.html');
-        Storage::disk('analysis')->put($htmlPath, (string) ($data['html'] ?? ''));
+
+        try {
+            $data = $client->render($website->normalized_url);
+            $this->putToAnalysisStorage($htmlPath, (string) ($data['html'] ?? ''));
+        } catch (AnalysisException $e) {
+            $this->recordMetric($this->websiteAnalysisId, 'fixed_cta_present', MetricResultStatus::Unavailable, errorCode: $e->errorCode->value, errorMessage: $e->getMessage());
+
+            throw $e;
+        }
 
         AnalysisPage::query()->updateOrCreate(
             ['website_analysis_id' => $this->websiteAnalysisId, 'page_type' => PageType::Homepage],

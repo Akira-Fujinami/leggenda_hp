@@ -2,8 +2,10 @@
 
 namespace App\Jobs\Analysis;
 
+use App\Enums\AnalysisErrorCode;
 use App\Enums\JobType;
 use App\Enums\PageType;
+use App\Exceptions\Analysis\AnalysisException;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
@@ -18,12 +20,14 @@ use Illuminate\Support\Facades\Storage;
  * JS描画コンテンツ(SNSリンク・価格付き商品カード・動的H1・チャットボット・
  * 動的フォーム等)を取りこぼさないようにする。
  *
- * RenderPageJobの終端(成功・失敗いずれも)から必ず起動されるため、
- * レンダリング済みHTMLが利用できない場合は例外を投げず静かにno-opする
- * (静的結果(一次解析)をそのまま最終結果として残す ―― 全Metricを
- * unavailable化してはいけない。RenderPageJob失敗時はこの経路で
- * fallback_used相当の状態になる。frontend表示はAnalysisResultsResource側で
- * RenderPage/ReanalyzeRenderedHtmlのAnalysisJobステータスから判定する)。
+ * RenderPageJobの終端(成功・失敗いずれも)から必ず起動される。レンダリング済み
+ * HTMLが利用できない場合、静的結果(一次解析)はそのまま最終結果として残し
+ * (全Metricをunavailable化しない ―― AnalyzeHtmlSeoJobが既に記録済み)、
+ * このJob自身はAnalysisErrorCode::DependencyUnavailableとしてFailedにする。
+ * こうすることで「JS描画後の再解析は行われなかった」ことをAnalysisJob.error_codeで
+ * 判別できる(表示結果自体は静的解析のままで変わらない ―― RenderPageJobが
+ * 失敗している場合、WebsiteAnalysisは既にrender_page側のFailedでpartial/failed
+ * 判定に反映されているため、ここでもFailedにしても追加の悪化はない)。
  *
  * $tries=1: AnalyzeHtmlSeoJobによる静的解析という安全網が既にあるため、
  * この二次解析自体の再試行は必須ではない。
@@ -51,8 +55,9 @@ class ReanalyzeRenderedHtmlJob extends BaseWebsiteAnalysisJob
         if ($page?->rendered_html_path === null || ! $disk->exists($page->rendered_html_path)) {
             // レンダリング済みHTMLが利用不可(RenderPageJob失敗、または
             // analyzerが空のHTMLしか返さなかった等)。静的HTML解析(一次解析)の
-            // 結果を最終結果として確定させ、ここでは何も上書きしない。
-            return;
+            // 結果を最終結果として確定させ、Metricは一切上書きしない
+            // (unavailable化もしない ―― AnalyzeHtmlSeoJobの結果が既に正)。
+            throw new AnalysisException(AnalysisErrorCode::DependencyUnavailable, 'レンダリング済みHTMLが利用できなかったため、再解析をスキップしました。');
         }
 
         $html = $disk->get($page->rendered_html_path);

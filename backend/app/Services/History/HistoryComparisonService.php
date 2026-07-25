@@ -26,8 +26,7 @@ class HistoryComparisonService
     public function __construct(
         private readonly OverallScoreCalculator $scoreCalculator,
         private readonly MetricValueDiffClassifier $diffClassifier,
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -108,8 +107,8 @@ class HistoryComparisonService
         Collection $categories,
         Collection $definitions,
     ): array {
-        $currentScore = $currentWa !== null ? $this->scoreCalculator->calculate($categories, $currentWa->metricResults) : null;
-        $previousScore = $previousWa !== null ? $this->scoreCalculator->calculate($categories, $previousWa->metricResults) : null;
+        $currentScore = $currentWa !== null ? $this->scoreCalculator->calculate($categories, $definitions, $currentWa->metricResults) : null;
+        $previousScore = $previousWa !== null ? $this->scoreCalculator->calculate($categories, $definitions, $previousWa->metricResults) : null;
 
         $website = $currentWa?->website ?? $previousWa?->website;
 

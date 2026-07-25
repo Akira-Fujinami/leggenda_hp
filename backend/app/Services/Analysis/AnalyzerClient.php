@@ -97,15 +97,32 @@ class AnalyzerClient
             throw new AnalysisException(AnalysisErrorCode::AnalyzerUnavailable, 'analyzerに接続できませんでした。', $e);
         }
 
-        if ($response->status() === 401) {
+        $status = $response->status();
+
+        if ($status === 401) {
             throw new AnalysisException(AnalysisErrorCode::AnalyzerAuthFailed, 'analyzerの認証に失敗しました。');
         }
 
-        if ($response->status() === 429 || $response->status() === 503) {
+        if ($status === 429 || $status === 503) {
             throw new AnalysisException(AnalysisErrorCode::AnalyzerUnavailable, 'analyzerが混雑しています。');
         }
 
+        // 502/504はanalyzerアプリ自身が返すルートではない(server.tsの全ルートは
+        // 401/422/503/500のいずれかで応答する)。Renderのプロキシやコンテナの
+        // クラッシュ/再起動中に返される可能性が高く、analyzerが実際に処理して
+        // 失敗した場合と区別できるよう専用のエラーコードにする。
+        if ($status === 502 || $status === 504) {
+            throw new AnalysisException(AnalysisErrorCode::AnalyzerGatewayError, "analyzerへの接続がゲートウェイで失敗しました(HTTP {$status})。");
+        }
+
         $body = $response->json();
+
+        // $response->json()はデコード失敗時に例外を投げずnullを返す。analyzerは
+        // 常にJSONで応答する設計のため、非JSON本文(Renderのプロキシが返す
+        // デフォルトのエラーページ等)もゲートウェイ由来の失敗として扱う。
+        if ($body === null) {
+            throw new AnalysisException(AnalysisErrorCode::AnalyzerGatewayError, 'analyzerから不正な応答(JSON以外)を受信しました。');
+        }
 
         if (! $response->successful() || ! ($body['success'] ?? false)) {
             $message = $body['error']['message'] ?? 'analyzerでの処理に失敗しました。';

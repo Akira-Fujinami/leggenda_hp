@@ -7,6 +7,7 @@ use App\Models\CategoryDefinition;
 use App\Models\MetricDefinition;
 use App\Models\MetricResult;
 use App\Services\Scoring\CategoryScoreCalculator;
+use App\Services\Scoring\ConfidenceCalculator;
 use App\Services\Scoring\CoverageCalculator;
 use App\Services\Scoring\MetricScorer;
 use App\Services\Scoring\OverallScoreCalculator;
@@ -75,15 +76,16 @@ class CalculatorsTest extends TestCase
 
         $results = MetricResult::query()->with('metricDefinition')->get();
         $categories = collect([$techSeo, $content]);
+        $definitions = collect([$seoMetric, $contentMetricAvailable, $contentMetricUnavailable]);
 
         $calculator = new OverallScoreCalculator(
             new MetricScorer,
             new CategoryScoreCalculator(new CoverageCalculator),
             new CoverageCalculator,
-            new \App\Services\Scoring\ConfidenceCalculator,
+            new ConfidenceCalculator,
         );
 
-        $score = $calculator->calculate($categories, $results);
+        $score = $calculator->calculate($categories, $definitions, $results);
 
         // configured_max = 20+15=35, available = 20(seo, all counted)+10(content available)=30
         $this->assertSame(35.0, $score->configuredMaxScore);
@@ -107,17 +109,58 @@ class CalculatorsTest extends TestCase
         MetricResult::factory()->create(['metric_definition_id' => $informationalMetric->id, 'status' => MetricResultStatus::Error]);
 
         $results = MetricResult::query()->with('metricDefinition')->get();
+        $definitions = collect([$scoredMetric, $informationalMetric]);
         $calculator = new OverallScoreCalculator(
             new MetricScorer,
             new CategoryScoreCalculator(new CoverageCalculator),
             new CoverageCalculator,
-            new \App\Services\Scoring\ConfidenceCalculator,
+            new ConfidenceCalculator,
         );
 
-        $score = $calculator->calculate(collect([$category]), $results);
+        $score = $calculator->calculate(collect([$category]), $definitions, $results);
 
         $this->assertSame(2, $score->metricSummary['error']);
         $this->assertSame(1, $score->metricSummary['scored_unavailable']);
         $this->assertSame(1, $score->metricSummary['informational_unavailable']);
+    }
+
+    /**
+     * MetricResult行が1件も無い(Job失敗によりrecordMetric()に到達しなかった)
+     * 定義が、「未取得(scored_unavailable)」に正しく計上されることの回帰テスト。
+     * 修正前はMetricResultだけを起点に集計しており、行が存在しない定義は
+     * 完全に不可視だった(2026-07-25の障害調査で判明: 採点対象の未取得が
+     * 常に0件と表示されるバグ)。
+     */
+    public function test_a_metric_definition_with_no_result_row_at_all_is_counted_as_missing(): void
+    {
+        $category = CategoryDefinition::factory()->create(['key' => 'performance', 'weight' => 20, 'display_order' => 1]);
+        $measured = MetricDefinition::factory()->create(['category_key' => 'performance', 'scoring_type' => 'boolean', 'max_score' => 10]);
+        $neverRecorded = MetricDefinition::factory()->create(['category_key' => 'performance', 'scoring_type' => 'boolean', 'max_score' => 10]);
+        $informationalNeverRecorded = MetricDefinition::factory()->create(['category_key' => 'performance', 'scoring_type' => 'not_scored', 'max_score' => 0]);
+
+        MetricResult::factory()->create(['metric_definition_id' => $measured->id, 'status' => MetricResultStatus::Success, 'normalized_value' => ['value' => true]]);
+        // $neverRecorded/$informationalNeverRecordedに対応するMetricResultは
+        // 意図的に作らない(RunLighthouseJob等がAnalyzerClient呼び出しの前段で
+        // 失敗し、recordMetric()に一度も到達しなかった状態を再現する)。
+
+        $results = MetricResult::query()->with('metricDefinition')->get();
+        $definitions = collect([$measured, $neverRecorded, $informationalNeverRecorded]);
+
+        $calculator = new OverallScoreCalculator(
+            new MetricScorer,
+            new CategoryScoreCalculator(new CoverageCalculator),
+            new CoverageCalculator,
+            new ConfidenceCalculator,
+        );
+
+        $score = $calculator->calculate(collect([$category]), $definitions, $results);
+
+        $this->assertSame(1, $score->metricSummary['success']);
+        $this->assertSame(2, $score->metricSummary['missing']);
+        $this->assertSame(1, $score->metricSummary['scored_unavailable']);
+        $this->assertSame(1, $score->metricSummary['informational_unavailable']);
+        // 未取得の指標は分子(available_score)にも配点通りの分母にも含まれない
+        // (0点として扱わない ―― available_scoreはmax_score=10の$measuredのみ)。
+        $this->assertSame(10.0, $score->availableScore);
     }
 }

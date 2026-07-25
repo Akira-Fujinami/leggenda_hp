@@ -74,6 +74,12 @@ class FetchStaticPageJobTest extends TestCase
         $this->assertSame(AnalysisErrorCode::UnsafeUrl->value, $job->error_code);
 
         Queue::assertPushed(AnalyzeHtmlSeoJob::class);
+
+        // fetch_static_page自体が失敗しても、started_atはmarkRunning()側で
+        // 既に設定されているため残る(2026-07-25の障害調査で判明したバグの
+        // 回帰テスト: 以前はこのJobのprocess()内でしかstarted_atを設定して
+        // おらず、失敗時にnullのまま残っていた)。
+        $this->assertNotNull($websiteAnalysis->refresh()->started_at);
     }
 
     public function test_analyze_html_seo_job_is_not_dispatched_prematurely_during_a_retryable_attempt(): void
@@ -119,6 +125,27 @@ class FetchStaticPageJobTest extends TestCase
 
         // attempt2(実際に成功した試行)の完了後にのみ、正確に1回dispatchされる。
         Queue::assertPushed(AnalyzeHtmlSeoJob::class, 1);
+    }
+
+    public function test_started_at_is_set_by_the_first_job_and_not_overwritten_by_a_later_one(): void
+    {
+        Queue::fake([AnalyzeHtmlSeoJob::class]);
+        Http::fake([
+            'https://example.com/' => Http::response('<html></html>', 200, ['Content-Type' => 'text/html']),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        $pipeline = app(AnalysisPipeline::class);
+
+        // 他のサイト単位Jobが先にmarkRunning()へ到達した状況を模す
+        // (Worker上ではどのJobが最初に処理されるか順不同のため)。
+        $pipeline->markRunning($websiteAnalysis->analysis_id, $websiteAnalysis->id, JobType::FetchRobots);
+        $firstStartedAt = $websiteAnalysis->refresh()->started_at;
+        $this->assertNotNull($firstStartedAt);
+
+        (new FetchStaticPageJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle($pipeline);
+
+        $this->assertTrue($websiteAnalysis->refresh()->started_at->eq($firstStartedAt));
     }
 
     public function test_rerunning_a_completed_job_is_a_noop(): void

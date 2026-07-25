@@ -8,7 +8,7 @@ readonly class WebsiteScoreResult
 {
     /**
      * @param  Collection<int, CategoryScoreResult>  $categoryScores
-     * @param  array{success: int, not_found: int, unavailable: int, error: int, not_applicable: int, scored_unavailable: int, informational_unavailable: int}  $metricSummary
+     * @param  array{success: int, not_found: int, unavailable: int, error: int, not_applicable: int, scored_unavailable: int, informational_unavailable: int, missing: int}  $metricSummary
      */
     public function __construct(
         public float $overallScore,
@@ -19,8 +19,7 @@ readonly class WebsiteScoreResult
         public float $confidenceRate,
         public Collection $categoryScores,
         public array $metricSummary,
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<string, mixed>

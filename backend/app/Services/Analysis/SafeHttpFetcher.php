@@ -4,6 +4,8 @@ namespace App\Services\Analysis;
 
 use App\Enums\AnalysisErrorCode;
 use App\Exceptions\Analysis\AnalysisException;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
 /**
@@ -13,9 +15,7 @@ use Illuminate\Support\Facades\Http;
  */
 class SafeHttpFetcher
 {
-    public function __construct(private readonly SafeUrlValidator $validator)
-    {
-    }
+    public function __construct(private readonly SafeUrlValidator $validator) {}
 
     /**
      * @param  list<string>  $allowedContentTypePrefixes  空の場合はContent-Typeを検証しない
@@ -31,19 +31,31 @@ class SafeHttpFetcher
         $requestedUrl = $url;
         $currentUrl = $url;
         $started = microtime(true);
+        // リダイレクト追従全体(最大 $maxRedirects+1 回のHTTPリクエスト)を通して
+        // 単一の締切りを守る。各ホップごとにtimeout()をリセットすると、
+        // (max_redirects+1) * total_timeout_secondsまで累積し得て、
+        // 呼び出し元Jobの$timeoutを超過してWorkerプロセスごと強制終了
+        // させかねない(2026-07-25の本番障害調査で判明した設計不備)。
+        $deadline = $started + $totalTimeout;
 
         for ($redirectCount = 0; $redirectCount <= $maxRedirects; $redirectCount++) {
             $this->validator->assertSafe($currentUrl);
 
+            $remainingSeconds = $deadline - microtime(true);
+            if ($remainingSeconds <= 0) {
+                throw new AnalysisException(AnalysisErrorCode::RequestTimeout, "リダイレクトの追跡中にタイムアウトしました: {$requestedUrl}");
+            }
+            $hopTimeout = (int) max(1, ceil($remainingSeconds));
+
             try {
                 $response = Http::withUserAgent($userAgent)
-                    ->connectTimeout($connectTimeout)
-                    ->timeout($totalTimeout)
+                    ->connectTimeout(min($connectTimeout, $hopTimeout))
+                    ->timeout($hopTimeout)
                     ->withOptions([
                         'allow_redirects' => false,
                     ])
                     ->get($currentUrl);
-            } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            } catch (ConnectionException $e) {
                 throw new AnalysisException(AnalysisErrorCode::ConnectionTimeout, "接続できませんでした: {$currentUrl}", $e);
             }
 
@@ -106,7 +118,7 @@ class SafeHttpFetcher
      * (Guzzleの完全ストリーミング制御はHTTPテストのFake機構と相性が悪いため、
      * MVPではボディ取得後の切り詰めで代替する)
      */
-    private function readBodyWithLimit(\Illuminate\Http\Client\Response $response, int $maxBytes): string
+    private function readBodyWithLimit(Response $response, int $maxBytes): string
     {
         $declaredLength = $response->header('Content-Length');
         if ($declaredLength !== null && (int) $declaredLength > $maxBytes) {

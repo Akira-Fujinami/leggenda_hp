@@ -5,6 +5,7 @@ namespace App\Jobs\Analysis;
 use App\Enums\AnalysisErrorCode;
 use App\Enums\AnalysisStatus;
 use App\Enums\JobType;
+use App\Jobs\Analysis\Concerns\LogsJobFailures;
 use App\Models\Analysis;
 use App\Services\Analysis\AnalysisPipeline;
 use Illuminate\Bus\Queueable;
@@ -23,7 +24,7 @@ use Illuminate\Support\Facades\Log;
  */
 class StartAnalysisJob implements ShouldBeUnique, ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, LogsJobFailures, Queueable, SerializesModels;
 
     public $tries = 2;
 
@@ -31,9 +32,7 @@ class StartAnalysisJob implements ShouldBeUnique, ShouldQueue
 
     public $uniqueFor = 600;
 
-    public function __construct(public readonly int $analysisId)
-    {
-    }
+    public function __construct(public readonly int $analysisId) {}
 
     public function uniqueId(): string
     {
@@ -42,6 +41,8 @@ class StartAnalysisJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(AnalysisPipeline $pipeline): void
     {
+        $startedAt = microtime(true);
+
         // analysis_jobs.analysis_idはanalysesへのFK(制約あり)のため、親Analysisが
         // 既に存在しない(例: テスト/開発環境のDBリセット後に残った孤児Job)状態で
         // markRunning()を呼ぶとfirstOrCreate()がFK違反例外を投げてしまう。
@@ -78,6 +79,7 @@ class StartAnalysisJob implements ShouldBeUnique, ShouldQueue
             $pipeline->markCompleted($record);
         } catch (\Throwable $e) {
             report($e);
+            $this->logJobFailure($e, $this->analysisId, null, JobType::StartAnalysis->value, $this->attempts(), microtime(true) - $startedAt);
             $pipeline->markFailed($record, AnalysisErrorCode::UnknownError, '分析の開始中に予期しないエラーが発生しました。');
         }
     }

@@ -4,13 +4,17 @@ namespace Tests\Unit\Jobs\Analysis;
 
 use App\Enums\AnalysisJobStatus;
 use App\Enums\JobType;
+use App\Enums\MetricResultStatus;
 use App\Enums\PageType;
 use App\Jobs\Analysis\ReanalyzeRenderedHtmlJob;
 use App\Jobs\Analysis\RenderPageJob;
 use App\Models\AnalysisPage;
+use App\Models\MetricResult;
 use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
+use Database\Seeders\CategoryDefinitionSeeder;
+use Database\Seeders\MetricDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -87,6 +91,35 @@ class RenderPageJobTest extends TestCase
         // 自身は無害にno-opするため、必ずdispatchしてよい
         // (放置するとAnalysisJob行がpendingのまま残りFinalizeが止まる)。
         Queue::assertPushed(ReanalyzeRenderedHtmlJob::class, 1);
+    }
+
+    /**
+     * analyzer呼び出し失敗時にMetricResult行が1件も作られない(=採点対象の
+     * 未取得集計から不可視になる)バグの回帰テスト。
+     */
+    public function test_analyzer_failure_marks_fixed_cta_metric_unavailable(): void
+    {
+        $this->seed(CategoryDefinitionSeeder::class);
+        $this->seed(MetricDefinitionSeeder::class);
+
+        Queue::fake([ReanalyzeRenderedHtmlJob::class]);
+        Http::fake([
+            '*/analyze/render' => Http::response([], 500),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+        ]);
+
+        (new RenderPageJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $result = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'fixed_cta_present'))->first();
+        $this->assertNotNull($result);
+        $this->assertSame(MetricResultStatus::Unavailable, $result->status);
+        $this->assertNotNull($result->error_code);
     }
 
     public function test_reanalysis_job_is_not_dispatched_prematurely_during_a_retryable_attempt(): void

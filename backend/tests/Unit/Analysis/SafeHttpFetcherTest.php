@@ -111,6 +111,29 @@ class SafeHttpFetcherTest extends TestCase
         $this->assertSame(10, strlen($result->body));
     }
 
+    /**
+     * リダイレクト追従全体(最大 max_redirects+1 回のHTTPリクエスト)が
+     * 単一の締切りを守ることの回帰テスト。修正前は各ホップごとに
+     * total_timeout_secondsがリセットされていたため、リダイレクトが多い
+     * サイトでは呼び出し元Jobの$timeoutを大きく超過し得た。
+     */
+    public function test_it_stops_following_redirects_once_the_overall_deadline_has_passed(): void
+    {
+        config(['analysis.http.total_timeout_seconds' => 0]);
+
+        Http::fake([
+            'https://example.com/a' => Http::response('', 301, ['Location' => 'https://example.com/b']),
+            'https://example.com/b' => Http::response('<html>ok</html>', 200, ['Content-Type' => 'text/html']),
+        ]);
+
+        try {
+            $this->fetcher->fetch('https://example.com/a');
+            $this->fail('Expected AnalysisException');
+        } catch (AnalysisException $e) {
+            $this->assertSame(AnalysisErrorCode::RequestTimeout, $e->errorCode);
+        }
+    }
+
     public function test_it_rejects_unsupported_content_types(): void
     {
         Http::fake([

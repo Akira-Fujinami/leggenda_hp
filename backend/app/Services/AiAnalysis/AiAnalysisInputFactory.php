@@ -38,8 +38,7 @@ class AiAnalysisInputFactory
         private readonly OverallScoreCalculator $scoreCalculator,
         private readonly ComparisonCalculator $comparisonCalculator,
         private readonly StrengthWeaknessExtractor $strengthWeaknessExtractor,
-    ) {
-    }
+    ) {}
 
     public function build(WebsiteAnalysis $websiteAnalysis): AiAnalysisInput
     {
@@ -58,7 +57,7 @@ class AiAnalysisInputFactory
 
         $entries = $analysis->websiteAnalyses->map(fn ($wa) => new SiteScoreEntry(
             websiteAnalysis: $wa,
-            score: $this->scoreCalculator->calculate($categories, $wa->metricResults),
+            score: $this->scoreCalculator->calculate($categories, $definitions, $wa->metricResults),
         ));
 
         $targetEntry = $entries->first(fn (SiteScoreEntry $e) => $e->websiteAnalysis->id === $websiteAnalysis->id);

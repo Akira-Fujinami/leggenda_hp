@@ -67,6 +67,55 @@ class FetchRobotsJobTest extends TestCase
         $this->assertEquals($result->max_score, $result->score);
     }
 
+    public function test_403_response_is_marked_unavailable_not_a_false_exists(): void
+    {
+        // アクセス拒否(403)は「存在しない」ではなく「判定不能」であるべき。
+        // normalized_value=falseの固定化バグの回帰テスト。
+        Http::fake([
+            'https://example.com/robots.txt' => Http::response('Forbidden', 403),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        (new FetchRobotsJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $job = $websiteAnalysis->jobs()->where('job_type', JobType::FetchRobots)->first();
+        $this->assertSame(AnalysisJobStatus::Completed, $job->status);
+
+        $result = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'robots_fetched'))->first();
+        $this->assertSame(MetricResultStatus::Unavailable, $result->status);
+        $this->assertNull($result->normalized_value);
+        $this->assertNull($result->score);
+    }
+
+    public function test_500_response_is_marked_unavailable_not_a_false_exists(): void
+    {
+        Http::fake([
+            'https://example.com/robots.txt' => Http::response('Internal Server Error', 500),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        (new FetchRobotsJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $result = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'robots_fetched'))->first();
+        $this->assertSame(MetricResultStatus::Unavailable, $result->status);
+        $this->assertNull($result->normalized_value);
+    }
+
+    public function test_redirect_to_200_is_treated_as_exists(): void
+    {
+        Http::fake([
+            'https://example.com/robots.txt' => Http::response('', 301, ['Location' => 'https://example.com/robots-real.txt']),
+            'https://example.com/robots-real.txt' => Http::response("User-agent: *\nDisallow:", 200, ['Content-Type' => 'text/plain']),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        (new FetchRobotsJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $result = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'robots_fetched'))->first();
+        $this->assertSame(MetricResultStatus::Success, $result->status);
+        $this->assertTrue($result->normalized_value['value']);
+    }
+
     public function test_network_failure_marks_job_failed_and_metric_error(): void
     {
         $website = Website::factory()->create(['url' => 'https://localhost', 'normalized_url' => 'https://localhost']);

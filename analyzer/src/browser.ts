@@ -12,11 +12,21 @@ async function getBrowser(): Promise<Browser> {
   }
 
   if (!launching) {
-    launching = chromium.launch({ headless: true }).then((browser) => {
-      sharedBrowser = browser;
-      launching = null;
-      return browser;
-    });
+    // lighthouse.tsのchrome-launcher起動と同じ堅牢化フラグを揃える。
+    // 特に--disable-dev-shm-usageが無いと、Dockerの既定/dev/shm(64MB)を
+    // 使おうとして重いページのレンダリング/フルページスクリーンショットで
+    // "Target crashed"になりやすい(render/screenshot/technology detectionの
+    // 失敗調査で判明した設定不備)。
+    launching = chromium
+      .launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
+      })
+      .then((browser) => {
+        sharedBrowser = browser;
+        launching = null;
+        return browser;
+      });
   }
 
   return launching;

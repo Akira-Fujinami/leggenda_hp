@@ -12,6 +12,7 @@ use App\Models\MetricResult;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
+use App\Services\Analysis\HtmlSeoAnalyzer;
 use Database\Seeders\CategoryDefinitionSeeder;
 use Database\Seeders\MetricDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -30,14 +31,22 @@ class AnalyzeHtmlSeoJobTest extends TestCase
         Storage::fake('analysis');
     }
 
-    public function test_records_all_metrics_as_unavailable_when_no_html_was_fetched(): void
+    /**
+     * 入力HTMLが無い場合、全指標はunavailableで記録した上で、Job自身も
+     * DependencyUnavailableとしてFailedになる(retryなし)。以前はCompleted
+     * だったが、「解析対象が無くてスキップした」ことをAnalysisJob.error_codeで
+     * 判別できるようにするための変更(fetch_static_page失敗の連鎖がUNKNOWN_ERRORに
+     * なっていたバグの修正)。
+     */
+    public function test_dependency_unavailable_when_no_html_was_fetched(): void
     {
         $websiteAnalysis = WebsiteAnalysis::factory()->create();
 
         (new AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
 
         $job = $websiteAnalysis->jobs()->where('job_type', JobType::AnalyzeHtmlSeo)->first();
-        $this->assertSame(AnalysisJobStatus::Completed, $job->status);
+        $this->assertSame(AnalysisJobStatus::Failed, $job->status);
+        $this->assertSame('DEPENDENCY_UNAVAILABLE', $job->error_code);
 
         $titleResult = MetricResult::query()
             ->whereHas('metricDefinition', fn ($q) => $q->where('key', 'title_present'))
@@ -349,7 +358,7 @@ class AnalyzeHtmlSeoJobTest extends TestCase
             'fetched_at' => now(),
         ]);
 
-        $this->mock(\App\Services\Analysis\HtmlSeoAnalyzer::class, function ($mock) {
+        $this->mock(HtmlSeoAnalyzer::class, function ($mock) {
             $mock->shouldReceive('analyze')->andThrow(new \RuntimeException('DOM parse failed'));
         });
 

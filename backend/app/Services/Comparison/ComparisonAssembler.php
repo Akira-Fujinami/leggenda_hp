@@ -22,8 +22,7 @@ class ComparisonAssembler
         private readonly RankingCalculator $rankingCalculator,
         private readonly ComparisonCalculator $comparisonCalculator,
         private readonly StrengthWeaknessExtractor $strengthWeaknessExtractor,
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -40,7 +39,7 @@ class ComparisonAssembler
 
         $entries = $analysis->websiteAnalyses->map(fn ($wa) => new SiteScoreEntry(
             websiteAnalysis: $wa,
-            score: $this->scoreCalculator->calculate($categories, $wa->metricResults),
+            score: $this->scoreCalculator->calculate($categories, $definitions, $wa->metricResults),
         ));
 
         $primaryEntry = $entries->first(fn (SiteScoreEntry $e) => (bool) $e->websiteAnalysis->website?->is_primary);

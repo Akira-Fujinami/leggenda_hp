@@ -6,6 +6,7 @@ use App\Enums\AnalysisJobStatus;
 use App\Enums\JobType;
 use App\Enums\MetricResultStatus;
 use App\Enums\PageType;
+use App\Jobs\Analysis\AnalyzeHtmlSeoJob;
 use App\Jobs\Analysis\ReanalyzeRenderedHtmlJob;
 use App\Models\AnalysisPage;
 use App\Models\MetricResult;
@@ -13,6 +14,7 @@ use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
+use App\Services\Analysis\HtmlSeoAnalyzer;
 use Database\Seeders\CategoryDefinitionSeeder;
 use Database\Seeders\MetricDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -38,7 +40,13 @@ class ReanalyzeRenderedHtmlJobTest extends TestCase
         return WebsiteAnalysis::factory()->create(['website_id' => $website->id]);
     }
 
-    public function test_noop_when_rendered_html_path_is_missing(): void
+    /**
+     * レンダリング済みHTMLが利用不可の場合、二次解析自体は
+     * DependencyUnavailableとしてFailedになる(静的解析の結果は上書きされず
+     * 維持される)。以前はCompletedだったが、「JS描画後の再解析が行われな
+     * かったこと」をAnalysisJob.error_codeで判別できるようにするための変更。
+     */
+    public function test_dependency_unavailable_when_rendered_html_path_is_missing(): void
     {
         $websiteAnalysis = $this->makeWebsiteAnalysis();
         AnalysisPage::query()->create([
@@ -53,11 +61,12 @@ class ReanalyzeRenderedHtmlJobTest extends TestCase
         (new ReanalyzeRenderedHtmlJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
 
         $job = $websiteAnalysis->jobs()->where('job_type', JobType::ReanalyzeRenderedHtml)->first();
-        $this->assertSame(AnalysisJobStatus::Completed, $job->status);
+        $this->assertSame(AnalysisJobStatus::Failed, $job->status);
+        $this->assertSame('DEPENDENCY_UNAVAILABLE', $job->error_code);
         $this->assertSame(0, MetricResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
     }
 
-    public function test_noop_when_rendered_html_file_is_missing_on_disk(): void
+    public function test_dependency_unavailable_when_rendered_html_file_is_missing_on_disk(): void
     {
         $websiteAnalysis = $this->makeWebsiteAnalysis();
         AnalysisPage::query()->create([
@@ -73,7 +82,8 @@ class ReanalyzeRenderedHtmlJobTest extends TestCase
         (new ReanalyzeRenderedHtmlJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
 
         $job = $websiteAnalysis->jobs()->where('job_type', JobType::ReanalyzeRenderedHtml)->first();
-        $this->assertSame(AnalysisJobStatus::Completed, $job->status);
+        $this->assertSame(AnalysisJobStatus::Failed, $job->status);
+        $this->assertSame('DEPENDENCY_UNAVAILABLE', $job->error_code);
     }
 
     public function test_overwrites_static_results_with_rendered_source_preserving_the_same_row_id(): void
@@ -102,7 +112,7 @@ class ReanalyzeRenderedHtmlJobTest extends TestCase
         ]);
 
         // 一次解析(静的HTML)を先に実行して既存のstatic結果を作る。
-        (new \App\Jobs\Analysis\AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+        (new AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
 
         $h1Before = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'h1_single'))
             ->where('website_analysis_id', $websiteAnalysis->id)->first();
@@ -155,11 +165,11 @@ class ReanalyzeRenderedHtmlJobTest extends TestCase
             'fetched_at' => now(),
         ]);
 
-        (new \App\Jobs\Analysis\AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+        (new AnalyzeHtmlSeoJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
 
         $page->update(['rendered_html_path' => $renderedHtmlPath]);
 
-        $this->mock(\App\Services\Analysis\HtmlSeoAnalyzer::class, function ($mock) {
+        $this->mock(HtmlSeoAnalyzer::class, function ($mock) {
             $mock->shouldReceive('analyze')->andThrow(new \RuntimeException('rendered HTML parse failed'));
         });
 

@@ -4,15 +4,20 @@ namespace Tests\Unit\Jobs\Analysis;
 
 use App\Enums\AnalysisJobStatus;
 use App\Enums\JobType;
+use App\Enums\MetricResultStatus;
 use App\Jobs\Analysis\FinalizeWebsiteAnalysisJob;
 use App\Jobs\Analysis\RunLighthouseJob;
 use App\Models\AnalysisJob;
+use App\Models\MetricResult;
 use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalyzerClient;
+use Database\Seeders\CategoryDefinitionSeeder;
+use Database\Seeders\MetricDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Queue\MaxAttemptsExceededException;
 use Illuminate\Queue\TimeoutExceededException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -76,6 +81,35 @@ class RunLighthouseTimeoutTest extends TestCase
         $this->assertSame('ANALYZER_UNAVAILABLE', $job->error_code);
     }
 
+    /**
+     * analyzer呼び出し失敗時にlighthouse系MetricResultが1件も作られず、
+     * 「採点対象の未取得」集計から不可視になっていたバグの回帰テスト。
+     */
+    public function test_analyzer_failure_marks_lighthouse_metrics_unavailable(): void
+    {
+        $this->seed(CategoryDefinitionSeeder::class);
+        $this->seed(MetricDefinitionSeeder::class);
+
+        Http::fake([
+            '*/analyze/lighthouse' => function () {
+                throw new ConnectionException('cURL error 28: Operation timed out after 330001 milliseconds');
+            },
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        (new RunLighthouseJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))
+            ->handle(app(AnalysisPipeline::class));
+
+        $result = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'lighthouse_performance'))->first();
+        $this->assertNotNull($result);
+        $this->assertSame(MetricResultStatus::Unavailable, $result->status);
+        $this->assertSame('ANALYZER_UNAVAILABLE', $result->error_code);
+
+        $fcp = MetricResult::query()->whereHas('metricDefinition', fn ($q) => $q->where('key', 'fcp'))->first();
+        $this->assertNotNull($fcp);
+        $this->assertSame(MetricResultStatus::Unavailable, $fcp->status);
+    }
+
     public function test_queue_level_timeout_kill_still_finalizes_the_website_analysis_when_it_is_the_last_pending_job(): void
     {
         Queue::fake([FinalizeWebsiteAnalysisJob::class]);
@@ -105,6 +139,40 @@ class RunLighthouseTimeoutTest extends TestCase
         Queue::assertPushed(FinalizeWebsiteAnalysisJob::class, 1);
 
         $this->assertGreaterThan(0, $websiteAnalysis->fresh()->progress);
+    }
+
+    public function test_timeout_exception_is_classified_as_job_timeout_not_unknown_error(): void
+    {
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        AnalysisJob::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'job_type' => JobType::RunLighthouse,
+            'status' => AnalysisJobStatus::Running,
+        ]);
+
+        $job = new RunLighthouseJob($websiteAnalysis->analysis_id, $websiteAnalysis->id);
+        $job->failed(new TimeoutExceededException('App\\Jobs\\Analysis\\RunLighthouseJob has timed out.'));
+
+        $record = $websiteAnalysis->jobs()->where('job_type', JobType::RunLighthouse)->first();
+        $this->assertSame('JOB_TIMEOUT', $record->error_code);
+    }
+
+    public function test_max_attempts_exceeded_exception_is_classified_accordingly(): void
+    {
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        AnalysisJob::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'job_type' => JobType::RunLighthouse,
+            'status' => AnalysisJobStatus::Running,
+        ]);
+
+        $job = new RunLighthouseJob($websiteAnalysis->analysis_id, $websiteAnalysis->id);
+        $job->failed(new MaxAttemptsExceededException('App\\Jobs\\Analysis\\RunLighthouseJob has been attempted too many times.'));
+
+        $record = $websiteAnalysis->jobs()->where('job_type', JobType::RunLighthouse)->first();
+        $this->assertSame('MAX_ATTEMPTS_EXCEEDED', $record->error_code);
     }
 
     public function test_failed_after_timeout_does_not_overwrite_an_already_terminal_job(): void

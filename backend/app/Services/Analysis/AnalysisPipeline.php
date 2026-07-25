@@ -97,6 +97,13 @@ class AnalysisPipeline
      * 冪等に用意し、まだ終端状態でなければ実行中としてマークする。
      * 既に終端状態(completed/failed)の場合はnullを返し、呼び出し元は
      * 処理をスキップする(重複実行防止)。
+     *
+     * WebsiteAnalysis.started_atは、そのサイトの最初のJob(fetch_static_page/
+     * fetch_robots/fetch_sitemap等、どれが最初に処理されるかはWorkerの
+     * 処理順次第)がここに到達した瞬間に一度だけ設定する。特定のJobクラス内で
+     * 個別に設定すると、そのJobが失敗して到達できなかった場合に
+     * started_atが永久にnullのまま残ってしまう(2026-07-25の障害調査で判明:
+     * WebsiteAnalysis.started_atがnullのままcompleted_atだけ入る不具合)。
      */
     public function markRunning(int $analysisId, ?int $websiteAnalysisId, JobType $jobType): ?AnalysisJobRecord
     {
@@ -123,6 +130,13 @@ class AnalysisPipeline
             'attempts' => $record->attempts + 1,
             'started_at' => $record->started_at ?? now(),
         ]);
+
+        if ($websiteAnalysisId !== null) {
+            WebsiteAnalysis::query()
+                ->whereKey($websiteAnalysisId)
+                ->whereNull('started_at')
+                ->update(['started_at' => now()]);
+        }
 
         return $record;
     }

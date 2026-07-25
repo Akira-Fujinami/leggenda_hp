@@ -50,10 +50,17 @@ return [
         // 分析成果物 (HTML/スクリーンショット/Lighthouse Raw JSON) 用の共有Volume。
         // analyzerコンテナと同じVolumeをマウントし、双方から読み書きする。
         // 直接公開URLにはせず、Laravel側のコントローラーで所有権確認の上ストリーミングする。
+        //
+        // throw=true: 権限不足(共有Volumeがroot所有のままマウントされた等)や
+        // ディスクフル等の書き込み失敗を、silent failure(false を返すだけで
+        // 気づかれない)にせず、必ず例外として呼び出し元(Job)へ伝播させる。
+        // これによりJob側で捕捉してAnalysisErrorCode::StorageWriteFailedへ
+        // 正しく分類でき、UNKNOWN_ERRORとして原因不明のまま握りつぶされる
+        // ことを防ぐ(2026-07-25の本番障害で判明した問題)。
         'analysis' => [
             'driver' => 'local',
             'root' => env('ANALYSIS_STORAGE_PATH', storage_path('app/analysis')),
-            'throw' => false,
+            'throw' => true,
             'report' => false,
         ],
 

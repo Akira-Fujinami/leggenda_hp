@@ -7,6 +7,7 @@ use App\Enums\JobType;
 use App\Enums\PageType;
 use App\Models\Analysis;
 use App\Models\CategoryDefinition;
+use App\Models\MetricDefinition;
 use App\Services\Scoring\MetricScorer;
 use App\Services\Scoring\OverallScoreCalculator;
 use Illuminate\Http\Request;
@@ -29,6 +30,7 @@ class AnalysisResultsResource extends JsonResource
     public function toArray(Request $request): array
     {
         $activeCategories = CategoryDefinition::query()->where('is_active', true)->orderBy('display_order')->get();
+        $activeDefinitions = MetricDefinition::query()->where('is_active', true)->get();
         $calculator = app(OverallScoreCalculator::class);
 
         return [
@@ -37,9 +39,9 @@ class AnalysisResultsResource extends JsonResource
             'progress' => $this->progress,
             'started_at' => $this->started_at?->toIso8601String(),
             'completed_at' => $this->completed_at?->toIso8601String(),
-            'websites' => $this->websiteAnalyses->map(function ($wa) use ($activeCategories, $calculator) {
+            'websites' => $this->websiteAnalyses->map(function ($wa) use ($activeCategories, $activeDefinitions, $calculator) {
                 $homepage = $wa->pages->firstWhere('page_type', PageType::Homepage);
-                $score = $calculator->calculate($activeCategories, $wa->metricResults);
+                $score = $calculator->calculate($activeCategories, $activeDefinitions, $wa->metricResults);
 
                 return [
                     'website_analysis_id' => $wa->id,

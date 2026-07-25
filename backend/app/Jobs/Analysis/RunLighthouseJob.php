@@ -4,13 +4,14 @@ namespace App\Jobs\Analysis;
 
 use App\Enums\JobType;
 use App\Enums\MetricResultStatus;
+use App\Exceptions\Analysis\AnalysisException;
 use App\Jobs\Analysis\Concerns\RecordsMetricResults;
+use App\Jobs\Analysis\Concerns\WritesAnalysisStorage;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\AnalyzerClient;
-use Illuminate\Support\Facades\Storage;
 
 /**
  * Lighthouseの実行。生のLighthouseレポートはAPIレスポンスに含めず、
@@ -21,7 +22,16 @@ use Illuminate\Support\Facades\Storage;
  */
 class RunLighthouseJob extends BaseWebsiteAnalysisJob
 {
-    use RecordsMetricResults;
+    use RecordsMetricResults, WritesAnalysisStorage;
+
+    /**
+     * このJobが担当する全MetricDefinitionキー(analyzer呼び出し失敗時に
+     * まとめてunavailableにするため)。
+     */
+    private const ALL_KEYS = [
+        'lighthouse_performance', 'lighthouse_accessibility', 'lighthouse_best_practices', 'lighthouse_seo_score',
+        'fcp', 'lcp', 'cls', 'speed_index', 'tbt', 'lighthouse_request_count', 'lighthouse_transfer_size',
+    ];
 
     public $tries = 2;
 
@@ -44,13 +54,20 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
 
         /** @var AnalyzerClient $client */
         $client = app(AnalyzerClient::class);
-        $data = $client->lighthouse($website->normalized_url);
 
-        if (isset($data['raw_report'])) {
-            /** @var AnalysisStoragePaths $paths */
-            $paths = app(AnalysisStoragePaths::class);
-            $metadataPath = $paths->metadataPath($this->analysisId, $this->websiteAnalysisId, 'lighthouse.json');
-            Storage::disk('analysis')->put($metadataPath, json_encode($data['raw_report'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        try {
+            $data = $client->lighthouse($website->normalized_url);
+
+            if (isset($data['raw_report'])) {
+                /** @var AnalysisStoragePaths $paths */
+                $paths = app(AnalysisStoragePaths::class);
+                $metadataPath = $paths->metadataPath($this->analysisId, $this->websiteAnalysisId, 'lighthouse.json');
+                $this->putToAnalysisStorage($metadataPath, json_encode($data['raw_report'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            }
+        } catch (AnalysisException $e) {
+            $this->recordAllUnavailable($e->errorCode->value, $e->getMessage());
+
+            throw $e;
         }
 
         $scores = $data['scores'] ?? [];
@@ -108,5 +125,12 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
             evidence: $evidence,
             confidence: $confidence,
         );
+    }
+
+    private function recordAllUnavailable(string $errorCode, string $errorMessage): void
+    {
+        foreach (self::ALL_KEYS as $key) {
+            $this->recordMetric($this->websiteAnalysisId, $key, MetricResultStatus::Unavailable, errorCode: $errorCode, errorMessage: $errorMessage);
+        }
     }
 }

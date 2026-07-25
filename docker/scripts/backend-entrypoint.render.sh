@@ -19,6 +19,18 @@ set -euo pipefail
 # php-fpmのworkerプロセス(www-data)が書き込めるよう所有権を揃える。
 chown -R www-data:www-data storage bootstrap/cache public
 
+# ANALYSIS_STORAGE_PATH(Render Disk等の永続Volumeで、backend/analyzer間の
+# 共有Volume)も同様にroot所有のままマウントされることがある。ここが
+# www-data書き込み不可のままだと、FetchStaticPageJob/RenderPageJob等の
+# Storage::put()がここだけ失敗し(2026-07-25の本番障害の一因)、原因の
+# わかりにくいUNKNOWN_ERRORになる。storage/public同様、起動のたびに
+# 必ず所有権を揃える(ディレクトリが無ければ作成してから)。
+ANALYSIS_STORAGE_PATH="${ANALYSIS_STORAGE_PATH:-}"
+if [ -n "$ANALYSIS_STORAGE_PATH" ]; then
+    mkdir -p "$ANALYSIS_STORAGE_PATH"
+    chown -R www-data:www-data "$ANALYSIS_STORAGE_PATH"
+fi
+
 su -s /bin/sh www-data -c '
     set -e
     if [ ! -L public/storage ]; then

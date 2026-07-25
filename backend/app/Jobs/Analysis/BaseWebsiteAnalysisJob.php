@@ -5,6 +5,7 @@ namespace App\Jobs\Analysis;
 use App\Enums\AnalysisErrorCode;
 use App\Enums\JobType;
 use App\Exceptions\Analysis\AnalysisException;
+use App\Jobs\Analysis\Concerns\LogsJobFailures;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
@@ -13,7 +14,9 @@ use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\MaxAttemptsExceededException;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Queue\TimeoutExceededException;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -29,7 +32,7 @@ use Illuminate\Support\Facades\Log;
  */
 abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, LogsJobFailures, Queueable, SerializesModels;
 
     public $uniqueFor = 3600;
 
@@ -85,6 +88,8 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(AnalysisPipeline $pipeline): void
     {
+        $startedAt = microtime(true);
+
         $websiteAnalysis = WebsiteAnalysis::find($this->websiteAnalysisId);
 
         if ($websiteAnalysis === null) {
@@ -122,6 +127,7 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
             $this->onWebsiteJobTerminal($pipeline);
         } catch (\Throwable $e) {
             report($e);
+            $this->logJobFailure($e, $this->analysisId, $this->websiteAnalysisId, $this->jobType()->value, $this->attempts(), microtime(true) - $startedAt);
 
             if ($this->attempts() < $this->tries && $this->canRelease()) {
                 $this->release($this->nextBackoffSeconds());
@@ -163,7 +169,16 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
             return;
         }
 
-        $pipeline->markFailed($record, AnalysisErrorCode::UnknownError, 'ジョブがタイムアウトしたか、想定外のエラーで終了しました。');
+        [$errorCode, $message] = match (true) {
+            $exception instanceof TimeoutExceededException => [AnalysisErrorCode::JobTimeout, 'ジョブがタイムアウトしました。'],
+            $exception instanceof MaxAttemptsExceededException => [AnalysisErrorCode::MaxAttemptsExceeded, 'リトライ回数の上限に達しました。'],
+            default => [AnalysisErrorCode::UnknownError, 'ジョブがタイムアウトしたか、想定外のエラーで終了しました。'],
+        };
+
+        $elapsedSeconds = $record->started_at !== null ? now()->diffInSeconds($record->started_at) : 0.0;
+        $this->logJobFailure($exception, $this->analysisId, $this->websiteAnalysisId, $this->jobType()->value, $record->attempts, (float) $elapsedSeconds, $errorCode);
+
+        $pipeline->markFailed($record, $errorCode, $message);
         $this->onWebsiteJobTerminal($pipeline);
 
         $pipeline->updateWebsiteAnalysisProgress($this->websiteAnalysisId);
