@@ -111,5 +111,6 @@ class RenderPageJob extends BaseWebsiteAnalysisJob
     protected function onWebsiteJobTerminal(AnalysisPipeline $pipeline): void
     {
         $pipeline->dispatchReanalysis($this->analysisId, $this->websiteAnalysisId);
+        $pipeline->dispatchNextAnalyzerJob($this->analysisId, $this->websiteAnalysisId, $this->jobType());
     }
 }

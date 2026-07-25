@@ -22,6 +22,7 @@ use Database\Seeders\CategoryDefinitionSeeder;
 use Database\Seeders\MetricDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -35,6 +36,14 @@ class AnalyzerDrivenJobsTest extends TestCase
         $this->seed(CategoryDefinitionSeeder::class);
         $this->seed(MetricDefinitionSeeder::class);
         Storage::fake('analysis');
+        // このテストは各Jobを直接handle()するため、$this->job(実キュー由来の
+        // Job)がnullでcanRelease()が常にfalseとなり、Analyzer呼び出しの
+        // 成否によらずonWebsiteJobTerminal()から次段のAnalyzerチェーンJob
+        // (render→desktop→mobile→technology→lighthouse)が即座に実dispatch
+        // されてしまう(QUEUE_CONNECTION=syncのためdispatch()が即handle()を
+        // 呼ぶ)。個々のテストは前段Jobの挙動だけを検証したいため、
+        // 全JobをfakeしてQueueへの実dispatchを防ぐ。
+        Queue::fake();
     }
 
     private function makeWebsiteAnalysis(): WebsiteAnalysis
@@ -131,6 +140,26 @@ class AnalyzerDrivenJobsTest extends TestCase
         $this->assertTrue($ga->normalized_value['value']);
     }
 
+    public function test_technology_job_classifies_a_malformed_but_http_successful_response_instead_of_an_unknown_error(): void
+    {
+        // analyzerがOOM再起動等の途中で、HTTPレベルは200/success:trueのまま
+        // 想定外の形状(technologiesが配列でない)を返した場合、array_column()
+        // 等の下流処理でTypeErrorが起き、以前はhandle()の汎用catch(\Throwable)を
+        // 経由してUNKNOWN_ERROR(「予期しないエラーが発生しました。」)へ丸め
+        // られていた(2026-07-25 Analyzer OOM調査で実際に観測された症状)。
+        Http::fake([
+            '*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => 'not-an-array']], 200),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        (new DetectTechnologyJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        $job = $websiteAnalysis->jobs()->where('job_type', JobType::DetectTechnology)->first();
+        $this->assertSame(AnalysisJobStatus::Failed, $job->status);
+        $this->assertSame('TECHNOLOGY_DETECTION_FAILED', $job->error_code);
+        $this->assertNotSame('UNKNOWN_ERROR', $job->error_code);
+    }
+
     public function test_technology_job_marks_analytics_not_found_when_nothing_detected(): void
     {
         Http::fake([
@@ -222,6 +251,26 @@ class AnalyzerDrivenJobsTest extends TestCase
         $job = $websiteAnalysis->jobs()->where('job_type', JobType::CaptureScreenshotDesktop)->first();
         $this->assertSame(AnalysisJobStatus::Failed, $job->status);
         $this->assertSame('SCREENSHOT_TIMEOUT', $job->error_code);
+    }
+
+    public function test_screenshot_resource_limit_from_analyzer_is_preserved_not_rounded_to_screenshot_failed(): void
+    {
+        // Analyzerがquality低下→captured height半減→viewportフォールバックを
+        // 全て試みても安全なメモリ予算内で撮影できなかった場合の専用コード。
+        // SCREENSHOT_FAILED等の汎用コードへ丸めてはならない。
+        Http::fake([
+            '*/analyze/screenshot' => Http::response([
+                'success' => false,
+                'error' => ['code' => 'SCREENSHOT_RESOURCE_LIMIT', 'message' => '安全なメモリ範囲で撮影できませんでした。', 'retryable' => true],
+            ], 500),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        (new CaptureScreenshotJob($websiteAnalysis->analysis_id, $websiteAnalysis->id, Device::Desktop))->handle(app(AnalysisPipeline::class));
+
+        $job = $websiteAnalysis->jobs()->where('job_type', JobType::CaptureScreenshotDesktop)->first();
+        $this->assertSame(AnalysisJobStatus::Failed, $job->status);
+        $this->assertSame('SCREENSHOT_RESOURCE_LIMIT', $job->error_code);
     }
 
     public function test_render_job_records_a_detected_fixed_cta(): void

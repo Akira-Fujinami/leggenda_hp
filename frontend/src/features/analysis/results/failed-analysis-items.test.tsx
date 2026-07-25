@@ -26,4 +26,19 @@ describe("FailedAnalysisItems", () => {
     expect(screen.getByText("接続がタイムアウトしました。")).toBeInTheDocument();
     expect(screen.getByText(/技術検出カテゴリの評価のみに影響/)).toBeInTheDocument();
   });
+
+  it("shows the analyzer's own message verbatim for the technology-detection-failed and screenshot-resource-limit codes (no generic fallback text)", async () => {
+    const user = userEvent.setup();
+    const errors: AnalysisJobError[] = [
+      { job_type: "detect_technology", error_code: "TECHNOLOGY_DETECTION_FAILED", error_message: "技術検出の結果を処理できませんでした。" },
+      { job_type: "capture_screenshot_desktop", error_code: "SCREENSHOT_RESOURCE_LIMIT", error_message: "画像サイズを縮小して複数回試みましたが、安全なメモリ範囲で撮影できませんでした。" },
+    ];
+
+    render(<FailedAnalysisItems errors={errors} />);
+    await user.click(screen.getByRole("button", { name: "詳細を見る" }));
+
+    expect(screen.getByText("技術検出の結果を処理できませんでした。")).toBeInTheDocument();
+    expect(screen.getByText("画像サイズを縮小して複数回試みましたが、安全なメモリ範囲で撮影できませんでした。")).toBeInTheDocument();
+    expect(screen.queryByText("予期しないエラーが発生しました。")).not.toBeInTheDocument();
+  });
 });

@@ -2,6 +2,7 @@
 
 namespace App\Jobs\Analysis;
 
+use App\Enums\AnalysisErrorCode;
 use App\Enums\JobType;
 use App\Enums\MetricResultStatus;
 use App\Exceptions\Analysis\AnalysisException;
@@ -12,6 +13,7 @@ use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\AnalyzerClient;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Lighthouseの実行。生のLighthouseレポートはAPIレスポンスに含めず、
@@ -56,6 +58,8 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
         $client = app(AnalyzerClient::class);
 
         try {
+            $this->rejectIfAnalyzerBusy($client);
+
             $data = $client->lighthouse($website->normalized_url);
 
             if (isset($data['raw_report'])) {
@@ -131,6 +135,33 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
     {
         foreach (self::ALL_KEYS as $key) {
             $this->recordMetric($this->websiteAnalysisId, $key, MetricResultStatus::Unavailable, errorCode: $errorCode, errorMessage: $errorMessage);
+        }
+    }
+
+    /**
+     * Lighthouseは共有Playwrightブラウザとは別のChromeプロセスをchrome-launcherで
+     * 都度起動するため、共有ブラウザのcontextが残っている間に実行が重なると、
+     * 低メモリのRender環境で2つのブラウザプロセス分のメモリを同時に抱える
+     * リスクがある。Backend側の順次dispatch(render→desktop→mobile→
+     * technology→lighthouse)により通常は既にactive_contexts=0のはずだが、
+     * 別サイト/別分析の処理と重なる可能性が皆無ではないため、念のため
+     * ヘルスチェックで確認する。0でなければ即失敗にはせず、$triesの範囲で
+     * リトライさせる(無制限の再試行は行わない)。ヘルスチェック自体が
+     * 失敗した場合はfail-openとし、Lighthouseの実行を無条件に妨げない。
+     */
+    private function rejectIfAnalyzerBusy(AnalyzerClient $client): void
+    {
+        $health = $client->healthDetails();
+        $activeContexts = $health['active_contexts'] ?? 0;
+
+        if ($activeContexts > 0) {
+            Log::warning('RunLighthouseJob deferred because the shared analyzer browser still has active contexts', [
+                'analysis_id' => $this->analysisId,
+                'website_analysis_id' => $this->websiteAnalysisId,
+                'active_contexts' => $activeContexts,
+            ]);
+
+            throw new AnalysisException(AnalysisErrorCode::AnalyzerUnavailable, 'analyzerが他の処理を実行中のため、Lighthouseの実行を延期します。');
         }
     }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyError, PhaseError } from "../src/errorClassification.js";
+import { classifyError, PhaseError, ScreenshotResourceExhaustedError } from "../src/errorClassification.js";
 
 describe("classifyError", () => {
   it("classifies a Playwright navigation timeout", () => {
@@ -113,5 +113,26 @@ describe("classifyError", () => {
     const result = classifyError("a plain string error");
 
     expect(result.code).toBe("UNKNOWN_ANALYZER_ERROR");
+  });
+
+  it("classifies exhaustion of the screenshot size-reduction fallback ladder as SCREENSHOT_RESOURCE_LIMIT", () => {
+    const result = classifyError(new ScreenshotResourceExhaustedError(new Error("still too large after all fallbacks")), "screenshot");
+
+    expect(result.code).toBe("SCREENSHOT_RESOURCE_LIMIT");
+    expect(result.retryable).toBe(true);
+  });
+
+  it("classifies a connection reset mid-request the same as connection refused", () => {
+    const result = classifyError(new Error("read ECONNRESET"));
+
+    expect(result.code).toBe("CONNECTION_REFUSED");
+    expect(result.retryable).toBe(true);
+  });
+
+  it("classifies a raw out-of-memory failure distinctly from a generic unknown error", () => {
+    const result = classifyError(new Error("spawn ENOMEM"));
+
+    expect(result.code).toBe("OUT_OF_MEMORY");
+    expect(result.retryable).toBe(true);
   });
 });

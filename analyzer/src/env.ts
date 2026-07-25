@@ -18,8 +18,12 @@ const envSchema = z.object({
   // (無制限待機は行わない)。
   ANALYZER_QUEUE_MAX_WAIT_MS: z.coerce.number().int().nonnegative().default(15_000),
   // 待機列に積める最大件数。これを超えたリクエストは待機列に入れず即503にする
-  // (無制限なキューイングによるメモリ増加を防ぐ)。
-  ANALYZER_QUEUE_MAX_SIZE: z.coerce.number().int().nonnegative().default(4),
+  // (無制限なキューイングによるメモリ増加を防ぐ)。Backend側をrender→
+  // desktop screenshot→mobile screenshot→technology→lighthouseの順次
+  // dispatchへ変更したため、同一サイトからは基本的に1件ずつしか届かない。
+  // 既定値は複数サイト/複数分析が重なった場合の緩衝分のみを見込み、
+  // 低メモリ環境向けに4から2へ引き下げた。
+  ANALYZER_QUEUE_MAX_SIZE: z.coerce.number().int().nonnegative().default(2),
   BROWSER_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   // page.screenshot()自体の明示的timeout。Playwrightの既定(暗黙の30秒action
   // timeout)に任せると、巨大ページのfullPage撮影で"page.screenshot: Timeout
@@ -27,14 +31,32 @@ const envSchema = z.object({
   // (2026-07-25 ユニクロ調査)。Backend AnalyzerClient::SCREENSHOT_TIMEOUT_SECONDS
   // (90秒)より十分短く保つこと。
   ANALYZER_SCREENSHOT_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(45_000),
-  // fullPageスクリーンショットで撮影する最大高さ(px)。低メモリのRender環境を
-  // 前提に、デスクトップ幅1440pxでも生ビットマップが概ね60MB程度に収まる
-  // 高さとして既定値10000pxとする(1440*10000*4byte ≈ 57.6MB。モバイル幅390pxは
-  // さらに小さく、同じ上限を共有しても安全側になる)。超過するページ
-  // (例: ユニクロ等のECサイトで数万px)はviewport幅×この高さでクリップし、
+  // fullPageスクリーンショットで撮影する最大高さ(px)の第一次上限。
+  // 2026-07-25時点では10000pxを既定としていたが、ユニクロ等の画像点数が
+  // 多いECサイトで実際にRenderのメモリ上限(Analyzer exceeded its memory
+  // limit)を超過する事故が発生した。原因は高さそのものよりも、viewportを
+  // 高さ10000pxまで拡張することで「画面内」と判定される商品画像が
+  // 一度に大量に遅延読込・デコードされることだと判断し、既定値を4000pxへ
+  // 引き下げた。最終的な撮影高さはANALYZER_SCREENSHOT_MAX_PIXELSによる
+  // 総ピクセル数上限でさらに縮小され得る(幅×高さの実効ピクセル数が
+  // 優先される)。超過するページはviewport幅×この高さでクリップし、
   // truncated=trueとして部分成功で返す(無制限のfullPage撮影や画像の
   // 分割合成は行わない)。
-  ANALYZER_SCREENSHOT_MAX_HEIGHT: z.coerce.number().int().positive().default(10_000),
+  ANALYZER_SCREENSHOT_MAX_HEIGHT: z.coerce.number().int().positive().default(4_000),
+  // 撮影する画像の実効ピクセル数(幅×高さ×deviceScaleFactor²、
+  // deviceScaleFactorは常に1に固定するため実質的に幅×高さ)の上限。
+  // モバイルは幅が狭い分、高さ上限だけでは長大ページのピクセル数を
+  // 十分に抑えられないため、高さ上限とは独立にこちらでも縮小する
+  // (どちらか小さい方が最終的な撮影高さになる)。
+  ANALYZER_SCREENSHOT_MAX_PIXELS: z.coerce.number().int().positive().default(6_000_000),
+  // JPEGエンコード後のファイルサイズ上限(byte)。超過時はquality低下→
+  // captured height半減→viewportのみ撮影、の順に1回ずつ再試行し
+  // (無制限リトライは行わない)、それでも超える場合は
+  // SCREENSHOT_RESOURCE_LIMITとして失敗させる。
+  ANALYZER_SCREENSHOT_MAX_BYTES: z.coerce.number().int().positive().default(3_000_000),
+  // JPEGの初期quality。SEO比較用の確認画像であり印刷品質は不要なため、
+  // 低メモリ環境での安全性を優先し80より低い値を既定にする。
+  ANALYZER_SCREENSHOT_QUALITY: z.coerce.number().int().min(1).max(100).default(70),
   MAX_HTML_BYTES: z.coerce.number().int().positive().default(5 * 1024 * 1024),
   MAX_REDIRECTS: z.coerce.number().int().nonnegative().default(3),
   // Laravelと共有するDockerボリュームのマウント先。screenshotの保存先。

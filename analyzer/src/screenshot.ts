@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { Page } from "playwright";
-import { withPage } from "./browser.js";
+import { getActiveContextCount, withPage } from "./browser.js";
 import { env } from "./env.js";
-import { PhaseError } from "./errorClassification.js";
+import { PhaseError, ScreenshotResourceExhaustedError } from "./errorClassification.js";
+import { logMemorySnapshot } from "./memoryLog.js";
 import { navigateResilient, type NavigationStatus } from "./navigation.js";
 import { ensureDir, relativeStoragePath, screenshotsDir } from "./storage.js";
 
@@ -16,6 +17,14 @@ const VIEWPORTS: Record<Device, { width: number; height: number }> = {
 };
 
 export type ScreenshotStatus = "ok" | "partial";
+
+/**
+ * "full": 要求どおりdocument全体をfullPageで撮影できた。
+ * "clip": 高さ/ピクセル数上限超過のため、viewport幅×縮小した高さでクリップ撮影した。
+ * "viewport": 上限内での撮影が繰り返し失敗し、最終手段として現在の画面
+ *   (スクロールしない1画面分)のみを撮影した。
+ */
+export type CaptureMode = "full" | "clip" | "viewport";
 
 export interface ScreenshotResult {
   storagePath: string;
@@ -29,6 +38,7 @@ export interface ScreenshotResult {
   truncated: boolean;
   documentHeight: number;
   capturedHeight: number;
+  captureMode: CaptureMode;
 }
 
 /**
@@ -56,15 +66,55 @@ async function stabilizeForScreenshot(page: Page): Promise<void> {
 }
 
 /**
- * スクリーンショットを撮影し、Laravelとの共有Dockerボリュームへ直接保存する。
- * 画像バイト列はレスポンスに一切含めない(storage_path等のメタデータのみ返す)。
- * ファイル名はUUIDで、利用者入力(URL等)を一切パスに使わない。
- *
- * fullPage指定時にdocument高さがANALYZER_SCREENSHOT_MAX_HEIGHTを超える場合、
- * 無制限のfullPage撮影(低メモリなRender環境でのOOM/ハングの原因になり得る)
- * や画像の分割合成は行わず、viewport幅×上限高さでクリップして撮影し
- * truncated=trueの部分成功として返す。
+ * 実効ピクセル数(幅×高さ×deviceScaleFactor²、deviceScaleFactorは常に1に
+ * 固定するため実質幅×高さ)がmaxPixelsを超えないような最大高さを返す。
  */
+export function maxHeightForPixelBudget(width: number, maxPixels: number): number {
+  return Math.max(1, Math.floor(maxPixels / width));
+}
+
+export interface CaptureAttempt {
+  label: string;
+  captureMode: CaptureMode;
+  fullPage: boolean;
+  viewportHeight: number;
+  quality: number;
+  truncated: boolean;
+}
+
+/**
+ * 巨大ページ(例: 画像点数の多いECサイト)でメモリ予算を超過しないよう、
+ * 束縛された段階的フォールバックで撮影する。無制限の再試行・無制限の
+ * fullPage撮影・画像の分割合成は一切行わない。
+ *
+ * fullPage要求時の段階:
+ *   1. primary: 高さ/ピクセル数上限まで(超過分はクリップ)、既定quality
+ *   2. quality_retry: 同じ高さ、qualityを1段階下げて再試行
+ *   3. height_halved: 高さを半減し、qualityは下げたまま再試行
+ *   4. viewport_fallback: 現在の画面(1画面分)のみを撮影する最終手段
+ * いずれかの段階でANALYZER_SCREENSHOT_MAX_BYTES以下に収まった時点で確定する。
+ * 全段階が失敗/超過した場合はScreenshotResourceExhaustedErrorを投げる。
+ */
+export function buildAttempts(fullPage: boolean, viewportHeight: number, targetHeight: number, initialTruncated: boolean): CaptureAttempt[] {
+  const reducedQuality = Math.max(40, env.ANALYZER_SCREENSHOT_QUALITY - 15);
+
+  if (!fullPage) {
+    return [
+      { label: "primary", captureMode: "viewport", fullPage: false, viewportHeight, quality: env.ANALYZER_SCREENSHOT_QUALITY, truncated: false },
+      { label: "quality_retry", captureMode: "viewport", fullPage: false, viewportHeight, quality: reducedQuality, truncated: false },
+    ];
+  }
+
+  const primaryMode: CaptureMode = initialTruncated ? "clip" : "full";
+
+  return [
+    { label: "primary", captureMode: primaryMode, fullPage: !initialTruncated, viewportHeight: targetHeight, quality: env.ANALYZER_SCREENSHOT_QUALITY, truncated: initialTruncated },
+    { label: "quality_retry", captureMode: primaryMode, fullPage: !initialTruncated, viewportHeight: targetHeight, quality: reducedQuality, truncated: initialTruncated },
+    { label: "height_halved", captureMode: "clip", fullPage: false, viewportHeight: Math.max(1, Math.floor(targetHeight / 2)), quality: reducedQuality, truncated: true },
+    { label: "viewport_fallback", captureMode: "viewport", fullPage: false, viewportHeight, quality: reducedQuality, truncated: true },
+  ];
+}
+
 export async function captureScreenshot(
   url: string,
   device: Device,
@@ -72,66 +122,132 @@ export async function captureScreenshot(
   websiteAnalysisId: number,
   fullPage: boolean,
   timeoutMs: number,
+  requestId: string,
 ): Promise<ScreenshotResult> {
   const viewport = VIEWPORTS[device];
 
-  return withPage({ viewport }, async (page) => {
-    const navigation = await navigateResilient(page, url, timeoutMs);
+  return withPage(
+    {
+      viewport,
+      afterClose: () => logMemorySnapshot("context_closed", requestId, { active_contexts: getActiveContextCount() }),
+    },
+    async (page) => {
+      logMemorySnapshot("context_ready", requestId, { active_contexts: getActiveContextCount() });
 
-    await stabilizeForScreenshot(page);
+      const navigation = await navigateResilient(page, url, timeoutMs);
+      logMemorySnapshot("navigation_complete", requestId, { active_contexts: getActiveContextCount() });
 
-    // documentElement/bodyのどちらか大きい方を採用する(quirks mode等で
-    // 片方しか実寸を反映しないページがあるため)。
-    const documentSize = await page.evaluate(() => ({
-      width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0),
-      height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0),
-    }));
+      await stabilizeForScreenshot(page);
 
-    const dir = screenshotsDir(analysisId, websiteAnalysisId);
-    await ensureDir(dir);
-
-    const filename = `${randomUUID()}.jpg`;
-    const absolutePath = path.join(dir, filename);
-
-    const truncated = fullPage && documentSize.height > env.ANALYZER_SCREENSHOT_MAX_HEIGHT;
-    const captureFullPage = fullPage && !truncated;
-
-    if (truncated) {
-      await page.setViewportSize({ width: viewport.width, height: env.ANALYZER_SCREENSHOT_MAX_HEIGHT });
-    }
-
-    try {
-      await page.screenshot({
-        path: absolutePath,
-        fullPage: captureFullPage,
-        type: "jpeg",
-        quality: 80,
-        timeout: env.ANALYZER_SCREENSHOT_TIMEOUT_MS,
-        animations: "disabled",
-        caret: "hide",
+      // documentElement/bodyのどちらか大きい方を採用する(quirks mode等で
+      // 片方しか実寸を反映しないページがあるため)。
+      const documentSize = await page.evaluate(() => ({
+        width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0),
+        height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0),
+      }));
+      logMemorySnapshot("document_dimensions", requestId, {
+        document_width: documentSize.width,
+        document_height: documentSize.height,
+        active_contexts: getActiveContextCount(),
       });
-    } catch (err) {
-      // page.gotoは既に完了しているため、ここでのTimeoutErrorはナビゲーション
-      // ではなくpage.screenshot()自体の失敗。呼び出し元のclassifyError()が
-      // NAVIGATION_TIMEOUTへ誤分類しないよう、captureフェーズとして明示する。
-      throw new PhaseError("capture", err);
-    }
 
-    const stats = await stat(absolutePath);
-    const capturedHeight = truncated ? env.ANALYZER_SCREENSHOT_MAX_HEIGHT : fullPage ? documentSize.height : viewport.height;
+      const dir = screenshotsDir(analysisId, websiteAnalysisId);
+      await ensureDir(dir);
 
-    return {
-      storagePath: relativeStoragePath(absolutePath),
-      width: viewport.width,
-      height: capturedHeight,
-      fileSize: stats.size,
-      mimeType: "image/jpeg",
-      navigationStatus: navigation.status,
-      warning: navigation.warning,
-      screenshotStatus: truncated ? "partial" : "ok",
-      truncated,
-      documentHeight: documentSize.height,
-      capturedHeight,
-    };
-  });
+      const heightCap = Math.min(
+        env.ANALYZER_SCREENSHOT_MAX_HEIGHT,
+        maxHeightForPixelBudget(viewport.width, env.ANALYZER_SCREENSHOT_MAX_PIXELS),
+      );
+      const targetHeight = fullPage ? Math.min(documentSize.height, heightCap) : viewport.height;
+      const initialTruncated = fullPage && targetHeight < documentSize.height;
+
+      const attempts = buildAttempts(fullPage, viewport.height, targetHeight, initialTruncated);
+
+      const filename = `${randomUUID()}.jpg`;
+      const absolutePath = path.join(dir, filename);
+
+      logMemorySnapshot("before_screenshot", requestId, {
+        document_width: documentSize.width,
+        document_height: documentSize.height,
+        active_contexts: getActiveContextCount(),
+      });
+
+      let lastErr: unknown;
+
+      for (const attempt of attempts) {
+        try {
+          if (attempt.captureMode !== "full") {
+            await page.setViewportSize({ width: viewport.width, height: attempt.viewportHeight });
+          }
+
+          try {
+            await page.screenshot({
+              path: absolutePath,
+              fullPage: attempt.fullPage,
+              type: "jpeg",
+              quality: attempt.quality,
+              timeout: env.ANALYZER_SCREENSHOT_TIMEOUT_MS,
+              animations: "disabled",
+              caret: "hide",
+            });
+          } catch (err) {
+            // page.gotoは既に完了しているため、ここでのTimeoutError等は
+            // ナビゲーションではなくpage.screenshot()自体の失敗。呼び出し元の
+            // classifyError()がNAVIGATION_TIMEOUTへ誤分類しないよう、
+            // captureフェーズとして明示する。
+            throw new PhaseError("capture", err);
+          }
+
+          const stats = await stat(absolutePath);
+
+          logMemorySnapshot("buffer_ready", requestId, {
+            attempt: attempt.label,
+            capture_mode: attempt.captureMode,
+            captured_width: viewport.width,
+            captured_height: attempt.viewportHeight,
+            image_bytes: stats.size,
+            active_contexts: getActiveContextCount(),
+          });
+          // Analyzerは画像をBase64へ変換せず共有Storageへ直接書き込むため、
+          // base64_lengthは常に計測対象外(undefined)。この段階のログは
+          // 「もしBase64化していたら増加していたはずの地点」を可視化するために
+          // buffer_ready直後の同じ時点で残す。
+          logMemorySnapshot("post_base64", requestId, {
+            attempt: attempt.label,
+            image_bytes: stats.size,
+            active_contexts: getActiveContextCount(),
+          });
+
+          if (stats.size <= env.ANALYZER_SCREENSHOT_MAX_BYTES) {
+            const truncated = attempt.truncated || attempt.captureMode === "viewport";
+
+            return {
+              storagePath: relativeStoragePath(absolutePath),
+              width: viewport.width,
+              height: attempt.viewportHeight,
+              fileSize: stats.size,
+              mimeType: "image/jpeg",
+              navigationStatus: navigation.status,
+              warning: navigation.warning,
+              screenshotStatus: truncated ? "partial" : "ok",
+              truncated,
+              documentHeight: documentSize.height,
+              capturedHeight: attempt.viewportHeight,
+              captureMode: attempt.captureMode,
+            };
+          }
+
+          lastErr = new Error(
+            `screenshot exceeded ANALYZER_SCREENSHOT_MAX_BYTES (${stats.size} > ${env.ANALYZER_SCREENSHOT_MAX_BYTES})`,
+          );
+          await unlink(absolutePath).catch(() => undefined);
+        } catch (err) {
+          lastErr = err;
+          await unlink(absolutePath).catch(() => undefined);
+        }
+      }
+
+      throw new ScreenshotResourceExhaustedError(lastErr);
+    },
+  );
 }

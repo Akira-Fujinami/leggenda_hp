@@ -6,6 +6,7 @@ use App\Enums\AnalysisJobStatus;
 use App\Enums\JobType;
 use App\Enums\MetricResultStatus;
 use App\Enums\PageType;
+use App\Jobs\Analysis\CaptureScreenshotJob;
 use App\Jobs\Analysis\ReanalyzeRenderedHtmlJob;
 use App\Jobs\Analysis\RenderPageJob;
 use App\Models\AnalysisPage;
@@ -38,7 +39,7 @@ class RenderPageJobTest extends TestCase
 
     public function test_successful_render_dispatches_reanalysis_job_once(): void
     {
-        Queue::fake([ReanalyzeRenderedHtmlJob::class]);
+        Queue::fake([ReanalyzeRenderedHtmlJob::class, CaptureScreenshotJob::class]);
         Http::fake([
             '*/analyze/render' => Http::response([
                 'success' => true,
@@ -70,7 +71,7 @@ class RenderPageJobTest extends TestCase
 
     public function test_failed_render_still_dispatches_reanalysis_job_once(): void
     {
-        Queue::fake([ReanalyzeRenderedHtmlJob::class]);
+        Queue::fake([ReanalyzeRenderedHtmlJob::class, CaptureScreenshotJob::class]);
         Http::fake([
             '*/analyze/render' => Http::response([], 500),
         ]);
@@ -103,7 +104,7 @@ class RenderPageJobTest extends TestCase
         $this->seed(CategoryDefinitionSeeder::class);
         $this->seed(MetricDefinitionSeeder::class);
 
-        Queue::fake([ReanalyzeRenderedHtmlJob::class]);
+        Queue::fake([ReanalyzeRenderedHtmlJob::class, CaptureScreenshotJob::class]);
         Http::fake([
             '*/analyze/render' => Http::response([
                 'success' => true,
@@ -145,7 +146,7 @@ class RenderPageJobTest extends TestCase
         $this->seed(CategoryDefinitionSeeder::class);
         $this->seed(MetricDefinitionSeeder::class);
 
-        Queue::fake([ReanalyzeRenderedHtmlJob::class]);
+        Queue::fake([ReanalyzeRenderedHtmlJob::class, CaptureScreenshotJob::class]);
         Http::fake([
             '*/analyze/render' => Http::response([], 500),
         ]);
@@ -171,7 +172,7 @@ class RenderPageJobTest extends TestCase
         // release()(再試行)される試行では、ReanalyzeRenderedHtmlJobは
         // まだdispatchされてはいけない。canRelease()をtrueにするため、
         // $job->job に実際のQueue Jobをモックして注入する。
-        Queue::fake([ReanalyzeRenderedHtmlJob::class]);
+        Queue::fake([ReanalyzeRenderedHtmlJob::class, CaptureScreenshotJob::class]);
         Http::fake([
             '*/analyze/render' => Http::sequence()
                 ->push([], 503)

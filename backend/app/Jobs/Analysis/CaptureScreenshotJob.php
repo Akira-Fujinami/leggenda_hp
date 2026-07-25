@@ -80,4 +80,15 @@ class CaptureScreenshotJob extends BaseWebsiteAnalysisJob
             ],
         );
     }
+
+    /**
+     * render→desktop→mobile→technology→lighthouseの順次dispatchカスケード
+     * (AnalysisPipeline::ANALYZER_CHAIN参照)。成功・失敗いずれの終端からも、
+     * このJob自身の処理(Analyzer呼び出し・Context close・レスポンス処理)が
+     * 完全に終わった後にのみ次を起動する。
+     */
+    protected function onWebsiteJobTerminal(AnalysisPipeline $pipeline): void
+    {
+        $pipeline->dispatchNextAnalyzerJob($this->analysisId, $this->websiteAnalysisId, $this->jobType());
+    }
 }

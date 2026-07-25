@@ -8,6 +8,7 @@ use App\Enums\JobType;
 use App\Enums\WebsiteAnalysisStatus;
 use App\Jobs\Analysis\CaptureScreenshotJob;
 use App\Jobs\Analysis\DetectTechnologyJob;
+use App\Jobs\Analysis\FetchExternalSeoDataJob;
 use App\Jobs\Analysis\FetchRobotsJob;
 use App\Jobs\Analysis\FetchSitemapJob;
 use App\Jobs\Analysis\FetchStaticPageJob;
@@ -208,7 +209,7 @@ class FinalizeJobsTest extends TestCase
     public function test_start_analysis_job_registers_placeholders_and_dispatches_fan_out(): void
     {
         Queue::fake([
-            FetchStaticPageJob::class, FetchRobotsJob::class, FetchSitemapJob::class, RenderPageJob::class,
+            FetchStaticPageJob::class, FetchRobotsJob::class, FetchSitemapJob::class, FetchExternalSeoDataJob::class, RenderPageJob::class,
             CaptureScreenshotJob::class, RunLighthouseJob::class, DetectTechnologyJob::class,
         ]);
 
@@ -230,8 +231,21 @@ class FinalizeJobsTest extends TestCase
             ]);
         }
 
+        // 軽量/独立な処理(HTML取得・robots/sitemap・外部SEO API)は引き続き
+        // 即座に同時fan-outする。
         Queue::assertPushed(FetchStaticPageJob::class);
-        Queue::assertPushed(RunLighthouseJob::class);
-        Queue::assertPushed(DetectTechnologyJob::class);
+        Queue::assertPushed(FetchRobotsJob::class);
+        Queue::assertPushed(FetchSitemapJob::class);
+        Queue::assertPushed(FetchExternalSeoDataJob::class);
+
+        // Analyzer(Playwright/Lighthouse)を呼び出す処理は、低メモリなRender環境
+        // でのOOM対策として同時fan-outをやめ、ANALYZER_CHAINの先頭
+        // (RenderPage)だけをここで起動する。CaptureScreenshotDesktop以降は
+        // 前段のonWebsiteJobTerminalから順次dispatchされるため、ここではまだ
+        // 起動されない(2026-07-25 Analyzerメモリ上限超過対策)。
+        Queue::assertPushed(RenderPageJob::class);
+        Queue::assertNotPushed(CaptureScreenshotJob::class);
+        Queue::assertNotPushed(DetectTechnologyJob::class);
+        Queue::assertNotPushed(RunLighthouseJob::class);
     }
 }

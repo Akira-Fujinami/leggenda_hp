@@ -28,6 +28,10 @@ enum AnalysisErrorCode: string
     // 発生するため、NAVIGATION_TIMEOUTやSCREENSHOT_FAILEDに丸めず専用コード
     // として保持する(2026-07-25 ユニクロ調査で判明した誤分類の修正)。
     case ScreenshotTimeout = 'SCREENSHOT_TIMEOUT';
+    // Analyzer自身がquality低下→captured height半減→viewportフォールバックの
+    // 束縛された再試行を全て試みても、安全なメモリ予算(ANALYZER_SCREENSHOT_MAX_BYTES等)
+    // 内で撮影できなかった場合の専用コード。SCREENSHOT_FAILEDへ丸めず保持する。
+    case ScreenshotResourceLimit = 'SCREENSHOT_RESOURCE_LIMIT';
     case LighthouseFailed = 'LIGHTHOUSE_FAILED';
     case TechnologyDetectionFailed = 'TECHNOLOGY_DETECTION_FAILED';
     case ParseFailed = 'PARSE_FAILED';

@@ -37,6 +37,20 @@ export class PhaseError extends Error {
   }
 }
 
+/**
+ * quality低下→captured height半減→viewportのみ撮影、という束縛された
+ * フォールバックの全段階を試しても撮影が成功しなかった(≒安全なメモリ予算内で
+ * 撮影できなかった)ことを示す専用のエラー。SCREENSHOT_TIMEOUTやTARGET_CRASHED
+ * 等の生の原因分類より優先して判定する(呼び出し元は既に十分縮小・再試行済み
+ * であることが分かっているため)。
+ */
+export class ScreenshotResourceExhaustedError extends Error {
+  constructor(public readonly cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "ScreenshotResourceExhaustedError";
+  }
+}
+
 interface Pattern {
   code: string;
   message: string;
@@ -113,6 +127,16 @@ const UNIVERSAL_PATTERNS: Pattern[] = [
     retryable: true,
     test: (raw) => /Failed to launch|browserType\.launch/i.test(raw),
   },
+  {
+    // OSによるプロセス強制終了(OOM kill)自体はcatchできない例外だが、
+    // 稀にNode/Playwright側がsyscall失敗として検知できるケースのための
+    // 安全網。Backend側の推定分類(502/接続リセット等の組み合わせ)が
+    // 本命であり、これは補助的な分類にすぎない。
+    code: "OUT_OF_MEMORY",
+    message: "メモリ不足のため処理を継続できませんでした。",
+    retryable: true,
+    test: (raw) => /ENOMEM|out of memory/i.test(raw),
+  },
 ];
 
 const OPERATION_TIMEOUT: Record<AnalyzerOperation, ClassifiedError> = {
@@ -137,6 +161,14 @@ const OPERATION_FALLBACK: Partial<Record<AnalyzerOperation, ClassifiedError>> = 
 const TIMEOUT_PATTERN = /timeout.*exceeded/i;
 
 export function classifyError(error: unknown, operation?: AnalyzerOperation): ClassifiedError {
+  if (error instanceof ScreenshotResourceExhaustedError) {
+    return {
+      code: "SCREENSHOT_RESOURCE_LIMIT",
+      message: "画像サイズを縮小して複数回試みましたが、安全なメモリ範囲で撮影できませんでした。",
+      retryable: true,
+    };
+  }
+
   const phase = error instanceof PhaseError ? error.phase : undefined;
   // PhaseErrorは元の例外(cause)をラップしているだけなので、DNS/TLS/クラッシュ等の
   // universalな原因判定は常にcauseの生メッセージに対して行う(タイムアウトで

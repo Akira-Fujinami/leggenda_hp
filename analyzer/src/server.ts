@@ -12,6 +12,7 @@ import { runLighthouse } from "./lighthouse.js";
 import { detectTechnologies } from "./technology.js";
 import { classifyError, type AnalyzerOperation } from "./errorClassification.js";
 import { getActiveContextCount, isBrowserConnected } from "./browser.js";
+import { logMemorySnapshot } from "./memoryLog.js";
 
 const renderRequestSchema = z.object({
   url: z.string().min(1),
@@ -237,6 +238,11 @@ function registerAnalyzeRoutes(
     const startedAt = Date.now();
     const logArgs = { operation: "screenshot" as const, requestId: request.id, url: parsed.data.url, startedAt, limiter };
 
+    logMemorySnapshot("request_received", request.id, {
+      active_contexts: getActiveContextCount(),
+      queued_sessions: limiter.queuedCount,
+    });
+
     try {
       await assertSafeUrl(parsed.data.url);
     } catch (err) {
@@ -249,6 +255,11 @@ function registerAnalyzeRoutes(
       full_page: parsed.data.full_page,
     };
 
+    logMemorySnapshot("queue_wait_start", request.id, {
+      active_contexts: getActiveContextCount(),
+      queued_sessions: limiter.queuedCount,
+    });
+
     let result;
     try {
       result = await limiter.run(() =>
@@ -259,6 +270,7 @@ function registerAnalyzeRoutes(
           parsed.data.website_analysis_id,
           parsed.data.full_page,
           env.BROWSER_TIMEOUT_MS,
+          request.id,
         ),
       );
     } catch (err) {
@@ -280,11 +292,12 @@ function registerAnalyzeRoutes(
         document_height: result.documentHeight,
         captured_height: result.capturedHeight,
         truncated: result.truncated,
+        capture_mode: result.captureMode,
         output_bytes: result.fileSize,
       },
     });
 
-    return reply.send({
+    const responseBody = {
       success: true,
       data: {
         storage_path: result.storagePath,
@@ -298,9 +311,25 @@ function registerAnalyzeRoutes(
         truncated: result.truncated,
         document_height: result.documentHeight,
         captured_height: result.capturedHeight,
+        capture_mode: result.captureMode,
       },
       error: null,
+    };
+
+    logMemorySnapshot("before_response", request.id, {
+      image_bytes: result.fileSize,
+      active_contexts: getActiveContextCount(),
+      queued_sessions: limiter.queuedCount,
     });
+
+    const sent = reply.send(responseBody);
+
+    logMemorySnapshot("request_complete", request.id, {
+      active_contexts: getActiveContextCount(),
+      queued_sessions: limiter.queuedCount,
+    });
+
+    return sent;
   });
 
   app.post("/analyze/lighthouse", async (request: FastifyRequest, reply: FastifyReply) => {

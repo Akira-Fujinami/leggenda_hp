@@ -28,7 +28,7 @@ const NEVER_IDLE_HTML = `
   <body><h1>Never idle</h1><script>fetch("/never-ends").catch(() => {});</script></body></html>
 `;
 
-// ANALYZER_SCREENSHOT_MAX_HEIGHT(既定10000px)を超える巨大ページ
+// ANALYZER_SCREENSHOT_MAX_HEIGHT(既定4000px)を超える巨大ページ
 // (大手ECサイト等を模したフィクスチャ)。無制限のfullPage撮影ではなく、
 // viewport幅×上限高さでクリップされ、truncated=trueとして返ることを検証する。
 const TALL_HTML = `
@@ -210,8 +210,9 @@ describe("analyzer routes", () => {
     expect(body.data.truncated).toBe(true);
     expect(body.data.screenshot_status).toBe("partial");
     expect(body.data.document_height).toBeGreaterThan(10_000);
-    expect(body.data.captured_height).toBe(10_000);
-    expect(body.data.height).toBe(10_000);
+    expect(body.data.captured_height).toBe(4_000);
+    expect(body.data.height).toBe(4_000);
+    expect(body.data.capture_mode).toBe("clip");
   }, 30_000);
 
   it("detects technology signatures on the fixture page's html", async () => {

@@ -2,9 +2,11 @@
 
 namespace App\Jobs\Analysis;
 
+use App\Enums\AnalysisErrorCode;
 use App\Enums\JobType;
 use App\Enums\MetricResultStatus;
 use App\Enums\PageType;
+use App\Exceptions\Analysis\AnalysisException;
 use App\Jobs\Analysis\Concerns\RecordsMetricResults;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\AnalysisPage;
@@ -83,7 +85,50 @@ class DetectTechnologyJob extends BaseWebsiteAnalysisJob
 
         try {
             $data = $client->technology($website->normalized_url, $html);
-        } catch (\Throwable $e) {
+
+            $technologies = $data['technologies'] ?? [];
+            if (! is_array($technologies)) {
+                // analyzerがOOM再起動等の途中で、HTTPレベルは「成功」のまま
+                // 不完全・想定外の形状のJSONを返すケースへの安全網。
+                throw new \UnexpectedValueException('analyzerから技術検出の結果(technologies)が配列以外の形式で返されました。');
+            }
+
+            $names = array_column($technologies, 'name');
+
+            $analyticsConfigured = in_array('Google Analytics', $names, true) || in_array('Google Tag Manager', $names, true);
+            $this->recordMetric(
+                $this->websiteAnalysisId,
+                'analytics_configured',
+                MetricResultStatus::Success,
+                normalizedValue: $analyticsConfigured,
+                rawValue: ['technologies' => $technologies],
+                evidence: ['count' => count($technologies)],
+                // 静的検出(GA/GTMの既知タグの有無)に基づく判定であり、独自計測・
+                // サーバーサイド計測・同意後読み込み等は検出できないため、
+                // 「未検出」であっても「未設置」と断定できるほどの確信度は無い。
+                confidence: $analyticsConfigured ? 0.9 : 0.6,
+            );
+
+            $cmsOrFramework = array_values(array_filter($technologies, fn ($t) => in_array($t['category'] ?? null, self::CMS_OR_FRAMEWORK_CATEGORIES, true)));
+            $this->recordMetric(
+                $this->websiteAnalysisId,
+                'cms_detected',
+                $cmsOrFramework === [] ? MetricResultStatus::NotFound : MetricResultStatus::Success,
+                normalizedValue: $cmsOrFramework[0]['name'] ?? null,
+                rawValue: ['detected' => $cmsOrFramework],
+            );
+
+            foreach (self::INFORMATIONAL_MAP as $key => $matchNames) {
+                $detected = array_values(array_filter($technologies, fn ($t) => in_array($t['name'] ?? null, $matchNames, true)));
+                $this->recordMetric(
+                    $this->websiteAnalysisId,
+                    $key,
+                    $detected === [] ? MetricResultStatus::NotFound : MetricResultStatus::Success,
+                    normalizedValue: $detected !== [],
+                    rawValue: ['detected' => $detected],
+                );
+            }
+        } catch (AnalysisException $e) {
             // HTMLは取得できているが技術検出そのものが失敗したケース。
             // 「未取得0件なのに技術セクションが空」という矛盾を避けるため、
             // 全指標を明示的にError状態で記録してからジョブの
@@ -91,44 +136,27 @@ class DetectTechnologyJob extends BaseWebsiteAnalysisJob
             $this->recordAllError($e->getMessage());
 
             throw $e;
+        } catch (\Throwable $e) {
+            // AnalyzerClient自体は例外を投げなかった(HTTPレベルは成功扱い)が、
+            // 返却データの形状が想定外だった場合等。ここでAnalysisExceptionへ
+            // 変換せずに素通りさせると、handle()の汎用catch(\Throwable)で
+            // UNKNOWN_ERROR(「予期しないエラーが発生しました。」)へ丸められて
+            // しまい、原因調査ができなくなる(2026-07-25 Analyzer OOM調査で
+            // 実際に観測された症状)。TECHNOLOGY_DETECTION_FAILEDとして
+            // 明示的に分類する。
+            $this->recordAllError($e->getMessage());
+
+            throw new AnalysisException(AnalysisErrorCode::TechnologyDetectionFailed, '技術検出の結果を処理できませんでした。', $e);
         }
+    }
 
-        $technologies = $data['technologies'] ?? [];
-        $names = array_column($technologies, 'name');
-
-        $analyticsConfigured = in_array('Google Analytics', $names, true) || in_array('Google Tag Manager', $names, true);
-        $this->recordMetric(
-            $this->websiteAnalysisId,
-            'analytics_configured',
-            MetricResultStatus::Success,
-            normalizedValue: $analyticsConfigured,
-            rawValue: ['technologies' => $technologies],
-            evidence: ['count' => count($technologies)],
-            // 静的検出(GA/GTMの既知タグの有無)に基づく判定であり、独自計測・
-            // サーバーサイド計測・同意後読み込み等は検出できないため、
-            // 「未検出」であっても「未設置」と断定できるほどの確信度は無い。
-            confidence: $analyticsConfigured ? 0.9 : 0.6,
-        );
-
-        $cmsOrFramework = array_values(array_filter($technologies, fn ($t) => in_array($t['category'] ?? null, self::CMS_OR_FRAMEWORK_CATEGORIES, true)));
-        $this->recordMetric(
-            $this->websiteAnalysisId,
-            'cms_detected',
-            $cmsOrFramework === [] ? MetricResultStatus::NotFound : MetricResultStatus::Success,
-            normalizedValue: $cmsOrFramework[0]['name'] ?? null,
-            rawValue: ['detected' => $cmsOrFramework],
-        );
-
-        foreach (self::INFORMATIONAL_MAP as $key => $matchNames) {
-            $detected = array_values(array_filter($technologies, fn ($t) => in_array($t['name'] ?? null, $matchNames, true)));
-            $this->recordMetric(
-                $this->websiteAnalysisId,
-                $key,
-                $detected === [] ? MetricResultStatus::NotFound : MetricResultStatus::Success,
-                normalizedValue: $detected !== [],
-                rawValue: ['detected' => $detected],
-            );
-        }
+    /**
+     * render→desktop→mobile→technology→lighthouseの順次dispatchカスケード
+     * (AnalysisPipeline::ANALYZER_CHAIN参照)。
+     */
+    protected function onWebsiteJobTerminal(AnalysisPipeline $pipeline): void
+    {
+        $pipeline->dispatchNextAnalyzerJob($this->analysisId, $this->websiteAnalysisId, $this->jobType());
     }
 
     /**

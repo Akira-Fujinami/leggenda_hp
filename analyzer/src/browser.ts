@@ -63,6 +63,11 @@ export async function closeBrowser(): Promise<void> {
 export interface WithPageOptions {
   viewport: { width: number; height: number };
   userAgent?: string;
+  deviceScaleFactor?: number;
+  // context.close()完了直後に呼ばれる任意フック。呼び出し側(screenshot.ts等)が
+  // クローズ後のメモリ使用量を計測するためのもので、withPage自体の責務には
+  // 含めない。
+  afterClose?: () => void;
 }
 
 /**
@@ -86,6 +91,10 @@ export async function withPage<T>(
     userAgent: options.userAgent ?? env.CRAWLER_USER_AGENT,
     acceptDownloads: false,
     ignoreHTTPSErrors: false,
+    // 撮影サイズの実効ピクセル数(幅×高さ×deviceScaleFactor²)の見積もりを
+    // 単純化し、意図せず高解像度(Retina等)相当の撮影でメモリ消費が
+    // 数倍になることを防ぐため、明示的に指定がない限り常に1に固定する。
+    deviceScaleFactor: options.deviceScaleFactor ?? 1,
   });
   activeContextCount += 1;
 
@@ -128,6 +137,7 @@ export async function withPage<T>(
       logger.error({ err }, "failed_to_close_browser_context");
     });
     activeContextCount = Math.max(0, activeContextCount - 1);
+    options.afterClose?.();
   }
 }
 

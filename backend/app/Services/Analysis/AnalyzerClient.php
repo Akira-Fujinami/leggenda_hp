@@ -93,6 +93,32 @@ class AnalyzerClient
     }
 
     /**
+     * /healthのdata部分(active_contexts/queued_sessions/browser_connected等)を
+     * そのまま返す。RunLighthouseJobが、共有Playwrightブラウザのcontextが
+     * 残っていないことを確認してから重いLighthouse計測を始めるために使う。
+     * ヘルスチェック自体の失敗はfail-open(空配列)とする ―― Analyzer自身の
+     * ConcurrencyLimiterが最終的な排他制御を担っており、この確認はあくまで
+     * 追加の安全策のため、確認できないことを理由にLighthouseの実行自体を
+     * 妨げない。
+     *
+     * @return array<string, mixed>
+     */
+    public function healthDetails(): array
+    {
+        try {
+            $response = Http::baseUrl($this->baseUrl())->timeout(3)->get('/health');
+
+            if (! $response->successful()) {
+                return [];
+            }
+
+            return $response->json('data') ?? [];
+        } catch (ConnectionException) {
+            return [];
+        }
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function post(string $path, array $payload, AnalysisErrorCode $defaultErrorCode, int $timeoutSeconds = 60, int $connectTimeoutSeconds = 5): array
@@ -106,6 +132,14 @@ class AnalyzerClient
                 ->connectTimeout($connectTimeoutSeconds)
                 ->post($path, $payload);
         } catch (ConnectionException $e) {
+            // LaravelのHTTPクライアントは、接続確立自体の失敗(Guzzleの
+            // ConnectException)だけでなく、応答受信中の切断("connection reset
+            // by peer"/"socket hang up"相当、Guzzleの RequestException
+            // (レスポンス無し))も含めて全てConnectionExceptionへ正規化する
+            // (PendingRequest::marshalRequestExceptionWithoutResponse参照)。
+            // そのためanalyzerがOOM kill・再起動の途中で切断した場合も、
+            // ここで一律ANALYZER_UNAVAILABLEとして分類され、UNKNOWN_ERRORへ
+            // 丸められることはない。
             throw new AnalysisException(AnalysisErrorCode::AnalyzerUnavailable, 'analyzerに接続できませんでした。', $e);
         }
 

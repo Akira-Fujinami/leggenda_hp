@@ -57,9 +57,34 @@ class AnalysisPipeline
     }
 
     /**
+     * Analyzer(Playwright/Lighthouse)を呼び出すサイト単位ジョブの実行順序。
+     * 以前は全て同時にfan-outしていたが、Analyzer自身のConcurrencyLimiter
+     * (既定1)で実行自体は直列化されるものの、Laravel側の複数Worker/複数
+     * キューが同時にHTTPリクエストを送ること自体は妨げられず、Render環境で
+     * 実際に「Analyzer exceeded its memory limit」(OOM kill)が発生した
+     * (2026-07-25)。Lighthouseは共有Playwrightブラウザとは別のChromeプロセスを
+     * 都度起動するため特に重く、最後に実行することで他の処理と重なる余地を
+     * さらに減らす。dispatchNextAnalyzerJob()が各JobのonWebsiteJobTerminalから
+     * 呼ばれ、1つ前が完全に終端(Context close・レスポンス処理完了)して
+     * 初めて次をdispatchする。
+     *
+     * @var list<JobType>
+     */
+    private const ANALYZER_CHAIN = [
+        JobType::RenderPage,
+        JobType::CaptureScreenshotDesktop,
+        JobType::CaptureScreenshotMobile,
+        JobType::DetectTechnology,
+        JobType::RunLighthouse,
+    ];
+
+    /**
      * サイト単位で最初に起動するジョブ群。AnalyzeHtmlSeoJobだけは
      * FetchStaticPageJobが取得したHTMLに依存するため、FetchStaticPageJob側の
-     * 完了時に個別に起動する(ここでは起動しない)。
+     * 完了時に個別に起動する(ここでは起動しない)。Analyzerを呼び出す
+     * render/screenshot(desktop/mobile)/technology/lighthouseは同時fan-outせず、
+     * ANALYZER_CHAINの先頭(RenderPage)のみをここで起動し、以降は
+     * dispatchNextAnalyzerJob()による順次カスケードに委ねる。
      */
     public function dispatchWebsiteFanOut(WebsiteAnalysis $websiteAnalysis): void
     {
@@ -69,12 +94,38 @@ class AnalysisPipeline
         FetchStaticPageJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::FetchStaticPage->queueName());
         FetchRobotsJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::FetchRobots->queueName());
         FetchSitemapJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::FetchSitemap->queueName());
-        RenderPageJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::RenderPage->queueName());
-        CaptureScreenshotJob::dispatch($analysisId, $websiteAnalysisId, Device::Desktop)->onQueue(JobType::CaptureScreenshotDesktop->queueName());
-        CaptureScreenshotJob::dispatch($analysisId, $websiteAnalysisId, Device::Mobile)->onQueue(JobType::CaptureScreenshotMobile->queueName());
-        RunLighthouseJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::RunLighthouse->queueName());
-        DetectTechnologyJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::DetectTechnology->queueName());
         FetchExternalSeoDataJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::FetchExternalSeoData->queueName());
+
+        $this->dispatchAnalyzerChainJob($analysisId, $websiteAnalysisId, self::ANALYZER_CHAIN[0]);
+    }
+
+    /**
+     * Analyzerを呼び出すジョブの終端(成功・失敗いずれも)から呼び出す。
+     * $justCompletedの次にANALYZER_CHAINで定義された種別があれば、それだけを
+     * dispatchする(全て終わればno-op)。1つ前のJobの終端フックから呼ばれる
+     * ため、必ず前段のcontext close・レスポンス処理完了後になる。
+     */
+    public function dispatchNextAnalyzerJob(int $analysisId, int $websiteAnalysisId, JobType $justCompleted): void
+    {
+        $index = array_search($justCompleted, self::ANALYZER_CHAIN, true);
+
+        if ($index === false || ! isset(self::ANALYZER_CHAIN[$index + 1])) {
+            return;
+        }
+
+        $this->dispatchAnalyzerChainJob($analysisId, $websiteAnalysisId, self::ANALYZER_CHAIN[$index + 1]);
+    }
+
+    private function dispatchAnalyzerChainJob(int $analysisId, int $websiteAnalysisId, JobType $jobType): void
+    {
+        match ($jobType) {
+            JobType::RenderPage => RenderPageJob::dispatch($analysisId, $websiteAnalysisId)->onQueue($jobType->queueName()),
+            JobType::CaptureScreenshotDesktop => CaptureScreenshotJob::dispatch($analysisId, $websiteAnalysisId, Device::Desktop)->onQueue($jobType->queueName()),
+            JobType::CaptureScreenshotMobile => CaptureScreenshotJob::dispatch($analysisId, $websiteAnalysisId, Device::Mobile)->onQueue($jobType->queueName()),
+            JobType::DetectTechnology => DetectTechnologyJob::dispatch($analysisId, $websiteAnalysisId)->onQueue($jobType->queueName()),
+            JobType::RunLighthouse => RunLighthouseJob::dispatch($analysisId, $websiteAnalysisId)->onQueue($jobType->queueName()),
+            default => throw new \LogicException("ANALYZER_CHAINに含まれない想定外のJobTypeです: {$jobType->value}"),
+        };
     }
 
     public function dispatchHtmlSeoAnalysis(int $analysisId, int $websiteAnalysisId): void
