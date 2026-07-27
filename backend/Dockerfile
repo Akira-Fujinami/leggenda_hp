@@ -23,6 +23,11 @@ RUN set -eux; \
         libjpeg62-turbo-dev \
         libpng-dev \
         libfreetype6-dev \
+        # リード向けレポート(dompdf)の日本語PDF出力に使う。fonts-noto-cjkは
+        # TrueType Collection(.ttc)でしか配布されておらず、dompdfが依存する
+        # php-font-libのTTC対応が実運用で不安定なため避け、単体の.ttfとして
+        # 配布されるIPAexゴシック(IPA Font License、商用利用可)を採用する。
+        fonts-ipaexfont-gothic \
     ; \
     for f in /tmp/extra-certs/*.pem /tmp/extra-certs/*.crt; do \
         [ -f "$f" ] || continue; \

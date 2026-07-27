@@ -2,7 +2,7 @@ import type { Query } from "@tanstack/react-query";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ApiEnvelope } from "@/lib/api-client";
 import { leadApi } from "@/features/lead/api";
-import type { LeadAnalysisStartInput, LeadOnboardingInput, LeadProgress } from "@/types/lead";
+import type { LeadAnalysisStartInput, LeadOnboardingInput, LeadProgress, LeadResults } from "@/types/lead";
 
 const TERMINAL_STATUSES = ["completed", "partial", "failed"] as const;
 
@@ -41,5 +41,14 @@ export function useLeadResults(token: string, analysisId: number | null) {
     queryKey: ["lead", "results", token, analysisId],
     queryFn: () => leadApi.results(token, analysisId as number),
     enabled: analysisId !== null,
+    // レポート(Word/PDF)は結果とは非同期に生成されるため、いずれかが
+    // まだ"processing"の間は短い間隔で再取得し、ダウンロードボタンが
+    // 準備でき次第すぐ有効になるようにする。
+    refetchInterval: (query: Query<ApiEnvelope<LeadResults>>) => {
+      const reports = query.state.data?.data.reports;
+      if (!reports) return false;
+      const stillProcessing = reports.docx === "processing" || reports.pdf === "processing";
+      return stillProcessing ? 3000 : false;
+    },
   });
 }

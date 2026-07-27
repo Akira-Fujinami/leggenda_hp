@@ -5,7 +5,7 @@
 // SameSite=None運用が不要になる。
 // 末尾スラッシュを正規化する("/backend/"のようにスラッシュ付きで設定されても、
 // パス側は常に"/sanctum/..."/"/api/..."から始まるため二重スラッシュにならないようにする)。
-const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/backend").replace(/\/+$/, "");
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/backend").replace(/\/+$/, "");
 
 // このクライアントはブラウザ(document.cookie)を前提にしたCookieベースの
 // Sanctum SPA認証専用。Server Components/Route Handlersなどサーバー側から

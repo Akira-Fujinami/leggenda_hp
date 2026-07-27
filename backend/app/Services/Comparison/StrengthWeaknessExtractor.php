@@ -12,11 +12,15 @@ use Illuminate\Support\Collection;
  */
 class StrengthWeaknessExtractor
 {
-    private const HIGH_CATEGORY_RATIO = 0.8;
+    // レポート側のReportSummaryComposerが「最高/最低カテゴリ」判定に同じ
+    // 閾値を再利用するため公開する(強み/弱み判定と食い違うと「弱みと
+    // 書かれた項目が最高カテゴリになる」ような矛盾が生じるため、値は
+    // ここ一箇所に集約する)。
+    public const HIGH_CATEGORY_RATIO = 0.8;
 
-    private const LOW_CATEGORY_RATIO = 0.5;
+    public const LOW_CATEGORY_RATIO = 0.5;
 
-    private const MIN_CATEGORY_COVERAGE = 50.0;
+    public const MIN_CATEGORY_COVERAGE = 50.0;
 
     private const MIN_CONFIDENCE = 0.6;
 

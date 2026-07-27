@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['project_id', 'created_by', 'status', 'progress', 'started_at', 'completed_at', 'failed_at', 'error_summary', 'skip_lighthouse'])]
+#[Fillable(['project_id', 'created_by', 'status', 'progress', 'started_at', 'completed_at', 'failed_at', 'error_summary', 'skip_lighthouse', 'skip_screenshots'])]
 class Analysis extends Model
 {
     /** @use HasFactory<AnalysisFactory> */
@@ -25,6 +25,7 @@ class Analysis extends Model
             'completed_at' => 'datetime',
             'failed_at' => 'datetime',
             'skip_lighthouse' => 'boolean',
+            'skip_screenshots' => 'boolean',
         ];
     }
 
@@ -58,5 +59,13 @@ class Analysis extends Model
     public function jobs(): HasMany
     {
         return $this->hasMany(AnalysisJob::class);
+    }
+
+    /**
+     * @return HasMany<Report, $this>
+     */
+    public function reports(): HasMany
+    {
+        return $this->hasMany(Report::class);
     }
 }

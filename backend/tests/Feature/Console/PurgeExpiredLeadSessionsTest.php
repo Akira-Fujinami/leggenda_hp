@@ -2,10 +2,14 @@
 
 namespace Tests\Feature\Console;
 
+use App\Enums\ReportGenerationStatus;
+use App\Models\Analysis;
 use App\Models\LeadSession;
 use App\Models\Project;
+use App\Models\Report;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class PurgeExpiredLeadSessionsTest extends TestCase
@@ -51,6 +55,27 @@ class PurgeExpiredLeadSessionsTest extends TestCase
         $this->artisan('lead:purge-expired-sessions --execute --force')->assertSuccessful();
 
         $this->assertDatabaseCount('lead_sessions', 1);
+    }
+
+    public function test_execute_with_force_also_deletes_report_files_from_storage(): void
+    {
+        Storage::fake('analysis');
+
+        $session = $this->makeExpiredSessionWithProject();
+        $project = $session->projects->first();
+        $analysis = Analysis::factory()->create(['project_id' => $project->id]);
+        Storage::disk('analysis')->put("reports/{$analysis->id}/report.pdf", '%PDF-fake');
+        Report::factory()->create([
+            'analysis_id' => $analysis->id,
+            'format' => 'pdf',
+            'storage_path' => "reports/{$analysis->id}/report.pdf",
+            'status' => ReportGenerationStatus::Completed,
+        ]);
+
+        $this->artisan('lead:purge-expired-sessions --execute --force')->assertSuccessful();
+
+        Storage::disk('analysis')->assertMissing("reports/{$analysis->id}/report.pdf");
+        $this->assertDatabaseCount('reports', 0);
     }
 
     public function test_execute_is_refused_in_production(): void

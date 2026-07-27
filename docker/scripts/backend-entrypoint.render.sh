@@ -58,7 +58,7 @@ nginx -t
 # 外部入力やSecretそのものは含まれないためログにも出力してよい)。
 # ---------------------------------------------------------------------------
 ENABLE_EMBEDDED_QUEUE_WORKER="${ENABLE_EMBEDDED_QUEUE_WORKER:-true}"
-QUEUE_WORKER_QUEUES="${QUEUE_WORKER_QUEUES:-analysis,external-api,analysis-heavy,ai}"
+QUEUE_WORKER_QUEUES="${QUEUE_WORKER_QUEUES:-analysis,external-api,analysis-heavy,ai,reports}"
 QUEUE_WORKER_SLEEP="${QUEUE_WORKER_SLEEP:-3}"
 QUEUE_WORKER_TRIES="${QUEUE_WORKER_TRIES:-2}"
 QUEUE_WORKER_TIMEOUT="${QUEUE_WORKER_TIMEOUT:-600}"

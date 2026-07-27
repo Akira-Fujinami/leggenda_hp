@@ -26,9 +26,16 @@ return [
     // 安易に引き上げないこと(OOM再発のリスクがある)。
     'max_concurrent_analyses' => (int) env('LEAD_MAX_CONCURRENT_ANALYSES', 1),
 
-    // リード分析ではLighthouseを省略し、Analyzerの単一Workerの占有時間を
-    // 短縮する(実測: 含めると約72-79秒、省略すると約53秒)。
-    'skip_lighthouse' => (bool) env('LEAD_SKIP_LIGHTHOUSE', true),
+    // リード分析でもLighthouse/Semrushの両方を実施し、社内向けと同等のスコア
+    // 精度を確保する(Phase 2でSemrush併用が承認されたことに伴い、Phase 1の
+    // 「Lighthouse省略」判断を撤回。既定はfalseで、Analyzer単一Workerの
+    // 占有時間が伸びる点は max_concurrent_analyses の抑制で吸収する)。
+    'skip_lighthouse' => (bool) env('LEAD_SKIP_LIGHTHOUSE', false),
+
+    // リード分析ではスクリーンショット撮影を省略する。77指標のうち
+    // スクリーンショット由来の指標は0件のため、採点への影響はない。
+    // 社内向けフル機能は常にfalse相当(撮影する)のまま変わらない。
+    'skip_screenshots' => (bool) env('LEAD_SKIP_SCREENSHOTS', true),
 
     // lead_sessions/その配下データの保持期間(日数)。有効期限切れから
     // この日数を過ぎたセッションを lead:purge-expired-sessions --execute で削除する。

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Webサイト診断レポート</title>
+<style>
+    @page {
+        margin: 20mm 15mm;
+    }
+    @font-face {
+        font-family: 'IPAexGothic';
+        src: url('{{ $ipaexGothicFontPath }}') format('truetype');
+        font-weight: normal;
+        font-style: normal;
+    }
+    @font-face {
+        font-family: 'IPAexGothic';
+        src: url('{{ $ipaexGothicFontPath }}') format('truetype');
+        font-weight: bold;
+        font-style: normal;
+    }
+    body {
+        font-family: 'IPAexGothic', sans-serif;
+        font-size: 11pt;
+        color: #1a1a1a;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+    p {
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+    h1, h2, h3 {
+        font-family: 'IPAexGothic', sans-serif;
+    }
+    .page {
+        page-break-after: always;
+        padding: 24px 0;
+    }
+    .page:last-child {
+        page-break-after: auto;
+    }
+    .cover {
+        text-align: center;
+        padding-top: 160px;
+    }
+    .cover h1 {
+        font-size: 24pt;
+        margin-bottom: 40px;
+    }
+    .cover p {
+        font-size: 12pt;
+        margin: 4px 0;
+    }
+    table {
+        width: 100%;
+        table-layout: fixed;
+        border-collapse: collapse;
+        margin-top: 12px;
+    }
+    th, td {
+        border: 1px solid #ccc;
+        padding: 6px 8px;
+        text-align: left;
+        font-size: 10pt;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+    th {
+        background-color: #f2f2f2;
+    }
+    .score-headline {
+        font-size: 20pt;
+        font-weight: bold;
+        margin: 12px 0;
+    }
+    .reference-badge {
+        display: inline-block;
+        border: 1px solid #b8860b;
+        color: #b8860b;
+        padding: 2px 8px;
+        font-size: 9pt;
+        border-radius: 4px;
+        margin-left: 8px;
+    }
+    .summary-text {
+        line-height: 1.8;
+        margin-top: 16px;
+    }
+    .recommendation {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
+    }
+    .recommendation .title {
+        font-weight: bold;
+        font-size: 11.5pt;
+    }
+    .recommendation .meta {
+        font-size: 9pt;
+        color: #555;
+        margin-top: 2px;
+    }
+    .cta {
+        text-align: center;
+        padding-top: 120px;
+    }
+    .cta h2 {
+        font-size: 18pt;
+    }
+    .footnote {
+        font-size: 8.5pt;
+        color: #666;
+        margin-top: 24px;
+    }
+</style>
+</head>
+<body>
+
+<div class="page cover">
+    <h1>Webサイト診断レポート</h1>
+    <p>{{ $viewModel->companyDisplayName }}</p>
+    <p>対象サイト: {{ $viewModel->selfWebsiteUrl }}</p>
+    @if ($viewModel->competitorWebsiteUrl)
+        <p>比較サイト: {{ $viewModel->competitorWebsiteUrl }}</p>
+    @endif
+    <p>{{ $viewModel->generatedAtLabel }}</p>
+    @if ($viewModel->isPartial)
+        <p class="footnote">一部のデータは取得できませんでしたが、取得できた範囲での診断結果です。</p>
+    @endif
+</div>
+
+<div class="page">
+    <h2>総合結果</h2>
+    <p class="score-headline">
+        {{ $viewModel->selfScore['display_score'] }}点 <span style="font-size: 12pt; font-weight: normal;">/ 100点</span>
+        @if ($viewModel->selfScore['coverage_rate'] < 70)
+            <span class="reference-badge">参考スコア</span>
+        @endif
+    </p>
+    <p>測定カバー率: {{ number_format($viewModel->selfScore['coverage_rate'], 2) }}%　確信度: {{ number_format($viewModel->selfScore['confidence_rate'], 2) }}%</p>
+    <p class="summary-text">{{ $viewModel->overallSummaryText }}</p>
+    @if ($viewModel->comparisonSentence)
+        <p class="summary-text">{{ $viewModel->comparisonSentence }}</p>
+    @endif
+</div>
+
+<div class="page">
+    <h2>カテゴリ別スコア</h2>
+    <table>
+        <colgroup>
+            <col style="width: 16%;">
+            <col style="width: 38%;">
+            <col style="width: 14%;">
+            <col style="width: 32%;">
+        </colgroup>
+        <thead>
+        <tr>
+            <th>カテゴリ</th>
+            <th>説明</th>
+            <th>スコア</th>
+            <th>カバー率</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach ($viewModel->categoryBreakdown as $category)
+            <tr>
+                <td>{{ $category->name }}</td>
+                <td>{{ $category->description }}</td>
+                <td>
+                    @if ($category->availability === 'not_measured')
+                        計測対象外
+                    @elseif ($category->availability === 'unavailable')
+                        評価不可
+                    @else
+                        {{ $category->score }} / {{ $category->configuredMaxScore }}
+                    @endif
+                </td>
+                <td>
+                    @if ($category->availability === 'not_measured')
+                        今回の診断では計測していません
+                    @elseif ($category->availability === 'unavailable')
+                        データを取得できませんでした
+                    @else
+                        {{ number_format($category->coverageRate, 2) }}%
+                    @endif
+                </td>
+            </tr>
+        @endforeach
+        </tbody>
+    </table>
+</div>
+
+<div class="page">
+    <h2>改善提案</h2>
+    @if (count($viewModel->topRecommendations) === 0)
+        <p>現時点で優先度の高い改善提案はありません。</p>
+    @else
+        @foreach ($viewModel->topRecommendations as $recommendation)
+            <div class="recommendation">
+                <p class="title">{{ $recommendation->title }}</p>
+                <p>{{ $recommendation->description }}</p>
+                <p class="meta">優先度: {{ $recommendation->priorityLabel }}　影響度: {{ $recommendation->impactLabel }}　対応工数: {{ $recommendation->effortLabel }}</p>
+            </div>
+        @endforeach
+    @endif
+</div>
+
+<div class="page cta">
+    <h2>より詳しい診断・ご相談はこちら</h2>
+    <p>今回は自社サイト{{ $viewModel->competitorWebsiteUrl ? '・比較サイト1社' : '' }}の簡易診断結果です。</p>
+    <p>他社比較(3〜5社)や、詳細な改善提案については、担当者までお気軽にご相談ください。</p>
+</div>
+
+</body>
+</html>

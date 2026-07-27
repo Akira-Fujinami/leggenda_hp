@@ -29,9 +29,8 @@ Route::prefix('lead')->group(function () {
             ->middleware('throttle:lead-analysis-poll');
         Route::get('/analyses/{analysis}/results', [LeadAnalysisController::class, 'results'])
             ->middleware('throttle:lead-analysis-poll');
-        Route::get('/website-analyses/{websiteAnalysis}/screenshots/{device}', [LeadAnalysisController::class, 'screenshot'])
-            ->middleware('throttle:lead-analysis-poll')
-            ->name('lead.analyses.screenshot');
+        Route::get('/analyses/{analysis}/reports/{format}', [LeadAnalysisController::class, 'downloadReport'])
+            ->middleware('throttle:lead-analysis-poll');
     });
 });
 

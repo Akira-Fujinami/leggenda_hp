@@ -95,7 +95,7 @@ function DiagnoseResult({ token, analysisId }: { token: string; analysisId: numb
 
   return (
     <div className="space-y-6">
-      <LeadResults results={resultsQuery.data.data} />
+      <LeadResults results={resultsQuery.data.data} token={token} analysisId={analysisId} />
       <div className="rounded-md border p-4 text-center">
         <p className="font-medium">もっと他社と比較したい場合はご相談ください</p>
         <p className="mt-1 text-sm text-muted-foreground">

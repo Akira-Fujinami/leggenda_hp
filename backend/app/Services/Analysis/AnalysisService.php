@@ -14,7 +14,7 @@ use Illuminate\Validation\ValidationException;
 class AnalysisService
 {
     /**
-     * @param  array{website_ids?: array<int, int>, max_websites?: int, skip_lighthouse?: bool}  $data
+     * @param  array{website_ids?: array<int, int>, max_websites?: int, skip_lighthouse?: bool, skip_screenshots?: bool}  $data
      */
     public function start(Project $project, array $data, User $user): Analysis
     {
@@ -40,9 +40,10 @@ class AnalysisService
                 'status' => AnalysisStatus::Pending,
                 'progress' => 0,
                 // リード向け簡易分析(LeadAnalysisController)のみtrueを渡す。
-                // 社内向けの既存呼び出し元はこのキーを渡さないため常にfalseで、
+                // 社内向けの既存呼び出し元はこれらのキーを渡さないため常にfalseで、
                 // AnalysisPipelineの挙動は一切変わらない。
                 'skip_lighthouse' => (bool) ($data['skip_lighthouse'] ?? false),
+                'skip_screenshots' => (bool) ($data['skip_screenshots'] ?? false),
             ]);
 
             foreach ($websites as $website) {

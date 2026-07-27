@@ -56,7 +56,10 @@ class LeadAnalysisTest extends TestCase
         $response->assertJsonStructure(['data' => ['analysis_id']]);
 
         $analysis = Analysis::find($response->json('data.analysis_id'));
-        $this->assertTrue($analysis->skip_lighthouse);
+        // Phase 2でSemrush併用が承認されたため、Lighthouseは省略しない。
+        $this->assertFalse($analysis->skip_lighthouse);
+        // スクリーンショット由来の指標は0件のため、撮影自体は省略する。
+        $this->assertTrue($analysis->skip_screenshots);
         $this->assertSame(1, $analysis->project->websites()->count());
         $this->assertTrue($analysis->project->websites()->first()->is_primary);
 
@@ -192,8 +195,8 @@ class LeadAnalysisTest extends TestCase
     {
         Http::fake([
             '*/analyze/render' => Http::response(['success' => true, 'data' => ['html' => '<html></html>', 'fixed_cta' => ['detected' => false]]], 200),
-            '*/analyze/screenshot' => Http::response(['success' => true, 'data' => ['storage_path' => 'x.jpg', 'width' => 100, 'height' => 100, 'file_size' => 1, 'mime_type' => 'image/jpeg']], 200),
             '*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => []]], 200),
+            '*/analyze/lighthouse' => Http::response(['success' => true, 'data' => ['scores' => [], 'metrics' => []]], 200),
         ]);
 
         $token = $this->issueToken();
@@ -208,15 +211,17 @@ class LeadAnalysisTest extends TestCase
             $this->assertStringNotContainsString($forbidden, $raw);
         }
 
-        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/analyze/lighthouse'));
+        // リード分析ではCaptureScreenshotJob自体を省略するため、
+        // スクリーンショット関連のAnalyzer呼び出しは一切発生しない。
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/analyze/screenshot'));
     }
 
     public function test_partial_analysis_still_returns_results_instead_of_nothing(): void
     {
         Http::fake([
             '*/analyze/render' => Http::response([], 500),
-            '*/analyze/screenshot' => Http::response([], 500),
             '*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => []]], 200),
+            '*/analyze/lighthouse' => Http::response([], 500),
         ]);
 
         $token = $this->issueToken();

@@ -16,8 +16,11 @@ class RankingCalculator
 {
     /**
      * データ取得率がこの値未満の場合、順位に注意表示を付ける。
+     * レポート側のReportSummaryComposerが競合比較文の安全装置として同じ
+     * 閾値を再利用するため公開する(既存の比較画面の「データ不足」バッジと
+     * 判定基準を必ず一致させるため、値をここ一箇所に集約する)。
      */
-    private const LOW_COVERAGE_THRESHOLD = 50.0;
+    public const LOW_COVERAGE_THRESHOLD = 50.0;
 
     /**
      * @param  Collection<int, SiteScoreEntry>  $entries

@@ -1,4 +1,4 @@
-import { api, ApiEnvelope } from "@/lib/api-client";
+import { api, API_URL, ApiEnvelope } from "@/lib/api-client";
 import type {
   LeadAnalysisStartInput,
   LeadAnalysisStartResult,
@@ -26,4 +26,10 @@ export const leadApi = {
 
   results: (token: string, analysisId: number) =>
     api.get<ApiEnvelope<LeadResults>>(`/api/lead/analyses/${analysisId}/results?token=${encodeURIComponent(token)}`),
+
+  // ダウンロードはファイル取得(GET)のため、CSRF不要でJSクライアントを
+  // 介さずブラウザから直接開ける(<a href>やwindow.open)。既存のBFFプロキシ
+  // (/backend/[...path])を経由する点はJSON APIと同じにする。
+  reportDownloadUrl: (token: string, analysisId: number, format: "docx" | "pdf") =>
+    `${API_URL}/api/lead/analyses/${analysisId}/reports/${format}?token=${encodeURIComponent(token)}`,
 };

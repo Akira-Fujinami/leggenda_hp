@@ -27,6 +27,15 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'lead.token' => ResolveLeadToken::class,
         ]);
+        // 信頼するプロキシが未設定だと$request->ip()が常にRender自身の
+        // ロードバランサーのIPを返し(実際の訪問者IPではない)、IP単位の
+        // レート制限(RateLimiter::for('lead-*')等)が事実上効かなくなる
+        // (2026-07-27 Phase2着手前の調査で判明)。Renderのロードバランサーの
+        // IPは固定/公開されていないPaaS環境のため、Laravel公式が推奨する
+        // 「すべて信頼する('*')」を採用する ―― コンテナへの唯一の入口は
+        // Render自身のロードバランサーであり、それ以外の経路からnginxへ
+        // 直接到達することはない。
+        $middleware->trustProxies(at: '*');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

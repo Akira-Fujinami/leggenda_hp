@@ -3,22 +3,24 @@
 namespace App\Http\Controllers\Api\Lead;
 
 use App\Enums\AnalysisStatus;
-use App\Enums\Device;
+use App\Enums\ReportFormat;
+use App\Enums\ReportGenerationStatus;
 use App\Http\Controllers\Controller;
+use App\Jobs\Report\GenerateLeadReportJob;
 use App\Models\Analysis;
 use App\Models\CategoryDefinition;
 use App\Models\LeadSession;
 use App\Models\MetricDefinition;
 use App\Models\Project;
-use App\Models\Screenshot;
-use App\Models\WebsiteAnalysis;
+use App\Models\Report;
 use App\Services\Analysis\AnalysisService;
 use App\Services\Lead\LeadSessionService;
 use App\Services\Scoring\OverallScoreCalculator;
 use App\Services\WebsiteService;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -28,6 +30,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  * 再利用する ―― 分析ロジックを別系統で作らない。認可はProjectPolicy等の
  * Gateを使わず、LeadSession(ResolveLeadTokenミドルウェアが解決済み)と
  * 対象リソースのlead_session_idが一致するかをここで直接確認する。
+ * リード分析ではCaptureScreenshotJob自体を省略するため(skip_screenshots)、
+ * スクリーンショット配信エンドポイントは持たない。
  */
 class LeadAnalysisController extends Controller
 {
@@ -80,6 +84,9 @@ class LeadAnalysisController extends Controller
         $analysis = $this->analyses->start($project, [
             'max_websites' => (int) config('lead.max_websites'),
             'skip_lighthouse' => (bool) config('lead.skip_lighthouse'),
+            // CaptureScreenshotJobは77指標のうち1つも記録しないため、
+            // リード分析では撮影自体を省略する(採点への影響はゼロ)。
+            'skip_screenshots' => (bool) config('lead.skip_screenshots'),
         ], $sentinelUser);
 
         $this->leadSessions->recordAnalysisStarted($leadSession);
@@ -90,6 +97,7 @@ class LeadAnalysisController extends Controller
     public function progress(Request $request, Analysis $analysis): JsonResponse
     {
         $this->authorizeLeadOwnsAnalysis($request, $analysis);
+        $this->maybeDispatchReportGeneration($analysis);
 
         return $this->success([
             'percent' => $analysis->progress,
@@ -101,10 +109,10 @@ class LeadAnalysisController extends Controller
     public function results(Request $request, Analysis $analysis): JsonResponse
     {
         $this->authorizeLeadOwnsAnalysis($request, $analysis);
+        $this->maybeDispatchReportGeneration($analysis);
 
         $analysis->load([
             'websiteAnalyses.website',
-            'websiteAnalyses.screenshots',
             'websiteAnalyses.recommendations',
             'websiteAnalyses.metricResults.metricDefinition',
         ]);
@@ -115,6 +123,7 @@ class LeadAnalysisController extends Controller
 
         return $this->success([
             'status' => $this->leadFacingStatus($analysis->status),
+            'reports' => $this->reportStatusPayload($analysis),
             'websites' => $analysis->websiteAnalyses->map(function ($wa) use ($activeCategories, $activeDefinitions, $calculator) {
                 $score = $calculator->calculate($activeCategories, $activeDefinitions, $wa->metricResults);
 
@@ -134,56 +143,114 @@ class LeadAnalysisController extends Controller
                             'impact' => $r->impact->value,
                             'effort' => $r->effort->value,
                         ])->values(),
-                    'screenshots' => $wa->screenshots->map(fn ($s) => [
-                        'device' => $s->device->value,
-                        'url' => route('lead.analyses.screenshot', ['websiteAnalysis' => $wa->id, 'device' => $s->device->value]),
-                    ])->values(),
                 ];
             })->values(),
         ]);
     }
 
     /**
-     * リード向けのスクリーンショット配信。既存のAnalysisController::screenshot()
-     * (auth:sanctum配下)とは別の、lead.tokenミドルウェア配下の専用エンドポイント
-     * とする ―― リードはSanctumセッションを持たないため、既存エンドポイントを
-     * 直接は使えない。認可ロジック(Storageへ直接アクセスさせず、DBが指す
-     * storage_pathのみ配信する)は既存と同じ方針を踏襲する。
+     * リード向けレポート(Word/PDF)のダウンロード。既存のAnalysisController::
+     * screenshot()と同じ方針(Storageへ直接アクセスさせず、DBが指す
+     * storage_pathのみ配信)を踏襲する。storage_path・error_message等の
+     * 内部情報はレスポンスに一切含めない。
      */
-    public function screenshot(Request $request, WebsiteAnalysis $websiteAnalysis, string $device): StreamedResponse|Response
+    public function downloadReport(Request $request, Analysis $analysis, string $format): StreamedResponse
     {
-        $this->authorizeLeadOwnsWebsiteAnalysis($request, $websiteAnalysis);
+        $this->authorizeLeadOwnsAnalysis($request, $analysis);
 
-        $deviceEnum = Device::tryFrom($device);
+        $formatEnum = ReportFormat::tryFrom($format);
 
-        if ($deviceEnum === null) {
+        if ($formatEnum === null) {
             abort(404);
         }
 
-        $screenshot = Screenshot::query()
-            ->where('website_analysis_id', $websiteAnalysis->id)
-            ->where('device', $deviceEnum)
+        $report = Report::query()
+            ->where('analysis_id', $analysis->id)
+            ->where('format', $formatEnum->value)
             ->first();
 
-        if ($screenshot === null || ! Storage::disk('analysis')->exists($screenshot->storage_path)) {
+        if ($report === null || $report->status !== ReportGenerationStatus::Completed) {
+            throw new HttpResponseException(response()->json([
+                'message' => 'レポートはまだ準備中です。しばらくしてから再度お試しください。',
+                'errors' => [],
+                'error_code' => 'REPORT_NOT_READY',
+            ], 409));
+        }
+
+        if (! Storage::disk('analysis')->exists($report->storage_path)) {
             abort(404);
         }
 
-        return Storage::disk('analysis')->response($screenshot->storage_path, null, [
-            'Content-Type' => $screenshot->mime_type,
+        $filename = '診断レポート.'.$formatEnum->fileExtension();
+
+        return Storage::disk('analysis')->download($report->storage_path, $filename, [
+            'Content-Type' => $formatEnum->contentType(),
         ]);
     }
 
-    private function authorizeLeadOwnsWebsiteAnalysis(Request $request, WebsiteAnalysis $websiteAnalysis): void
+    /**
+     * 結果が終端状態(completed/partial)になった最初のポーリングで一度だけ
+     * レポート生成Jobを起動する。Reportテーブルの行(pending)をこの場で
+     * 即座に作ってから冪等性のガードにするため、Job自体がまだ実行されて
+     * いない(=行がまだ無い)間に2回目のポーリングが来ても二重dispatchしない。
+     * 同時リクエストでの競合は(analysis_id, format)のunique制約違反として
+     * 検出し、その場合は既に他方が作成済みとみなして何もしない。
+     * failedの分析にはレポートを生成しない(表示できる結果が何もないため)。
+     * 既存のFinalizeWebsiteAnalysisJob/FinalizeAnalysisJob等の共有
+     * パイプラインには一切触れない。
+     */
+    private function maybeDispatchReportGeneration(Analysis $analysis): void
     {
-        /** @var LeadSession $leadSession */
-        $leadSession = $request->attributes->get('leadSession');
+        $status = $this->leadFacingStatus($analysis->status);
 
-        $websiteAnalysis->loadMissing('analysis.project');
-
-        if ($websiteAnalysis->analysis?->project?->lead_session_id !== $leadSession->id) {
-            abort(404);
+        if (! in_array($status, ['completed', 'partial'], true)) {
+            return;
         }
+
+        if (Report::query()->where('analysis_id', $analysis->id)->exists()) {
+            return;
+        }
+
+        try {
+            foreach ([ReportFormat::Docx, ReportFormat::Pdf] as $format) {
+                Report::query()->create([
+                    'analysis_id' => $analysis->id,
+                    'format' => $format->value,
+                    'storage_path' => '',
+                    'status' => ReportGenerationStatus::Pending->value,
+                ]);
+            }
+        } catch (QueryException) {
+            return;
+        }
+
+        GenerateLeadReportJob::dispatch($analysis->id)->onQueue('reports');
+    }
+
+    /**
+     * @return array{docx: string, pdf: string}
+     */
+    private function reportStatusPayload(Analysis $analysis): array
+    {
+        $reports = Report::query()->where('analysis_id', $analysis->id)->get()->keyBy('format');
+
+        return [
+            'docx' => $this->singleReportStatus($reports->get(ReportFormat::Docx->value)),
+            'pdf' => $this->singleReportStatus($reports->get(ReportFormat::Pdf->value)),
+        ];
+    }
+
+    private function singleReportStatus(?Report $report): string
+    {
+        if ($report === null) {
+            return 'processing';
+        }
+
+        return match ($report->status) {
+            ReportGenerationStatus::Completed => 'ready',
+            ReportGenerationStatus::Failed => 'unavailable',
+            ReportGenerationStatus::Pending => 'processing',
+        };
     }
 
     private function authorizeLeadOwnsAnalysis(Request $request, Analysis $analysis): void

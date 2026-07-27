@@ -39,7 +39,7 @@ class AnalysisPipeline
      */
     public function registerWebsiteJobPlaceholders(WebsiteAnalysis $websiteAnalysis): void
     {
-        $jobTypes = $this->excludeLighthouseIfSkipped(JobType::websiteLevelTypes(), $websiteAnalysis->analysis);
+        $jobTypes = $this->excludeSkippedJobTypes(JobType::websiteLevelTypes(), $websiteAnalysis->analysis);
 
         foreach ($jobTypes as $jobType) {
             AnalysisJobRecord::query()->firstOrCreate(
@@ -109,7 +109,7 @@ class AnalysisPipeline
      */
     public function dispatchNextAnalyzerJob(int $analysisId, int $websiteAnalysisId, JobType $justCompleted): void
     {
-        $chain = $this->excludeLighthouseIfSkipped(self::ANALYZER_CHAIN, Analysis::find($analysisId));
+        $chain = $this->excludeSkippedJobTypes(self::ANALYZER_CHAIN, Analysis::find($analysisId));
 
         $index = array_search($justCompleted, $chain, true);
 
@@ -121,20 +121,37 @@ class AnalysisPipeline
     }
 
     /**
-     * リード向け簡易分析(Analysis.skip_lighthouse=true)では、Analyzerの
-     * 単一Workerを長時間(最大360秒)占有するLighthouseを省略する。既定は
-     * false(社内向けフル機能は常にこの値のままであり、挙動は一切変わらない)。
+     * リード向け簡易分析では、Analysis.skip_lighthouse/skip_screenshotsの
+     * フラグに応じて、Analyzerの単一Workerを長時間占有するLighthouseや、
+     * 採点に一切使われないスクリーンショット撮影を省略する。両フラグとも
+     * 既定はfalseで、社内向けフル機能は常にこの分岐に入らず挙動は
+     * 一切変わらない。
      *
      * @param  list<JobType>  $jobTypes
      * @return list<JobType>
      */
-    private function excludeLighthouseIfSkipped(array $jobTypes, ?Analysis $analysis): array
+    private function excludeSkippedJobTypes(array $jobTypes, ?Analysis $analysis): array
     {
-        if ($analysis?->skip_lighthouse !== true) {
+        if ($analysis === null) {
             return $jobTypes;
         }
 
-        return array_values(array_filter($jobTypes, fn (JobType $type) => $type !== JobType::RunLighthouse));
+        $excluded = [];
+
+        if ($analysis->skip_lighthouse === true) {
+            $excluded[] = JobType::RunLighthouse;
+        }
+
+        if ($analysis->skip_screenshots === true) {
+            $excluded[] = JobType::CaptureScreenshotDesktop;
+            $excluded[] = JobType::CaptureScreenshotMobile;
+        }
+
+        if ($excluded === []) {
+            return $jobTypes;
+        }
+
+        return array_values(array_filter($jobTypes, fn (JobType $type) => ! in_array($type, $excluded, true)));
     }
 
     private function dispatchAnalyzerChainJob(int $analysisId, int $websiteAnalysisId, JobType $jobType): void
@@ -286,7 +303,7 @@ class AnalysisPipeline
             return;
         }
 
-        $requiredTypes = $this->excludeLighthouseIfSkipped(JobType::websiteFanOutTypes(), $websiteAnalysis->analysis);
+        $requiredTypes = $this->excludeSkippedJobTypes(JobType::websiteFanOutTypes(), $websiteAnalysis->analysis);
 
         $jobs = AnalysisJobRecord::query()
             ->where('website_analysis_id', $websiteAnalysisId)

@@ -45,20 +45,19 @@ export interface LeadRecommendation {
   effort: string;
 }
 
-export interface LeadScreenshot {
-  device: "desktop" | "mobile";
-  url: string;
-}
-
+// リード分析ではCaptureScreenshotJob自体を省略するため(採点への影響は
+// ゼロ)、スクリーンショットは持たない。社内向けフル機能とは異なる。
 export interface LeadWebsiteResult {
   website_name: string | null;
   is_primary: boolean;
   score: LeadWebsiteScore;
   top_recommendations: LeadRecommendation[];
-  screenshots: LeadScreenshot[];
 }
+
+export type LeadReportStatus = "processing" | "ready" | "unavailable";
 
 export interface LeadResults {
   status: LeadAnalysisPhase;
+  reports: { docx: LeadReportStatus; pdf: LeadReportStatus };
   websites: LeadWebsiteResult[];
 }

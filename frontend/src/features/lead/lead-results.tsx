@@ -1,10 +1,16 @@
 import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataQualityNotice } from "@/features/analysis/results/data-quality-notice";
-import { ScreenshotLightbox } from "@/features/analysis/results/screenshot-lightbox";
-import type { LeadResults as LeadResultsType, LeadWebsiteResult } from "@/types/lead";
+import { leadApi } from "@/features/lead/api";
+import type { LeadReportStatus, LeadResults as LeadResultsType, LeadWebsiteResult } from "@/types/lead";
 
-const PRIORITY_LABELS: Record<string, string> = { high: "優先度: 高", medium: "優先度: 中", low: "優先度: 低" };
+const PRIORITY_LABELS: Record<string, string> = {
+  critical: "優先度: 緊急",
+  high: "優先度: 高",
+  medium: "優先度: 中",
+  low: "優先度: 低",
+};
 
 function WebsiteResultCard({ website }: { website: LeadWebsiteResult }) {
   return (
@@ -43,30 +49,43 @@ function WebsiteResultCard({ website }: { website: LeadWebsiteResult }) {
             </ul>
           </div>
         )}
-
-        {website.screenshots.length > 0 && (
-          <div className="grid grid-cols-2 gap-2">
-            {website.screenshots.map((s) => (
-              <ScreenshotLightbox
-                key={s.device}
-                src={s.url}
-                alt={`${website.website_name ?? ""}(${s.device === "desktop" ? "PC" : "モバイル"})`}
-                trigger={
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={s.url}
-                    alt={`${website.website_name ?? ""}(${s.device === "desktop" ? "PC" : "モバイル"})`}
-                    loading="lazy"
-                    className="w-full rounded-md border object-contain"
-                    style={{ maxHeight: 200 }}
-                  />
-                }
-              />
-            ))}
-          </div>
-        )}
       </CardContent>
     </Card>
+  );
+}
+
+const REPORT_LABELS: Record<"docx" | "pdf", string> = { docx: "Wordでダウンロード", pdf: "PDFでダウンロード" };
+
+function ReportDownloadButton({
+  token,
+  analysisId,
+  format,
+  status,
+}: {
+  token: string;
+  analysisId: number;
+  format: "docx" | "pdf";
+  status: LeadReportStatus;
+}) {
+  if (status === "unavailable") {
+    return null;
+  }
+
+  if (status === "processing") {
+    return (
+      <Button variant="outline" disabled>
+        {REPORT_LABELS[format]}(準備中…)
+      </Button>
+    );
+  }
+
+  // Base UIのButtonはリンク(<a>)をrenderで差し替える用途を想定していない
+  // (公式ドキュメントで非推奨)ため、ボタンの見た目だけをbuttonVariantsで
+  // <a>へ直接適用する。
+  return (
+    <a href={leadApi.reportDownloadUrl(token, analysisId, format)} className={buttonVariants({ variant: "outline" })}>
+      {REPORT_LABELS[format]}
+    </a>
   );
 }
 
@@ -77,7 +96,15 @@ function WebsiteResultCard({ website }: { website: LeadWebsiteResult }) {
  * 警告を消さない)は既存のDataQualityNoticeをそのまま再利用することで
  * 自動的に担保される。
  */
-export function LeadResults({ results }: { results: LeadResultsType }) {
+export function LeadResults({
+  results,
+  token,
+  analysisId,
+}: {
+  results: LeadResultsType;
+  token: string;
+  analysisId: number;
+}) {
   return (
     <div className="space-y-4">
       {results.status === "partial" && (
@@ -88,6 +115,10 @@ export function LeadResults({ results }: { results: LeadResultsType }) {
       {results.websites.map((website, i) => (
         <WebsiteResultCard key={i} website={website} />
       ))}
+      <div className="flex flex-wrap gap-2">
+        <ReportDownloadButton token={token} analysisId={analysisId} format="docx" status={results.reports.docx} />
+        <ReportDownloadButton token={token} analysisId={analysisId} format="pdf" status={results.reports.pdf} />
+      </div>
     </div>
   );
 }
