@@ -24,6 +24,19 @@ class Project extends Model
     }
 
     /**
+     * nullの場合は社内ユーザーが通常操作で作成したProject。非nullの場合、
+     * リード獲得フォーム経由でLeadSessionServiceが内部生成したProjectであり、
+     * 社内画面の一覧には出さない(既存コントローラのuser_idスコープにより、
+     * 専用のsentinelユーザーが所有する分だけで自然に除外される)。
+     *
+     * @return BelongsTo<LeadSession, $this>
+     */
+    public function leadSession(): BelongsTo
+    {
+        return $this->belongsTo(LeadSession::class);
+    }
+
+    /**
      * @return HasMany<Website, $this>
      */
     public function websites(): HasMany

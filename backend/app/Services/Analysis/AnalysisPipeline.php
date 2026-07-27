@@ -39,7 +39,9 @@ class AnalysisPipeline
      */
     public function registerWebsiteJobPlaceholders(WebsiteAnalysis $websiteAnalysis): void
     {
-        foreach (JobType::websiteLevelTypes() as $jobType) {
+        $jobTypes = $this->excludeLighthouseIfSkipped(JobType::websiteLevelTypes(), $websiteAnalysis->analysis);
+
+        foreach ($jobTypes as $jobType) {
             AnalysisJobRecord::query()->firstOrCreate(
                 [
                     'analysis_id' => $websiteAnalysis->analysis_id,
@@ -107,13 +109,32 @@ class AnalysisPipeline
      */
     public function dispatchNextAnalyzerJob(int $analysisId, int $websiteAnalysisId, JobType $justCompleted): void
     {
-        $index = array_search($justCompleted, self::ANALYZER_CHAIN, true);
+        $chain = $this->excludeLighthouseIfSkipped(self::ANALYZER_CHAIN, Analysis::find($analysisId));
 
-        if ($index === false || ! isset(self::ANALYZER_CHAIN[$index + 1])) {
+        $index = array_search($justCompleted, $chain, true);
+
+        if ($index === false || ! isset($chain[$index + 1])) {
             return;
         }
 
-        $this->dispatchAnalyzerChainJob($analysisId, $websiteAnalysisId, self::ANALYZER_CHAIN[$index + 1]);
+        $this->dispatchAnalyzerChainJob($analysisId, $websiteAnalysisId, $chain[$index + 1]);
+    }
+
+    /**
+     * リード向け簡易分析(Analysis.skip_lighthouse=true)では、Analyzerの
+     * 単一Workerを長時間(最大360秒)占有するLighthouseを省略する。既定は
+     * false(社内向けフル機能は常にこの値のままであり、挙動は一切変わらない)。
+     *
+     * @param  list<JobType>  $jobTypes
+     * @return list<JobType>
+     */
+    private function excludeLighthouseIfSkipped(array $jobTypes, ?Analysis $analysis): array
+    {
+        if ($analysis?->skip_lighthouse !== true) {
+            return $jobTypes;
+        }
+
+        return array_values(array_filter($jobTypes, fn (JobType $type) => $type !== JobType::RunLighthouse));
     }
 
     private function dispatchAnalyzerChainJob(int $analysisId, int $websiteAnalysisId, JobType $jobType): void
@@ -265,7 +286,7 @@ class AnalysisPipeline
             return;
         }
 
-        $requiredTypes = JobType::websiteFanOutTypes();
+        $requiredTypes = $this->excludeLighthouseIfSkipped(JobType::websiteFanOutTypes(), $websiteAnalysis->analysis);
 
         $jobs = AnalysisJobRecord::query()
             ->where('website_analysis_id', $websiteAnalysisId)

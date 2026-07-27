@@ -172,6 +172,52 @@ docker compose exec backend php artisan analysis:purge-mock-data --execute --inc
 
 production環境では`--execute`は常に拒否されます。
 
+## リード向けセルフ診断機能
+
+営業リード(メルマガ経由の未ログインユーザー)が、社内向けフル機能とは別の
+制限付きモードでサイト診断を体験できる機能。採点エンジン・分析パイプライン・
+URL検証(SSRF対策)は社内向け機能と完全に共用し、リード向けに緩めることはない。
+
+- **リードの識別**: `lead_sessions`テーブルで完全に別管理する(ログイン概念を
+  持たせない)。Project/Websiteは固定の「lead-service」sentinelユーザーが所有し、
+  `projects.lead_session_id`で紐付ける。既存の`ProjectPolicy`等はuser_idの一致
+  のみを見るため無変更で、社内ユーザーの一覧に混ざることもない。
+- **認可**: `auth:sanctum`とは完全に独立した`lead.token`ミドルウェア
+  (ハッシュ化して保存したワンタイムトークンを検証)。PolicyやGateは使わない。
+- **公開API**: `POST /api/lead/onboarding`(フォーム受付)、
+  `POST /api/lead/analyses`・`GET /api/lead/analyses/{id}/progress`・
+  `GET /api/lead/analyses/{id}/results`(いずれも`lead.token`配下)。
+  すべて`RateLimiter::for('lead-*')`でIP単位のレート制限を掛けている。
+- **公開画面**: `frontend/src/app/(lead)/lead/start`(フォーム)、
+  `frontend/src/app/(lead)/lead/diagnose`(URL入力→進捗→簡易結果)。
+  既存の`(app)`/`(guest)`とは独立したroute groupで、RequireAuth/RequireGuestは使わない。
+- **Lighthouse省略**: リード向け分析は`analyses.skip_lighthouse=true`で
+  `AnalysisPipeline`のAnalyzerChainから`RunLighthouse`のみを除外する
+  (実測: 含めると2サイトで約72-79秒、省略すると約53秒。単一Workerを長時間
+  占有するLighthouseを避けることで、Analyzerの同時実行数1という制約下でも
+  他の処理への影響を抑える)。内部向けフル機能は常に`skip_lighthouse=false`で
+  挙動は一切変わらない。
+- **保持期間**: `lead_sessions`とその配下のProject一式(Website/Analysis等は
+  カスケード削除)を、有効期限切れから一定日数後に削除する。
+
+```bash
+docker compose exec backend php artisan lead:purge-expired-sessions                 # dry-run(既定、何も削除しない)
+docker compose exec backend php artisan lead:purge-expired-sessions --execute       # 確認プロンプト付きで削除
+```
+
+production環境では`--execute`は常に拒否されます。
+
+関連する環境変数(`backend/.env.example`参照): `LEAD_MAX_WEBSITES`(既定2件、
+社内向けの`max_websites_per_analysis`=5件とは独立)、`LEAD_TOKEN_EXPIRY_DAYS`
+(既定7日)、`LEAD_MAX_ANALYSES_PER_TOKEN`(既定1回)、
+`LEAD_MAX_CONCURRENT_ANALYSES`(既定1件、Analyzerの同時実行数を踏まえた
+混雑判定用)、`LEAD_SKIP_LIGHTHOUSE`(既定true)、
+`LEAD_RETENTION_DAYS_AFTER_EXPIRY`(既定180日)。いずれも未設定でも安全な
+既定値で動作するため必須ではない。
+
+現時点(第1弾)ではリード獲得〜簡易結果表示までを実装済み。Word/PDFレポート
+出力、および3〜5社比較の相談申込フォーム・社内通知は未実装(今後の弾で追加予定)。
+
 ## 開発時のホットリロード
 
 - frontend: `next dev --webpack` をbind mountで実行。コード変更は即座に反映される。

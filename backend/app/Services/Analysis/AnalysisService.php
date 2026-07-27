@@ -14,7 +14,7 @@ use Illuminate\Validation\ValidationException;
 class AnalysisService
 {
     /**
-     * @param  array{website_ids?: array<int, int>}  $data
+     * @param  array{website_ids?: array<int, int>, max_websites?: int, skip_lighthouse?: bool}  $data
      */
     public function start(Project $project, array $data, User $user): Analysis
     {
@@ -39,6 +39,10 @@ class AnalysisService
                 'created_by' => $user->id,
                 'status' => AnalysisStatus::Pending,
                 'progress' => 0,
+                // リード向け簡易分析(LeadAnalysisController)のみtrueを渡す。
+                // 社内向けの既存呼び出し元はこのキーを渡さないため常にfalseで、
+                // AnalysisPipelineの挙動は一切変わらない。
+                'skip_lighthouse' => (bool) ($data['skip_lighthouse'] ?? false),
             ]);
 
             foreach ($websites as $website) {
@@ -56,12 +60,12 @@ class AnalysisService
     }
 
     /**
-     * @param  array{website_ids?: array<int, int>}  $data
+     * @param  array{website_ids?: array<int, int>, max_websites?: int}  $data
      * @return \Illuminate\Support\Collection<int, \App\Models\Website>
      */
     private function resolveTargetWebsites(Project $project, array $data): \Illuminate\Support\Collection
     {
-        $maxWebsites = (int) config('analysis.max_websites_per_analysis');
+        $maxWebsites = (int) ($data['max_websites'] ?? config('analysis.max_websites_per_analysis'));
 
         if (isset($data['website_ids']) && $data['website_ids'] !== []) {
             $requestedIds = array_values(array_unique($data['website_ids']));

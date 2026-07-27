@@ -2,6 +2,7 @@
 
 use App\Exceptions\Analysis\AnalysisAlreadyRunningException;
 use App\Http\Middleware\AssignRequestId;
+use App\Http\Middleware\ResolveLeadToken;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -23,6 +24,9 @@ return Application::configure(basePath: dirname(__DIR__))
         // 全APIリクエストにリクエストID(UUID)を付与する(X-Request-Idレスポンスヘッダー
         // として返す。frontend側で読めるようconfig/cors.phpのexposed_headersにも追加済み)。
         $middleware->api(prepend: [AssignRequestId::class]);
+        $middleware->alias([
+            'lead.token' => ResolveLeadToken::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

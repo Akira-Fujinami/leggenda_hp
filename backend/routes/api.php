@@ -4,6 +4,8 @@ use App\Http\Controllers\Api\AiAnalysisController;
 use App\Http\Controllers\Api\AnalysisController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\HealthController;
+use App\Http\Controllers\Api\Lead\LeadAnalysisController;
+use App\Http\Controllers\Api\Lead\LeadOnboardingController;
 use App\Http\Controllers\Api\ProjectController;
 use App\Http\Controllers\Api\RecommendationController;
 use App\Http\Controllers\Api\WebsiteController;
@@ -13,6 +15,25 @@ Route::get('/health', HealthController::class);
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
+
+// リード向けセルフ診断(未ログインの公開エンドポイント)。auth:sanctumとは
+// 完全に独立し、認可はlead.tokenミドルウェア(ワンタイムトークン検証)のみで行う。
+Route::prefix('lead')->group(function () {
+    Route::post('/onboarding', [LeadOnboardingController::class, 'store'])
+        ->middleware('throttle:lead-onboarding');
+
+    Route::middleware('lead.token')->group(function () {
+        Route::post('/analyses', [LeadAnalysisController::class, 'store'])
+            ->middleware('throttle:lead-analysis-start');
+        Route::get('/analyses/{analysis}/progress', [LeadAnalysisController::class, 'progress'])
+            ->middleware('throttle:lead-analysis-poll');
+        Route::get('/analyses/{analysis}/results', [LeadAnalysisController::class, 'results'])
+            ->middleware('throttle:lead-analysis-poll');
+        Route::get('/website-analyses/{websiteAnalysis}/screenshots/{device}', [LeadAnalysisController::class, 'screenshot'])
+            ->middleware('throttle:lead-analysis-poll')
+            ->name('lead.analyses.screenshot');
+    });
+});
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
