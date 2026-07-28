@@ -95,7 +95,14 @@ class ReportViewModelBuilderTest extends TestCase
         $this->assertNotNull($viewModel->comparisonSentence);
     }
 
-    public function test_a_category_disabled_by_skipping_lighthouse_is_labelled_not_measured(): void
+    /**
+     * Phase 3: 内部の7カテゴリ別内訳(旧categoryBreakdown、
+     * CategoryAvailabilityClassifierによる計測対象外/評価不可判定)は
+     * 採用担当向けの4観点(perspectives)へ置き換わった。同等の
+     * 計測対象外/評価不可の書き分けは、観点①(採用ページ)について
+     * LeadPerspectiveComposerTest側でカバーする。
+     */
+    public function test_view_model_exposes_four_lead_perspectives_instead_of_internal_categories(): void
     {
         $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
         $project = new Project(['name' => 'テスト']);
@@ -103,19 +110,16 @@ class ReportViewModelBuilderTest extends TestCase
         $project->lead_session_id = $leadSession->id;
         $project->save();
 
-        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed, 'skip_lighthouse' => true]);
-        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
-
-        // accessibilityカテゴリは全指標がlighthouse由来という前提を再現する
-        // (実際のMetricDefinitionSeederと同様、1指標のみで構成)。
-        MetricDefinition::factory()->create(['category_key' => 'accessibility', 'source_type' => 'lighthouse', 'key' => 'lighthouse_accessibility', 'weight' => 10]);
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $this->makeWebsiteAnalysis($analysis, isPrimary: true);
 
         $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
 
-        $accessibilityRow = collect($viewModel->categoryBreakdown)->firstWhere('key', 'accessibility');
-
-        $this->assertNotNull($accessibilityRow);
-        $this->assertSame('not_measured', $accessibilityRow->availability);
+        $this->assertCount(4, $viewModel->perspectives);
+        $this->assertEqualsCanonicalizing(
+            ['completeness', 'clarity', 'findability', 'usability'],
+            array_column($viewModel->perspectives, 'key'),
+        );
     }
 
     public function test_top_recommendations_are_sorted_by_sort_score_and_capped_at_five_with_correct_labels(): void
@@ -162,6 +166,6 @@ class ReportViewModelBuilderTest extends TestCase
         $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
 
         $this->assertTrue($viewModel->isPartial);
-        $this->assertNotEmpty($viewModel->categoryBreakdown);
+        $this->assertNotEmpty($viewModel->perspectives);
     }
 }

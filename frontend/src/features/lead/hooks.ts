@@ -18,6 +18,12 @@ export function useStartLeadAnalysis(token: string) {
   });
 }
 
+export function useRequestConsultation(token: string, analysisId: number) {
+  return useMutation({
+    mutationFn: () => leadApi.requestConsultation(token, analysisId),
+  });
+}
+
 export function useLeadProgress(token: string, analysisId: number | null) {
   return useQuery({
     queryKey: ["lead", "progress", token, analysisId],

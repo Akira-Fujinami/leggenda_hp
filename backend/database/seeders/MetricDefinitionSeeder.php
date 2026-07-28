@@ -145,6 +145,21 @@ class MetricDefinitionSeeder extends Seeder
             // プラン・予約カードの有無を情報表示する(旅行・EC系サイトのように
             // 固定料金ページが無くても価格表示のある業態を正しく評価するため)。
             ['key' => 'pricing_card_or_product_price_present', 'name' => '価格付き商品・プラン', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 65],
+            // Phase 3: 採用ページ(トップページのbusiness_links.recruitから検出した
+            // URLを取得・解析した結果)向けの情報表示専用項目。採点体系(配点・
+            // カテゴリ)は一切変更しないため、既存のホームページ向け項目と同じ
+            // 判定ロジック(HtmlSeoAnalyzer)を採用ページのHTMLに対して実行するが、
+            // 記録先は別のmetric_definition(このため既存項目とkeyを分ける)。
+            // 採用ページが見つからない場合はこれらの行自体が記録されない
+            // (MetricResultが無いこと自体で「計測対象外」をレポート側が判定する)。
+            ['key' => 'recruit_title_present', 'name' => '採用ページのtitleタグ', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 200],
+            ['key' => 'recruit_meta_description_present', 'name' => '採用ページのmeta description', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 210],
+            ['key' => 'recruit_h1_single', 'name' => '採用ページのH1タグ(1件)', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 220],
+            ['key' => 'recruit_heading_structure_present', 'name' => '採用ページの見出し構造', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 230],
+            ['key' => 'recruit_word_count_sufficient', 'name' => '採用ページの本文の文字数', 'value_type' => 'number', 'unit' => 'characters', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 240],
+            ['key' => 'recruit_internal_link_sufficient', 'name' => '採用ページの内部リンク数', 'value_type' => 'number', 'unit' => 'links', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 250],
+            ['key' => 'recruit_faq_link_present', 'name' => '採用ページのFAQ/よくある質問リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 260],
+            ['key' => 'recruit_company_info_link_present', 'name' => '採用ページの会社概要リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 270],
         ];
     }
 
@@ -160,6 +175,8 @@ class MetricDefinitionSeeder extends Seeder
             // リクエスト数・転送量は「多い/少ない」自体を機械的に採点せず、参考情報として表示する。
             ['key' => 'lighthouse_request_count', 'name' => 'リクエスト数', 'value_type' => 'number', 'unit' => 'requests', 'source_type' => 'lighthouse', 'scoring_type' => 'not_scored', 'points' => 0, 'higher_is_better' => false, 'display_order' => 70],
             ['key' => 'lighthouse_transfer_size', 'name' => '転送量', 'value_type' => 'number', 'unit' => 'bytes', 'source_type' => 'lighthouse', 'scoring_type' => 'not_scored', 'points' => 0, 'higher_is_better' => false, 'display_order' => 80],
+            // Phase 3: 採用ページ向けの情報表示専用項目(採点体系は変更しない)。
+            ['key' => 'recruit_lighthouse_performance', 'name' => '採用ページのLighthouse Performance', 'value_type' => 'score', 'unit' => 'pt', 'source_type' => 'lighthouse', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 90],
         ];
     }
 
@@ -171,6 +188,14 @@ class MetricDefinitionSeeder extends Seeder
             ['key' => 'a11y_form_label_present', 'name' => 'form label', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 1, 'not_found_policy' => 'exclude', 'display_order' => 30, 'recommendation_template' => 'フォーム項目にlabelを関連付けてください。'],
             ['key' => 'a11y_button_name_present', 'name' => 'button名前', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 1, 'not_found_policy' => 'exclude', 'display_order' => 40, 'recommendation_template' => 'ボタンに分かりやすいテキスト/aria-labelを設定してください。'],
             ['key' => 'a11y_heading_order_ok', 'name' => '見出し順序', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'boolean', 'points' => 1, 'not_found_policy' => 'exclude', 'display_order' => 50, 'recommendation_template' => '見出しレベル(H1→H2→H3)の順序を整えてください。'],
+            // Phase 3: 採用ページ向けの情報表示専用項目(採点体系は変更しない)。
+            // contentMetrics()冒頭のコメントを参照。
+            ['key' => 'recruit_viewport_present', 'name' => '採用ページのviewport', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 200],
+            ['key' => 'recruit_a11y_lang_present', 'name' => '採用ページのlang属性', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 210],
+            ['key' => 'recruit_a11y_form_label_present', 'name' => '採用ページのform label', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 220],
+            ['key' => 'recruit_a11y_button_name_present', 'name' => '採用ページのbutton名前', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 230],
+            ['key' => 'recruit_a11y_heading_order_ok', 'name' => '採用ページの見出し順序', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 240],
+            ['key' => 'recruit_lighthouse_accessibility', 'name' => '採用ページのLighthouse Accessibility', 'value_type' => 'score', 'unit' => 'pt', 'source_type' => 'lighthouse', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 250],
         ];
     }
 
@@ -208,6 +233,12 @@ class MetricDefinitionSeeder extends Seeder
             // 予約手段(自社フォームか外部予約サービスか)は事業内容によって優劣がつくものではないため採点対象外。
             ['key' => 'external_reservation_service_detected', 'name' => '外部予約サービス利用', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 100],
             ['key' => 'recruit_link_present', 'name' => '採用情報リンク', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 110],
+            // Phase 3: 採用ページ自体(トップページのrecruit_link_presentが指す
+            // 先のページ)向けの情報表示専用項目。トップページの導線ではなく、
+            // 採用ページ内の問い合わせ手段の有無を確認する。
+            ['key' => 'recruit_contact_cta_present', 'name' => '採用ページの問い合わせ導線', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 200],
+            ['key' => 'recruit_tel_or_mailto_present', 'name' => '採用ページの電話/メール導線', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 210],
+            ['key' => 'recruit_form_present', 'name' => '採用ページのフォーム有無', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 220],
             // チャットサポートの有無は事業内容によって優劣がつくものではないため採点対象外。
             ['key' => 'chatbot_detected', 'name' => 'チャットサポート', 'value_type' => 'boolean', 'source_type' => 'static_html', 'scoring_type' => 'not_scored', 'points' => 0, 'display_order' => 115],
             // ページ全体のフォーム数・入力項目総数・代表フォーム自体の項目数は、

@@ -56,6 +56,7 @@ class AnalyzerDrivenJobsTest extends TestCase
     public function test_lighthouse_job_records_scores_and_stores_raw_report(): void
     {
         Http::fake([
+            '*/health' => Http::response(['success' => true, 'data' => ['active_contexts' => 0]], 200),
             '*/analyze/lighthouse' => Http::response([
                 'success' => true,
                 'data' => [
@@ -96,6 +97,7 @@ class AnalyzerDrivenJobsTest extends TestCase
     public function test_lighthouse_job_leaves_missing_metrics_unavailable_not_zero(): void
     {
         Http::fake([
+            '*/health' => Http::response(['success' => true, 'data' => ['active_contexts' => 0]], 200),
             '*/analyze/lighthouse' => Http::response([
                 'success' => true,
                 'data' => ['scores' => ['performance' => null], 'metrics' => []],
@@ -413,6 +415,7 @@ class AnalyzerDrivenJobsTest extends TestCase
     public function test_analyzer_unavailable_marks_job_failed(): void
     {
         Http::fake([
+            '*/health' => Http::response(['success' => true, 'data' => ['active_contexts' => 0]], 200),
             '*/analyze/lighthouse' => Http::response([], 503),
         ]);
 

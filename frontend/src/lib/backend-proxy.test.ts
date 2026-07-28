@@ -280,6 +280,37 @@ describe("proxyToBackend", () => {
     expect(setCookies[1]).not.toMatch(/domain=/i);
   });
 
+  it("strips client-supplied X-Forwarded-For/Forwarded/X-Real-IP headers instead of forwarding them unverified", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = req("https://frontend.example.com/backend/api/projects", {
+      method: "GET",
+      headers: {
+        "X-Forwarded-For": "1.2.3.4",
+        "X-Forwarded-Host": "evil.example",
+        "X-Forwarded-Proto": "https",
+        Forwarded: "for=1.2.3.4",
+        "X-Real-IP": "1.2.3.4",
+      },
+    });
+
+    await proxyToBackend(request, "GET", ["api", "projects"]);
+
+    const [, init] = fetchMock.mock.calls[0];
+    const sentHeaders = init.headers as Headers;
+    // trustProxiesが未設定の間は、これらのヘッダーをそのまま転送すると
+    // 誰でも任意のIPを名乗れてしまう(bootstrap/app.phpのコメント参照)。
+    // 転送しないこと自体がなりすまし対策であり、実IP伝播の代替にはならない。
+    expect(sentHeaders.has("X-Forwarded-For")).toBe(false);
+    expect(sentHeaders.has("X-Forwarded-Host")).toBe(false);
+    expect(sentHeaders.has("X-Forwarded-Proto")).toBe(false);
+    expect(sentHeaders.has("Forwarded")).toBe(false);
+    expect(sentHeaders.has("X-Real-IP")).toBe(false);
+  });
+
   it("returns 400 and never calls fetch for a path-traversal segment", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

@@ -67,6 +67,7 @@ class RunLighthouseTimeoutTest extends TestCase
     public function test_analyzer_http_timeout_marks_the_job_failed_instead_of_leaving_it_running(): void
     {
         Http::fake([
+            '*/health' => Http::response(['success' => true, 'data' => ['active_contexts' => 0]], 200),
             '*/analyze/lighthouse' => function () {
                 throw new ConnectionException('cURL error 28: Operation timed out after 330001 milliseconds');
             },
@@ -91,6 +92,7 @@ class RunLighthouseTimeoutTest extends TestCase
         $this->seed(MetricDefinitionSeeder::class);
 
         Http::fake([
+            '*/health' => Http::response(['success' => true, 'data' => ['active_contexts' => 0]], 200),
             '*/analyze/lighthouse' => function () {
                 throw new ConnectionException('cURL error 28: Operation timed out after 330001 milliseconds');
             },

@@ -114,6 +114,41 @@
         color: #666;
         margin-top: 24px;
     }
+    .perspective {
+        margin-bottom: 20px;
+    }
+    .perspective h3 {
+        font-size: 13pt;
+        margin-bottom: 4px;
+    }
+    .perspective-status {
+        display: inline-block;
+        font-weight: bold;
+        padding: 2px 10px;
+        border-radius: 4px;
+        font-size: 10pt;
+        margin-bottom: 6px;
+    }
+    .perspective-status.good { background-color: #e6f4ea; color: #1e7e34; }
+    .perspective-status.needs_review { background-color: #fff8e1; color: #8a6d00; }
+    .perspective-status.needs_improvement { background-color: #fdecea; color: #b3261e; }
+    .perspective-status.not_measured,
+    .perspective-status.not_applicable,
+    .perspective-status.not_detected,
+    .perspective-status.unavailable { background-color: #eeeeee; color: #555555; }
+    .perspective-note {
+        font-size: 9pt;
+        color: #666;
+        margin: 4px 0;
+    }
+    .perspective-items {
+        margin: 6px 0 0 0;
+        padding-left: 18px;
+    }
+    .perspective-items li {
+        font-size: 10pt;
+        margin-bottom: 3px;
+    }
 </style>
 </head>
 <body>
@@ -133,8 +168,9 @@
 
 <div class="page">
     <h2>総合結果</h2>
+    <p class="footnote" style="margin-top: 0;">採用サイトとして重要な4観点での評価(社内版の点数とは別建てです)</p>
     <p class="score-headline">
-        {{ $viewModel->selfScore['display_score'] }}点 <span style="font-size: 12pt; font-weight: normal;">/ 100点</span>
+        {{ $viewModel->selfScore['display_score'] }}点 <span style="font-size: 12pt; font-weight: normal;">/ {{ (int) round($viewModel->selfScore['configured_max_score']) }}点</span>
         @if ($viewModel->selfScore['coverage_rate'] < 70)
             <span class="reference-badge">参考スコア</span>
         @endif
@@ -147,49 +183,28 @@
 </div>
 
 <div class="page">
-    <h2>カテゴリ別スコア</h2>
-    <table>
-        <colgroup>
-            <col style="width: 16%;">
-            <col style="width: 38%;">
-            <col style="width: 14%;">
-            <col style="width: 32%;">
-        </colgroup>
-        <thead>
-        <tr>
-            <th>カテゴリ</th>
-            <th>説明</th>
-            <th>スコア</th>
-            <th>カバー率</th>
-        </tr>
-        </thead>
-        <tbody>
-        @foreach ($viewModel->categoryBreakdown as $category)
-            <tr>
-                <td>{{ $category->name }}</td>
-                <td>{{ $category->description }}</td>
-                <td>
-                    @if ($category->availability === 'not_measured')
-                        計測対象外
-                    @elseif ($category->availability === 'unavailable')
-                        評価不可
-                    @else
-                        {{ $category->score }} / {{ $category->configuredMaxScore }}
-                    @endif
-                </td>
-                <td>
-                    @if ($category->availability === 'not_measured')
-                        今回の診断では計測していません
-                    @elseif ($category->availability === 'unavailable')
-                        データを取得できませんでした
-                    @else
-                        {{ number_format($category->coverageRate, 2) }}%
-                    @endif
-                </td>
-            </tr>
-        @endforeach
-        </tbody>
-    </table>
+    <h2>採用担当の視点で見た診断結果</h2>
+    @foreach ($viewModel->perspectives as $perspective)
+        <div class="perspective">
+            <h3>{{ $perspective['heading'] }}</h3>
+            <span class="perspective-status {{ $perspective['status'] }}">
+                {{ \App\Services\Lead\LeadPerspectiveComposer::statusLabel($perspective['status']) }}
+            </span>
+            @if (!empty($perspective['note']))
+                <p class="perspective-note">{{ $perspective['note'] }}</p>
+            @endif
+            @if (!empty($perspective['summary']))
+                <p>{{ $perspective['summary'] }}</p>
+            @endif
+            @if (!empty($perspective['items']))
+                <ul class="perspective-items">
+                    @foreach ($perspective['items'] as $item)
+                        <li>{{ $item['label'] }}: {{ \App\Services\Lead\LeadPerspectiveComposer::statusLabel($item['status']) }}</li>
+                    @endforeach
+                </ul>
+            @endif
+        </div>
+    @endforeach
 </div>
 
 <div class="page">

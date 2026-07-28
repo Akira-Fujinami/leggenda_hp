@@ -6,6 +6,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LeadAnalysisForm } from "@/features/lead/lead-analysis-form";
 import { useLeadProgress, useLeadResults } from "@/features/lead/hooks";
+import { isLeadTokenError, LeadTokenError } from "@/features/lead/lead-token-error";
 import { LeadProgress } from "@/features/lead/lead-progress";
 import { LeadResults } from "@/features/lead/lead-results";
 
@@ -39,11 +40,7 @@ function LeadDiagnoseContent() {
   };
 
   if (!token) {
-    return (
-      <Alert variant="destructive">
-        <AlertDescription>診断用のリンクが無効です。もう一度フォームからお申し込みください。</AlertDescription>
-      </Alert>
-    );
+    return <LeadTokenError />;
   }
 
   if (analysisId === null) {
@@ -68,6 +65,10 @@ function DiagnoseResult({ token, analysisId }: { token: string; analysisId: numb
   }
 
   if (progressQuery.isError || !progressQuery.data) {
+    if (isLeadTokenError(progressQuery.error)) {
+      return <LeadTokenError />;
+    }
+
     return (
       <Alert variant="destructive">
         <AlertDescription>状況の取得に失敗しました。しばらくしてからページを再読み込みしてください。</AlertDescription>
@@ -96,12 +97,6 @@ function DiagnoseResult({ token, analysisId }: { token: string; analysisId: numb
   return (
     <div className="space-y-6">
       <LeadResults results={resultsQuery.data.data} token={token} analysisId={analysisId} />
-      <div className="rounded-md border p-4 text-center">
-        <p className="font-medium">もっと他社と比較したい場合はご相談ください</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          比較したいサイトを3〜5社お知らせいただければ、後日担当より結果をご説明します。
-        </p>
-      </div>
     </div>
   );
 }

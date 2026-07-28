@@ -42,5 +42,22 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('lead-analysis-poll', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());
         });
+
+        // 2026-07-28時点でtrustProxiesを設定していないため、IPベースの制限は
+        // RenderのロードバランサーのIPに集約されて事実上機能しない
+        // (全リードが同一IP扱いになる)。加えてbootstrap/app.php参照のとおり、
+        // 仮にtrustProxiesを設定してもfrontend側がX-Forwarded-Forを転送
+        // していないため実IPは得られない。したがって、この後に追加する
+        // 新規の未認証エンドポイント(相談ボタン等)は、IPではなく
+        // lead.tokenミドルウェアが解決済みのLeadSession単位で制限する
+        // ―― こちらは偽装できない(トークン自体がハッシュ照合済みの
+        // 認可情報のため)。lead.tokenはこのミドルウェアより必ず先に
+        // 実行されるルート構成が前提。
+        RateLimiter::for('lead-consultation', function (Request $request) {
+            $leadSession = $request->attributes->get('leadSession');
+            $key = $leadSession?->id ?? $request->ip();
+
+            return Limit::perMinute(3)->by((string) $key);
+        });
     }
 }

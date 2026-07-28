@@ -8,19 +8,21 @@ use App\Enums\ReportGenerationStatus;
 use App\Http\Controllers\Controller;
 use App\Jobs\Report\GenerateLeadReportJob;
 use App\Models\Analysis;
-use App\Models\CategoryDefinition;
 use App\Models\LeadSession;
 use App\Models\MetricDefinition;
 use App\Models\Project;
 use App\Models\Report;
 use App\Services\Analysis\AnalysisService;
+use App\Services\Lead\LeadNotificationService;
+use App\Services\Lead\LeadPerspectiveComposer;
+use App\Services\Lead\LeadScoreCalculator;
 use App\Services\Lead\LeadSessionService;
-use App\Services\Scoring\OverallScoreCalculator;
 use App\Services\WebsiteService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -39,6 +41,7 @@ class LeadAnalysisController extends Controller
         private readonly LeadSessionService $leadSessions,
         private readonly WebsiteService $websites,
         private readonly AnalysisService $analyses,
+        private readonly LeadNotificationService $notifications,
     ) {}
 
     public function store(Request $request): JsonResponse
@@ -47,6 +50,10 @@ class LeadAnalysisController extends Controller
         $leadSession = $request->attributes->get('leadSession');
 
         if (! $this->leadSessions->canStartAnalysis($leadSession)) {
+            // 「開けない」という問い合わせの原因切り分け用(2026-07-29対応)。
+            // トークン値・会社名等の個人情報は記録しない。
+            Log::info('Lead analysis start rejected: quota exceeded', ['lead_session_id' => $leadSession->id]);
+
             return response()->json([
                 'message' => 'このリンクでの診断は既にご利用いただいております。追加のご相談はお問い合わせフォームからお願いいたします。',
                 'errors' => [],
@@ -91,6 +98,11 @@ class LeadAnalysisController extends Controller
 
         $this->leadSessions->recordAnalysisStarted($leadSession);
 
+        // 通知はnotificationsキュー経由の非同期送信のため、ここでの失敗は
+        // このレスポンス(=リードの診断開始そのもの)に一切影響しない。
+        $rawToken = (string) $request->attributes->get('leadToken');
+        $this->notifications->notifyAnalysisStarted($leadSession, $analysis->id, $rawToken);
+
         return $this->success(['analysis_id' => $analysis->id], [], null, 201);
     }
 
@@ -117,20 +129,30 @@ class LeadAnalysisController extends Controller
             'websiteAnalyses.metricResults.metricDefinition',
         ]);
 
-        $activeCategories = CategoryDefinition::query()->where('is_active', true)->orderBy('display_order')->get();
         $activeDefinitions = MetricDefinition::query()->where('is_active', true)->get();
-        $calculator = app(OverallScoreCalculator::class);
+        $calculator = app(LeadScoreCalculator::class);
+        $perspectiveComposer = app(LeadPerspectiveComposer::class);
 
         return $this->success([
             'status' => $this->leadFacingStatus($analysis->status),
             'reports' => $this->reportStatusPayload($analysis),
-            'websites' => $analysis->websiteAnalyses->map(function ($wa) use ($activeCategories, $activeDefinitions, $calculator) {
-                $score = $calculator->calculate($activeCategories, $activeDefinitions, $wa->metricResults);
+            'websites' => $analysis->websiteAnalyses->map(function ($wa) use ($activeDefinitions, $calculator, $perspectiveComposer) {
+                // 社内版(OverallScoreCalculator、7カテゴリ100点)とは別建ての
+                // リード向け点数 ―― 4観点(LeadMetricCatalog)に表示している
+                // 指標だけを対象に算出するため、画面の4観点表示と数値が
+                // 完全に一致する(2026-07-28のユーザー指摘への対応)。
+                // 社内版のスコアとは満点も内訳も異なるため、商談時に
+                // 混同しないこと。
+                $score = $calculator->calculate($activeDefinitions, $wa->metricResults);
 
                 return [
                     'website_name' => $wa->website?->name,
                     'is_primary' => (bool) $wa->website?->is_primary,
                     'score' => $score->toArray(),
+                    // 採用担当向けの4観点(書くべきこと/メッセージ/導線/見やすさ)。
+                    // 内部の7カテゴリ(technical_seo等)は意図的に含めない
+                    // ―― 採用担当の関心に沿わない情報量を増やさないため。
+                    'perspectives' => $perspectiveComposer->compose($wa->metricResults),
                     // 指標77件の詳細一覧・Job名・エラーコード・内部IDは
                     // 意図的に含めない(社内担当が説明する余地を残すため)。
                     'top_recommendations' => $wa->recommendations
@@ -186,6 +208,61 @@ class LeadAnalysisController extends Controller
         return Storage::disk('analysis')->download($report->storage_path, $filename, [
             'Content-Type' => $formatEnum->contentType(),
         ]);
+    }
+
+    /**
+     * 「もっと他社と比較したい/相談したい」ボタン。二重送信防止は
+     * LeadSessionService::recordConsultationRequested()の条件付きUPDATEに
+     * 一任する(このメソッド自身はread-then-writeの判定を行わない)。
+     * 2回目以降の押下もエラーにはせず、既に送信済みである旨を返す
+     * (ユーザーから見て連打が失敗として見えないようにするため)。
+     */
+    public function requestConsultation(Request $request, Analysis $analysis): JsonResponse
+    {
+        $this->authorizeLeadOwnsAnalysis($request, $analysis);
+
+        /** @var LeadSession $leadSession */
+        $leadSession = $request->attributes->get('leadSession');
+
+        $isFirstRequest = $this->leadSessions->recordConsultationRequested($leadSession);
+
+        if ($isFirstRequest) {
+            $rawToken = (string) $request->attributes->get('leadToken');
+            $this->notifications->notifyConsultationRequested(
+                $leadSession,
+                $analysis->id,
+                $rawToken,
+                $this->scoreSummaryFor($analysis),
+            );
+        }
+
+        return $this->success(['already_requested' => ! $isFirstRequest]);
+    }
+
+    /**
+     * 通知メール本文向けの一文サマリー。LeadScoreCalculator(4観点スコープの
+     * リード向けスコア)を再利用し、社内版のOverallScoreCalculatorには
+     * 一切触れない。
+     */
+    private function scoreSummaryFor(Analysis $analysis): string
+    {
+        $analysis->loadMissing(['websiteAnalyses.website', 'websiteAnalyses.metricResults.metricDefinition']);
+
+        $selfWebsiteAnalysis = $analysis->websiteAnalyses->first(fn ($wa) => (bool) $wa->website?->is_primary);
+
+        if ($selfWebsiteAnalysis === null) {
+            return '(診断結果を取得できませんでした)';
+        }
+
+        $activeDefinitions = MetricDefinition::query()->where('is_active', true)->get();
+        $score = app(LeadScoreCalculator::class)->calculate($activeDefinitions, $selfWebsiteAnalysis->metricResults);
+
+        return sprintf(
+            '%d点 / %d点(測定カバー率%s%%)',
+            $score->displayScore,
+            (int) round($score->configuredMaxScore),
+            number_format($score->coverageRate, 1),
+        );
     }
 
     /**

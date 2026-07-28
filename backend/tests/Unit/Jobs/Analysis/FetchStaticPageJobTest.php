@@ -38,8 +38,12 @@ class FetchStaticPageJobTest extends TestCase
     public function test_successful_fetch_stores_html_and_updates_website_analysis(): void
     {
         Queue::fake([AnalyzeHtmlSeoJob::class]);
+        // SafeHttpFetcherはwebsite.normalized_url("https://example.com"、末尾
+        // スラッシュなし)をそのままリクエストするため、fakeのキーもそれに
+        // 正確に一致させる(末尾スラッシュ付きのパターンは一致せず、意図せず
+        // 実ネットワークへ素通りしてしまう)。
         Http::fake([
-            'https://example.com/' => Http::response('<html><title>t</title></html>', 200, ['Content-Type' => 'text/html']),
+            'https://example.com' => Http::response('<html><title>t</title></html>', 200, ['Content-Type' => 'text/html']),
         ]);
 
         $websiteAnalysis = $this->makeWebsiteAnalysis();
@@ -131,7 +135,7 @@ class FetchStaticPageJobTest extends TestCase
     {
         Queue::fake([AnalyzeHtmlSeoJob::class]);
         Http::fake([
-            'https://example.com/' => Http::response('<html></html>', 200, ['Content-Type' => 'text/html']),
+            'https://example.com' => Http::response('<html></html>', 200, ['Content-Type' => 'text/html']),
         ]);
 
         $websiteAnalysis = $this->makeWebsiteAnalysis();
@@ -152,7 +156,7 @@ class FetchStaticPageJobTest extends TestCase
     {
         Queue::fake([AnalyzeHtmlSeoJob::class]);
         Http::fake([
-            'https://example.com/' => Http::response('<html></html>', 200, ['Content-Type' => 'text/html']),
+            'https://example.com' => Http::response('<html></html>', 200, ['Content-Type' => 'text/html']),
         ]);
 
         $websiteAnalysis = $this->makeWebsiteAnalysis();

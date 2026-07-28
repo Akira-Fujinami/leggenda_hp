@@ -7,6 +7,7 @@ use App\Jobs\Analysis\CaptureScreenshotJob;
 use App\Jobs\Analysis\DetectTechnologyJob;
 use App\Jobs\Analysis\RenderPageJob;
 use App\Jobs\Analysis\RunLighthouseJob;
+use App\Jobs\Analysis\RunRecruitLighthouseJob;
 use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
@@ -92,16 +93,37 @@ class AnalyzerSequentialDispatchTest extends TestCase
 
     public function test_technology_completion_dispatches_only_lighthouse_next(): void
     {
-        Queue::fake([RunLighthouseJob::class]);
+        Queue::fake([RunLighthouseJob::class, RunRecruitLighthouseJob::class]);
         Http::fake(['*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => []]], 200)]);
 
         $websiteAnalysis = $this->makeWebsiteAnalysis();
         (new DetectTechnologyJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
 
         Queue::assertPushed(RunLighthouseJob::class);
+        Queue::assertNotPushed(RunRecruitLighthouseJob::class);
     }
 
-    public function test_lighthouse_completion_dispatches_nothing_further(): void
+    /**
+     * Phase 3: RunRecruitLighthouseがANALYZER_CHAINの末尾に追加されたため、
+     * RunLighthouse自身の終端からも次のチェーン項目(採用ページのLighthouse)を
+     * 起動する必要がある(以前はRunLighthouseがチェーンの最後尾だったため、
+     * このカスケードは存在しなかった)。
+     */
+    public function test_lighthouse_completion_dispatches_recruit_lighthouse_next(): void
+    {
+        Queue::fake([RunRecruitLighthouseJob::class]);
+        Http::fake([
+            '*/health' => Http::response(['success' => true, 'data' => ['active_contexts' => 0]], 200),
+            '*/analyze/lighthouse' => Http::response(['success' => true, 'data' => ['scores' => [], 'metrics' => []]], 200),
+        ]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        (new RunLighthouseJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        Queue::assertPushed(RunRecruitLighthouseJob::class);
+    }
+
+    public function test_recruit_lighthouse_completion_dispatches_nothing_further(): void
     {
         Queue::fake();
         Http::fake([
@@ -110,7 +132,7 @@ class AnalyzerSequentialDispatchTest extends TestCase
         ]);
 
         $websiteAnalysis = $this->makeWebsiteAnalysis();
-        (new RunLighthouseJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+        (new RunRecruitLighthouseJob($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'https://example.com/careers'))->handle(app(AnalysisPipeline::class));
 
         Queue::assertNothingPushed();
     }

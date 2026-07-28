@@ -31,6 +31,8 @@ Route::prefix('lead')->group(function () {
             ->middleware('throttle:lead-analysis-poll');
         Route::get('/analyses/{analysis}/reports/{format}', [LeadAnalysisController::class, 'downloadReport'])
             ->middleware('throttle:lead-analysis-poll');
+        Route::post('/analyses/{analysis}/consultation', [LeadAnalysisController::class, 'requestConsultation'])
+            ->middleware('throttle:lead-consultation');
     });
 });
 

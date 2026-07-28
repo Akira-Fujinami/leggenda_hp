@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api-client";
 import { useStartLeadAnalysis } from "@/features/lead/hooks";
+import { isLeadTokenError, LeadTokenError } from "@/features/lead/lead-token-error";
 
 const analysisSchema = z.object({
   self_url: z.string().min(1, "自社サイトのURLを入力してください。").max(2048),
@@ -34,6 +35,13 @@ export function LeadAnalysisForm({ token, onStarted }: { token: string; onStarte
       { onSuccess: (res) => onStarted(res.data.analysis_id) },
     );
   };
+
+  // トークン照合失敗(未指定/期限切れ/使用済み/該当なし)は理由を出さず、
+  // 常に同じ文言+「最初からやり直す」導線に寄せる。それ以外(混雑・利用回数
+  // 上限等)は、リード本人の対応可否が異なるため既存の個別メッセージのまま出す。
+  if (isLeadTokenError(start.error)) {
+    return <LeadTokenError />;
+  }
 
   const generalError = start.error instanceof ApiError ? start.error.message : null;
 

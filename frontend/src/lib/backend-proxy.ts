@@ -20,6 +20,18 @@ const EXCLUDED_REQUEST_HEADERS = new Set([
   // ブラウザから送られてきた値をそのまま転送しない(なりすまし防止)。
   "origin",
   "referer",
+  // Backend側はRenderの単一ロードバランサーのみを信頼する設定
+  // (bootstrap/app.php)のため、本来はこのBFF自身がクライアントの実IPを
+  // 検証済みの経路で伝える責務を持つ。それをしていない現状で、ブラウザが
+  // 自ら送ってきたこれらのヘッダーをそのまま転送すると、任意のIPを
+  // 名乗れてしまう(BFFを経由しない直接アクセスと同じなりすましが、
+  // 正規のBFF経由でも成立してしまう)。伝播の仕組みを別途用意するまでは、
+  // 「伝えない」のではなく「偽装させない」ことを優先し、常に除去する。
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "forwarded",
+  "x-real-ip",
 ]);
 
 // hop-by-hop header + レスポンス生成時に作り直す/個別処理するヘッダーは除外する。

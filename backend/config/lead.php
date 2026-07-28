@@ -40,4 +40,10 @@ return [
     // lead_sessions/その配下データの保持期間(日数)。有効期限切れから
     // この日数を過ぎたセッションを lead:purge-expired-sessions --execute で削除する。
     'retention_days_after_expiry' => (int) env('LEAD_RETENTION_DAYS_AFTER_EXPIRY', 180),
+
+    // 診断開始通知・相談リクエスト通知の送信先。個人のメールアドレスではなく
+    // 必ず共有の受信箱を指定すること ―― 通知本文にはリード自身のトークンを
+    // 使った「診断結果を開く権限つきリンク」を含めるため、個人宛だと転送時に
+    // 権限が漏れるリスクがある(2026-07-28の合意事項)。
+    'notification_to' => env('LEAD_NOTIFICATION_TO'),
 ];

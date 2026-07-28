@@ -164,4 +164,15 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
             throw new AnalysisException(AnalysisErrorCode::AnalyzerUnavailable, 'analyzerが他の処理を実行中のため、Lighthouseの実行を延期します。');
         }
     }
+
+    /**
+     * Phase 3以前はRunLighthouseがANALYZER_CHAINの最後尾だったため、
+     * このフックは不要だった(既定のno-opのままで問題なかった)。
+     * RunRecruitLighthouseを末尾に追加したことで、RunLighthouse自身の
+     * 終端からも次のチェーン項目を起動する必要がある。
+     */
+    protected function onWebsiteJobTerminal(AnalysisPipeline $pipeline): void
+    {
+        $pipeline->dispatchNextAnalyzerJob($this->analysisId, $this->websiteAnalysisId, $this->jobType());
+    }
 }

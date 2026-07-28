@@ -24,6 +24,7 @@ class LeadSession extends Model
         return [
             'expires_at' => 'datetime',
             'analyses_used' => 'integer',
+            'consultation_requested_at' => 'datetime',
         ];
     }
 

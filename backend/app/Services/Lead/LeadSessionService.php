@@ -5,6 +5,7 @@ namespace App\Services\Lead;
 use App\Models\LeadSession;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -62,11 +63,27 @@ class LeadSessionService
         return ['session' => $session, 'token' => $token];
     }
 
+    /**
+     * 画面には「有効期限が切れています」等の理由の書き分けを一切出さない
+     * (トークンの存在有無を推測されるとセキュリティ上望ましくないため)が、
+     * サーバーログ側では「該当なし」と「期限切れ」を区別して記録する ――
+     * リードから「開けない」と連絡が来た際に原因を切り分けられるようにする
+     * ため(2026-07-29の実運用インシデントへの対応)。トークン値そのものは
+     * 記録しない。
+     */
     public function findValidByToken(string $plainToken): ?LeadSession
     {
         $session = LeadSession::query()->where('token_hash', $this->hashToken($plainToken))->first();
 
-        if ($session === null || $session->isExpired()) {
+        if ($session === null) {
+            Log::info('Lead token validation failed: not found');
+
+            return null;
+        }
+
+        if ($session->isExpired()) {
+            Log::info('Lead token validation failed: expired', ['lead_session_id' => $session->id]);
+
             return null;
         }
 
@@ -81,6 +98,25 @@ class LeadSessionService
     public function recordAnalysisStarted(LeadSession $session): void
     {
         $session->increment('analyses_used');
+    }
+
+    /**
+     * 相談リクエストの二重送信を防ぐ。同時押下・多重リクエストに対しても
+     * 安全なよう、「consultation_requested_atがまだnullの行だけを更新する」
+     * という条件付きUPDATEで一度だけ勝者を決める(read-then-writeのGET-CHECK-SET
+     * だと競合が起こり得るため使わない)。
+     *
+     * @return bool  このリクエストが実際に更新した(=通知を送るべき)場合はtrue。
+     *               既に送信済み(他のリクエストが先に更新した場合を含む)はfalse。
+     */
+    public function recordConsultationRequested(LeadSession $session): bool
+    {
+        $updated = LeadSession::query()
+            ->where('id', $session->id)
+            ->whereNull('consultation_requested_at')
+            ->update(['consultation_requested_at' => now()]);
+
+        return $updated > 0;
     }
 
     /**

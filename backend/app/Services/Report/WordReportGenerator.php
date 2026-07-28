@@ -2,7 +2,7 @@
 
 namespace App\Services\Report;
 
-use App\Support\Report\ReportCategoryRow;
+use App\Services\Lead\LeadPerspectiveComposer;
 use App\Support\Report\ReportRecommendationRow;
 use App\Support\Report\ReportViewModel;
 use PhpOffice\PhpWord\Element\Section;
@@ -34,7 +34,7 @@ class WordReportGenerator
 
         $this->addCoverSection($phpWord, $viewModel);
         $this->addOverallResultsSection($phpWord, $viewModel);
-        $this->addCategoryBreakdownSection($phpWord, $viewModel);
+        $this->addPerspectivesSection($phpWord, $viewModel);
         $this->addRecommendationsSection($phpWord, $viewModel);
         $this->addCallToActionSection($phpWord, $viewModel);
 
@@ -78,12 +78,18 @@ class WordReportGenerator
         $section = $phpWord->addSection();
 
         $section->addTitle('総合結果', 1);
+        // 社内版(7カテゴリ100点)の点数とは別建てであることを明示する
+        // (2026-07-28のユーザー指摘: 商談時に取り違えないため)。
+        $section->addText('採用サイトとして重要な4観点での評価', ['size' => 9, 'italic' => true]);
 
         $displayScore = (int) $viewModel->selfScore['display_score'];
         $coverageRate = (float) $viewModel->selfScore['coverage_rate'];
         $confidenceRate = (float) $viewModel->selfScore['confidence_rate'];
+        // LeadScoreCalculatorは4観点に表示している指標だけを対象に算出する
+        // ため、満点が常に100点とは限らない ―― 固定値にしないこと。
+        $maxScore = (int) round((float) $viewModel->selfScore['configured_max_score']);
 
-        $scoreLine = "{$displayScore}点 / 100点";
+        $scoreLine = "{$displayScore}点 / {$maxScore}点";
 
         if ($coverageRate < 70) {
             $scoreLine .= '(参考スコア)';
@@ -100,45 +106,34 @@ class WordReportGenerator
         }
     }
 
-    private function addCategoryBreakdownSection(PhpWord $phpWord, ReportViewModel $viewModel): void
+    /**
+     * 採用担当向けの4観点(①書くべきこと・②メッセージ・③導線・④見やすさ)。
+     * 内部の7カテゴリ(technical_seo等)は表示しない ―― 表示のグルーピングを
+     * 変えるだけで、採点ロジック自体は変更していない(LeadPerspectiveComposer参照)。
+     */
+    private function addPerspectivesSection(PhpWord $phpWord, ReportViewModel $viewModel): void
     {
         $section = $phpWord->addSection();
+        $section->addTitle('採用担当の視点で見た診断結果', 1);
 
-        $section->addTitle('カテゴリ別スコア', 1);
+        foreach ($viewModel->perspectives as $perspective) {
+            $section->addTitle($perspective['heading'], 2);
+            $section->addText(LeadPerspectiveComposer::statusLabel($perspective['status']), ['bold' => true]);
 
-        $table = $section->addTable(['borderSize' => 6, 'borderColor' => 'cccccc', 'cellMargin' => 80]);
+            if (! empty($perspective['note'])) {
+                $section->addText($perspective['note'], ['size' => 9, 'italic' => true]);
+            }
 
-        $table->addRow();
-        $table->addCell(2000)->addText('カテゴリ', ['bold' => true]);
-        $table->addCell(4500)->addText('説明', ['bold' => true]);
-        $table->addCell(1800)->addText('スコア', ['bold' => true]);
-        $table->addCell(3200)->addText('カバー率', ['bold' => true]);
+            if (! empty($perspective['summary'])) {
+                $section->addText($perspective['summary']);
+            }
 
-        foreach ($viewModel->categoryBreakdown as $category) {
-            $table->addRow();
-            $table->addCell(2000)->addText($category->name);
-            $table->addCell(4500)->addText($category->description);
-            $table->addCell(1800)->addText($this->categoryScoreLabel($category));
-            $table->addCell(3200)->addText($this->categoryCoverageLabel($category));
+            foreach ($perspective['items'] as $item) {
+                $section->addText("・{$item['label']}: ".LeadPerspectiveComposer::statusLabel($item['status']));
+            }
+
+            $section->addTextBreak(1);
         }
-    }
-
-    private function categoryScoreLabel(ReportCategoryRow $category): string
-    {
-        return match ($category->availability) {
-            CategoryAvailabilityClassifier::NOT_MEASURED => '計測対象外',
-            CategoryAvailabilityClassifier::UNAVAILABLE => '評価不可',
-            default => "{$category->score} / {$category->configuredMaxScore}",
-        };
-    }
-
-    private function categoryCoverageLabel(ReportCategoryRow $category): string
-    {
-        return match ($category->availability) {
-            CategoryAvailabilityClassifier::NOT_MEASURED => '今回の診断では計測していません',
-            CategoryAvailabilityClassifier::UNAVAILABLE => 'データを取得できませんでした',
-            default => number_format($category->coverageRate, 2).'%',
-        };
     }
 
     private function addRecommendationsSection(PhpWord $phpWord, ReportViewModel $viewModel): void

@@ -1,7 +1,86 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { LeadResults } from "@/features/lead/lead-results";
-import type { LeadResults as LeadResultsType } from "@/types/lead";
+import { useRequestConsultation } from "@/features/lead/hooks";
+import type { LeadPerspective, LeadResults as LeadResultsType } from "@/types/lead";
+
+vi.mock("@/features/lead/hooks", () => ({
+  useRequestConsultation: vi.fn(),
+}));
+
+const mockUseRequestConsultation = vi.mocked(useRequestConsultation);
+
+function mockConsultationState(overrides: Partial<ReturnType<typeof useRequestConsultation>> = {}) {
+  mockUseRequestConsultation.mockReturnValue({
+    mutate: vi.fn(),
+    isPending: false,
+    isSuccess: false,
+    isError: false,
+    data: undefined,
+    ...overrides,
+  } as ReturnType<typeof useRequestConsultation>);
+}
+
+const COMPLETENESS_NOTE =
+  "業務内容・給与・勤務時間といった募集要項の記載内容の確認は、今後追加予定です。" +
+  "現時点では、採用ページ自体の有無と、その情報量のみを確認しています。";
+
+const USABILITY_NOTE =
+  "現時点では、読み上げソフトへの対応や文字と背景のコントラストなど、" +
+  "アクセシビリティ監査の範囲で自動判定しています。配色やレイアウトの" +
+  "見た目そのものの印象は自動判定の対象外です。デザインの良し悪しは、" +
+  "商談の際に担当者と直接ご確認ください。";
+
+function basePerspectives(overrides: Partial<Record<LeadPerspective["key"], LeadPerspective>> = {}): LeadPerspective[] {
+  const defaults: Record<LeadPerspective["key"], LeadPerspective> = {
+    completeness: {
+      key: "completeness",
+      label: "書くべきことが書けているか",
+      heading: "書くべきことが書けているか",
+      note: COMPLETENESS_NOTE,
+      summary: "採用ページを確認できました。",
+      status: "good",
+      items: [
+        { label: "採用ページの案内", status: "good", detail: null },
+        { label: "採用ページのタイトル設定", status: "good", detail: null },
+      ],
+    },
+    clarity: {
+      key: "clarity",
+      label: "メッセージの分かりやすさ",
+      heading: "伝えたいことが分かりやすく伝わっているか",
+      note: null,
+      status: "needs_review",
+      items: [{ label: "ページタイトルの長さ", status: "needs_review", detail: null }],
+    },
+    findability: {
+      key: "findability",
+      label: "情報の取りやすさ・導線",
+      heading: "知りたい情報にたどり着けるか",
+      note: null,
+      status: "good",
+      items: [{ label: "問い合わせへの案内", status: "good", detail: null }],
+    },
+    usability: {
+      key: "usability",
+      label: "見やすさ・使いやすさ",
+      heading: "見やすく、使いやすいか",
+      note: USABILITY_NOTE,
+      status: "needs_improvement",
+      items: [
+        { label: "文字と背景の色のコントラスト、読み上げソフトへの対応", status: "needs_improvement", detail: null },
+      ],
+    },
+  };
+
+  return [
+    { ...defaults.completeness, ...overrides.completeness },
+    { ...defaults.clarity, ...overrides.clarity },
+    { ...defaults.findability, ...overrides.findability },
+    { ...defaults.usability, ...overrides.usability },
+  ];
+}
 
 function baseWebsite(overrides: Partial<LeadResultsType["websites"][number]> = {}): LeadResultsType["websites"][number] {
   return {
@@ -28,6 +107,7 @@ function baseWebsite(overrides: Partial<LeadResultsType["websites"][number]> = {
         informational_unavailable: 0,
       },
     },
+    perspectives: basePerspectives(),
     top_recommendations: [
       { title: "画像を圧縮してください", description: "表示速度の改善につながります。", priority: "high", impact: "high", effort: "low" },
     ],
@@ -45,21 +125,27 @@ function baseResults(overrides: Partial<LeadResultsType> = {}): LeadResultsType 
 }
 
 describe("LeadResults", () => {
-  it("shows 総合スコア when coverage is at or above the honesty threshold", () => {
+  beforeEach(() => {
+    mockConsultationState();
+  });
+
+  it("shows the recruiter-scoped score label (not the internal 総合スコア wording) at or above the honesty threshold", () => {
     render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
 
-    expect(screen.getByText("総合スコア")).toBeInTheDocument();
+    expect(screen.getByText("採用サイトとして重要な4観点での評価")).toBeInTheDocument();
+    // 社内版の点数とは別建てであることが分かるよう、内部の「総合スコア」表記は出さない。
+    expect(screen.queryByText("総合スコア")).not.toBeInTheDocument();
     expect(screen.getByText("サンプル株式会社")).toBeInTheDocument();
     expect(screen.getByText("自社サイト")).toBeInTheDocument();
   });
 
-  it("shows 参考スコア and a warning when coverage is below 70%, never silently upgrading it", () => {
+  it("shows the reference-only variant of the recruiter-scoped label and a warning when coverage is below 70%, never silently upgrading it", () => {
     const lowCoverage = baseResults({
       websites: [baseWebsite({ score: { ...baseWebsite().score, coverage_rate: 40 } })],
     });
     render(<LeadResults results={lowCoverage} token="tok" analysisId={1} />);
 
-    expect(screen.getByText("参考スコア")).toBeInTheDocument();
+    expect(screen.getByText("採用サイトとして重要な4観点での参考評価")).toBeInTheDocument();
     expect(screen.getByText(/測定カバー率が40%のため、このスコアは参考値です/)).toBeInTheDocument();
   });
 
@@ -110,5 +196,135 @@ describe("LeadResults", () => {
 
     expect(screen.queryByText(/Wordでダウンロード/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "PDFでダウンロード" })).toBeInTheDocument();
+  });
+
+  it("uses the recruiter's own questions as headings, not the internal perspective names", () => {
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+
+    expect(screen.getByText("書くべきことが書けているか")).toBeInTheDocument();
+    expect(screen.getByText("伝えたいことが分かりやすく伝わっているか")).toBeInTheDocument();
+    expect(screen.getByText("知りたい情報にたどり着けるか")).toBeInTheDocument();
+    expect(screen.getByText("見やすく、使いやすいか")).toBeInTheDocument();
+
+    // バックエンドが返す内部名(label)そのままは見出しとして出さない。
+    expect(screen.queryByText("メッセージの分かりやすさ")).not.toBeInTheDocument();
+    expect(screen.queryByText("情報の取りやすさ・導線")).not.toBeInTheDocument();
+  });
+
+  it("④は色のコントラストに触れ、配色の印象自体は自動判定していない旨を明示する", () => {
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+
+    expect(screen.getByText(/文字と背景のコントラスト/)).toBeInTheDocument();
+    expect(screen.getByText(/配色やレイアウトの見た目そのものの印象は自動判定の対象外です/)).toBeInTheDocument();
+  });
+
+  it("shows qualitative status text instead of a numeric fraction for each perspective", () => {
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+
+    expect(screen.getAllByText("確認をおすすめします").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("良好").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("改善の余地があります").length).toBeGreaterThan(0);
+
+    // 旧・内部カテゴリの分数表示("5 / 15"のような形式)は出さない。
+    expect(screen.queryByText("技術SEO")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^\d+\s*\/\s*\d+$/)).not.toBeInTheDocument();
+  });
+
+  it("①観点は採用ページを検出できなかった場合、網羅しているかのように見せず正直に書く", () => {
+    const notDetected = baseResults({
+      websites: [
+        baseWebsite({
+          perspectives: basePerspectives({
+            completeness: {
+              key: "completeness",
+              label: "書くべきことが書けているか",
+              heading: "書くべきことが書けているか",
+              note: COMPLETENESS_NOTE,
+              summary: "採用ページを検出できませんでした。トップページに採用に関する案内が見つからなかったため、この観点は今回「計測対象外」です。",
+              status: "not_detected",
+              items: [],
+            },
+          }),
+        }),
+      ],
+    });
+
+    render(<LeadResults results={notDetected} token="tok" analysisId={1} />);
+
+    expect(screen.getByText(/採用ページを検出できませんでした/)).toBeInTheDocument();
+    expect(screen.getByText("計測対象外")).toBeInTheDocument();
+  });
+
+  it("既存の誠実性表示(計測できませんでした・評価不可)を4観点表示でも区別して見せる", () => {
+    const unavailable = baseResults({
+      websites: [
+        baseWebsite({
+          perspectives: basePerspectives({
+            completeness: {
+              key: "completeness",
+              label: "書くべきことが書けているか",
+              heading: "書くべきことが書けているか",
+              note: COMPLETENESS_NOTE,
+              summary: "採用ページへのリンクは見つかりましたが、内容を確認できませんでした。",
+              status: "unavailable",
+              items: [],
+            },
+            clarity: {
+              key: "clarity",
+              label: "メッセージの分かりやすさ",
+              heading: "伝えたいことが分かりやすく伝わっているか",
+              note: null,
+              status: "not_measured",
+              items: [{ label: "ページタイトルの長さ", status: "not_measured", detail: null }],
+            },
+          }),
+        }),
+      ],
+    });
+
+    render(<LeadResults results={unavailable} token="tok" analysisId={1} />);
+
+    expect(screen.getByText("評価不可")).toBeInTheDocument();
+    expect(screen.getAllByText("計測できませんでした").length).toBeGreaterThan(0);
+  });
+
+  it("shows a confirmation dialog before sending the consultation request", async () => {
+    const user = userEvent.setup();
+    const mutate = vi.fn();
+    mockConsultationState({ mutate });
+
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+
+    expect(mutate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "相談をリクエストする" }));
+
+    expect(screen.getByText("相談をリクエストしますか？")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "リクエストする" }));
+
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a success message once the consultation request is newly accepted", () => {
+    mockConsultationState({ isSuccess: true, data: { data: { already_requested: false } } as never });
+
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+
+    expect(screen.getByText("ご相談リクエストを受け付けました")).toBeInTheDocument();
+  });
+
+  it("honestly reports a repeat click as already requested, not as a fresh success", () => {
+    mockConsultationState({ isSuccess: true, data: { data: { already_requested: true } } as never });
+
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+
+    expect(screen.getByText("既にご相談リクエストを受け付けています")).toBeInTheDocument();
+  });
+
+  it("shows an error message when the consultation request fails, without pretending it succeeded", () => {
+    mockConsultationState({ isError: true });
+
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+
+    expect(screen.getByText("送信に失敗しました。しばらくしてから再度お試しください。")).toBeInTheDocument();
   });
 });

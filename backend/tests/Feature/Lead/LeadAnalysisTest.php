@@ -8,8 +8,11 @@ use App\Models\Analysis;
 use App\Models\LeadSession;
 use App\Models\Project;
 use App\Models\User;
+use App\Notifications\Lead\LeadAnalysisStartedNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
@@ -31,18 +34,32 @@ class LeadAnalysisTest extends TestCase
 
     public function test_a_missing_token_is_rejected_without_touching_analysis_start(): void
     {
+        Log::spy();
+
         $response = $this->postJson('/api/lead/analyses', ['self_url' => 'https://example.com']);
 
         $response->assertStatus(401);
         $response->assertJsonPath('error_code', 'LEAD_TOKEN_MISSING');
+        // 2026-07-29対応: 画面は理由を区別しない統一文言、コピー時のURL欠落等の
+        // 実運用インシデントを踏まえ「有効期限が切れています」と断定しない。
+        $response->assertJsonPath('message', 'この診断URLは利用できません。お手数ですが、もう一度お申し込みください。');
+        Log::shouldHaveReceived('info')->once()->with('Lead token validation failed: missing');
     }
 
     public function test_an_invalid_token_is_rejected(): void
     {
+        Log::spy();
+
         $response = $this->postJson('/api/lead/analyses?token=not-a-real-token', ['self_url' => 'https://example.com']);
 
         $response->assertStatus(401);
         $response->assertJsonPath('error_code', 'LEAD_TOKEN_INVALID');
+        $response->assertJsonPath('message', 'この診断URLは利用できません。お手数ですが、もう一度お申し込みください。');
+        // 画面向けメッセージは「該当なし」と「期限切れ」を区別しないが、ログは区別する
+        // (LeadSessionServiceTokenValidationTestで検証)。トークン値は記録しない。
+        Log::shouldHaveReceived('info')
+            ->once()
+            ->withArgs(fn (string $message) => $message === 'Lead token validation failed: not found');
     }
 
     public function test_valid_token_starts_an_analysis_for_self_site_only(): void
@@ -64,6 +81,30 @@ class LeadAnalysisTest extends TestCase
         $this->assertTrue($analysis->project->websites()->first()->is_primary);
 
         $this->assertSame(1, LeadSession::first()->analyses_used);
+    }
+
+    public function test_starting_an_analysis_sends_the_analysis_started_notification_when_a_recipient_is_configured(): void
+    {
+        config(['lead.notification_to' => 'staff@example.com']);
+        Notification::fake();
+        Queue::fake([StartAnalysisJob::class]);
+        $token = $this->issueToken();
+
+        $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])->assertCreated();
+
+        Notification::assertSentOnDemand(LeadAnalysisStartedNotification::class);
+    }
+
+    public function test_starting_an_analysis_never_fails_the_request_when_no_notification_recipient_is_configured(): void
+    {
+        config(['lead.notification_to' => null]);
+        Notification::fake();
+        Queue::fake([StartAnalysisJob::class]);
+        $token = $this->issueToken();
+
+        $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])->assertCreated();
+
+        Notification::assertNothingSent();
     }
 
     public function test_valid_token_with_a_competitor_url_registers_two_websites(): void
@@ -99,11 +140,21 @@ class LeadAnalysisTest extends TestCase
         $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])->assertCreated();
         $this->assertSame(1, Analysis::count());
 
+        Log::spy();
         $response = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://another-example.com']);
 
         $response->assertStatus(403);
         $response->assertJsonPath('error_code', 'LEAD_ANALYSIS_QUOTA_EXCEEDED');
         $this->assertSame(1, Analysis::count(), '拒否された場合は新しいAnalysisを作ってはいけない');
+
+        // 2026-07-29対応: 「開けない」問い合わせの原因切り分け用ログ。トークン値は含めない。
+        Log::shouldHaveReceived('info')
+            ->once()
+            ->withArgs(function (string $message, array $context = []) use ($token) {
+                return $message === 'Lead analysis start rejected: quota exceeded'
+                    && isset($context['lead_session_id'])
+                    && ! str_contains(json_encode($context), $token);
+            });
     }
 
     public function test_congestion_rejects_without_consuming_the_tokens_one_time_allowance(): void
@@ -233,5 +284,41 @@ class LeadAnalysisTest extends TestCase
         $response->assertOk();
         $response->assertJsonStructure(['data' => ['status', 'websites']]);
         $this->assertNotEmpty($response->json('data.websites'));
+    }
+
+    /**
+     * Phase 3: 採用担当向けの4観点表示。既存の内部向けカテゴリ(technical_seo等)
+     * を露出せず、①書くべきこと/②メッセージ/③導線/④見やすさの4件のみが
+     * 返ること、および内部指標キー(metric_definitions.key)がラベルに
+     * 混入していないことを確認する。
+     */
+    public function test_results_endpoint_returns_the_four_lead_perspectives_without_internal_category_names(): void
+    {
+        Http::fake([
+            '*/analyze/render' => Http::response(['success' => true, 'data' => ['html' => '<html></html>', 'fixed_cta' => ['detected' => false]]], 200),
+            '*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => []]], 200),
+            '*/analyze/lighthouse' => Http::response(['success' => true, 'data' => ['scores' => [], 'metrics' => []]], 200),
+        ]);
+
+        $token = $this->issueToken();
+        $analysisId = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])
+            ->json('data.analysis_id');
+
+        $response = $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}");
+
+        $response->assertOk();
+        $perspectives = $response->json('data.websites.0.perspectives');
+
+        $this->assertCount(4, $perspectives);
+        $this->assertEqualsCanonicalizing(
+            ['completeness', 'clarity', 'findability', 'usability'],
+            array_column($perspectives, 'key'),
+        );
+
+        $raw = $response->getContent();
+        // 内部カテゴリ名・指標キーが混入していないこと。
+        foreach (['technical_seo', 'metric_definition', 'category_key', 'title_present', 'form_present'] as $forbidden) {
+            $this->assertStringNotContainsString($forbidden, $raw);
+        }
     }
 }

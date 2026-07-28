@@ -22,7 +22,19 @@ function htmlAnalysisSourceLine(htmlAnalysisSource?: HtmlAnalysisSource): { labe
   return { label: "HTML解析元: 静的HTML(レンダリング済みページの再解析待ち)", warning: null };
 }
 
-export function DataQualityNotice({ score, htmlAnalysisSource }: { score: AnalysisScore; htmlAnalysisSource?: HtmlAnalysisSource }) {
+export function DataQualityNotice({
+  score,
+  htmlAnalysisSource,
+  label = "総合スコア",
+  referenceLabel = "参考スコア",
+}: {
+  score: AnalysisScore;
+  htmlAnalysisSource?: HtmlAnalysisSource;
+  // リード向け画面など、社内版の総合スコアとは別建ての値であることを
+  // 見出しで明示したい場合に上書きする(既定値は社内版の内部ダッシュボードと同じ)。
+  label?: string;
+  referenceLabel?: string;
+}) {
   const isReferenceOnly = score.coverage_rate < COVERAGE_THRESHOLD;
   const effectiveConfidence = calculateEffectiveConfidence(score);
   const confidenceBand = classifyConfidenceBand(effectiveConfidence);
@@ -32,7 +44,7 @@ export function DataQualityNotice({ score, htmlAnalysisSource }: { score: Analys
 
   return (
     <div className="rounded-md border p-4">
-      <p className="text-sm text-muted-foreground">{isReferenceOnly ? "参考スコア" : "総合スコア"}</p>
+      <p className="text-sm text-muted-foreground">{isReferenceOnly ? referenceLabel : label}</p>
       <p className="text-2xl font-semibold">
         {score.display_score}
         <span className="text-sm font-normal text-muted-foreground"> / {score.configured_max_score}</span>

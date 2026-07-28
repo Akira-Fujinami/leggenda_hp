@@ -90,7 +90,7 @@ services:
       <<: *backend-env
     volumes:
       - analysis-storage:/var/analysis-storage
-    command: ["php", "artisan", "queue:work", "redis", "--queue=default,analysis,reports", "--sleep=3", "--tries=3", "--timeout=300"]
+    command: ["php", "artisan", "queue:work", "redis", "--queue=default,analysis,reports,notifications", "--sleep=3", "--tries=3", "--timeout=300"]
     depends_on:
       postgres:
         condition: service_healthy

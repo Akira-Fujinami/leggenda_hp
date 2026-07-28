@@ -27,15 +27,22 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'lead.token' => ResolveLeadToken::class,
         ]);
-        // 信頼するプロキシが未設定だと$request->ip()が常にRender自身の
-        // ロードバランサーのIPを返し(実際の訪問者IPではない)、IP単位の
-        // レート制限(RateLimiter::for('lead-*')等)が事実上効かなくなる
-        // (2026-07-27 Phase2着手前の調査で判明)。Renderのロードバランサーの
-        // IPは固定/公開されていないPaaS環境のため、Laravel公式が推奨する
-        // 「すべて信頼する('*')」を採用する ―― コンテナへの唯一の入口は
-        // Render自身のロードバランサーであり、それ以外の経路からnginxへ
-        // 直接到達することはない。
-        $middleware->trustProxies(at: '*');
+        // 2026-07-27に「$request->ip()が常にRenderのロードバランサーの
+        // IPを返す」問題への対処として一度 trustProxies(at: '*') を
+        // 追加したが、2026-07-28に前提が崩れていると判明したため撤回する:
+        // BackendはRenderのWeb Serviceとして公開されており、frontend側の
+        // BFF(backend-proxy.ts)を経由しないリクエストも直接Backendへ
+        // 届き得る。「すべてのプロキシを信頼する」設定は、BFFを経由した
+        // 正規のリクエストと、X-Forwarded-Forを自称するだけの偽装
+        // リクエストを区別できない ―― 実IPが取れないままなりすましだけを
+        // 許す、最悪の組み合わせになる。frontend側もこのヘッダーを
+        // 転送していない(backend-proxy.tsのEXCLUDED_REQUEST_HEADERS参照)
+        // ため、trustProxiesを設定しても実際には実IPは得られず、
+        // リスクだけが残っていた。
+        // 実IPの正しい伝播(BFFが検証済みの値を署名付きヘッダーで渡す等)は
+        // 別途整理するまでの間、trustProxiesは未設定のままにし、
+        // IPベースのレート制限が効かない前提でリードトークン単位の
+        // 制限(RateLimiter::for('lead-consultation')等)を優先する。
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

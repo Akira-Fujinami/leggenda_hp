@@ -4,51 +4,36 @@ namespace App\Services\Report;
 
 use App\Enums\AnalysisStatus;
 use App\Models\Analysis;
-use App\Models\CategoryDefinition;
 use App\Models\LeadSession;
 use App\Models\MetricDefinition;
-use App\Models\MetricResult;
 use App\Models\WebsiteAnalysis;
-use App\Services\Scoring\OverallScoreCalculator;
-use App\Support\Report\ReportCategoryRow;
+use App\Services\Lead\LeadPerspectiveComposer;
+use App\Services\Lead\LeadScoreCalculator;
 use App\Support\Report\ReportRecommendationRow;
 use App\Support\Report\ReportViewModel;
-use App\Support\Scoring\WebsiteScoreResult;
-use Illuminate\Support\Collection;
 
 /**
  * Analysis(+LeadSession)から、Word/PDF生成が共通で参照するReportViewModelを
- * 組み立てる。スコア計算・強み弱み判定は既存のOverallScoreCalculator等を
+ * 組み立てる。スコア計算・強み弱み判定は既存のLeadScoreCalculator等を
  * そのまま呼び出すだけで、再実装は一切しない。
+ *
+ * Phase 3: 内部の7カテゴリ別内訳の代わりに、採用担当向けの4観点
+ * (LeadPerspectiveComposer)を組み込む。JSON API(LeadAnalysisController)と
+ * 同じComposerを使うため、画面とレポートで表示内容が食い違わない。
+ *
+ * スコアも同様にLeadScoreCalculator(社内版OverallScoreCalculatorとは別建て、
+ * 4観点に表示している指標だけを対象に算出)をJSON APIと共有する
+ * ―― 画面の点数とレポートの点数が食い違うことがないようにするため
+ * (2026-07-28のユーザー指摘への対応)。
  */
 class ReportViewModelBuilder
 {
-    /**
-     * カテゴリ配点(CategoryDefinitionSeeder)は将来変わり得るため、
-     * 説明文はkeyで引く。Seeder側のdescription列は現状nullのため、
-     * レポート専用の一言説明をここに保持する
-     * (2026-07-27 ユーザーレビューで承認済みの文面。technologyのみ、
-     * CMS検出はinformational専用でありスコアに寄与しないという指摘を受けて
-     * 「アクセス解析タグの設置状況とWeb標準への準拠」に修正済み)。
-     *
-     * @var array<string, string>
-     */
-    private const CATEGORY_DESCRIPTIONS = [
-        'technical_seo' => '検索エンジンに正しく認識されるための基本設定',
-        'content' => 'タイトルや説明文など、ページ内容の充実度',
-        'performance' => 'ページの表示速度と体感的な快適さ',
-        'accessibility' => '誰にとっても使いやすいページ作りへの配慮',
-        'technology' => 'アクセス解析タグの設置状況とWeb標準への準拠',
-        'conversion' => '問い合わせや資料請求につながる導線の設計',
-        'authority' => '外部からの評価やドメインの信頼性',
-    ];
-
     private const MAX_RECOMMENDATIONS = 5;
 
     public function __construct(
-        private readonly OverallScoreCalculator $scoreCalculator,
+        private readonly LeadScoreCalculator $scoreCalculator,
         private readonly ReportSummaryComposer $summaryComposer,
-        private readonly CategoryAvailabilityClassifier $availabilityClassifier,
+        private readonly LeadPerspectiveComposer $perspectiveComposer,
         private readonly HonorificNameFormatter $nameFormatter,
         private readonly RecommendationLabelFormatter $labelFormatter,
     ) {}
@@ -61,21 +46,19 @@ class ReportViewModelBuilder
             'websiteAnalyses.metricResults.metricDefinition',
         ]);
 
-        $activeCategories = CategoryDefinition::query()->where('is_active', true)->orderBy('display_order')->get();
         $activeDefinitions = MetricDefinition::query()->where('is_active', true)->get();
-        $definitionsByCategory = $activeDefinitions->groupBy('category_key');
 
         $selfWebsiteAnalysis = $analysis->websiteAnalyses->first(fn (WebsiteAnalysis $wa) => (bool) $wa->website?->is_primary);
         $competitorWebsiteAnalysis = $analysis->websiteAnalyses->first(fn (WebsiteAnalysis $wa) => ! (bool) $wa->website?->is_primary);
 
-        $selfScore = $this->scoreCalculator->calculate($activeCategories, $activeDefinitions, $selfWebsiteAnalysis?->metricResults ?? collect());
+        $selfScore = $this->scoreCalculator->calculate($activeDefinitions, $selfWebsiteAnalysis?->metricResults ?? collect());
         $selfScoreArray = $selfScore->toArray();
 
         $competitorScoreArray = null;
         $comparisonSentence = null;
 
         if ($competitorWebsiteAnalysis !== null) {
-            $competitorScore = $this->scoreCalculator->calculate($activeCategories, $activeDefinitions, $competitorWebsiteAnalysis->metricResults);
+            $competitorScore = $this->scoreCalculator->calculate($activeDefinitions, $competitorWebsiteAnalysis->metricResults);
             $competitorScoreArray = $competitorScore->toArray();
             $comparisonSentence = $this->summaryComposer->composeComparisonSentence($selfScoreArray, $competitorScoreArray);
         }
@@ -91,12 +74,7 @@ class ReportViewModelBuilder
             $this->nameFormatter->format($leadSession->company_name),
         );
 
-        $categoryBreakdown = $this->buildCategoryBreakdown(
-            $selfScore,
-            $definitionsByCategory,
-            $selfWebsiteAnalysis?->metricResults ?? collect(),
-            $analysis,
-        );
+        $perspectives = $this->perspectiveComposer->compose($selfWebsiteAnalysis?->metricResults ?? collect());
 
         $recommendationRows = $topRecommendations->map(fn ($r) => new ReportRecommendationRow(
             title: $r->title,
@@ -115,44 +93,9 @@ class ReportViewModelBuilder
             competitorScore: $competitorScoreArray,
             overallSummaryText: $overallSummaryText,
             comparisonSentence: $comparisonSentence,
-            categoryBreakdown: $categoryBreakdown,
+            perspectives: $perspectives,
             topRecommendations: $recommendationRows,
             isPartial: $analysis->status === AnalysisStatus::Partial,
         );
-    }
-
-    /**
-     * @param  Collection<string, Collection<int, MetricDefinition>>  $definitionsByCategory
-     * @param  Collection<int, MetricResult>  $selfMetricResults
-     * @return list<ReportCategoryRow>
-     */
-    private function buildCategoryBreakdown(
-        WebsiteScoreResult $selfScore,
-        Collection $definitionsByCategory,
-        Collection $selfMetricResults,
-        Analysis $analysis,
-    ): array {
-        $resultsByDefinitionId = $selfMetricResults->keyBy('metric_definition_id');
-
-        return $selfScore->categoryScores->map(function ($category) use ($definitionsByCategory, $resultsByDefinitionId, $analysis) {
-            $categoryDefinitions = $definitionsByCategory->get($category->key, collect());
-
-            $availability = $this->availabilityClassifier->classify(
-                $category->maxAvailableScore,
-                $categoryDefinitions,
-                $resultsByDefinitionId,
-                $analysis,
-            );
-
-            return new ReportCategoryRow(
-                key: $category->key,
-                name: $category->name,
-                description: self::CATEGORY_DESCRIPTIONS[$category->key] ?? '',
-                score: round($category->score, 2),
-                configuredMaxScore: round($category->configuredMaxScore, 2),
-                coverageRate: round($category->coverageRate, 2),
-                availability: $availability,
-            );
-        })->values()->all();
     }
 }

@@ -2,6 +2,7 @@ import { api, API_URL, ApiEnvelope } from "@/lib/api-client";
 import type {
   LeadAnalysisStartInput,
   LeadAnalysisStartResult,
+  LeadConsultationResult,
   LeadOnboardingInput,
   LeadOnboardingResult,
   LeadProgress,
@@ -26,6 +27,12 @@ export const leadApi = {
 
   results: (token: string, analysisId: number) =>
     api.get<ApiEnvelope<LeadResults>>(`/api/lead/analyses/${analysisId}/results?token=${encodeURIComponent(token)}`),
+
+  requestConsultation: (token: string, analysisId: number) =>
+    api.post<ApiEnvelope<LeadConsultationResult>>(
+      `/api/lead/analyses/${analysisId}/consultation?token=${encodeURIComponent(token)}`,
+      {},
+    ),
 
   // ダウンロードはファイル取得(GET)のため、CSRF不要でJSクライアントを
   // 介さずブラウザから直接開ける(<a href>やwindow.open)。既存のBFFプロキシ

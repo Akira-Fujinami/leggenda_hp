@@ -92,12 +92,16 @@ class ReportSummaryComposer
     {
         $displayScore = (int) $selfScore['display_score'];
         $coverageRate = (float) $selfScore['coverage_rate'];
+        // リード向けスコア(LeadScoreCalculator)は4観点に表示している指標
+        // だけを対象に算出するため、満点が常に100点とは限らない
+        // ―― configured_max_scoreを固定値(100)にしないこと。
+        $maxScore = (int) round((float) $selfScore['configured_max_score']);
 
         if ($coverageRate < self::REFERENCE_SCORE_COVERAGE_THRESHOLD) {
-            return "{$displayCompanyName}の自社サイトは、測定できた範囲で総合スコア{$displayScore}点(100点満点、参考スコア)という結果になりました。";
+            return "{$displayCompanyName}の自社サイトは、測定できた範囲で総合スコア{$displayScore}点({$maxScore}点満点、参考スコア)という結果になりました。";
         }
 
-        return "{$displayCompanyName}の自社サイトは、総合スコア{$displayScore}点(100点満点)という結果になりました。";
+        return "{$displayCompanyName}の自社サイトは、総合スコア{$displayScore}点({$maxScore}点満点)という結果になりました。";
     }
 
     /**

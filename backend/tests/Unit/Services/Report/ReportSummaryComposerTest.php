@@ -105,9 +105,14 @@ class ReportSummaryComposerTest extends TestCase
     // composeOverallSummary: 分岐込みの総評文
     // ------------------------------------------------------------------
 
-    private function selfScore(int $displayScore, float $coverageRate, array $categoryScores): array
+    private function selfScore(int $displayScore, float $coverageRate, array $categoryScores, float $configuredMaxScore = 100.0): array
     {
-        return ['display_score' => $displayScore, 'coverage_rate' => $coverageRate, 'category_scores' => $categoryScores];
+        return [
+            'display_score' => $displayScore,
+            'configured_max_score' => $configuredMaxScore,
+            'coverage_rate' => $coverageRate,
+            'category_scores' => $categoryScores,
+        ];
     }
 
     public function test_summary_uses_reference_score_wording_below_the_coverage_threshold(): void

@@ -6,10 +6,13 @@ use App\Enums\AnalysisErrorCode;
 use App\Enums\AnalysisJobStatus;
 use App\Enums\Device;
 use App\Enums\JobType;
+use App\Enums\PageType;
 use App\Jobs\Analysis\AnalyzeHtmlSeoJob;
+use App\Jobs\Analysis\AnalyzeRecruitPageJob;
 use App\Jobs\Analysis\CaptureScreenshotJob;
 use App\Jobs\Analysis\DetectTechnologyJob;
 use App\Jobs\Analysis\FetchExternalSeoDataJob;
+use App\Jobs\Analysis\FetchRecruitPageJob;
 use App\Jobs\Analysis\FetchRobotsJob;
 use App\Jobs\Analysis\FetchSitemapJob;
 use App\Jobs\Analysis\FetchStaticPageJob;
@@ -18,8 +21,12 @@ use App\Jobs\Analysis\FinalizeWebsiteAnalysisJob;
 use App\Jobs\Analysis\ReanalyzeRenderedHtmlJob;
 use App\Jobs\Analysis\RenderPageJob;
 use App\Jobs\Analysis\RunLighthouseJob;
+use App\Jobs\Analysis\RunRecruitLighthouseJob;
 use App\Models\Analysis;
 use App\Models\AnalysisJob as AnalysisJobRecord;
+use App\Models\AnalysisPage;
+use App\Models\MetricDefinition;
+use App\Models\MetricResult;
 use App\Models\WebsiteAnalysis;
 use Illuminate\Support\Collection;
 
@@ -78,6 +85,10 @@ class AnalysisPipeline
         JobType::CaptureScreenshotMobile,
         JobType::DetectTechnology,
         JobType::RunLighthouse,
+        // Phase 3: 採用ページに対するLighthouse。トップページのRunLighthouseと
+        // 同時に走らせるとAnalyzerへの同時HTTPリクエストが増えメモリ圧迫の
+        // リスクが再発するため、既存チェーンの最後尾に連結する。
+        JobType::RunRecruitLighthouse,
     ];
 
     /**
@@ -140,6 +151,7 @@ class AnalysisPipeline
 
         if ($analysis->skip_lighthouse === true) {
             $excluded[] = JobType::RunLighthouse;
+            $excluded[] = JobType::RunRecruitLighthouse;
         }
 
         if ($analysis->skip_screenshots === true) {
@@ -162,6 +174,7 @@ class AnalysisPipeline
             JobType::CaptureScreenshotMobile => CaptureScreenshotJob::dispatch($analysisId, $websiteAnalysisId, Device::Mobile)->onQueue($jobType->queueName()),
             JobType::DetectTechnology => DetectTechnologyJob::dispatch($analysisId, $websiteAnalysisId)->onQueue($jobType->queueName()),
             JobType::RunLighthouse => RunLighthouseJob::dispatch($analysisId, $websiteAnalysisId)->onQueue($jobType->queueName()),
+            JobType::RunRecruitLighthouse => RunRecruitLighthouseJob::dispatch($analysisId, $websiteAnalysisId, $this->resolveRecruitUrl($websiteAnalysisId))->onQueue($jobType->queueName()),
             default => throw new \LogicException("ANALYZER_CHAINに含まれない想定外のJobTypeです: {$jobType->value}"),
         };
     }
@@ -169,6 +182,71 @@ class AnalysisPipeline
     public function dispatchHtmlSeoAnalysis(int $analysisId, int $websiteAnalysisId): void
     {
         AnalyzeHtmlSeoJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::AnalyzeHtmlSeo->queueName());
+    }
+
+    /**
+     * AnalyzeHtmlSeoJobの終端(成功・失敗いずれも)から必ず呼び出す。
+     * トップページのbusiness_links.recruit(recruit_link_presentとして
+     * 既に記録済み)から採用ページのURLを解決し、FetchRecruitPageJobを
+     * 起動する。URLが見つからない場合もnullを渡して必ずdispatchする
+     * (事前登録したプレースホルダーを終端させ、進捗計算を止めないため)。
+     */
+    public function dispatchRecruitPageFetch(int $analysisId, int $websiteAnalysisId): void
+    {
+        FetchRecruitPageJob::dispatch($analysisId, $websiteAnalysisId, $this->resolveRecruitUrl($websiteAnalysisId))
+            ->onQueue(JobType::FetchRecruitPage->queueName());
+    }
+
+    /**
+     * FetchRecruitPageJobの終端(成功・失敗いずれも)から必ず呼び出す。
+     * AnalyzeRecruitPageJob側で「採用ページのHTMLが利用可能か」を判定するため、
+     * ここでは無条件にdispatchしてよい。
+     */
+    public function dispatchRecruitPageAnalysis(int $analysisId, int $websiteAnalysisId): void
+    {
+        AnalyzeRecruitPageJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::AnalyzeRecruitPage->queueName());
+    }
+
+    /**
+     * トップページのrecruit_link_present(HtmlSeoAnalyzer::analyzeBusinessLinks()が
+     * 検出したhrefをそのまま保存したもの)から、採用ページの絶対URLを解決する。
+     * hrefは相対URLの場合があるため、トップページ自身のURLを基準に解決する
+     * (RelativeUrlResolver)。実際のSSRF検証はFetchRecruitPageJob/
+     * RunRecruitLighthouseJob側がSafeHttpFetcher/AnalyzerClient経由で行う
+     * ―― ここでは解決のみを行い、検証はしない。
+     */
+    private function resolveRecruitUrl(int $websiteAnalysisId): ?string
+    {
+        $definition = MetricDefinition::query()->where('key', 'recruit_link_present')->first();
+
+        if ($definition === null) {
+            return null;
+        }
+
+        $result = MetricResult::query()
+            ->where('website_analysis_id', $websiteAnalysisId)
+            ->where('metric_definition_id', $definition->id)
+            ->first();
+
+        $href = $result?->raw_value['url'] ?? null;
+
+        if (! is_string($href) || $href === '') {
+            return null;
+        }
+
+        $websiteAnalysis = WebsiteAnalysis::find($websiteAnalysisId);
+        $homepage = AnalysisPage::query()
+            ->where('website_analysis_id', $websiteAnalysisId)
+            ->where('page_type', PageType::Homepage)
+            ->first();
+
+        $baseUrl = $homepage?->final_url ?? $homepage?->url ?? $websiteAnalysis?->website?->normalized_url;
+
+        if ($baseUrl === null) {
+            return null;
+        }
+
+        return app(RelativeUrlResolver::class)->resolve($baseUrl, $href);
     }
 
     /**

@@ -102,4 +102,17 @@ class AnalyzeHtmlSeoJob extends BaseWebsiteAnalysisJob
 
         $recorder->recordAll($this->websiteAnalysisId, $result, $page->id, $htmlSource);
     }
+
+    /**
+     * Phase 3: recruit_link_present(このJobが今まさに記録した、business_links.recruitの
+     * 検出結果)を使って採用ページを取得する後続Jobを必ず起動する。process()が
+     * DependencyUnavailableで例外を投げて終了した場合(HTML自体が無かった場合)も
+     * 含め、失敗時にもここは呼ばれる(BaseWebsiteAnalysisJob::handle()参照) ――
+     * その場合はrecruit_link_presentの行自体が存在しないため、
+     * FetchRecruitPageJob側でURLがnullとして扱われ、正常にno-op終端する。
+     */
+    protected function onWebsiteJobTerminal(AnalysisPipeline $pipeline): void
+    {
+        $pipeline->dispatchRecruitPageFetch($this->analysisId, $this->websiteAnalysisId);
+    }
 }
