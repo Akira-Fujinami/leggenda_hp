@@ -2,6 +2,8 @@
 
 namespace App\Services\AiAnalysis;
 
+use App\Support\MockProviderGuard;
+
 /**
  * AI_PROVIDER設定からAiAnalysisProvider実装を解決する。
  * SeoProviderFactoryと同じ方針: 未対応のProvider名が指定された場合や、
@@ -50,7 +52,9 @@ class AiAnalysisProviderFactory
 
     private function makeMock(): AiAnalysisProvider
     {
-        if (app()->environment('production')) {
+        $rejection = MockProviderGuard::rejectionReason();
+
+        if ($rejection === MockProviderGuard::REASON_PRODUCTION) {
             throw new AiAnalysisException(
                 'AI_PROVIDER_MOCK_IN_PRODUCTION',
                 'production環境ではAI_PROVIDER=mockを使用できません。意図せずモックデータが本物の分析結果として表示されるのを防ぐため、'.
@@ -58,7 +62,7 @@ class AiAnalysisProviderFactory
             );
         }
 
-        if (! (bool) config('analysis.allow_mock_providers')) {
+        if ($rejection === MockProviderGuard::REASON_NOT_EXPLICITLY_ALLOWED) {
             throw new AiAnalysisException(
                 'MOCK_PROVIDER_NOT_ALLOWED',
                 'AI_PROVIDER=mockを使用するにはALLOW_MOCK_PROVIDERS=trueの設定が必要です。',

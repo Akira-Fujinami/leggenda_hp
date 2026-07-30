@@ -2,10 +2,18 @@
 
 namespace App\Services\Lead;
 
+use App\Mail\BrandWheelAnalysisCompletedMail;
+use App\Mail\BrandWheelLeadAnalysisCompletedMail;
+use App\Models\BrandWheelAnalysisResult;
 use App\Models\LeadSession;
 use App\Notifications\Lead\LeadAnalysisStartedNotification;
 use App\Notifications\Lead\LeadConsultationRequestedNotification;
+use App\Services\BrandWheel\BrandWheelEmailContentBuilder;
+use App\Services\BrandWheel\BrandWheelHexagonRenderer;
+use App\Services\BrandWheel\BrandWheelHexagonSvgBuilder;
+use App\Services\BrandWheel\BrandWheelLeadEmailContentBuilder;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Throwable;
 
@@ -50,6 +58,109 @@ class LeadNotificationService
                 resultsUrl: $this->resultsUrl($rawToken),
             ));
         });
+    }
+
+    /**
+     * ブランド・ホイール(6軸)分析結果を社内スタッフへ送る2通目メール。
+     * 1通目(notifyConsultationRequested)とは異なり、キュー経由の非同期通知
+     * ではなく同期送信にする ―― 呼び出し元(GenerateBrandWheelAnalysisJob)が
+     * 既にaiキュー上のJobとして実行中であり、ここでさらにnotificationsキューへ
+     * 積んでも二重に待たせるだけで利点が無いため。
+     *
+     * 送信の成否をboolで返す ―― 呼び出し元がstaff_notified_atを更新して
+     * よいかどうかの判断に使う(失敗時はnullのままにして再送可能にする、
+     * 2026-07-30の指摘)。
+     */
+    public function notifyBrandWheelAnalysisCompleted(
+        BrandWheelAnalysisResult $result,
+        string $companyName,
+        string $contactName,
+        string $targetUrl,
+    ): bool {
+        $recipient = config('lead.notification_to');
+
+        if (! is_string($recipient) || $recipient === '') {
+            Log::warning('Lead notification skipped: LEAD_NOTIFICATION_TO is not configured', [
+                'event' => 'brand_wheel_analysis_completed',
+                'brand_wheel_analysis_result_id' => $result->id,
+            ]);
+
+            return false;
+        }
+
+        try {
+            $data = app(BrandWheelEmailContentBuilder::class)->build($result, $companyName, $contactName, $targetUrl);
+
+            $png = null;
+            if (! $data['insufficientInput']) {
+                $svg = app(BrandWheelHexagonSvgBuilder::class)->build($result);
+                $png = app(BrandWheelHexagonRenderer::class)->renderPng($svg);
+            }
+
+            Mail::to($recipient)->send(new BrandWheelAnalysisCompletedMail($data, $png));
+
+            return true;
+        } catch (Throwable $e) {
+            report($e);
+
+            Log::warning('Brand wheel analysis completed notification failed to send', [
+                'brand_wheel_analysis_result_id' => $result->id,
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
+     * ブランド・ホイール(6軸)分析結果をリード企業自身へ送るメール。
+     * 社内スタッフ向け(notifyBrandWheelAnalysisCompleted)とは受信者・送信条件・
+     * 内容がすべて独立しており、片方の成否がもう片方に影響しない
+     * (staff_notified_at/lead_notified_atを別々に持つ設計、2026-07-30の指摘)。
+     *
+     * BrandWheelLeadEmailContentBuilder::canSend()をこのメソッド自身の中でも
+     * 再確認する ―― 「6軸すべて読み取れませんでした」等の内容を社外へ送ることは
+     * いかなる場合もしない、という絶対のルールを、呼び出し側の判断だけに
+     * 委ねず境界そのもので強制するため。
+     */
+    public function notifyBrandWheelAnalysisCompletedToLead(
+        BrandWheelAnalysisResult $result,
+        ?string $leadEmail,
+        string $targetUrl,
+    ): bool {
+        $contentBuilder = app(BrandWheelLeadEmailContentBuilder::class);
+
+        if (! $contentBuilder->canSend($result)) {
+            Log::info('Brand wheel lead notification skipped: not eligible to send', [
+                'brand_wheel_analysis_result_id' => $result->id,
+                'reason' => $contentBuilder->blockedReason($result),
+            ]);
+
+            return false;
+        }
+
+        if ($leadEmail === null || $leadEmail === '') {
+            Log::warning('Brand wheel lead notification skipped: no lead email address available', [
+                'brand_wheel_analysis_result_id' => $result->id,
+            ]);
+
+            return false;
+        }
+
+        try {
+            $data = $contentBuilder->build($result, $targetUrl);
+
+            Mail::to($leadEmail)->send(new BrandWheelLeadAnalysisCompletedMail($data));
+
+            return true;
+        } catch (Throwable $e) {
+            report($e);
+
+            Log::warning('Brand wheel lead notification failed to send', [
+                'brand_wheel_analysis_result_id' => $result->id,
+            ]);
+
+            return false;
+        }
     }
 
     private function resultsUrl(string $rawToken): string

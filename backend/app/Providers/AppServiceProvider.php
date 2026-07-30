@@ -53,6 +53,10 @@ class AppServiceProvider extends ServiceProvider
         // ―― こちらは偽装できない(トークン自体がハッシュ照合済みの
         // 認可情報のため)。lead.tokenはこのミドルウェアより必ず先に
         // 実行されるルート構成が前提。
+        // ブランド・ホイール分析Job(Phase 4)もこのエンドポイント経由で
+        // 起動されるため、押すたびにOpenAIのコストが発生する。IP単位の制限も
+        // 検討したが、上記コメント通りtrustProxies未設定下では既知の理由により
+        // 見送り、LeadSession単位のみを維持する(2026-07-29に確認済み)。
         RateLimiter::for('lead-consultation', function (Request $request) {
             $leadSession = $request->attributes->get('leadSession');
             $key = $leadSession?->id ?? $request->ip();

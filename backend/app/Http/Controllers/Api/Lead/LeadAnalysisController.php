@@ -6,8 +6,10 @@ use App\Enums\AnalysisStatus;
 use App\Enums\ReportFormat;
 use App\Enums\ReportGenerationStatus;
 use App\Http\Controllers\Controller;
+use App\Jobs\GenerateBrandWheelAnalysisJob;
 use App\Jobs\Report\GenerateLeadReportJob;
 use App\Models\Analysis;
+use App\Models\BrandWheelAnalysisResult;
 use App\Models\LeadSession;
 use App\Models\MetricDefinition;
 use App\Models\Project;
@@ -25,6 +27,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 /**
  * リード向け簡易分析(自社1件+競合1件、または自社のみ)。既存の
@@ -216,6 +219,11 @@ class LeadAnalysisController extends Controller
      * 一任する(このメソッド自身はread-then-writeの判定を行わない)。
      * 2回目以降の押下もエラーにはせず、既に送信済みである旨を返す
      * (ユーザーから見て連打が失敗として見えないようにするため)。
+     *
+     * ブランド・ホイール(6軸)分析Jobの起動もここで行うが、1通目
+     * (相談受付)メールの送信が確定した「後」に行う ―― 評価Job側の
+     * 失敗が相談受付そのもの・1通目メールを巻き込まないようにするため
+     * (同一トランザクション・同一ジョブチェーンには置かない)。
      */
     public function requestConsultation(Request $request, Analysis $analysis): JsonResponse
     {
@@ -234,9 +242,60 @@ class LeadAnalysisController extends Controller
                 $rawToken,
                 $this->scoreSummaryFor($analysis),
             );
+
+            $this->dispatchBrandWheelAnalysis($analysis);
         }
 
         return $this->success(['already_requested' => ! $isFirstRequest]);
+    }
+
+    /**
+     * ブランド・ホイール(6軸)分析Jobを起動する。生成物は社内向けのみで
+     * リードには一切表示されないため、失敗してもこのレスポンス・1通目
+     * メールには一切影響させない(例外はここで握りつぶし、ログにのみ残す)。
+     *
+     * リードの個人情報(会社名・担当者名・電話番号・メールアドレス・
+     * フォーム入力値)はJobへ一切渡さない ―― 渡すのはBrandWheelAnalysisResult
+     * のIDのみで、GenerateBrandWheelAnalysisJob自身もWebsiteAnalysisのIDしか
+     * 受け取らない(LeadSessionへの依存を持たない設計、BrandWheelAnalysis
+     * InputFactory参照)。
+     *
+     * OpenAIの二重呼び出し防止はGenerateBrandWheelAnalysisJobのShouldBeUnique
+     * (#95)に一任する。このメソッド自体は$isFirstRequestのゲート
+     * (recordConsultationRequestedの条件付きUPDATE)により、同一相談リクエストで
+     * 二重に呼ばれることはない。
+     */
+    private function dispatchBrandWheelAnalysis(Analysis $analysis): void
+    {
+        try {
+            $analysis->loadMissing('websiteAnalyses.website');
+            $selfWebsiteAnalysis = $analysis->websiteAnalyses->first(fn ($wa) => (bool) $wa->website?->is_primary);
+
+            if ($selfWebsiteAnalysis === null) {
+                // 通常の経路(store())では自社サイトのWebsiteは必ずis_primary=trueで
+                // 作られるため、ここに来るのは想定外のデータ不整合である可能性が
+                // 高い。運用上検知されるべき障害としてLog::errorで記録する
+                // (2026-07-29の指摘によりLog::warningから格上げ)。
+                Log::error('Brand wheel analysis dispatch skipped: no primary WebsiteAnalysis found', [
+                    'analysis_id' => $analysis->id,
+                ]);
+
+                return;
+            }
+
+            $record = BrandWheelAnalysisResult::query()->create([
+                'analysis_id' => $analysis->id,
+                'website_analysis_id' => $selfWebsiteAnalysis->id,
+                'status' => 'pending',
+                'is_mock' => false,
+                'input_hash' => '',
+            ]);
+
+            GenerateBrandWheelAnalysisJob::dispatch($record->id)->onQueue('ai');
+        } catch (Throwable $e) {
+            report($e);
+            Log::warning('Brand wheel analysis dispatch failed', ['analysis_id' => $analysis->id]);
+        }
     }
 
     /**

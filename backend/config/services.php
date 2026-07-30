@@ -59,6 +59,24 @@ return [
         'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
     ],
 
+    // ブランド・ホイール(6軸)分析用のAI Provider設定。既存のai.provider
+    // (スコアリング結果のAI要約、相談ボタンとは独立に都度呼ばれる)とは
+    // 別のオペレーション設定として切り替え可能にする ―― 段階的ロールアウト中、
+    // 一方だけmock/openaiを切り替えたい場面があるため。APIキー・モデル・
+    // base_urlは同じOpenAIアカウントを使うため openai.* をそのまま流用する。
+    'brand_wheel_ai' => [
+        'provider' => env('BRAND_WHEEL_AI_PROVIDER', env('AI_PROVIDER', 'mock')),
+        'timeout' => (int) env('BRAND_WHEEL_AI_TIMEOUT', env('AI_TIMEOUT', 60)),
+        'max_retries' => (int) env('BRAND_WHEEL_AI_MAX_RETRIES', env('AI_MAX_RETRIES', 1)),
+        'max_output_tokens' => (int) env('BRAND_WHEEL_AI_MAX_OUTPUT_TOKENS', env('AI_MAX_OUTPUT_TOKENS', 2000)),
+        // ブランド・ホイールは判定システムであり、同一サイトを2回評価して
+        // 違う結果が出ることは社外に出す文章として受け入れられない。
+        // 設定可能な最小値(0.0)を既定にし、揺らぎを最小化する
+        // (2026-07-30の指摘。既存のOpenAiAnalysisProvider(スコアリング要約用)の
+        // temperature=0.2はそのままで良い ―― あちらは判定システムではない)。
+        'temperature' => (float) env('BRAND_WHEEL_AI_TEMPERATURE', 0.0),
+    ],
+
     'semrush' => [
         'api_key' => env('SEMRUSH_API_KEY'),
         'database' => env('SEMRUSH_DATABASE', 'us'),

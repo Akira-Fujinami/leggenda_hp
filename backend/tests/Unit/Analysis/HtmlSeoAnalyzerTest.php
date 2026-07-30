@@ -733,4 +733,159 @@ class HtmlSeoAnalyzerTest extends TestCase
         $this->assertFalse($result['product_price_cards']['present']);
         $this->assertSame(0, $result['product_price_cards']['count']);
     }
+
+    // ------------------------------------------------------------------
+    // Phase 4(ブランド・ホイール6軸分析)向けに追加した公開メソッド。
+    // analyze()自体は変更していないため、上記の既存テストは無影響。
+    // ------------------------------------------------------------------
+
+    public function test_extract_body_text_returns_whitespace_normalized_plain_text(): void
+    {
+        $html = '<html><body><p>これは  本文です。</p><p>2段落目。</p></body></html>';
+
+        $text = $this->analyzer->extractBodyText($html);
+
+        // <p>タグの境界には改行を挿入するため、タグ内の連続空白は1つのスペースに
+        // 畳まれつつ、段落同士は改行で区切られる(地続きの文字列にはならない)。
+        $this->assertSame("これは 本文です。\n2段落目。", $text);
+    }
+
+    public function test_extract_body_text_does_not_concatenate_adjacent_block_elements_into_a_phantom_phrase(): void
+    {
+        // <h2>と直後の<p>がtextContentで単純連結されると、サイト上に実在しない
+        // 「挑戦する人材を求めています」という文字列が生成されてしまう。
+        // ブロック境界を改行として保持することで、この幻の文字列を防ぐ。
+        $html = '<html><body><h2>挑戦</h2><p>する人材を求めています。</p></body></html>';
+
+        $text = $this->analyzer->extractBodyText($html);
+
+        $this->assertStringNotContainsString('挑戦する人材を求めています', $text);
+        $this->assertSame("挑戦\nする人材を求めています。", $text);
+    }
+
+    public function test_extract_body_text_treats_br_as_a_single_line_break_within_a_block(): void
+    {
+        $html = '<html><body><p>1行目<br>2行目</p></body></html>';
+
+        $text = $this->analyzer->extractBodyText($html);
+
+        $this->assertSame("1行目\n2行目", $text);
+    }
+
+    public function test_extract_body_text_collapses_nested_and_consecutive_block_boundaries_into_single_newlines(): void
+    {
+        $html = '<html><body><div><p>入れ子の段落。</p></div><section><p>次の段落。</p></section></body></html>';
+
+        $text = $this->analyzer->extractBodyText($html);
+
+        $this->assertSame("入れ子の段落。\n次の段落。", $text);
+    }
+
+    public function test_extract_body_text_excludes_script_and_style_content(): void
+    {
+        $html = '<html><head><style>.a{color:red}</style></head><body>'
+            .'<script>var leaked = "スクリプト内の文字列";</script>'
+            .'<p>本当の本文。</p>'
+            .'</body></html>';
+
+        $text = $this->analyzer->extractBodyText($html);
+
+        $this->assertStringNotContainsString('スクリプト内の文字列', $text);
+        $this->assertStringNotContainsString('color:red', $text);
+        $this->assertStringContainsString('本当の本文。', $text);
+    }
+
+    public function test_extract_heading_texts_returns_h1_to_h3_in_document_order(): void
+    {
+        $html = '<html><body>'
+            .'<h1>採用情報</h1>'
+            .'<h2>働く環境</h2>'
+            .'<h3>福利厚生</h3>'
+            .'<h4>この見出しは対象外</h4>'
+            .'</body></html>';
+
+        $headings = $this->analyzer->extractHeadingTexts($html);
+
+        $this->assertSame([
+            ['level' => 1, 'text' => '採用情報'],
+            ['level' => 2, 'text' => '働く環境'],
+            ['level' => 3, 'text' => '福利厚生'],
+        ], $headings);
+    }
+
+    public function test_extract_heading_texts_skips_empty_headings(): void
+    {
+        $html = '<html><body><h1></h1><h2>本題</h2></body></html>';
+
+        $headings = $this->analyzer->extractHeadingTexts($html);
+
+        $this->assertSame([['level' => 2, 'text' => '本題']], $headings);
+    }
+
+    public function test_extract_navigation_link_labels_returns_header_nav_and_footer_anchor_text_without_urls(): void
+    {
+        $html = '<html><body>'
+            .'<header><nav><a href="/energy">エネルギー事業</a><a href="/mobility">モビリティ事業</a></nav></header>'
+            .'<main><a href="/should-be-ignored">本文中のリンクは対象外</a></main>'
+            .'<footer><a href="/healthcare">ヘルスケア事業</a></footer>'
+            .'</body></html>';
+
+        $labels = $this->analyzer->extractNavigationLinkLabels($html);
+
+        $this->assertSame(['エネルギー事業', 'モビリティ事業', 'ヘルスケア事業'], $labels);
+        foreach ($labels as $label) {
+            $this->assertStringNotContainsString('/', $label);
+            $this->assertStringNotContainsString('href', $label);
+        }
+    }
+
+    public function test_extract_navigation_link_labels_collapses_duplicate_labels_into_one(): void
+    {
+        $html = '<html><body><header><nav>'
+            .'<a href="/energy">エネルギー事業</a>'
+            .'<a href="/energy-2">エネルギー事業</a>'
+            .'</nav></header></body></html>';
+
+        $labels = $this->analyzer->extractNavigationLinkLabels($html);
+
+        $this->assertSame(['エネルギー事業'], $labels);
+    }
+
+    public function test_extract_navigation_link_labels_enforces_the_64_character_and_50_item_caps(): void
+    {
+        $longLabel = str_repeat('事', 100);
+        $html = '<html><body><header><nav>'
+            .'<a href="/long">'.$longLabel.'</a>'
+            .implode('', array_map(fn (int $i) => '<a href="/item-'.$i.'">事業'.$i.'</a>', range(1, 60)))
+            .'</nav></header></body></html>';
+
+        $labels = $this->analyzer->extractNavigationLinkLabels($html);
+
+        $this->assertSame(64, mb_strlen($labels[0]));
+        $this->assertSame(str_repeat('事', 64), $labels[0]);
+        $this->assertCount(50, $labels);
+    }
+
+    public function test_extract_navigation_link_labels_returns_empty_array_when_no_navigation_exists(): void
+    {
+        $html = '<html><body><main><p>本文のみで、header/nav/footerが存在しない。</p></main></body></html>';
+
+        $labels = $this->analyzer->extractNavigationLinkLabels($html);
+
+        $this->assertSame([], $labels);
+    }
+
+    public function test_extract_navigation_link_labels_excludes_content_less_and_symbol_only_labels(): void
+    {
+        $html = '<html><body><header><nav>'
+            .'<a href="/a">詳しくはこちら</a>'
+            .'<a href="/b">MORE</a>'
+            .'<a href="/c">&gt;&gt;</a>'
+            .'<a href="/d">エネルギー事業</a>'
+            .'</nav></header></body></html>';
+
+        $labels = $this->analyzer->extractNavigationLinkLabels($html);
+
+        $this->assertSame(['エネルギー事業'], $labels);
+    }
 }

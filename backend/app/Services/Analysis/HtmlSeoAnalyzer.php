@@ -121,6 +121,25 @@ class HtmlSeoAnalyzer
     private const RECRUIT_KEYWORDS = ['recruit', 'careers', 'career', '採用', '求人'];
 
     /**
+     * extractNavigationLinkLabels()の1件あたりの文字数上限/全体件数上限。
+     */
+    private const NAV_LINK_LABEL_MAX_LENGTH = 64;
+
+    private const NAV_LINK_LABEL_MAX_COUNT = 50;
+
+    /**
+     * extractNavigationLinkLabels()で「内容を持たないラベル」として除外する
+     * 語(小文字化して比較する)。ページネーション・続きを読む系の定型文言のみを
+     * 対象とし、実際の事業・商品名を誤って除外しないよう最小限にとどめる。
+     *
+     * @var list<string>
+     */
+    private const NAV_LINK_NO_CONTENT_LABELS = [
+        '詳しくはこちら', 'もっと見る', '一覧', '一覧を見る', '次へ', '前へ',
+        'more', 'read more', 'learn more', 'see more', 'top', 'home', 'next', 'prev', 'previous',
+    ];
+
+    /**
      * 代表フォーム選定において「問い合わせ・相談フォームらしい」とみなす語
      * (action/id/class、input name/type、周辺見出しの判定に共通で使う)。
      */
@@ -204,6 +223,196 @@ class HtmlSeoAnalyzer
             'form_burden' => $this->analyzeFormBurden($xpath),
             'accessibility' => $this->analyzeAccessibilityHeuristics($xpath),
         ];
+    }
+
+    /**
+     * ブロックレベル要素の境界とみなし、テキスト化の際に改行を挿入するタグ名。
+     * DOMNode::textContentは要素境界に何の区切りも挿入せず子孫テキストノードを
+     * 単純連結するため、これを使わずに直接textContentを取ると、見出しと直後の
+     * 段落が地続きになり、サイト上に実在しない文字列が生成されてしまう
+     * (例: <h2>挑戦</h2><p>する人材を求めています</p> →
+     * 「挑戦する人材を求めています」という幻の文字列)。これはPhase 4の
+     * evidence検証(元テキストへの部分一致)を無効化するため、ブロック境界を
+     * 明示的に改行として保持する。
+     *
+     * @var list<string>
+     */
+    private const TEXT_BLOCK_BOUNDARY_TAGS = [
+        'p', 'div', 'section', 'article', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'td', 'tr', 'dt', 'dd', 'blockquote', 'header', 'footer', 'nav', 'main', 'aside', 'figcaption',
+    ];
+
+    /**
+     * ページ本文のプレーンテキストを返す(script/style除去後、空白正規化済み)。
+     * ブロックレベル要素の境界は改行として保持する(段落単位で改行区切りに
+     * 並ぶ)。Phase 4(ブランド・ホイール6軸分析)がAIへ渡す入力を組み立てる
+     * ために追加した公開メソッド。analyze()の内部で同じ値を計算しているが
+     * 返却していないため(analyzeContent()はbody_length/word_countなどの
+     * 派生値しか返さない)、analyze()自体は一切変更せず、同じDOM読み込み手順を
+     * 独立して行う新規メソッドとして追加する(既存の呼び出し元・テストへの
+     * 影響をゼロにするため ―― extractBodyText()自体の呼び出し元は
+     * BrandWheelAnalysisInputFactoryのみで、既存の指標算出は一切参照しない)。
+     */
+    public function extractBodyText(string $html): string
+    {
+        [, $xpath] = $this->loadDomForTextExtraction($html);
+
+        $bodyNodes = $xpath->query('//body');
+        $rawText = ($bodyNodes?->length ?? 0) > 0 ? $this->textWithBlockBoundaries($bodyNodes->item(0)) : '';
+
+        return $this->normalizeBlockText($rawText);
+    }
+
+    /**
+     * ブロック境界タグの前後に改行を挿入しながら、テキストノードを文書順に連結する。
+     */
+    private function textWithBlockBoundaries(\DOMNode $node): string
+    {
+        if ($node instanceof \DOMText) {
+            return $node->wholeText;
+        }
+
+        if (! $node instanceof \DOMElement) {
+            return '';
+        }
+
+        $tagName = strtolower($node->nodeName);
+
+        if ($tagName === 'br') {
+            return "\n";
+        }
+
+        $isBlockBoundary = in_array($tagName, self::TEXT_BLOCK_BOUNDARY_TAGS, true);
+
+        $parts = [];
+        if ($isBlockBoundary) {
+            $parts[] = "\n";
+        }
+        foreach ($node->childNodes as $child) {
+            $parts[] = $this->textWithBlockBoundaries($child);
+        }
+        if ($isBlockBoundary) {
+            $parts[] = "\n";
+        }
+
+        return implode('', $parts);
+    }
+
+    /**
+     * 改行以外の空白(半角/全角スペース・タブ)は単一のスペースに畳み、
+     * 改行そのものは潰さずに残す。連続改行は1つに畳み、行頭/行末の
+     * 空白と空行は除去する。
+     */
+    private function normalizeBlockText(string $text): string
+    {
+        $text = preg_replace('/[^\S\n]+/u', ' ', $text) ?? '';
+        $text = preg_replace('/[ \t]*\n[ \t]*/u', "\n", $text) ?? '';
+        $text = preg_replace('/\n{2,}/u', "\n", $text) ?? '';
+
+        return trim($text, " \n");
+    }
+
+    /**
+     * H1〜H3の見出しテキストを文書順に返す。Phase 4の6軸分析入力用。
+     *
+     * @return list<array{level: int, text: string}>
+     */
+    public function extractHeadingTexts(string $html): array
+    {
+        [, $xpath] = $this->loadDomForTextExtraction($html);
+
+        $nodes = $xpath->query('//h1 | //h2 | //h3');
+        $headings = [];
+
+        foreach ($nodes ?? [] as $node) {
+            $text = trim(preg_replace('/\s+/u', ' ', $node->textContent) ?? '');
+
+            if ($text === '') {
+                continue;
+            }
+
+            $headings[] = ['level' => (int) substr($node->nodeName, 1), 'text' => $text];
+        }
+
+        return $headings;
+    }
+
+    /**
+     * 「その会社が何を事業として展開しているか」を読み取るための材料として、
+     * グローバルナビゲーション(header/nav配下)とフッターナビゲーションの
+     * リンクテキストを文書順に返す。ブランド・ホイールの活動的魅力
+     * (下位要素「展開事業・商品」)専用の抽出であり、analyzeBusinessLinks()
+     * (料金/FAQ/会社概要等、信頼性評価用の個別ページ検出)とは目的も
+     * 対象ノードも異なるため独立させている ―― analyzeBusinessLinks()には
+     * 一切手を入れない。
+     *
+     * 正規化: 前後・連続空白の単一化、1件64文字で切り詰め、正規化後の
+     * 文字列で重複除去、文書順で最大50件。空文字・記号のみ・
+     * 「詳しくはこちら」等の内容を持たないラベルは除外する。URLは含めない。
+     *
+     * @return list<string>
+     */
+    public function extractNavigationLinkLabels(string $html): array
+    {
+        [, $xpath] = $this->loadDomForTextExtraction($html);
+
+        $nodes = $xpath->query('//header//a | //nav//a | //footer//a');
+
+        $labels = [];
+        foreach ($nodes ?? [] as $node) {
+            if (count($labels) >= self::NAV_LINK_LABEL_MAX_COUNT) {
+                break;
+            }
+
+            $label = $this->normalizeNavLinkLabel($node->textContent);
+            if ($label === null || in_array($label, $labels, true)) {
+                continue;
+            }
+
+            $labels[] = $label;
+        }
+
+        return $labels;
+    }
+
+    private function normalizeNavLinkLabel(string $rawText): ?string
+    {
+        $text = $this->sanitizeCandidateText(trim($rawText)) ?? '';
+        $text = trim(preg_replace('/\s+/u', ' ', $text) ?? '');
+
+        if ($text === '' || ! preg_match('/[\p{L}\p{N}]/u', $text)) {
+            return null;
+        }
+
+        if (in_array(mb_strtolower($text), self::NAV_LINK_NO_CONTENT_LABELS, true)) {
+            return null;
+        }
+
+        return mb_substr($text, 0, self::NAV_LINK_LABEL_MAX_LENGTH);
+    }
+
+    /**
+     * extractBodyText()/extractHeadingTexts()専用のDOM読み込み。analyze()と
+     * 同じ手順(UTF-8強制・XXE対策・script/style等の除去)を独立して行う
+     * ―― analyze()自体の実装には一切触れない。
+     *
+     * @return array{0: \DOMDocument, 1: \DOMXPath}
+     */
+    private function loadDomForTextExtraction(string $html): array
+    {
+        $dom = new \DOMDocument;
+        $previous = libxml_use_internal_errors(true);
+        $dom->loadHTML(
+            '<?xml encoding="utf-8"?>'.$html,
+            LIBXML_NOENT | LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING,
+        );
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+
+        $xpath = new \DOMXPath($dom);
+        $this->stripNonContentElements($xpath);
+
+        return [$dom, $xpath];
     }
 
     /**

@@ -28,6 +28,11 @@ RUN set -eux; \
         # php-font-libのTTC対応が実運用で不安定なため避け、単体の.ttfとして
         # 配布されるIPAexゴシック(IPA Font License、商用利用可)を採用する。
         fonts-ipaexfont-gothic \
+        # ブランド・ホイール(6軸)のヘキサゴンSVGをPNG化してメールへ埋め込む
+        # ために使う(Phase 4)。ImageMagickのSVGデリゲート経由だと
+        # policy.xml等の追加設定が絡み不安定なため、SVG専用のrsvg-convert
+        # コマンドをSymfony\Process経由で直接呼び出す方式にした。
+        librsvg2-bin \
     ; \
     for f in /tmp/extra-certs/*.pem /tmp/extra-certs/*.crt; do \
         [ -f "$f" ] || continue; \

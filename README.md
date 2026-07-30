@@ -325,6 +325,68 @@ FRONTEND_ORIGIN=https://<frontend-service>.onrender.com
   する必要がある。特に`NEXT_PUBLIC_API_URL`はNext.jsのビルド時にJSバンドルへ
   焼き込まれるため、値を変えたら必ずfrontendを再ビルドすること。
 
+## リリース前チェックリスト
+
+- **[未解決・最優先] `SEMRUSH_API_KEY`のローテーションと`backend/.env.example`の
+  プレースホルダ化**。これが完了するまでpushしないこと。
+- **[未解決] 本番で`CategoryDefinitionSeeder`と`MetricDefinitionSeeder`をクラス指定で
+  再実行すること**。定義が欠けていると`recordMetric()`が無言で記録をスキップする
+  (2026-07-20の「採点マスタ0件」と同じ失敗経路)。
+- **[未解決] `GET /up`で疎通確認すること**。`/api/health`はRedisを必須チェックにして
+  いるため、本番では常に503になる。
+- **`SANCTUM_STATEFUL_DOMAINS`と実際のfrontend Originの一致確認**(2026-07-29追加)。
+  値が空でない・schemeを含まないことは`ProductionEnvironmentValidator`が起動時に
+  検証するが、**`FRONTEND_URL`のホスト名と一致しているかどうかは検証していない**。
+  一致していない場合、`EnsureFrontendRequestsAreStateful::fromFrontend()`が
+  リクエストをstateful扱いせず、認証自体は通るのに次のリクエストで未認証に戻る
+  (=誰もログインできない)という気づきにくい形で壊れる。デプロイ前に手動で
+  確認すること(将来的に`ProductionEnvironmentValidator`へこの整合性チェックを
+  追加することも検討する)。
+- **カスタムドメイン導入時は、`SANCTUM_STATEFUL_DOMAINS`・`FRONTEND_URL`・
+  `FRONTEND_ORIGIN`のいずれも値の更新が必要**(上記と同じ理由)。更新後は
+  frontend・backend双方の再デプロイも必要。
+- **ブランド・ホイール(Phase 4)機能が読む採用ページ/トップページの生HTMLの
+  ディスク容量**(2026-07-29追加、実装ではなく実測・監視の課題として明記):
+  - 概算: WebsiteAnalysis 1件あたり、トップページ(raw+rendered)・採用ページ
+    (raw)・robots.txt・sitemap.xmlの合計でおおよそ0.3〜2MB程度(サイトの重さに
+    よって数倍〜十倍程度まで振れ得る、あくまで概算)。1リード(自社+競合で
+    最大`LEAD_MAX_WEBSITES`件のWebsiteAnalysis)あたりではこの数倍。
+    Task #99の実サイト実測作業で、実測値に置き換えること。
+  - この生HTMLは`PurgeExpiredLeadSessions`が対象とするLeadSessionの保持期間
+    (`LEAD_RETENTION_DAYS_AFTER_EXPIRY`、既定180日)が過ぎるまで、削除されずに
+    蓄積し続ける(下記参照)。Renderの永続ディスクは固定サイズで、埋まると
+    書き込みが失敗し解析全体が停止するため、割当サイズと実際のリード流入
+    ペースから見た消費見込みを事前に見積もり、使用率を監視すること
+    (`du -sh $ANALYSIS_STORAGE_PATH`、またはRenderのディスク使用率メトリクス)。
+  - **既知の未対応課題**: `PurgeExpiredLeadSessions`はDB行(Project以下カスケード)
+    とWord/PDFレポートファイルは削除するが、`analysis_pages.raw_html_path`/
+    `rendered_html_path`が指す生HTMLファイル自体は削除しない(孤児ファイルとして
+    ディスクに残り続ける)。Phase 4完了後の課題として、この削除をコマンドへ
+    追加することを検討する(現時点では意図的に未実装 ―― 参照中のファイルを
+    誤って消すリスクを避けるため、実装は見送っている)。
+- **ブランド・ホイール(Phase 4)デプロイ関連**(2026-07-30追加):
+  - AIプロバイダ(OpenAI)のAPIキーがRenderに設定されているか(値そのものは
+    確認・記載しないこと)。
+  - `brand_wheel_ai`関連の環境変数(`BRAND_WHEEL_AI_PROVIDER`/`BRAND_WHEEL_AI_TIMEOUT`/
+    `BRAND_WHEEL_AI_MAX_RETRIES`/`BRAND_WHEEL_AI_MAX_OUTPUT_TOKENS`/
+    `BRAND_WHEEL_AI_TEMPERATURE`)が意図通り設定されているか。特に
+    `BRAND_WHEEL_AI_TEMPERATURE`は判定システムのため既定0.0(未設定なら0.0が
+    自動適用される)を推奨、意図的に上げる場合のみ明示的に設定すること。
+  - **Dockerfileに`librsvg2-bin`と日本語フォント(`fonts-ipaexfont-gothic`)を
+    追加したため、本番イメージの再ビルドが必須**。ローカル環境でもこれを
+    忘れてイメージが古いまま(`rsvg-convert`が存在しない状態)になっていたことが
+    あるため、`docker compose build`(または本番のビルドパイプライン)で
+    イメージが実際に再ビルドされたことを確認すること。
+  - **本番デプロイ後、実際にヘキサゴンPNGが日本語で正しく描画されることを、
+    社員宛のテスト送信で確認すること**。ローカルで確認済みでも、本番イメージ
+    (ビルド環境・OSパッケージの構成)での確認は別途必要(`rsvg-convert`が
+    フォントを解決できない場合、コマンドはエラーを返さず豆腐(□□□)の画像を
+    正常終了で生成するため、目視確認以外に検知手段が無い)。
+  - `brand_wheel_analysis_results`のマイグレーション適用(`php artisan migrate`)。
+  - **Resendのドメイン検証(SPF/DKIM)**。リード企業向けメール
+    (`BrandWheelLeadAnalysisCompletedMail`)が新たに追加され、社外の受信者へ
+    送るメールが増えたため、到達性の検証はこれまで以上に重要になっている。
+
 ## テスト
 
 ```bash
