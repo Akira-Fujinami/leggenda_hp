@@ -204,17 +204,67 @@ $0.60/百万出力トークン)。
   同一サイトを2回評価すると異なる結果が出る状態だった。
 - コストは概算のみ算出済み(本文書8節)。
 
+### 9.0 実測用CLIツール(非本番環境限定)
+
+実測作業のために、`APP_ENV=production`では実行を拒否する2つのartisanコマンドを
+用意している(2026-07-30追加、いずれも製品機能ではない ―― 本番の「1トークン1回」
+の制限・相談ボタンの二重押下防止・input_hashによる再利用は一切変更していない)。
+
+- **`php artisan lead:issue-test-session {self_url} {competitor_url?}`**:
+  既存データを書き換えず、毎回新規にテスト用LeadSessionとトークンを発行し、
+  診断を開始してワンタイムURLを標準出力へ表示する。リード情報はダミー値
+  (メールアドレスは`@example.com`)。**出力にトークンが含まれるため、実行結果を
+  ログファイルや報告に貼らないこと。**
+- **`php artisan brand-wheel:run {website_analysis_id} [--force] [--output=<path>]`**:
+  診断フロー全体を経由せず、既存のWebsiteAnalysisに対してブランド・ホイール分析
+  だけを単体実行する。`--force`を指定すると、`input_hash`が一致する既存の
+  `success`結果があっても再利用せずAIを再度呼ぶ(`GenerateBrandWheelAnalysisJob`の
+  `forceRefresh`引数、production環境では強制的に無効化される)。`--output`を
+  指定すると、パース済みの判定結果(6軸の`state`・`matched_sub_elements`・
+  `discarded_sub_elements`・`claimed_sub_element_count`・`axis_state_counts`・
+  `core_value`・使用モデル名・`prompt_version`・実測トークン数・所要時間)を
+  JSONファイルへ書き出す。`BrandWheelAnalysisResult`モデル自身のカラムのみから
+  組み立てており、このモデルにはリードの企業名・担当者名・連絡先を保持する
+  カラムがそもそも存在しないため、出力にリードのPIIが混入する経路は無い
+  (対象サイト本文のevidence抜粋は含まれる)。
+
+**`--force`を付けずに同一サイトを複数回実行しても、安定性確認にはならない。**
+2回目以降は`input_hash`の一致により結果が再利用され、AIを実際には1回しか呼んで
+いないにもかかわらず「常に完全一致する」という見かけ上の結果になる。**さらに、
+`--output`を使わずに同一`website_analysis_id`へ3回実行しても、`brand_wheel_
+analysis_results`の対象行は毎回上書きされるため、比較する時点で1回目・2回目の
+結果は失われている。** 下記9.1の安定性確認では、必ず`--force`と`--output`を
+両方付けて、3回とも別々のファイルパスに出力すること。
+
 ### 9.1 実測の優先順位(この順序を必ず守ること)
 
 実際のAPIキーが利用可能になった時点で、以下の順序で実施すること。**1が通らない
 状態で3(閾値調整)を行っても意味が無い** ―― 同じ入力に対して結果が揺れるなら、
 閾値をどう調整してもその調整自体が測定誤差に埋もれる。
 
-1. **安定性(最優先、これが通らないとリリース不可)**: 同一サイト1件を3回評価し、
-   6軸のstateが完全に一致するか、`matched_sub_elements`のキー集合が一致するか、
-   evidenceの抜粋箇所が一致するかを比較する。一致しない場合、それが最も重要な
-   発見であり、揺れた軸と内容を具体的に報告すること。temperatureを下げても
-   揺れる場合は、プロンプトか閾値の設計問題である。
+1. **安定性(最優先、これが通らないとリリース不可)**: 以下の手順で実施する。
+
+   ```
+   php artisan lead:issue-test-session https://<自社サイト> https://<競合サイト>
+   # 出力されたURLから website_analysis_id を確認する(URLそのものは
+   # ログ・報告に貼らないこと)。
+
+   php artisan brand-wheel:run {website_analysis_id} --force --output=/tmp/run1.json
+   php artisan brand-wheel:run {website_analysis_id} --force --output=/tmp/run2.json
+   php artisan brand-wheel:run {website_analysis_id} --force --output=/tmp/run3.json
+
+   diff /tmp/run1.json /tmp/run2.json
+   diff /tmp/run2.json /tmp/run3.json
+   ```
+
+   `--force`と`--output=<別ファイル>`を必ず両方付けて3回実行すること ―― `--force`
+   が無ければ2回目以降はinput_hashの再利用で結果が固定され、`--output`が無ければ
+   `brand_wheel_analysis_results`の対象行が毎回上書きされ、比較する時点で1回目・
+   2回目の結果は失われている(いずれも見かけ上の「安定」を生むだけで測定として
+   成立しない)。3つのJSONファイルを`diff`で比較し、6軸の`state`が完全に一致するか、
+   `matched_sub_elements`のキー集合が一致するか、evidenceの抜粋箇所が一致するかを
+   確認する。一致しない場合、それが最も重要な発見であり、揺れた軸と内容を具体的に
+   報告すること。temperatureを下げても揺れる場合は、プロンプトか閾値の設計問題である。
 2. **モデル比較(破棄率)**: 下記9.2節の手順で実施。
 3. **10サイトのstate分布と閾値の妥当性**: 1・2が安定していることを確認した上で
    実施する。

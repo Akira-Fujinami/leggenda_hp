@@ -52,6 +52,12 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
 
     public function __construct(
         public readonly int $brandWheelAnalysisResultId,
+        // #99の安定性確認(同一サイトを複数回評価し、AIの出力自体が揺れるかを
+        // 見る)専用のバイパス。既定はfalseで、既存の呼び出し元(#96の相談ボタン
+        // からのdispatch)は一切このパラメータを渡さないため、本番の挙動は
+        // 変わらない。production環境ではhandle()内で強制的に無効化する
+        // (2026-07-30の指摘 ―― このバイパス自体も本番では使えないこと)。
+        public readonly bool $forceRefresh = false,
     ) {
         $this->timeout = ((int) config('services.brand_wheel_ai.timeout', 60)) + 30;
         // ShouldBeUniqueのロック期間はJobのタイムアウトより確実に長く保つ
@@ -142,7 +148,12 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
 
         $inputHash = $this->computeInputHash($input, $provider);
 
-        $reusable = BrandWheelAnalysisResultRecord::query()
+        // production環境ではforceRefreshを常に無視する(境界そのもので強制する
+        // ―― production環境でこのJobにforceRefresh=trueが渡ること自体
+        // 想定していないが、二重に安全側へ倒す)。
+        $skipReuseCheck = $this->forceRefresh && ! app()->environment('production');
+
+        $reusable = $skipReuseCheck ? null : BrandWheelAnalysisResultRecord::query()
             ->where('website_analysis_id', $websiteAnalysis->id)
             ->where('input_hash', $inputHash)
             ->where('status', 'success')
