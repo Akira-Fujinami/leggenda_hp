@@ -82,20 +82,27 @@ function basePerspectives(overrides: Partial<Record<LeadPerspective["key"], Lead
   ];
 }
 
+// LeadScoreCalculatorはcategory_scoresを4観点のキー(completeness/clarity/
+// findability/usability)で返し、nameにはLeadMetricCatalog::PERSPECTIVE_LABELS
+// (内部名)を入れる。画面はnameを一切表示せず、見出しにはperspective.headingを
+// 使う ―― この対応関係が崩れると比較チャートの数値が出なくなるため、
+// フィクスチャも実APIと同じキーで持つ。
 function baseWebsite(overrides: Partial<LeadResultsType["websites"][number]> = {}): LeadResultsType["websites"][number] {
   return {
     website_name: "サンプル株式会社",
     is_primary: true,
     score: {
-      overall_score: 72.5,
-      display_score: 73,
-      available_score: 72.5,
-      configured_max_score: 100,
+      overall_score: 20,
+      display_score: 20,
+      available_score: 29,
+      configured_max_score: 40,
       coverage_rate: 90,
       confidence_rate: 88,
       category_scores: [
-        { key: "technical_seo", name: "技術SEO", score: 15, max_available_score: 20, configured_max_score: 20, coverage_rate: 100 },
-        { key: "performance", name: "表示速度", score: 10, max_available_score: 15, configured_max_score: 15, coverage_rate: 100 },
+        { key: "completeness", name: "書くべきことが書けているか", score: 8, max_available_score: 10, configured_max_score: 10, coverage_rate: 100 },
+        { key: "clarity", name: "メッセージの分かりやすさ", score: 3, max_available_score: 6, configured_max_score: 10, coverage_rate: 60 },
+        { key: "findability", name: "情報の取りやすさ・導線", score: 5, max_available_score: 5, configured_max_score: 10, coverage_rate: 50 },
+        { key: "usability", name: "見やすさ・使いやすさ", score: 2, max_available_score: 8, configured_max_score: 10, coverage_rate: 80 },
       ],
       metric_summary: {
         success: 40,
@@ -206,7 +213,8 @@ describe("LeadResults", () => {
     expect(screen.getByText("知りたい情報にたどり着けるか")).toBeInTheDocument();
     expect(screen.getByText("見やすく、使いやすいか")).toBeInTheDocument();
 
-    // バックエンドが返す内部名(label)そのままは見出しとして出さない。
+    // バックエンドが返す内部名(perspective.label / category_scores[].name)そのままは
+    // 見出しとして出さない。
     expect(screen.queryByText("メッセージの分かりやすさ")).not.toBeInTheDocument();
     expect(screen.queryByText("情報の取りやすさ・導線")).not.toBeInTheDocument();
   });
@@ -225,8 +233,7 @@ describe("LeadResults", () => {
     expect(screen.getAllByText("良好").length).toBeGreaterThan(0);
     expect(screen.getAllByText("改善の余地があります").length).toBeGreaterThan(0);
 
-    // 旧・内部カテゴリの分数表示("5 / 15"のような形式)は出さない。
-    expect(screen.queryByText("技術SEO")).not.toBeInTheDocument();
+    // 観点ごとの分数表示("5 / 15"のような形式)は出さない。
     expect(screen.queryByText(/^\d+\s*\/\s*\d+$/)).not.toBeInTheDocument();
   });
 
@@ -286,6 +293,65 @@ describe("LeadResults", () => {
 
     expect(screen.getByText("評価不可")).toBeInTheDocument();
     expect(screen.getAllByText("計測できませんでした").length).toBeGreaterThan(0);
+  });
+
+  // --- 2026-07-30の構成変更(縦の長さを抑え、2社を並べて比べられるようにする) ---
+
+  it("4観点の比較ブロックに、自社と競合のバーを観点ごとに並べて描く", () => {
+    const twoSites = baseResults({
+      websites: [baseWebsite(), baseWebsite({ website_name: "競合株式会社", is_primary: false })],
+    });
+
+    render(<LeadResults results={twoSites} token="tok" analysisId={1} />);
+
+    expect(screen.getByText("4つの観点での比較")).toBeInTheDocument();
+    // completeness: 8/10 = 80%(configured_max_score 10 と同値のため、分母の
+    // 取り違えでは差が出ない。分母の検証はlead-perspective-comparison.test.tsx側。)
+    expect(screen.getByTestId("bar-self-completeness")).toHaveAttribute("data-value", "80");
+    expect(screen.getByTestId("bar-competitor-completeness")).toHaveAttribute("data-value", "80");
+  });
+
+  it("項目の内訳は既定で折りたたまれており、開くまで縦に伸びない", async () => {
+    const user = userEvent.setup();
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+
+    expect(screen.queryByText("採用ページの案内")).not.toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("button", { name: /内訳を見る/ })[0]!);
+
+    expect(screen.getByText("採用ページの案内")).toBeInTheDocument();
+  });
+
+  it("2社のデータ品質(カバー率・信頼度)を同じ位置にまとめて出す", () => {
+    const twoSites = baseResults({
+      websites: [baseWebsite(), baseWebsite({ website_name: "競合株式会社", is_primary: false })],
+    });
+
+    render(<LeadResults results={twoSites} token="tok" analysisId={1} />);
+
+    expect(screen.getByText("サンプル株式会社")).toBeInTheDocument();
+    expect(screen.getByText("競合株式会社")).toBeInTheDocument();
+    expect(screen.getAllByText("採用サイトとして重要な4観点での評価")).toHaveLength(2);
+  });
+
+  it("競合サイトへの改善提案は出さない(リードにとって他社への助言になるため)", () => {
+    const twoSites = baseResults({
+      websites: [
+        baseWebsite(),
+        baseWebsite({
+          website_name: "競合株式会社",
+          is_primary: false,
+          top_recommendations: [
+            { title: "競合サイト側の改善提案", description: "出してはいけない項目。", priority: "high", impact: "high", effort: "low" },
+          ],
+        }),
+      ],
+    });
+
+    render(<LeadResults results={twoSites} token="tok" analysisId={1} />);
+
+    expect(screen.getByText("画像を圧縮してください")).toBeInTheDocument();
+    expect(screen.queryByText("競合サイト側の改善提案")).not.toBeInTheDocument();
   });
 
   it("shows a confirmation dialog before sending the consultation request", async () => {
