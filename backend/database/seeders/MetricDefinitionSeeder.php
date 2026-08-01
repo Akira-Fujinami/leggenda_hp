@@ -19,6 +19,27 @@ use Illuminate\Database\Seeder;
  */
 class MetricDefinitionSeeder extends Seeder
 {
+    /**
+     * このSeederが登録すべきkey一覧をcategory_key付きで返す。DBへは一切
+     * 触れない(categories()自体は純粋なデータ定義のため)。
+     * analysis:verify-metric-definitionsコマンドが、実際にrun()を実行する
+     * (=書き込む)ことなく「本来あるべきkey一覧」を読み取るために使う。
+     *
+     * @return list<array{key: string, category_key: string}>
+     */
+    public function expectedDefinitions(): array
+    {
+        $definitions = [];
+
+        foreach ($this->categories() as $categoryKey => $metrics) {
+            foreach ($metrics as $metric) {
+                $definitions[] = ['key' => $metric['key'], 'category_key' => $categoryKey];
+            }
+        }
+
+        return $definitions;
+    }
+
     public function run(): void
     {
         foreach ($this->categories() as $categoryKey => $metrics) {

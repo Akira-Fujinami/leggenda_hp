@@ -12,9 +12,16 @@ use Illuminate\Database\Seeder;
  */
 class CategoryDefinitionSeeder extends Seeder
 {
-    public function run(): void
+    /**
+     * DBへは一切触れない、純粋なカテゴリ定義データ。
+     * analysis:verify-metric-definitionsコマンドが、実際にrun()を実行する
+     * (=書き込む)ことなく「本来あるべきカテゴリ・配点」を読み取るために使う。
+     *
+     * @return list<array{key: string, name: string, weight: int, display_order: int}>
+     */
+    public function expectedCategories(): array
     {
-        $categories = [
+        return [
             ['key' => 'technical_seo', 'name' => '技術SEO', 'weight' => 20, 'display_order' => 10],
             ['key' => 'content', 'name' => 'コンテンツ', 'weight' => 15, 'display_order' => 20],
             ['key' => 'performance', 'name' => '表示速度', 'weight' => 15, 'display_order' => 30],
@@ -23,6 +30,11 @@ class CategoryDefinitionSeeder extends Seeder
             ['key' => 'conversion', 'name' => '集客・コンバージョン', 'weight' => 15, 'display_order' => 60],
             ['key' => 'authority', 'name' => '外部SEO・ドメイン評価', 'weight' => 15, 'display_order' => 70],
         ];
+    }
+
+    public function run(): void
+    {
+        $categories = $this->expectedCategories();
 
         foreach ($categories as $category) {
             CategoryDefinition::query()->updateOrCreate(

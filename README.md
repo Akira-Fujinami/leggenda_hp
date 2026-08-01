@@ -329,9 +329,61 @@ FRONTEND_ORIGIN=https://<frontend-service>.onrender.com
 
 - **[未解決・最優先] `SEMRUSH_API_KEY`のローテーションと`backend/.env.example`の
   プレースホルダ化**。これが完了するまでpushしないこと。
-- **[未解決] 本番で`CategoryDefinitionSeeder`と`MetricDefinitionSeeder`をクラス指定で
-  再実行すること**。定義が欠けていると`recordMetric()`が無言で記録をスキップする
-  (2026-07-20の「採点マスタ0件」と同じ失敗経路)。
+- **[未解決・要実施の可能性あり] 本番の`metric_definitions`/`category_definitions`が
+  最新のSeeder内容と一致しているか確認すること**(2026-08-01更新)。
+  `recruit_title_present`等5指標(`422652d`, 2026-07-29)を含め、これらのSeederに
+  触れるコミットの後、本番でクラス指定シードを実際に実行した記録はこのリポジトリの
+  どこにも残っていない(`docker/scripts/backend-entrypoint.render.sh`は
+  `migrate`/`db:seed`を一切自動実行しないため)。定義が欠けている/無効な場合、
+  `recordMetric()`が無言で記録をスキップし、リード診断の該当項目が
+  「計測対象外」「確認をおすすめします」のまま変化しない(2026-07-20の
+  「採点マスタ0件」と同じ失敗経路、2026-08-01にローカルで再現・確認済み ―― 詳細は
+  下記「デプロイ順序」を参照)。
+
+  **正しい確認手順(「シーダーを再実行した」だけでは実行し忘れを検知できないため、
+  必ず以下のコマンドで確認する)**:
+  ```bash
+  php artisan analysis:verify-metric-definitions
+  ```
+  読み取り専用で、本番でも安全に何度でも実行できる。`metric_definitions`/
+  `category_definitions`が欠落・無効化・weight合計不一致の場合はexit code 1で
+  該当キーを一覧表示する。デプロイ後の確認手順としては次項「デプロイ順序」を参照。
+
+  ### `metric_definitions`/`category_definitions`に触れる変更のデプロイ順序(2026-08-01追記)
+
+  この2つのSeederのいずれかに変更が入るデプロイでは、**必ず以下の順序**で行う
+  (順序を守らないと、コードは直っているのにDBの定義が古いままで
+  `recordMetric()`が無言でスキップし続け、「直したのに画面が変わらない」状態に
+  なる ―― 2026-08-01にローカルで実際に再現・確認済み)。
+
+  1. コードをデプロイする。
+  2. `CategoryDefinitionSeeder` / `MetricDefinitionSeeder`をクラス指定で再実行する
+     (`php artisan db:seed --class=CategoryDefinitionSeeder --force` /
+     `--class=MetricDefinitionSeeder --force`)。
+  3. `php artisan analysis:verify-metric-definitions`を実行し、exit code 0
+     (欠落ゼロ)を確認する。
+  4. リード診断を1件実行し(`php artisan lead:issue-test-session <自社URL> [競合URL]`、
+     非production環境限定)、診断結果の①(採用ページ)が「良好」「確認をおすすめします」
+     「改善の余地があります」のいずれかになり、「採用ページを検出できませんでした」
+     (計測対象外)のままになっていないことを確認する。
+
+  **副作用について**: `recruit_title_present`等、Phase 3で追加された採用ページ向け
+  5指標(および元々の`company_info_link_present`等の"情報表示専用"指標群)は、
+  `MetricDefinitionSeeder`上で`scoring_type: not_scored, points: 0`として意図的に
+  登録されている(`backend/database/seeders/MetricDefinitionSeeder.php`の該当コメント
+  参照)。`MetricScorer::score()`は`scoring_type`が`not_scored`の指標を採点対象から
+  無条件に除外し(`MetricScoreOutcome::excluded()`)、`LeadScoreCalculator`も
+  `is_informational`判定で`configured_max_score`への加算対象から明示的に除外している
+  (`backend/app/Services/Lead/LeadScoreCalculator.php:72-80`)。**このため、これら5指標の
+  シード有無は内部の7カテゴリ得点にもリード向けスコア(`configured_max_score`)にも
+  一切影響しない**ことをコードから確認済み。仮に将来、採点対象(`scoring_type`が
+  `not_scored`以外)の指標を同じカテゴリへ新規追加する場合は話が別で、その場合は
+  `MetricDefinitionSeeder::seedCategory()`の「カテゴリのweightを`points`比で配分し、
+  端数は最後の採点対象項目に寄せる」仕様により、同一カテゴリ内の既存の採点対象指標の
+  `max_score`が再計算され、`configured_max_score`も変わる。過去の診断結果は
+  記録時点の点数のまま残るため、新旧の点数基準が混在することになる(避けられないが、
+  混在が起こり得ることは記録しておく)。
+
 - **[未解決] `GET /up`で疎通確認すること**。`/api/health`はRedisを必須チェックにして
   いるため、本番では常に503になる。
 - **`SANCTUM_STATEFUL_DOMAINS`と実際のfrontend Originの一致確認**(2026-07-29追加)。
@@ -424,6 +476,28 @@ npx playwright test               # docker composeで起動済みのfrontend/bac
 ファイル変更を検知できず、コンテナ再起動しないと変更が反映されないことを確認済み)。
 それでも改善しない場合は、`compose.override.yaml` の `WATCHPACK_POLLING=true` /
 `CHOKIDAR_USEPOLLING=true` が効いているか確認してください。
+
+## 既知の課題
+
+### 採用ページURL解決(resolveRecruitUrl)が静的HTML解析の結果に固定される競合状態(未修正, 2026-08-01時点)
+
+**発火条件**: トップページのナビゲーションを**JavaScriptで生成しているサイト**(静的HTML取得時点では採用ページへのリンクが存在せず、レンダリング後にのみ現れる)でのみ発火する。leggenda.co.jp自身のグローバルナビは静的HTML内に既に存在するため、この条件には該当せず、現時点で実サイトによる再現はできていない。
+
+**問題箇所**: `AnalysisPipeline::resolveRecruitUrl()`(`backend/app/Services/Analysis/AnalysisPipeline.php:218-249`)は、`AnalyzeHtmlSeoJob`の終端(`onWebsiteJobTerminal`)から呼ばれる`dispatchRecruitPageFetch()`(同ファイル`194-198行`)内で**1回だけ**実行され、その時点の`recruit_link_present`(静的HTML由来)の`raw_value['url']`を読んで`FetchRecruitPageJob`をディスパッチする。
+
+一方、レンダリング済みHTMLによる`recruit_link_present`の上書きを行う`ReanalyzeRenderedHtmlJob`は、`RenderPageJob`を先頭とする別系統の並列チェーン(`ANALYZER_CHAIN`, 同ファイル`82-92行`)から起動され、`fetch_static_page → analyze_html_seo → dispatchRecruitPageFetch`のチェーンとは**同期していない**。
+
+**結果として起こりうること**: 静的HTML解析の時点で採用リンクが見つからず`resolveRecruitUrl()`がnullを返した場合、後からレンダリング済みHTMLで正しい採用リンクが見つかっても、既に(URLなしで)確定した`FetchRecruitPageJob`/`AnalyzeRecruitPageJob`はやり直されない。画面上は`recruit_link_present`が(レンダリング後の結果で上書きされ)`present: true`になるのに、採用ページの中身は測定されていない、という食い違いが起きる可能性がある。
+
+**修正しない理由**: 修正には`maybeFinalizeWebsiteAnalysis()`(`WebsiteAnalysis`の全ジョブ終端判定)のタイミングと`JobType::weight()`(進捗計算, `backend/app/Enums/JobType.php:45-65`)への変更が伴う。この2つは2026-07-24の本番障害の直接の原因となった機構であり、実サイトで再現できていない条件付きの欠陥のために触れるべきではないと判断し、今回は見送った。
+
+**再修正時の設計方針(案、未実装)**:
+- 常に2回実行(常に`ReanalyzeRenderedHtmlJob`終端からも`dispatchRecruitPageFetch()`を呼ぶ)は、採用ページへの重複HTTPアクセスになるため避ける。**静的HTMLで採用リンクが見つからなかった場合に限り**、レンダリング後の結果を待って`resolveRecruitUrl()`を再評価する方式が望ましい。
+- `analysis_jobs_unique_target`(`analysis_id, website_analysis_id, job_type`一意)により、`fetch_recruit_page`/`analyze_recruit_page`のAnalysisJob行は1つしか持てない。`AnalysisPipeline::markRunning()`は既に`terminal`な行には何もしないため、再実行するには既存行を明示的に`pending`へ戻す処理が別途必要。
+- `analysis_jobs.metadata`(既存のjsonbカラム)に「どのURLで取得したか」を記録し、レンダリング後に再評価した`resolveRecruitUrl()`の結果と比較して**URLが実際に変わった場合のみ**再取得する(同じURLなら再取得の意味もリスクも無いため)。
+- 最大の懸念は`maybeFinalizeWebsiteAnalysis()`との競合: `ReanalyzeRenderedHtmlJob`自身の終端時にも`maybeFinalizeWebsiteAnalysis()`が呼ばれる(`BaseWebsiteAnalysisJob::handle()`のfinally節)。その時点で`fetch_recruit_page`/`analyze_recruit_page`が(誤った結果であれ)既に`completed`であれば、再取得を始める前に`WebsiteAnalysis`が確定してしまう可能性がある。再取得を開始する前に「確定済みなら再取得しない」ガードを入れるか、`maybeFinalizeWebsiteAnalysis()`側に「recruit再取得が保留中なら確定しない」という新しい待ち条件を追加する必要がある。
+
+②を実際に再現できるサイト(ナビをJavaScriptで生成しており、かつ採用ページへのリンクがそこにしか無いサイト)が見つかった時点で着手する。
 
 ## 現状の制約 (Phase 1時点)
 

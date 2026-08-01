@@ -325,6 +325,90 @@ class HtmlSeoAnalyzerTest extends TestCase
         }
     }
 
+    public function test_it_prefers_the_official_recruit_page_over_an_earlier_ambiguous_recruit_support_link(): void
+    {
+        // 欠陥①の再現テスト(実データ: leggenda.co.jpのグローバルナビ)。
+        // 「採用強化」(採用支援サービスの紹介ページ)がナビ内で先に現れても、
+        // パスセグメント完全一致は無いため候補としては弱く、ホスト+ラベル
+        // 完全一致で2シグナル該当する「採用情報」が優先されるべき。
+        $html = '<html><body>'
+            .'<a href="/recruitment_support/">採用強化</a>'
+            .'<a href="https://careers.example.co.jp/">採用情報</a>'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://www.example.co.jp/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('https://careers.example.co.jp/', $result['business_links']['recruit']['url']);
+        $this->assertEqualsWithDelta(0.95, $result['business_links']['recruit']['confidence'], 0.001);
+    }
+
+    public function test_it_selects_a_recruit_page_hosted_on_a_careers_subdomain_via_the_host_signal(): void
+    {
+        // メルカリ型: 採用サイトが親会社サイトとは別のcareers.サブドメインで
+        // 運用されているケース。ラベルは完全一致しない("Careers 採用")ため
+        // ホストシグナルのみ(1シグナル、confidence 0.85)で選ばれる。
+        // 同一ホスト制限が存在しないことの回帰確認も兼ねる。
+        $html = '<html><body><a href="https://careers.example.com/" target="_blank">Careers 採用</a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://about.example.com/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('https://careers.example.com/', $result['business_links']['recruit']['url']);
+        $this->assertSame('external', $result['business_links']['recruit']['link_type']);
+        $this->assertEqualsWithDelta(0.85, $result['business_links']['recruit']['confidence'], 0.001);
+    }
+
+    public function test_it_selects_an_internal_recruit_path_via_the_path_segment_signal(): void
+    {
+        // リンクテキストにRECRUIT_KEYWORDSの完全一致ラベルが無くても、
+        // パスセグメントが"recruit"と完全一致すれば1シグナル該当として選ばれる。
+        $html = '<html><body><a href="/recruit/">仲間を募集しています</a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('/recruit/', $result['business_links']['recruit']['url']);
+        $this->assertSame('internal', $result['business_links']['recruit']['link_type']);
+        $this->assertEqualsWithDelta(0.85, $result['business_links']['recruit']['confidence'], 0.001);
+    }
+
+    public function test_it_falls_back_to_partial_match_when_no_priority_signal_is_present(): void
+    {
+        // 優先シグナル(ホスト/パス完全一致/ラベル完全一致)にどれも該当する
+        // 候補が無いサイトでは、既存の部分一致方式による最初の候補を
+        // そのまま採用する(検出不能に後退させない)。
+        $html = '<html><body><a href="/recruitment_support/">採用強化</a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('/recruitment_support/', $result['business_links']['recruit']['url']);
+        $this->assertLessThan(0.95, $result['business_links']['recruit']['confidence']);
+    }
+
+    public function test_it_reports_recruit_link_absent_when_no_candidate_matches(): void
+    {
+        $html = '<html><body><a href="/about/">会社概要</a></body></html>';
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertFalse($result['business_links']['recruit']['present']);
+        $this->assertNull($result['business_links']['recruit']['url']);
+    }
+
+    public function test_it_keeps_first_match_wins_behavior_for_non_recruit_categories(): void
+    {
+        // recruit以外のカテゴリは、後続によりexactな一致があっても、依然として
+        // 「最初に見つかったリンク」を代表として採用する
+        // (欠陥①の修正はrecruitに限定し、他カテゴリの挙動は変更しない)。
+        $html = '<html><body>'
+            .'<a href="/service/pricing-related/">価格帯について</a>'
+            .'<a href="/pricing/">料金</a>'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/');
+
+        $this->assertTrue($result['business_links']['pricing']['present']);
+        $this->assertSame('/service/pricing-related/', $result['business_links']['pricing']['url']);
+    }
+
     public function test_it_gives_lower_confidence_when_only_the_href_matches_a_business_link_keyword(): void
     {
         // リンクテキストが一致しない(URLのみの一致)場合は確信度を100%にしない。

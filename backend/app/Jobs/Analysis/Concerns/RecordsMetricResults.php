@@ -5,6 +5,7 @@ namespace App\Jobs\Analysis\Concerns;
 use App\Enums\MetricResultStatus;
 use App\Models\MetricDefinition;
 use App\Models\MetricResult;
+use Illuminate\Support\Facades\Log;
 
 /**
  * MetricDefinition.keyを指定してMetricResult行をupsertするための共通処理。
@@ -45,6 +46,18 @@ trait RecordsMetricResults
         $definition = MetricDefinition::query()->where('key', $key)->where('is_active', true)->first();
 
         if ($definition === null) {
+            // 2026-07-20(採点マスタ0件)・2026-08-01(採用ページ指標の未シード)に
+            // 続き3度目のインシデントの再発防止(#A-2)。metric_definitionsに
+            // 有効な定義が無いキーは、この行以外どこにも記録が残らず
+            // MetricResult自体が作られないため気づく手段が無かった。
+            // ここではスキップする挙動自体は変えない(採点結果への影響ゼロを
+            // 維持するため)。analysis:verify-metric-definitionsコマンドで
+            // デプロイ直後に能動的検知することも合わせて行う。
+            Log::error('metric_definitions に有効な定義が無いキーへの記録をスキップしました', [
+                'key' => $key,
+                'website_analysis_id' => $websiteAnalysisId,
+            ]);
+
             return;
         }
 

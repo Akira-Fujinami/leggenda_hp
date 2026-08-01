@@ -33,12 +33,19 @@ const PRIORITY_LABELS: Record<string, string> = {
  * どちらの数値がどれだけの情報量に基づくのかを同時に確認できるようにする
  * (誠実性の維持に必要な情報なので、折りたたみの中には入れない)。
  */
+const SELF_SITE_BADGE = "自社サイト";
+
 function WebsiteQualityCard({ website }: { website: LeadWebsiteResult }) {
+  // website_nameが未設定のときバックエンドは「自社サイト」「比較サイト」を
+  // 入れてくる。その場合にバッジを併記すると「自社サイト 自社サイト」と重なるため、
+  // 名前がバッジと同じ文言のときはバッジを出さない。
+  const showBadge = website.is_primary && website.website_name !== SELF_SITE_BADGE;
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <p className="text-sm font-medium">{website.website_name}</p>
-        {website.is_primary && <Badge variant="secondary">自社サイト</Badge>}
+        {showBadge && <Badge variant="secondary">{SELF_SITE_BADGE}</Badge>}
       </div>
       {/* このスコアは社内版(7カテゴリ100点)とは別建て ―― 4観点に表示している
           指標だけを対象に算出しているため、満点も内訳も社内版とは異なる。

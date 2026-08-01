@@ -121,6 +121,36 @@ class HtmlSeoAnalyzer
     private const RECRUIT_KEYWORDS = ['recruit', 'careers', 'career', '採用', '求人'];
 
     /**
+     * recruitカテゴリ専用の優先選定シグナル(2026-08-01, 欠陥①の修正)。
+     * 「最初に一致したリンクを代表とする」方式は、"採用強化"(採用支援サービスの
+     * 紹介ページ)のような紛らわしい文言が本来の採用ページより先にナビへ
+     * 現れるサイトで、誤って別ページを採用ページとして選んでしまう
+     * (実データ: レジェンダ自身のグローバルナビで再現・確認済み)。
+     * 除外キーワードのリストは作らない ―― 企業ごとの言い回し(「採用強化」
+     * 「採用実績」「採用担当者様へ」等)に個別対応するのは終わりが無く脆いため、
+     * 代わりに「採用ページそのものである確度が高いシグナル」への一致数で
+     * 優先順位を付ける方式にする。他6カテゴリ(pricing/faq/help_center/
+     * case_study/company_info/privacy_policy)の判定・挙動はここでは一切
+     * 変更しない。
+     */
+    private const RECRUIT_SUBDOMAIN_PREFIXES = [
+        'careers.', 'recruit.', 'recruiting.', 'saiyo.', 'job.', 'jobs.', 'career.',
+    ];
+
+    private const RECRUIT_EXACT_PATH_SEGMENTS = [
+        'recruit', 'recruits', 'careers', 'career', 'recruiting', 'saiyo', 'jobs', 'job',
+    ];
+
+    /**
+     * 正規化(前後空白除去・連続空白の単一化・全角半角統一・小文字化)後に
+     * 完全一致で照合するラベル。部分一致(例:「採用強化」)はここに含めない。
+     */
+    private const RECRUIT_EXACT_LABELS = [
+        '採用情報', '採用サイト', '採用ページ', '採用', '採用・求人', '求人情報', '求人',
+        'recruit', 'recruits', 'recruiting', 'careers', 'career', 'join us', 'work with us',
+    ];
+
+    /**
      * extractNavigationLinkLabels()の1件あたりの文字数上限/全体件数上限。
      */
     private const NAV_LINK_LABEL_MAX_LENGTH = 64;
@@ -513,6 +543,7 @@ class HtmlSeoAnalyzer
 
         $nodes = $xpath->query('//a[@href]');
         $detected = array_fill_keys(array_keys($categories), null);
+        $recruitCandidates = [];
 
         foreach ($nodes ?? [] as $node) {
             $href = trim($node->getAttribute('href'));
@@ -537,10 +568,6 @@ class HtmlSeoAnalyzer
             $hrefPathSegments = $this->pathSegments($href);
 
             foreach ($categories as $category => $keywords) {
-                if ($detected[$category] !== null) {
-                    continue; // 最初に見つかったリンクを代表として採用する。
-                }
-
                 $hrefMatch = $this->segmentsMatchAny($hrefPathSegments, $keywords);
                 $textMatch = $this->containsAny($textLower, $keywords) || $this->containsAny($labelLower, $keywords);
 
@@ -550,15 +577,36 @@ class HtmlSeoAnalyzer
 
                 $confidence = $hrefMatch && $textMatch ? 0.95 : ($textMatch ? 0.75 : 0.65);
                 $representativeText = $text !== '' ? $text : ($ariaLabel !== '' ? $ariaLabel : $title);
+                $representativeText = $representativeText !== '' ? mb_substr($representativeText, 0, 100) : null;
+                $linkType = $this->classifyLinkType($href, $pageHost);
 
-                $detected[$category] = [
-                    'url' => $href,
-                    'text' => $representativeText !== '' ? mb_substr($representativeText, 0, 100) : null,
-                    'confidence' => $confidence,
-                    'link_type' => $this->classifyLinkType($href, $pageHost),
-                ];
+                // recruitだけは「最初の一致」を即採用せず、全候補を集めて
+                // 優先順位付けする(下記signalCountによる選定)。他カテゴリは
+                // 従来どおり最初に見つかったリンクを代表として採用する。
+                if ($category === 'recruit') {
+                    $recruitCandidates[] = [
+                        'url' => $href,
+                        'text' => $representativeText,
+                        'confidence' => $confidence,
+                        'link_type' => $linkType,
+                        'signal_count' => $this->countRecruitSignals($href, $hrefPathSegments, $text, $ariaLabel, $title, $pageHost),
+                    ];
+
+                    continue;
+                }
+
+                if ($detected[$category] === null) {
+                    $detected[$category] = [
+                        'url' => $href,
+                        'text' => $representativeText,
+                        'confidence' => $confidence,
+                        'link_type' => $linkType,
+                    ];
+                }
             }
         }
+
+        $detected['recruit'] = $this->selectRecruitCandidate($recruitCandidates);
 
         $result = [];
         foreach (array_keys($categories) as $category) {
@@ -572,6 +620,120 @@ class HtmlSeoAnalyzer
         }
 
         return $result;
+    }
+
+    /**
+     * recruitカテゴリの候補が満たす優先シグナル(1〜3)の数を数える。
+     *
+     * @param  list<string>  $hrefPathSegments
+     */
+    private function countRecruitSignals(
+        string $href,
+        array $hrefPathSegments,
+        string $text,
+        string $ariaLabel,
+        string $title,
+        string $pageHost,
+    ): int {
+        $count = 0;
+
+        // シグナル1: ホストが採用サイト用のサブドメイン(相対URLはhrefHost=''
+        // となり該当しない)。
+        $host = $this->hrefHost($href);
+        if ($host !== '' && $this->startsWithAny($host, self::RECRUIT_SUBDOMAIN_PREFIXES)) {
+            $count++;
+        }
+
+        // シグナル2: パスセグメントの完全一致(前方・後方一致は対象外。
+        // "recruitment_support"のような紛らわしいセグメントを除外するため)。
+        foreach ($hrefPathSegments as $segment) {
+            if (in_array($segment, self::RECRUIT_EXACT_PATH_SEGMENTS, true)) {
+                $count++;
+                break;
+            }
+        }
+
+        // シグナル3: リンクテキスト/aria-label/titleのいずれかが、正規化後に
+        // 正規のラベルと完全一致する(部分一致は対象外)。
+        foreach ([$text, $ariaLabel, $title] as $candidateText) {
+            if ($candidateText === '') {
+                continue;
+            }
+
+            if (in_array($this->normalizeForExactMatch($candidateText), self::RECRUIT_EXACT_LABELS, true)) {
+                $count++;
+                break;
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * @param  list<array{url: string, text: ?string, confidence: float, link_type: string, signal_count: int}>  $candidates
+     * @return array{url: string, text: ?string, confidence: float, link_type: string}|null
+     */
+    private function selectRecruitCandidate(array $candidates): ?array
+    {
+        if ($candidates === []) {
+            return null;
+        }
+
+        foreach ([2, 1] as $minSignals) {
+            foreach ($candidates as $candidate) {
+                if ($candidate['signal_count'] >= $minSignals) {
+                    return [
+                        'url' => $candidate['url'],
+                        'text' => $candidate['text'],
+                        'confidence' => $minSignals === 2 ? 0.95 : 0.85,
+                        'link_type' => $candidate['link_type'],
+                    ];
+                }
+            }
+        }
+
+        // どのシグナルにも該当する候補が無い場合は、既存の部分一致方式による
+        // 最初の候補をそのまま採用する(フォールバック。confidenceは元の算出値を
+        // 維持し、「採用」しか手がかりの無いサイトで検出不能にならないようにする)。
+        $first = $candidates[0];
+
+        return [
+            'url' => $first['url'],
+            'text' => $first['text'],
+            'confidence' => $first['confidence'],
+            'link_type' => $first['link_type'],
+        ];
+    }
+
+    private function hrefHost(string $href): string
+    {
+        return strtolower((string) parse_url($href, PHP_URL_HOST));
+    }
+
+    /**
+     * @param  list<string>  $prefixes
+     */
+    private function startsWithAny(string $haystack, array $prefixes): bool
+    {
+        foreach ($prefixes as $prefix) {
+            if (str_starts_with($haystack, mb_strtolower($prefix))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 完全一致照合用の正規化: 前後空白除去、連続空白の単一化、全角英数字・
+     * 全角スペースの半角統一、小文字化。
+     */
+    private function normalizeForExactMatch(string $text): string
+    {
+        $normalized = mb_convert_kana($text, 'as');
+        $normalized = preg_replace('/\s+/u', ' ', trim($normalized)) ?? '';
+
+        return mb_strtolower($normalized);
     }
 
     /**
