@@ -8,6 +8,7 @@ use App\Models\LeadSession;
 use App\Models\MetricDefinition;
 use App\Models\WebsiteAnalysis;
 use App\Services\Lead\LeadPerspectiveComposer;
+use App\Services\Lead\LeadRecommendationComposer;
 use App\Services\Lead\LeadScoreCalculator;
 use App\Support\Report\ReportRecommendationRow;
 use App\Support\Report\ReportViewModel;
@@ -36,13 +37,14 @@ class ReportViewModelBuilder
         private readonly LeadPerspectiveComposer $perspectiveComposer,
         private readonly HonorificNameFormatter $nameFormatter,
         private readonly RecommendationLabelFormatter $labelFormatter,
+        private readonly LeadRecommendationComposer $recommendationComposer,
     ) {}
 
     public function build(Analysis $analysis, LeadSession $leadSession): ReportViewModel
     {
         $analysis->loadMissing([
             'websiteAnalyses.website',
-            'websiteAnalyses.recommendations',
+            'websiteAnalyses.recommendations.metricResult.metricDefinition',
             'websiteAnalyses.metricResults.metricDefinition',
         ]);
 
@@ -63,26 +65,29 @@ class ReportViewModelBuilder
             $comparisonSentence = $this->summaryComposer->composeComparisonSentence($selfScoreArray, $competitorScoreArray);
         }
 
-        $topRecommendations = ($selfWebsiteAnalysis?->recommendations ?? collect())
-            ->sortByDesc('sort_score')
-            ->take(self::MAX_RECOMMENDATIONS)
-            ->values();
+        // title/descriptionはLeadRecommendationComposer経由(screen/JSON APIの
+        // LeadAnalysisControllerと同一クラスを共有) ―― 画面だけ直して
+        // レポートに技術用語が残る食い違いを作らないため(2026-08-03)。
+        $topRecommendations = $this->recommendationComposer->compose(
+            $selfWebsiteAnalysis?->recommendations ?? collect(),
+            self::MAX_RECOMMENDATIONS,
+        );
 
         $overallSummaryText = $this->summaryComposer->composeOverallSummary(
             $selfScoreArray,
-            $topRecommendations->count(),
+            count($topRecommendations),
             $this->nameFormatter->format($leadSession->company_name),
         );
 
         $perspectives = $this->perspectiveComposer->compose($selfWebsiteAnalysis?->metricResults ?? collect());
 
-        $recommendationRows = $topRecommendations->map(fn ($r) => new ReportRecommendationRow(
-            title: $r->title,
-            description: $r->description,
-            priorityLabel: $this->labelFormatter->priorityLabel($r->priority),
-            impactLabel: $this->labelFormatter->impactLabel($r->impact),
-            effortLabel: $this->labelFormatter->effortLabel($r->effort),
-        ))->values()->all();
+        $recommendationRows = array_values(array_map(fn (array $row) => new ReportRecommendationRow(
+            title: $row['title'],
+            description: $row['description'],
+            priorityLabel: $this->labelFormatter->priorityLabel($row['recommendation']->priority),
+            impactLabel: $this->labelFormatter->impactLabel($row['recommendation']->impact),
+            effortLabel: $this->labelFormatter->effortLabel($row['recommendation']->effort),
+        ), $topRecommendations));
 
         return new ReportViewModel(
             companyDisplayName: $this->nameFormatter->format($leadSession->company_name),

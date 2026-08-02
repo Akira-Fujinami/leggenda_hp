@@ -177,26 +177,6 @@ function UnmeasuredBar({ seriesLabel }: { seriesLabel: string }) {
   );
 }
 
-function AxisTicks() {
-  return (
-    <div className="flex items-center gap-2" aria-hidden>
-      <span className="w-7 shrink-0" />
-      <span className="relative block h-4 flex-1">
-        {TICKS.map((tick) => (
-          <span
-            key={tick}
-            className="absolute -translate-x-1/2 text-[10px] tabular-nums text-muted-foreground"
-            style={{ left: `${tick}%` }}
-          >
-            {tick}
-          </span>
-        ))}
-      </span>
-      <span className="w-8 shrink-0" />
-    </div>
-  );
-}
-
 function LegendSwatch({ label, barClass }: { label: string; barClass: string }) {
   return (
     <span className="flex items-center gap-1.5">
@@ -286,17 +266,17 @@ export function LeadPerspectiveComparison({ websites }: { websites: LeadWebsiteR
         </p>
       </div>
 
-      <div className="space-y-1">
-        <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-          <LegendSwatch label={SELF_LABEL} barClass={SELF_BAR} />
-          {competitor && <LegendSwatch label={COMPETITOR_LABEL} barClass={COMPETITOR_BAR} />}
-        </div>
-        {/* 目盛りは観点の並びの前に置く ―― 各観点のあいだに注記が入るため、
-            末尾に置くと最後のバーから離れて対応が読み取れなくなる。 */}
-        <AxisTicks />
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <LegendSwatch label={SELF_LABEL} barClass={SELF_BAR} />
+        {competitor && <LegendSwatch label={COMPETITOR_LABEL} barClass={COMPETITOR_BAR} />}
+        <span>0〜100で表しています(縦の目盛りは25刻み)</span>
       </div>
 
-      <div className="space-y-4">
+      {/* 画面が広いときは2列に折り返す ―― 1列のままだと観点ごとの注記が積み上がり、
+          PCでは縦に間延びして全体像が1画面に収まらない(2026-07-30のユーザー指摘)。
+          目盛りの数値行は置かない。2列にすると列ごとに軸が必要になり、
+          そのぶん縦を消費するわりに、各バーの右端に実数が出ているため情報量が増えない。 */}
+      <div className="grid gap-x-8 gap-y-5 lg:grid-cols-2">
         {rows.map((row) => (
           <div key={row.key} className="space-y-1.5">
             <p className="text-sm font-medium">{row.heading}</p>

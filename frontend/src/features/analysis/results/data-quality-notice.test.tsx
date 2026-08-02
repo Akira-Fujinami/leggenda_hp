@@ -87,4 +87,61 @@ describe("DataQualityNotice", () => {
 
     expect(screen.queryByText(/HTML解析元/)).not.toBeInTheDocument();
   });
+
+  describe("showPercentage (lead-facing only, 2026-08-03)", () => {
+    it("keeps the internal points display unchanged when showPercentage is not passed", () => {
+      render(<DataQualityNotice score={makeScore({ overall_score: 32, display_score: 32, available_score: 45, configured_max_score: 45.45 })} />);
+
+      expect(screen.getByText("32")).toBeInTheDocument();
+      expect(screen.getByText("/ 45.45")).toBeInTheDocument();
+      expect(screen.queryByText("63%")).not.toBeInTheDocument();
+      expect(screen.queryByText("評価できませんでした")).not.toBeInTheDocument();
+    });
+
+    /**
+     * 4観点比較チャート(lead-perspective-comparison.tsx)の各バーは
+     * score/max_available_score*100を採用しているため、overall_score/
+     * available_scoreの合計はその加重平均と代数的に一致する。実データに近い
+     * フィクスチャ(analysis 275, website_analysis_id=350の実測値)で確認する。
+     */
+    it("matches the max_available_score-weighted average of the 4 perspective bars (real-data fixture)", () => {
+      // 実測値(2026-08-01のA-1調査時点、analysis 275 website_analysis_id=350):
+      // completeness score=0/max_available=0(除外), clarity 8.15/11.45,
+      // findability 5.81/10.55, usability 11.46/18.3。
+      // overall_score=25.42, available_score=40.3 → 25.42/40.3*100 = 63.07...% → 63%
+      const score = makeScore({
+        overall_score: 25.42,
+        display_score: 25,
+        available_score: 40.3,
+        configured_max_score: 45.45,
+        coverage_rate: 88.67,
+      });
+
+      render(<DataQualityNotice score={score} showPercentage />);
+
+      // バー側の加重平均(手計算): (71.2*11.45 + 55.1*10.55 + 62.6*18.3) / 40.3 = 63.08...
+      expect(screen.getByText("63%")).toBeInTheDocument();
+    });
+
+    it("shows 評価できませんでした instead of 0% when nothing was measurable (available_score <= 0)", () => {
+      render(<DataQualityNotice score={makeScore({ overall_score: 0, display_score: 0, available_score: 0 })} showPercentage />);
+
+      expect(screen.getByText("評価できませんでした")).toBeInTheDocument();
+      expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    });
+
+    it("still switches to 参考評価 below the coverage threshold when showPercentage is on", () => {
+      render(
+        <DataQualityNotice
+          score={makeScore({ coverage_rate: 55, available_score: 40 })}
+          label="採用サイトとして重要な4観点での評価"
+          referenceLabel="採用サイトとして重要な4観点での参考評価"
+          showPercentage
+        />,
+      );
+
+      expect(screen.getByText("採用サイトとして重要な4観点での参考評価")).toBeInTheDocument();
+      expect(screen.getByText(/測定カバー率が55%のため、このスコアは参考値です/)).toBeInTheDocument();
+    });
+  });
 });

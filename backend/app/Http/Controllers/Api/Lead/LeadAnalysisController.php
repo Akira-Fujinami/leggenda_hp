@@ -17,6 +17,7 @@ use App\Models\Report;
 use App\Services\Analysis\AnalysisService;
 use App\Services\Lead\LeadNotificationService;
 use App\Services\Lead\LeadPerspectiveComposer;
+use App\Services\Lead\LeadRecommendationComposer;
 use App\Services\Lead\LeadScoreCalculator;
 use App\Services\Lead\LeadSessionService;
 use App\Services\WebsiteService;
@@ -45,7 +46,15 @@ class LeadAnalysisController extends Controller
         private readonly WebsiteService $websites,
         private readonly AnalysisService $analyses,
         private readonly LeadNotificationService $notifications,
+        private readonly LeadRecommendationComposer $recommendationComposer,
     ) {}
+
+    /**
+     * 画面向けの「特に改善効果が見込まれる項目」の件数。Word/PDFレポート
+     * (ReportViewModelBuilder::MAX_RECOMMENDATIONS)とは意図的に別値 ――
+     * 画面は要点のみ、レポートは持ち帰り資料として少し多めに載せる。
+     */
+    private const TOP_RECOMMENDATIONS_LIMIT = 3;
 
     public function store(Request $request): JsonResponse
     {
@@ -128,7 +137,7 @@ class LeadAnalysisController extends Controller
 
         $analysis->load([
             'websiteAnalyses.website',
-            'websiteAnalyses.recommendations',
+            'websiteAnalyses.recommendations.metricResult.metricDefinition',
             'websiteAnalyses.metricResults.metricDefinition',
         ]);
 
@@ -158,16 +167,19 @@ class LeadAnalysisController extends Controller
                     'perspectives' => $perspectiveComposer->compose($wa->metricResults),
                     // 指標77件の詳細一覧・Job名・エラーコード・内部IDは
                     // 意図的に含めない(社内担当が説明する余地を残すため)。
-                    'top_recommendations' => $wa->recommendations
-                        ->sortByDesc('sort_score')
-                        ->take(3)
-                        ->map(fn ($r) => [
-                            'title' => $r->title,
-                            'description' => $r->description,
-                            'priority' => $r->priority->value,
-                            'impact' => $r->impact->value,
-                            'effort' => $r->effort->value,
-                        ])->values(),
+                    // title/descriptionはLeadRecommendationComposer経由 ―― 4観点
+                    // (LeadMetricCatalog)に無いキー(例: アクセス解析タグ検出)は
+                    // ここで絞り込まれ、一切表示されない(2026-08-03)。
+                    'top_recommendations' => collect($this->recommendationComposer->compose(
+                        $wa->recommendations,
+                        self::TOP_RECOMMENDATIONS_LIMIT,
+                    ))->map(fn (array $row) => [
+                        'title' => $row['title'],
+                        'description' => $row['description'],
+                        'priority' => $row['recommendation']->priority->value,
+                        'impact' => $row['recommendation']->impact->value,
+                        'effort' => $row['recommendation']->effort->value,
+                    ])->values(),
                 ];
             })->values(),
         ]);

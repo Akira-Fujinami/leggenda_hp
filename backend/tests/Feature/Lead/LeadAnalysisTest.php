@@ -321,4 +321,77 @@ class LeadAnalysisTest extends TestCase
             $this->assertStringNotContainsString($forbidden, $raw);
         }
     }
+
+    /**
+     * 2026-08-03: top_recommendationsはLeadRecommendationCatalogの許可リストを
+     * 通す。トップページの静的HTML(title/meta description/フォームいずれも
+     * 無い最小限のHTML)・robots.txt・sitemap.xml・技術検出の全てを
+     * Http::fake()で明示的に固定し、実際のネットワーク通信を発生させずに
+     * 検証する(TestCase::setUp()のHttp::preventStrayRequests()により、
+     * ここで固定し忘れたURLへのリクエストがあれば例外でテストが失敗する)。
+     *
+     * 絞り込み前の候補には4観点に無いanalytics_configured
+     * (「一般的なアクセス解析タグの検出」)も含まれるはずだが、レスポンスには
+     * 一切出ないことを確認する。あわせて、出てくる文言にブランド・ホイールと
+     * 同じ禁止語(不足/欠如/劣る/弱い/低い等)が含まれないことも確認する
+     * (社外に出る文章のため)。
+     */
+    public function test_top_recommendations_excludes_off_catalog_metrics_and_forbidden_phrases(): void
+    {
+        // このテストクラスは既定でmetric_definitions/category_definitionsを
+        // シードしない(他のテストは実測データに依存しないため)。この
+        // テストだけは実際のMetricResult/Recommendationが記録されることに
+        // 依存するため、明示的にシードする。
+        $this->seed(\Database\Seeders\CategoryDefinitionSeeder::class);
+        $this->seed(\Database\Seeders\MetricDefinitionSeeder::class);
+
+        // title・meta description・フォームいずれも持たない最小限のHTML。
+        // title_present/meta_description_present/form_present等、
+        // LeadRecommendationCatalogに登録済みの複数キーで確実に改善提案が
+        // 生成される(=フィルタが何も無い状態を素通りしているだけでないことの
+        // 確認になる)。
+        $minimalHtml = '<html><body><p>本文のみ</p></body></html>';
+
+        Http::fake([
+            'https://example.com' => Http::response($minimalHtml, 200, ['Content-Type' => 'text/html; charset=UTF-8']),
+            'https://example.com/robots.txt' => Http::response('', 404),
+            'https://example.com/sitemap.xml' => Http::response('', 404),
+            '*/analyze/render' => Http::response(['success' => true, 'data' => ['html' => $minimalHtml, 'fixed_cta' => ['detected' => false]]], 200),
+            '*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => []]], 200),
+            '*/analyze/lighthouse' => Http::response(['success' => true, 'data' => ['scores' => [], 'metrics' => []]], 200),
+            // RunLighthouseJob::rejectIfAnalyzerBusy()の事前ヘルスチェック。
+            // 固定し忘れるとHttp::preventStrayRequests()がStrayRequestException
+            // (AnalyzerClient::healthDetails()がcatchしているConnectionException
+            // とは型が違うため素通りする)を投げ、Jobがリトライで詰まる。
+            '*/health' => Http::response(['success' => true, 'data' => ['active_contexts' => 0, 'queued_sessions' => 0, 'browser_connected' => true]], 200),
+        ]);
+
+        $token = $this->issueToken();
+        $analysisId = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])
+            ->json('data.analysis_id');
+
+        $response = $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}");
+
+        $response->assertOk();
+        $raw = $response->getContent();
+
+        // 4観点に無いキー(analytics_configured)の技術用語は一切出ない。
+        $this->assertStringNotContainsString('一般的なアクセス解析タグの検出', $raw);
+        $this->assertStringNotContainsString('Largest Contentful Paint', $raw);
+
+        $topRecommendations = $response->json('data.websites.0.top_recommendations');
+        // フィルタが機能した上でなお何かしら出ていることを確認する
+        // (0件だと以降のforeachが素通りし、検証が空振りになるため)。
+        $this->assertNotEmpty($topRecommendations, 'expected at least one lead-facing recommendation from the minimal fixture HTML');
+
+        $forbiddenPhrases = (array) config('brand_wheel.forbidden_phrases');
+        $this->assertNotEmpty($forbiddenPhrases);
+
+        foreach ($topRecommendations as $recommendation) {
+            foreach ($forbiddenPhrases as $phrase) {
+                $this->assertStringNotContainsString($phrase, $recommendation['title']);
+                $this->assertStringNotContainsString($phrase, $recommendation['description']);
+            }
+        }
+    }
 }

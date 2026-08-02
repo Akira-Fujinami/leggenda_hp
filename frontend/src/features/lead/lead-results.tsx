@@ -51,10 +51,14 @@ function WebsiteQualityCard({ website }: { website: LeadWebsiteResult }) {
           指標だけを対象に算出しているため、満点も内訳も社内版とは異なる。
           商談時に取り違えないよう、見出しでそれと分かる表現にする
           (2026-07-28のユーザー指摘への対応)。 */}
+      {/* showPercentage: 4観点比較チャートのバーと同じ0〜100%の尺度に揃える
+          (2026-08-03のユーザー指摘)。社内向けページ(analyses/[id]/results)は
+          このpropを渡さないため、既定のfalseのまま点数表示を維持する。 */}
       <DataQualityNotice
         score={website.score}
         label="採用サイトとして重要な4観点での評価"
         referenceLabel="採用サイトとして重要な4観点での参考評価"
+        showPercentage
       />
     </div>
   );
@@ -73,11 +77,12 @@ function TopRecommendations({ website }: { website: LeadWebsiteResult }) {
   return (
     <div className="space-y-2 rounded-md border p-4">
       <p className="text-sm font-medium">特に改善効果が見込まれる項目</p>
-      <ul className="space-y-2">
+      {/* 最大3件なので、画面が広いときは横に並べて縦の消費を抑える。 */}
+      <ul className="grid gap-2 lg:grid-cols-3">
         {website.top_recommendations.map((r, i) => (
           <li key={i} className="rounded-md border p-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-medium">{r.title}</p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium">{r.title}</p>
               <Badge variant="outline">{PRIORITY_LABELS[r.priority] ?? r.priority}</Badge>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">{r.description}</p>
@@ -209,7 +214,10 @@ export function LeadResults({
   const selfWebsite = results.websites.find((website) => website.is_primary) ?? results.websites[0];
 
   return (
-    <div className="space-y-4">
+    // data-lead-wide: (lead)/layout.tsx が既定のmax-w-lg(512px)を、この属性を
+    // 含むページに限って広げるための目印。フォーム画面は狭いままにしたいので、
+    // レイアウト側を一律に広げるのではなく、結果画面だけが広さを要求する。
+    <div data-lead-wide className="space-y-4">
       {results.status === "partial" && (
         <p className="text-sm text-muted-foreground">
           一部のデータは取得できませんでしたが、取得できた範囲での診断結果です。

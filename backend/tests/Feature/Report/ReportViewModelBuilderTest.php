@@ -17,6 +17,8 @@ use App\Models\User;
 use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\Report\ReportViewModelBuilder;
+use App\Support\Lead\LeadMetricCatalog;
+use App\Support\Lead\LeadRecommendationCatalog;
 use Database\Seeders\CategoryDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -122,6 +124,27 @@ class ReportViewModelBuilderTest extends TestCase
         );
     }
 
+    /**
+     * LeadRecommendationCatalogに載っている7キー分の改善提案を作り、
+     * sort_score降順で並べ替え・上位5件への絞り込みを検証する
+     * (2026-08-03: LeadRecommendationComposer経由になったため、
+     * metric_result_id経由でcatalog許可キーに解決できることが前提)。
+     */
+    private function recommendationWithCatalogKey(WebsiteAnalysis $wa, string $metricKey, float $sortScore, array $overrides = []): Recommendation
+    {
+        $definition = MetricDefinition::factory()->create(['key' => $metricKey]);
+        $result = MetricResult::factory()->create([
+            'website_analysis_id' => $wa->id,
+            'metric_definition_id' => $definition->id,
+        ]);
+
+        return Recommendation::factory()->create(array_merge([
+            'website_analysis_id' => $wa->id,
+            'metric_result_id' => $result->id,
+            'sort_score' => $sortScore,
+        ], $overrides));
+    }
+
     public function test_top_recommendations_are_sorted_by_sort_score_and_capped_at_five_with_correct_labels(): void
     {
         $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
@@ -133,23 +156,83 @@ class ReportViewModelBuilderTest extends TestCase
         $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
         $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
 
-        foreach (range(1, 7) as $i) {
-            Recommendation::factory()->create([
-                'website_analysis_id' => $selfWa->id,
-                'title' => "改善提案{$i}",
-                'sort_score' => $i,
-                'priority' => $i === 7 ? RecommendationPriority::Critical : RecommendationPriority::Medium,
+        $catalogKeys = [
+            'title_present', 'meta_description_present', 'h1_single', 'heading_structure_present',
+            'word_count_sufficient', 'internal_link_sufficient', 'form_present',
+        ];
+
+        foreach ($catalogKeys as $i => $key) {
+            $sortScore = $i + 1;
+            $this->recommendationWithCatalogKey($selfWa, $key, $sortScore, [
+                'priority' => $sortScore === 7 ? RecommendationPriority::Critical : RecommendationPriority::Medium,
                 'impact' => RecommendationImpact::High,
                 'effort' => RecommendationEffort::Small,
             ]);
         }
 
         $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+        $catalog = new LeadRecommendationCatalog(new LeadMetricCatalog);
 
         $this->assertCount(5, $viewModel->topRecommendations);
-        $this->assertSame('改善提案7', $viewModel->topRecommendations[0]->title);
+        // 最後(sort_score=7)はform_present。
+        $this->assertSame($catalog->title('form_present'), $viewModel->topRecommendations[0]->title);
         $this->assertSame('緊急', $viewModel->topRecommendations[0]->priorityLabel);
-        $this->assertSame('改善提案6', $viewModel->topRecommendations[1]->title);
+        // 次点(sort_score=6)はinternal_link_sufficient。
+        $this->assertSame($catalog->title('internal_link_sufficient'), $viewModel->topRecommendations[1]->title);
+    }
+
+    /**
+     * #A-2/カタログ整合性に続く2026-08-03の設計: 4観点(LeadMetricCatalog)に
+     * 無いキー(例: analytics_configured)は、レポートにも一切出さない
+     * ―― 画面だけ直してレポートに技術用語が残る食い違いを作らないため。
+     */
+    public function test_top_recommendations_excludes_a_metric_not_in_the_lead_metric_catalog(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        // 4観点に無いキー。sort_scoreを最大にしても出てはならない。
+        $this->recommendationWithCatalogKey($selfWa, 'analytics_configured', 999.0);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame([], $viewModel->topRecommendations);
+    }
+
+    /**
+     * レポートのtitle/descriptionが、画面(LeadAnalysisController)と同じ
+     * LeadRecommendationCatalogの文言そのものであることを固定する
+     * (raw metric_definitions.name/recommendation_templateではないこと)。
+     */
+    public function test_top_recommendations_use_lead_recommendation_catalog_wording_not_raw_technical_text(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        $this->recommendationWithCatalogKey($selfWa, 'form_present', 1.0, [
+            'title' => 'フォーム有無',
+            'description' => '問い合わせフォームを設置してください。',
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+        $catalog = new LeadRecommendationCatalog(new LeadMetricCatalog);
+
+        $this->assertCount(1, $viewModel->topRecommendations);
+        $this->assertSame($catalog->title('form_present'), $viewModel->topRecommendations[0]->title);
+        $this->assertSame($catalog->description('form_present'), $viewModel->topRecommendations[0]->description);
+        $this->assertNotSame('フォーム有無', $viewModel->topRecommendations[0]->title);
     }
 
     public function test_a_partial_analysis_still_produces_a_view_model(): void
