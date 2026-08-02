@@ -149,33 +149,47 @@ describe("buildComparisonRows", () => {
 });
 
 describe("LeadPerspectiveComparison", () => {
-  it("観点ごとに自社・競合のバーを描き、幅が達成度に一致する", () => {
+  it("観点ごとに自社・競合の頂点をレーダー上に打ち、達成度と一致する", () => {
     render(<LeadPerspectiveComparison websites={[website(), competitorWebsite()]} />);
 
     // completeness: 8/10 = 80%
-    const selfBar = screen.getByTestId("bar-self-completeness");
-    expect(selfBar).toHaveAttribute("data-value", "80");
-    expect(selfBar).toHaveStyle({ width: "80%" });
+    expect(screen.getByTestId("vertex-self-completeness")).toHaveAttribute("data-value", "80");
 
     // clarity: 3/6 = 50%
-    expect(screen.getByTestId("bar-competitor-clarity")).toHaveAttribute("data-value", "50");
+    expect(screen.getByTestId("vertex-competitor-clarity")).toHaveAttribute("data-value", "50");
   });
 
-  it("数値を出せない観点はバーを描かず、0点として読まれない表示にする", () => {
+  it("数値を出せない観点は頂点を打たず、0点として読まれない表示にする", () => {
     const site = website({ perspectives: [perspective("completeness", "not_measured"), ...KEYS.slice(1).map((k) => perspective(k))] });
 
     render(<LeadPerspectiveComparison websites={[site]} />);
 
-    expect(screen.queryByTestId("bar-self-completeness")).not.toBeInTheDocument();
+    // 未取得の観点は頂点を開けたまま(マーカーを打たない)。
+    expect(screen.queryByTestId("vertex-self-completeness")).not.toBeInTheDocument();
     expect(screen.getByText("数値なし")).toBeInTheDocument();
     // 理由はバックエンドと同じ文言で示す。
     expect(screen.getByText("計測できませんでした")).toBeInTheDocument();
   });
 
-  it("バーの幅を持つ要素は存在するが、多角形(レーダーチャート)のsvgは描かない", () => {
+  it("2社を重ねたレーダー(多角形)のsvgを描く", () => {
     const { container } = render(<LeadPerspectiveComparison websites={[website(), competitorWebsite()]} />);
 
-    expect(container.querySelector("svg polygon")).toBeNull();
+    expect(container.querySelector("svg")).not.toBeNull();
+    // 全観点が測れているときは閉じた多角形になる。
+    expect(container.querySelector("svg polygon")).not.toBeNull();
+  });
+
+  it("未取得の観点が0点として面積に含まれないよう、頂点を開けたまま描く", () => {
+    // completenessだけ未取得。残り3観点は測れているので開いた多角形になる。
+    const site = website({
+      perspectives: [perspective("completeness", "not_measured"), ...KEYS.slice(1).map((k) => perspective(k))],
+    });
+
+    render(<LeadPerspectiveComparison websites={[site]} />);
+
+    expect(screen.queryByTestId("vertex-self-completeness")).not.toBeInTheDocument();
+    expect(screen.getByTestId("vertex-self-clarity")).toBeInTheDocument();
+    expect(screen.getByText(/頂点を置かずに線を開けています/)).toBeInTheDocument();
   });
 
   it("取得率を常に併記する(数値の土台が分かる状態を保つ)", () => {
@@ -251,7 +265,7 @@ describe("LeadPerspectiveComparison", () => {
 
     expect(screen.getByText("4つの観点での評価")).toBeInTheDocument();
     expect(screen.queryByText("競合")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("bar-competitor-completeness")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("vertex-competitor-completeness")).not.toBeInTheDocument();
   });
 
   it("バックエンドの内部名(label/category name)は画面に出さない", () => {

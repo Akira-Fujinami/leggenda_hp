@@ -10,43 +10,61 @@ import type { CategoryScore } from "@/types/analysis";
 import type { LeadPerspective, LeadPerspectiveKey, LeadPerspectiveStatus, LeadWebsiteResult } from "@/types/lead";
 
 /**
- * 4観点を自社/競合で並べて見せる比較ブロック。
+ * 4観点を自社/競合で重ねて見せる比較ブロック(レーダー/多角形チャート)。
  *
- * 背景(2026-07-30のユーザー指摘): 従来は自社カード・競合カードが縦に2枚積まれ、
- * 各カード内で4観点が常に全展開されていたため、同じ観点を2社で比べるには
- * 遠く離れた2箇所をスクロールで往復する必要があった(「縦に長すぎて読みづらい」)。
- * 全体像をここに集約し、項目単位の内訳だけを折りたたむ。
+ * 背景(2026-08-02のユーザー要望): 観点ごとに自社・競合の棒を並べていた従来の
+ * 表示を、2社の形を重ねて全体像を一目で比べられる多角形(レーダー)チャートに
+ * 置き換えた。観点は4つなので図形は四角形になる。
  *
- * 設計上の制約(いずれも既存の誠実性の維持と同じ考え方):
+ * 以前この比較は「レーダーにしない」方針だった ―― 4観点は独立した項目で軸の
+ * 並び順に意味がなく、順序を変えるだけで面積が変わり、実際の差より大きく/
+ * 小さく見えるため。今回それをユーザー判断で上書きするにあたり、その懸念自体は
+ * 消えないので、次の形で従来と同じ誠実性を保つ:
  *
- * 1. レーダーチャート(多角形)にはしない。4観点は独立した項目で軸の並び順に
- *    意味がなく、順序を変えるだけで面積が変わるため、実際の差より大きく/
- *    小さく見える。
+ * 1. 面積の大小を優劣として読ませない。図の下に「軸の順序に意味はなく、面積は
+ *    全体像をつかむための目安」である旨を明記する。
  * 2. 分母はconfigured_max_scoreではなくmax_available_scoreを使う。
- *    configured_max_scoreは「このリリースで何点満点か」という設計上固定の値で、
- *    実測できたかどうかに左右されない ―― これを分母にすると、取得できなかった
- *    項目がある分だけ達成度が目減りし、「未取得の指標を0点として扱わない」
- *    という原則を集計レベルで破ることになる。
- * 3. 取得できなかった観点は長さ0のバーで描かない。バーが無いことは0点として
- *    読まれるため、バックエンドと同じ文言(PERSPECTIVE_STATUS_LABELS)で
- *    「計測できませんでした」等と明示する。
- * 4. 2は同時に別の問題を生む。自社のカバー率50%・競合95%のとき、それぞれ
- *    自分の取得範囲で正規化した数値が同じ軸に並び、直接比較できる形で見えて
- *    しまう。そのためカバー率を必ず併記し、差が大きい場合は注記を出す。
- * 5. 色だけで系列を区別しない。各バーに「自社」「競合」のラベルを直接置く。
- *    良し悪しを示す緑・赤は使わない(点数の高低は情報の置き方の話であり、
- *    企業としての優劣ではない)。
- * 6. 注記(note)と要約(summary)は折りたたみの外に置く。④の「配色やレイアウトの
- *    見た目そのものの印象は自動判定の対象外」のような但し書きが隠れていると、
- *    バーの数値をデザインの評価だと誤読される。
+ *    configured_max_scoreを分母にすると、取得できなかった項目がある分だけ
+ *    達成度が目減りし、「未取得の指標を0点として扱わない」原則を破る。
+ * 3. 取得できなかった観点は0の頂点を打たない。頂点を開けたまま(その軸に線を
+ *    繋がずに)描き、数値は「数値なし」と明示する ―― 頂点が無い=0点として
+ *    読まれないよう、多角形をその角で開ける。
+ * 4. 自社のカバー率と競合のカバー率が異なると、それぞれ自分の取得範囲で正規化
+ *    した数値が同じ図に重なる。そのためカバー率を必ず併記し、差が大きい場合は
+ *    そのまま並べて比較できない旨を注記する。
+ * 5. 色だけで系列を区別しない。自社=実線+丸、競合=点線+ひし形の頂点にし、
+ *    凡例と各観点の数値(本文テキスト)を併記する。良し悪しを示す緑・赤は
+ *    使わない(点数の高低は情報の置き方の話であり、企業としての優劣ではない)。
+ * 6. 注記(note)・要約(summary)・正確な数値表は従来どおり残す。SVGは装飾
+ *    (aria-hidden)とし、数値は本文テキストと数値表で読める状態を保つ ―― 図が
+ *    読めない環境でも同じ情報にたどり着けるようにする。
  */
 
 // 2系統(自社/競合)の識別色。色覚特性のシミュレーションを含む検証済みの値で、
 // ブランド・ホイールのヘキサゴンと同一 ―― 片方だけ変更しないこと。
+// 凡例のスウォッチ(背景色)用。
 const SELF_BAR = "bg-[#2a78d6] dark:bg-[#3987e5]";
 const COMPETITOR_BAR = "bg-[#eb6834] dark:bg-[#d95926]";
-const GRID_LINE = "bg-[#e1e0d9] dark:bg-[#2c2c2a]";
-const UNMEASURED_RULE = "bg-[#898781]";
+
+// レーダー(SVG)用の同一色。stroke=輪郭線、fill=塗り(薄く)、mark=頂点。
+const SERIES_STYLE = {
+  self: {
+    stroke: "stroke-[#2a78d6] dark:stroke-[#3987e5]",
+    fill: "fill-[#2a78d6]/15 dark:fill-[#3987e5]/20",
+    mark: "fill-[#2a78d6] dark:fill-[#3987e5]",
+    dash: undefined as string | undefined,
+    marker: "circle" as const,
+  },
+  competitor: {
+    stroke: "stroke-[#eb6834] dark:stroke-[#d95926]",
+    fill: "fill-[#eb6834]/15 dark:fill-[#d95926]/20",
+    mark: "fill-[#eb6834] dark:fill-[#d95926]",
+    dash: "5 4" as string | undefined,
+    marker: "diamond" as const,
+  },
+} as const;
+
+const GRID_STROKE = "stroke-[#e1e0d9] dark:stroke-[#2c2c2a]";
 
 /** 達成度を数値で出せるのはこの3状態のときだけ(それ以外は未取得系)。 */
 const MEASURED_STATUSES: readonly LeadPerspectiveStatus[] = ["good", "needs_review", "needs_improvement"];
@@ -96,7 +114,7 @@ export function normalizedValue(website: LeadWebsiteResult, perspective: LeadPer
 /**
  * 観点の並び順と見出しは自社サイトのperspectivesをそのまま使う ―― 見出しの
  * 唯一の定義元はバックエンドのLeadMetricCatalog::PERSPECTIVE_HEADINGSであり、
- * フロント側で別の文言を持たない。
+ * フロント側で別の文言を持たない。レーダーの軸(頂点)の並び順もこの順序に従う。
  */
 export function buildComparisonRows(self: LeadWebsiteResult, competitor: LeadWebsiteResult | null): ComparisonRow[] {
   return self.perspectives.map((perspective) => {
@@ -115,65 +133,197 @@ export function buildComparisonRows(self: LeadWebsiteResult, competitor: LeadWeb
   });
 }
 
-const TICKS = [0, 25, 50, 75, 100] as const;
+// --- レーダー(多角形)チャートの描画 ---------------------------------------
+//
+// SVGは装飾(aria-hidden)。同じ数値は各観点の本文テキストと数値表で読めるため、
+// スクリーンリーダー向けには重複読み上げを避けてSVGを隠す。
 
-function GridLines() {
-  return (
-    <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 right-0 block">
-      {TICKS.map((tick) => (
-        <span key={tick} className={cn("absolute -top-1 -bottom-1 block w-px", GRID_LINE)} style={{ left: `${tick}%` }} />
-      ))}
-    </span>
-  );
+const VIEWBOX = 232;
+const CENTER = VIEWBOX / 2; // 116
+const RADIUS = 88; // 100%の頂点までの半径
+const RING_TICKS = [25, 50, 75, 100] as const; // 25刻みのグリッド(0は中心)
+const LABEL_OFFSET = 15; // 軸番号を外周のさらに外に置く
+
+interface RadarAxis {
+  key: LeadPerspectiveKey;
+  index: number;
+  unit: { x: number; y: number };
+  value: number | null;
 }
 
-/**
- * バー1本。値はバーの中ではなく右の固定幅カラムに置く ―― バーが短いときに
- * ラベルがはみ出したり、長いときに枠外へ溢れるのを構造的に防ぐ。
- */
-function Bar({
-  seriesLabel,
+/** 軸iの単位ベクトル(真上を起点に時計回り。y軸は画面座標で下向き)。 */
+function axisUnit(index: number, count: number): { x: number; y: number } {
+  const angle = ((-90 + (360 * index) / count) * Math.PI) / 180;
+  return { x: Math.cos(angle), y: Math.sin(angle) };
+}
+
+/** 単位ベクトル×達成度(0〜100)を画面座標に変換する。 */
+function toXY(unit: { x: number; y: number }, value: number, radius = RADIUS): { x: number; y: number } {
+  const r = (radius * value) / 100;
+  return { x: CENTER + unit.x * r, y: CENTER + unit.y * r };
+}
+
+function pointsAttr(axes: RadarAxis[], value: number): string {
+  return axes
+    .map((axis) => {
+      const p = toXY(axis.unit, value);
+      return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+/** 頂点マーカー。自社=丸、競合=ひし形 ―― 色だけに頼らず形でも系列を区別する。 */
+function Vertex({
   series,
-  perspectiveKey,
+  axisKey,
   value,
-  barClass,
+  point,
 }: {
-  seriesLabel: string;
   series: "self" | "competitor";
-  perspectiveKey: LeadPerspectiveKey;
+  axisKey: LeadPerspectiveKey;
   value: number;
-  barClass: string;
+  point: { x: number; y: number };
 }) {
+  const style = SERIES_STYLE[series];
+  const testId = `vertex-${series}-${axisKey}`;
+
+  if (style.marker === "diamond") {
+    const d = 3.4;
+    const pts = `${point.x},${point.y - d} ${point.x + d},${point.y} ${point.x},${point.y + d} ${point.x - d},${point.y}`;
+    return <polygon data-testid={testId} data-value={value} points={pts} className={style.mark} />;
+  }
+
+  return <circle data-testid={testId} data-value={value} cx={point.x} cy={point.y} r={2.9} className={style.mark} />;
+}
+
+/**
+ * 1系列(自社 or 競合)の多角形。
+ *
+ * 全4観点が測れている場合は閉じた多角形(塗りあり)。1つでも数値なしの観点が
+ * あれば、その角では線を繋がず「頂点を開けたまま」描く(塗りは付けない) ――
+ * 未取得の観点を0点として面積に含めないため。
+ */
+function RadarSeries({ axes, series }: { axes: RadarAxis[]; series: "self" | "competitor" }) {
+  const style = SERIES_STYLE[series];
+  const count = axes.length;
+  const allMeasured = axes.every((axis) => axis.value !== null);
+
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-7 shrink-0 text-[11px] text-muted-foreground">{seriesLabel}</span>
-      <span className="relative block h-3.5 flex-1">
-        <GridLines />
-        <span
-          data-testid={`bar-${series}-${perspectiveKey}`}
-          data-value={value}
-          className={cn("absolute inset-y-0 left-0 block rounded-r-[4px]", barClass)}
-          style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+    <g>
+      {allMeasured ? (
+        <polygon
+          points={axes.map((axis) => `${toXY(axis.unit, axis.value!).x.toFixed(1)},${toXY(axis.unit, axis.value!).y.toFixed(1)}`).join(" ")}
+          strokeWidth={2}
+          strokeLinejoin="round"
+          strokeDasharray={style.dash}
+          className={cn(style.fill, style.stroke)}
         />
-      </span>
-      <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">{value}</span>
-    </div>
+      ) : (
+        axes.map((axis, i) => {
+          const next = axes[(i + 1) % count]!;
+          if (axis.value === null || next.value === null) {
+            return null; // 未取得の観点に隣接する辺は引かない ―― 角を開けたままにする
+          }
+          const from = toXY(axis.unit, axis.value);
+          const to = toXY(next.unit, next.value);
+          return (
+            <line
+              key={`edge-${axis.key}`}
+              x1={from.x}
+              y1={from.y}
+              x2={to.x}
+              y2={to.y}
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeDasharray={style.dash}
+              className={style.stroke}
+            />
+          );
+        })
+      )}
+
+      {axes.map((axis) =>
+        axis.value === null ? null : (
+          <Vertex
+            key={axis.key}
+            series={series}
+            axisKey={axis.key}
+            value={axis.value}
+            point={toXY(axis.unit, axis.value)}
+          />
+        ),
+      )}
+    </g>
   );
 }
 
 /**
- * 数値を出せない観点。長さ0のバーは描かない ―― バーが無いことは0点として
- * 読まれるため、罫線とテキストで「数値が出ていない」ことを明示する。
- * 理由(計測できませんでした/計測対象外/評価不可/該当なし)はすぐ上の状態行が
- * 担うので、ここでは繰り返さない。
+ * 4観点を重ねたレーダー(多角形)チャート。中心が0、外周が100。
+ * 数値そのものは各観点の本文テキストと数値表で読めるため、図には頂点の番号
+ * (下の観点に対応)だけを添える。
  */
-function UnmeasuredBar({ seriesLabel }: { seriesLabel: string }) {
+function PerspectiveRadar({ rows, hasCompetitor }: { rows: ComparisonRow[]; hasCompetitor: boolean }) {
+  const count = rows.length;
+  if (count === 0) {
+    return null;
+  }
+
+  const selfAxes: RadarAxis[] = rows.map((row, index) => ({
+    key: row.key,
+    index,
+    unit: axisUnit(index, count),
+    value: row.self.value,
+  }));
+  const competitorAxes: RadarAxis[] | null = hasCompetitor
+    ? rows.map((row, index) => ({
+        key: row.key,
+        index,
+        unit: axisUnit(index, count),
+        value: row.competitor?.value ?? null,
+      }))
+    : null;
+
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-7 shrink-0 text-[11px] text-muted-foreground">{seriesLabel}</span>
-      <span aria-hidden className={cn("block h-px w-6 shrink-0", UNMEASURED_RULE)} />
-      <span className="text-[11px] text-muted-foreground">数値なし</span>
-    </div>
+    <svg
+      aria-hidden
+      viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
+      className="mx-auto block h-auto w-full max-w-[280px]"
+    >
+      {/* グリッド(25刻みの同心多角形) */}
+      {RING_TICKS.map((tick) => (
+        <polygon key={tick} points={pointsAttr(selfAxes, tick)} fill="none" strokeWidth={1} className={GRID_STROKE} />
+      ))}
+
+      {/* 各軸のスポーク(中心→外周) */}
+      {selfAxes.map((axis) => {
+        const tip = toXY(axis.unit, 100);
+        return <line key={`spoke-${axis.key}`} x1={CENTER} y1={CENTER} x2={tip.x} y2={tip.y} strokeWidth={1} className={GRID_STROKE} />;
+      })}
+
+      {/* 競合を先に描いて自社を上に重ねる */}
+      {competitorAxes && <RadarSeries axes={competitorAxes} series="competitor" />}
+      <RadarSeries axes={selfAxes} series="self" />
+
+      {/* 軸番号(下の各観点に対応) */}
+      {selfAxes.map((axis) => {
+        const tip = {
+          x: CENTER + axis.unit.x * (RADIUS + LABEL_OFFSET),
+          y: CENTER + axis.unit.y * (RADIUS + LABEL_OFFSET),
+        };
+        return (
+          <text
+            key={`num-${axis.key}`}
+            x={tip.x}
+            y={tip.y}
+            textAnchor="middle"
+            dominantBaseline="central"
+            className="fill-current text-[11px] font-medium text-muted-foreground"
+          >
+            {axis.index + 1}
+          </text>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -235,6 +385,21 @@ function PerspectiveDetail({ row, showSiteLabels }: { row: ComparisonRow; showSi
   );
 }
 
+/** 観点1つ分の達成度(数値)。数値なしの観点は0点として読ませない文言にする。 */
+function PerspectiveValue({ row }: { row: ComparisonRow }) {
+  return (
+    <p className="text-xs text-muted-foreground">
+      {SELF_LABEL} <span className="tabular-nums">{row.self.value ?? "数値なし"}</span>
+      {row.competitor && (
+        <>
+          {" ／ "}
+          {COMPETITOR_LABEL} <span className="tabular-nums">{row.competitor.value ?? "数値なし"}</span>
+        </>
+      )}
+    </p>
+  );
+}
+
 export function LeadPerspectiveComparison({ websites }: { websites: LeadWebsiteResult[] }) {
   const [tableOpen, setTableOpen] = useState(false);
 
@@ -254,6 +419,9 @@ export function LeadPerspectiveComparison({ websites }: { websites: LeadWebsiteR
   const coverageGap =
     competitorCoverage !== null && Math.abs(selfCoverage - competitorCoverage) >= COVERAGE_GAP_THRESHOLD;
 
+  // 頂点を開けている(数値なしの)観点が1つでもあるか ―― あれば図の下で明示する。
+  const hasOpenVertex = rows.some((row) => row.self.value === null || (row.competitor && row.competitor.value === null));
+
   return (
     <div className="space-y-4 rounded-md border p-4">
       <div className="space-y-1">
@@ -267,19 +435,38 @@ export function LeadPerspectiveComparison({ websites }: { websites: LeadWebsiteR
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <LegendSwatch label={SELF_LABEL} barClass={SELF_BAR} />
-        {competitor && <LegendSwatch label={COMPETITOR_LABEL} barClass={COMPETITOR_BAR} />}
-        <span>0〜100で表しています(縦の目盛りは25刻み)</span>
+        <LegendSwatch label={`${SELF_LABEL}(実線・丸)`} barClass={SELF_BAR} />
+        {competitor && <LegendSwatch label={`${COMPETITOR_LABEL}(点線・ひし形)`} barClass={COMPETITOR_BAR} />}
+        <span>中心が0・外周が100(外側ほど高い/25刻み)</span>
+      </div>
+
+      <PerspectiveRadar rows={rows} hasCompetitor={competitor !== null} />
+
+      <div className="space-y-1 text-xs text-muted-foreground">
+        <p>各頂点の番号①〜④は、下に並ぶ4つの観点にそのまま対応しています。</p>
+        <p>
+          4つの観点は独立した項目で、軸の並び順に特別な意味はありません。多角形の面積は全体像をつかむための目安で、面積の大きさそのものが企業の優劣を示すものではありません。
+        </p>
+        {hasOpenVertex && (
+          <p>数値が取得できなかった観点は、頂点を置かずに線を開けています(0点ではありません)。</p>
+        )}
       </div>
 
       {/* 画面が広いときは2列に折り返す ―― 1列のままだと観点ごとの注記が積み上がり、
           PCでは縦に間延びして全体像が1画面に収まらない(2026-07-30のユーザー指摘)。
-          目盛りの数値行は置かない。2列にすると列ごとに軸が必要になり、
-          そのぶん縦を消費するわりに、各バーの右端に実数が出ているため情報量が増えない。 */}
+          先頭の番号はレーダーの軸番号と対応する。 */}
       <div className="grid gap-x-8 gap-y-5 lg:grid-cols-2">
-        {rows.map((row) => (
+        {rows.map((row, index) => (
           <div key={row.key} className="space-y-1.5">
-            <p className="text-sm font-medium">{row.heading}</p>
+            <p className="flex items-center gap-1.5 text-sm font-medium">
+              <span
+                aria-hidden
+                className="inline-flex size-4 shrink-0 items-center justify-center rounded-full border text-[10px] font-normal text-muted-foreground"
+              >
+                {index + 1}
+              </span>
+              {row.heading}
+            </p>
 
             {/* 定性判定はバックエンドのstatusLabel()と同じ文言をそのまま出す。
                 spanで囲むのは、画面とWord/PDFレポートで文言が食い違っていないことを
@@ -294,31 +481,7 @@ export function LeadPerspectiveComparison({ websites }: { websites: LeadWebsiteR
               )}
             </p>
 
-            <div className="space-y-0.5">
-              {row.self.value === null ? (
-                <UnmeasuredBar seriesLabel={SELF_LABEL} />
-              ) : (
-                <Bar
-                  seriesLabel={SELF_LABEL}
-                  series="self"
-                  perspectiveKey={row.key}
-                  value={row.self.value}
-                  barClass={SELF_BAR}
-                />
-              )}
-              {row.competitor &&
-                (row.competitor.value === null ? (
-                  <UnmeasuredBar seriesLabel={COMPETITOR_LABEL} />
-                ) : (
-                  <Bar
-                    seriesLabel={COMPETITOR_LABEL}
-                    series="competitor"
-                    perspectiveKey={row.key}
-                    value={row.competitor.value}
-                    barClass={COMPETITOR_BAR}
-                  />
-                ))}
-            </div>
+            <PerspectiveValue row={row} />
 
             {row.note && <p className="text-xs text-muted-foreground">{row.note}</p>}
 
