@@ -22,11 +22,12 @@ readonly class ReportViewModel
     /**
      * @param  array<string, mixed>  $selfScore  WebsiteScoreResult::toArray()
      * @param  ?array<string, mixed>  $competitorScore  WebsiteScoreResult::toArray()、競合なしの場合はnull
-     * @param  list<array<string, mixed>>  $perspectives  LeadPerspectiveComposer::compose()の戻り値
+     * @param  list<array<string, mixed>>  $perspectives  LeadPerspectiveComposer::compose()の戻り値+各要素に'one_liner'(string)を1つ追加したもの(ReportViewModelBuilderが付与、LeadPerspectiveComposer自体・JSON APIの形は変更しない)
      * @param  list<ReportRecommendationRow>  $topRecommendations
      * @param  ?array<string, mixed>  $brandWheelSelf  BrandWheelLeadResponseComposer::compose()の戻り値
      * @param  ?array<string, mixed>  $brandWheelCompetitor  BrandWheelLeadResponseComposer::compose()の戻り値、競合なしの場合はnull
      * @param  array{self_points: list<string>, competitor_points: list<string>, one_point: ?array{key: string, text: string}}  $brandWheelComparison  BrandWheelComparisonSummaryComposerの戻り値
+     * @param  ?string  $brandWheelRadarPng  BrandWheelRadarSvgBuilder+BrandWheelHexagonRendererで生成したPNGの生バイナリ。ラスタライズ失敗時・自社のブランド・ホイールがstatus!=='success'のときはnull(画像を省略し表だけで成立させる、既存メールと同じ方針)
      */
     public function __construct(
         public string $companyDisplayName,
@@ -43,5 +44,6 @@ readonly class ReportViewModel
         public ?array $brandWheelSelf,
         public ?array $brandWheelCompetitor,
         public array $brandWheelComparison,
+        public ?string $brandWheelRadarPng,
     ) {}
 }

@@ -21,11 +21,16 @@ class PdfReportGenerator
 
     public function generate(ReportViewModel $viewModel): string
     {
+        // 2026-08-04: A4横のスライド構成に変更したため'landscape'に修正。
+        // ビュー側のCSS `@page { size: A4 landscape; }` と一致させる ――
+        // 食い違ったままだと、dompdf内部のページ幅の想定がずれ、行の
+        // 折り返し計算に悪影響が出る(実PDF確認で見つかった、折り返し境界の
+        // 文字が欠落する不具合の一因と判明)。
         return Pdf::loadView('reports.lead-pdf', [
             'viewModel' => $viewModel,
             'ipaexGothicFontPath' => 'file://'.self::IPAEX_GOTHIC_FONT_PATH,
         ])
-            ->setPaper('a4', 'portrait')
+            ->setPaper('a4', 'landscape')
             ->setOption('enable_font_subsetting', true)
             ->output();
     }

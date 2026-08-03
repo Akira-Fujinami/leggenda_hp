@@ -31,6 +31,7 @@ class WordReportGeneratorTest extends TestCase
                     'status' => 'not_detected',
                     'summary' => '採用ページを検出できませんでした。トップページに採用に関する案内が見つからなかったため、この観点は今回「計測対象外」です。',
                     'items' => [],
+                    'one_liner' => '採用ページを検出できませんでした。トップページに採用に関する案内が見つからなかったため、この観点は今回「計測対象外」です。',
                 ],
                 [
                     'key' => LeadMetricCatalog::PERSPECTIVE_CLARITY,
@@ -41,6 +42,7 @@ class WordReportGeneratorTest extends TestCase
                     'items' => [
                         ['label' => 'ページタイトルの設定', 'status' => 'good', 'detail' => null],
                     ],
+                    'one_liner' => '確認した1項目に大きな問題は見つかりませんでした。',
                 ],
             ],
             topRecommendations: [
@@ -60,6 +62,7 @@ class WordReportGeneratorTest extends TestCase
             ],
             brandWheelCompetitor: null,
             brandWheelComparison: ['self_points' => ['活動的魅力が最も内容として充足しています。'], 'competitor_points' => [], 'one_point' => ['key' => 'well_covered', 'text' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。']],
+            brandWheelRadarPng: null,
         );
     }
 
@@ -100,6 +103,32 @@ class WordReportGeneratorTest extends TestCase
     }
 
     /**
+     * 2026-08-04: 個別指標名(items[*].label、社内の指標名)は4観点セクションに
+     * 一切出さない(見出し・判定バッジ・理由1文のみ、PDF版と同じ扱い)。
+     */
+    public function test_never_leaks_individual_metric_labels_in_the_perspectives_section(): void
+    {
+        $docx = app(WordReportGenerator::class)->generate($this->viewModel());
+        $documentXml = $this->extractDocumentXml($docx);
+
+        $this->assertStringNotContainsString('ページタイトルの設定', $documentXml);
+    }
+
+    /**
+     * 「取得できなかった項目は0点として扱わず、算出の対象から外している」旨と
+     * カバー率・確信度は、個別指標名を畳んだ後も残す(誠実性の維持に必要な情報)。
+     */
+    public function test_states_the_not_counted_as_zero_caveat_with_coverage_and_confidence(): void
+    {
+        $docx = app(WordReportGenerator::class)->generate($this->viewModel());
+        $documentXml = $this->extractDocumentXml($docx);
+
+        $this->assertStringContainsString('0点として扱わず', $documentXml);
+        $this->assertStringContainsString('92.5', $documentXml);
+        $this->assertStringContainsString('88.0', $documentXml);
+    }
+
+    /**
      * 2026-08-03: カバー率70%未満を「参考スコア」と明示する誠実性保証。
      * 画面(LeadResults)から診断内容そのものを外したため、この保証が
      * 実際にリードへ届く経路はWord/PDFレポートのみになった。従来の
@@ -124,6 +153,7 @@ class WordReportGeneratorTest extends TestCase
             brandWheelSelf: $viewModel->brandWheelSelf,
             brandWheelCompetitor: $viewModel->brandWheelCompetitor,
             brandWheelComparison: $viewModel->brandWheelComparison,
+            brandWheelRadarPng: $viewModel->brandWheelRadarPng,
         );
 
         $documentXml = $this->extractDocumentXml(app(WordReportGenerator::class)->generate($lowCoverage));
@@ -182,6 +212,7 @@ class WordReportGeneratorTest extends TestCase
             ],
             brandWheelCompetitor: null,
             brandWheelComparison: ['self_points' => [], 'competitor_points' => [], 'one_point' => null],
+            brandWheelRadarPng: null,
         );
 
         $documentXml = $this->extractDocumentXml(app(WordReportGenerator::class)->generate($unreadable));

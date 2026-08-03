@@ -374,4 +374,88 @@ class ReportViewModelBuilderTest extends TestCase
         $this->assertNull($viewModel->brandWheelCompetitor);
         $this->assertSame([], $viewModel->brandWheelComparison['competitor_points']);
     }
+
+    /**
+     * 2026-08-04: レーダー図(自社×競合を重ねた図)のPNGは、自社の
+     * ブランド・ホイールがstatus==='success'のときだけ生成される。
+     * ラスタライズ経路(rsvg-convert)自体はBrandWheelHexagonRendererTestで
+     * 別途検証済みのため、ここではビルダーがnull以外を返すこと(=実際に
+     * 呼び出して生成できていること)だけを確認する。
+     */
+    public function test_brand_wheel_radar_png_is_generated_when_self_axes_are_readable(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->brandWheelRadarPng);
+        $this->assertSame("\x89PNG\r\n\x1a\n", substr($viewModel->brandWheelRadarPng, 0, 8));
+    }
+
+    /**
+     * 6項目すべて0件の図(「魅力のない会社」の意味になる)を出さないのと
+     * 同じ理由で、status!=='success'のときはPNGそのものを生成しない
+     * (呼び出し側で画像を省略し、表だけで成立させるための前提)。
+     */
+    public function test_brand_wheel_radar_png_is_null_when_self_status_is_not_success(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'insufficient_input',
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNull($viewModel->brandWheelRadarPng);
+    }
+
+    /**
+     * 2026-08-04: ②③④観点(①はLeadPerspectiveComposerの既存summaryを使う)に
+     * 機械的な理由1文(one_liner)が付与されること、個別指標名を含まないこと。
+     * LeadPerspectiveComposer::compose()自体(JSON APIと共有)は変更していない
+     * ことも、items配列がそのまま残っていることで確認する。
+     */
+    public function test_perspectives_include_a_mechanically_derived_one_liner(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        foreach ($viewModel->perspectives as $perspective) {
+            $this->assertArrayHasKey('one_liner', $perspective);
+            $this->assertIsString($perspective['one_liner']);
+            $this->assertArrayHasKey('items', $perspective);
+        }
+    }
 }

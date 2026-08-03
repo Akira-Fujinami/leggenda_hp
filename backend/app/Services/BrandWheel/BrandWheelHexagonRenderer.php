@@ -16,8 +16,15 @@ use Symfony\Component\Process\Process;
  * (2026-07-30の指摘)。ダークモード版は作らずライトモード固定のパレットを使う。
  *
  * rsvg-convert自体が使えない/失敗した場合は例外を投げずnullを返す ――
- * 画像はメール本文の補助情報であり、無くても内容(HTMLの表)だけで伝わる
- * 設計のため、画像生成の失敗がメール送信全体をブロックしてはならない。
+ * 画像はメール本文・レポートの補助情報であり、無くても内容(HTMLの表)だけで
+ * 伝わる設計のため、画像生成の失敗が送信・レポート生成全体をブロックしては
+ * ならない。
+ *
+ * 幅・高さは引数で上書きできる(2026-08-04、BrandWheelRadarSvgBuilderの
+ * レーダー図(380x276、ヘキサゴンとはアスペクト比が異なる)を同じ
+ * ラスタライズ経路で扱うため)。省略時は既存のヘキサゴン用サイズ
+ * (380x316の2倍解像度)のまま ―― 既存呼び出し元(LeadNotificationService)は
+ * 無変更で動く。
  */
 class BrandWheelHexagonRenderer
 {
@@ -28,12 +35,12 @@ class BrandWheelHexagonRenderer
 
     private const string BACKGROUND_COLOR = '#fcfcfb';
 
-    public function renderPng(string $svg): ?string
+    public function renderPng(string $svg, ?int $widthPx = null, ?int $heightPx = null): ?string
     {
         $process = new Process([
             'rsvg-convert',
-            '-w', (string) self::WIDTH_PX,
-            '-h', (string) self::HEIGHT_PX,
+            '-w', (string) ($widthPx ?? self::WIDTH_PX),
+            '-h', (string) ($heightPx ?? self::HEIGHT_PX),
             '--background-color', self::BACKGROUND_COLOR,
         ]);
         $process->setInput($svg);

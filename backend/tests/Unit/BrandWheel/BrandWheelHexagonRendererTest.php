@@ -43,4 +43,23 @@ class BrandWheelHexagonRendererTest extends TestCase
 
         $this->assertNull($png);
     }
+
+    /**
+     * 2026-08-04: レーダー図(380x276、ヘキサゴンとはアスペクト比が異なる)を
+     * 同じラスタライズ経路で扱うため、幅・高さを引数で上書きできる。
+     */
+    public function test_it_rasterizes_at_a_custom_size_when_width_and_height_are_given(): void
+    {
+        $svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 276" width="380" height="276">'
+            .'<rect width="380" height="276" fill="#ffffff" />'
+            .'</svg>';
+
+        $png = $this->renderer->renderPng($svg, 760, 552);
+
+        $this->assertNotNull($png);
+        $width = unpack('N', substr($png, 16, 4))[1];
+        $height = unpack('N', substr($png, 20, 4))[1];
+        $this->assertSame(760, $width);
+        $this->assertSame(552, $height);
+    }
 }

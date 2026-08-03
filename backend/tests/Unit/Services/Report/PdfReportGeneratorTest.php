@@ -30,6 +30,7 @@ class PdfReportGeneratorTest extends TestCase
                     'status' => 'not_detected',
                     'summary' => '採用ページを検出できませんでした。',
                     'items' => [],
+                    'one_liner' => '採用ページを検出できませんでした。',
                 ],
                 [
                     'key' => LeadMetricCatalog::PERSPECTIVE_USABILITY,
@@ -40,6 +41,7 @@ class PdfReportGeneratorTest extends TestCase
                     'items' => [
                         ['label' => 'スマートフォンでの表示対応', 'status' => 'needs_improvement', 'detail' => null],
                     ],
+                    'one_liner' => '確認した1項目のうち1項目で改善の余地がありました。',
                 ],
             ],
             topRecommendations: [
@@ -59,6 +61,7 @@ class PdfReportGeneratorTest extends TestCase
             ],
             brandWheelCompetitor: null,
             brandWheelComparison: ['self_points' => ['活動的魅力が最も内容として充足しています。'], 'competitor_points' => [], 'one_point' => ['key' => 'well_covered', 'text' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。']],
+            brandWheelRadarPng: null,
         );
     }
 

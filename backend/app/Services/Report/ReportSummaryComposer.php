@@ -4,6 +4,7 @@ namespace App\Services\Report;
 
 use App\Services\Comparison\RankingCalculator;
 use App\Services\Comparison\StrengthWeaknessExtractor;
+use App\Services\Lead\LeadPerspectiveComposer;
 
 /**
  * レポート「総評」ページの文面を組み立てる。
@@ -213,5 +214,50 @@ class ReportSummaryComposer
     private function formatPercent(float $ratio): string
     {
         return number_format($ratio * 100, 1);
+    }
+
+    /**
+     * 4観点(②③④、①はcomposeCompleteness()が既に持つsummaryをそのまま使う)の
+     * 「理由1文」。個別指標名(items[*].label)は一切出さず、件数のみから
+     * 機械的に組み立てる(2026-08-04のユーザー指摘: 社内の指標名がそのまま
+     * 社外に出ている状態を解消するため。AIには書かせない、
+     * BrandWheelComparisonSummaryComposerと同じ設計方針)。
+     *
+     * @param  array{status: string, items: list<array{label: string, status: string, detail: ?string}>, summary?: string}  $perspective  LeadPerspectiveComposer::compose()の要素1件分
+     */
+    public function composePerspectiveOneLiner(array $perspective): string
+    {
+        if (! empty($perspective['summary'])) {
+            return (string) $perspective['summary'];
+        }
+
+        $determinableStatuses = [
+            LeadPerspectiveComposer::STATUS_GOOD,
+            LeadPerspectiveComposer::STATUS_NEEDS_REVIEW,
+            LeadPerspectiveComposer::STATUS_NEEDS_IMPROVEMENT,
+        ];
+        $determinable = array_filter(
+            $perspective['items'] ?? [],
+            fn (array $item) => in_array($item['status'], $determinableStatuses, true),
+        );
+        $n = count($determinable);
+
+        if ($n === 0) {
+            return 'この観点は計測できませんでした。';
+        }
+
+        $status = $perspective['status'];
+
+        if ($status === LeadPerspectiveComposer::STATUS_GOOD) {
+            return "確認した{$n}項目に大きな問題は見つかりませんでした。";
+        }
+
+        $k = count(array_filter($determinable, fn (array $item) => $item['status'] === $status));
+
+        return match ($status) {
+            LeadPerspectiveComposer::STATUS_NEEDS_IMPROVEMENT => "確認した{$n}項目のうち{$k}項目で改善の余地がありました。",
+            LeadPerspectiveComposer::STATUS_NEEDS_REVIEW => "確認した{$n}項目のうち{$k}項目で確認をおすすめします。",
+            default => 'この観点は計測できませんでした。',
+        };
     }
 }

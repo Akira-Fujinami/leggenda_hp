@@ -220,30 +220,37 @@ class WordReportGenerator
      * 採用担当向けの4観点(①書くべきこと・②メッセージ・③導線・④見やすさ)。
      * 内部の7カテゴリ(technical_seo等)は表示しない ―― 表示のグルーピングを
      * 変えるだけで、採点ロジック自体は変更していない(LeadPerspectiveComposer参照)。
+     *
+     * 2026-08-04: 個別指標(items[*].label、社内の指標名)は一切出さず、
+     * 見出し・判定バッジ・理由1文(one_liner、ReportViewModelBuilderが
+     * ReportSummaryComposer::composePerspectiveOneLiner()で機械的に付与)
+     * だけに畳む(PDF版と同じ扱いに揃える)。ただし「取得できなかった項目は
+     * 0点として扱わず、算出の対象から外している」旨とカバー率・確信度は
+     * 誠実性の維持に必要な情報のため残す。
      */
     private function addPerspectivesSection(PhpWord $phpWord, ReportViewModel $viewModel): void
     {
         $section = $phpWord->addSection();
         $section->addTitle('採用担当の視点で見た診断結果', 1);
+        $section->addText('4つの観点それぞれについて、判定と、その理由を一言で記載しています。', ['size' => 9, 'italic' => true]);
 
         foreach ($viewModel->perspectives as $perspective) {
             $section->addTitle($perspective['heading'], 2);
             $section->addText(LeadPerspectiveComposer::statusLabel($perspective['status']), ['bold' => true]);
-
-            if (! empty($perspective['note'])) {
-                $section->addText($perspective['note'], ['size' => 9, 'italic' => true]);
-            }
-
-            if (! empty($perspective['summary'])) {
-                $section->addText($perspective['summary']);
-            }
-
-            foreach ($perspective['items'] as $item) {
-                $section->addText("・{$item['label']}: ".LeadPerspectiveComposer::statusLabel($item['status']));
-            }
-
+            $section->addText($perspective['one_liner']);
             $section->addTextBreak(1);
         }
+
+        $coverageRate = (float) $viewModel->selfScore['coverage_rate'];
+        $confidenceRate = (float) $viewModel->selfScore['confidence_rate'];
+        $section->addText(
+            sprintf(
+                '取得できなかった項目は0点として扱わず、算出の対象から外しています(測定カバー率 %s%%／確信度 %s%%)。',
+                number_format($coverageRate, 1),
+                number_format($confidenceRate, 1),
+            ),
+            ['size' => 9, 'color' => '555555'],
+        );
     }
 
     private function addRecommendationsSection(PhpWord $phpWord, ReportViewModel $viewModel): void

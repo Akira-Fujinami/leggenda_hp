@@ -266,4 +266,73 @@ class ReportSummaryComposerTest extends TestCase
 
         $this->assertStringContainsString('参考程度にとどめてください', $sentence);
     }
+
+    // ------------------------------------------------------------------
+    // composePerspectiveOneLiner: 2026-08-04、②③④観点の「理由1文」。
+    // 個別指標名(items[*].label)は一切出さず、件数のみから機械的に組み立てる。
+    // ------------------------------------------------------------------
+
+    private function item(string $status): array
+    {
+        return ['label' => '内部専用のラベル', 'status' => $status, 'detail' => null];
+    }
+
+    public function test_perspective_with_an_existing_summary_uses_it_verbatim(): void
+    {
+        // ①(採用ページ)はLeadPerspectiveComposerが既に1文(summary)を
+        // 持っているため、それをそのまま使う(新しい文言を作らない)。
+        $perspective = ['status' => 'not_detected', 'items' => [], 'summary' => '採用ページを検出できませんでした。'];
+
+        $this->assertSame('採用ページを検出できませんでした。', $this->composer()->composePerspectiveOneLiner($perspective));
+    }
+
+    public function test_good_status_states_the_count_without_a_fraction(): void
+    {
+        $perspective = ['status' => 'good', 'items' => [$this->item('good'), $this->item('good'), $this->item('not_applicable')]];
+
+        $oneLiner = $this->composer()->composePerspectiveOneLiner($perspective);
+
+        $this->assertSame('確認した2項目に大きな問題は見つかりませんでした。', $oneLiner);
+        $this->assertStringNotContainsString('内部専用のラベル', $oneLiner);
+    }
+
+    public function test_needs_improvement_status_states_the_fraction(): void
+    {
+        $perspective = ['status' => 'needs_improvement', 'items' => [
+            $this->item('good'), $this->item('needs_improvement'), $this->item('needs_improvement'),
+        ]];
+
+        $this->assertSame(
+            '確認した3項目のうち2項目で改善の余地がありました。',
+            $this->composer()->composePerspectiveOneLiner($perspective),
+        );
+    }
+
+    public function test_needs_review_status_states_the_fraction(): void
+    {
+        $perspective = ['status' => 'needs_review', 'items' => [
+            $this->item('good'), $this->item('needs_review'),
+        ]];
+
+        $this->assertSame(
+            '確認した2項目のうち1項目で確認をおすすめします。',
+            $this->composer()->composePerspectiveOneLiner($perspective),
+        );
+    }
+
+    public function test_no_determinable_item_falls_back_to_a_could_not_measure_sentence(): void
+    {
+        // items全てnot_measured/not_applicable(=何も確認できていない)のとき、
+        // 「確認した0項目」のような不誠実な文言にはしない。
+        $perspective = ['status' => 'not_measured', 'items' => [$this->item('not_measured'), $this->item('not_applicable')]];
+
+        $this->assertSame('この観点は計測できませんでした。', $this->composer()->composePerspectiveOneLiner($perspective));
+    }
+
+    public function test_empty_items_falls_back_to_a_could_not_measure_sentence(): void
+    {
+        $perspective = ['status' => 'not_measured', 'items' => []];
+
+        $this->assertSame('この観点は計測できませんでした。', $this->composer()->composePerspectiveOneLiner($perspective));
+    }
 }

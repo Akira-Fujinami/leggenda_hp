@@ -1,0 +1,162 @@
+<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>診断レポート レイアウト案（ダミーデータ）</title>
+<style>
+@page { size: A4 landscape; margin: 0; }
+* { box-sizing: border-box; }
+body { margin:0; font-family:"IPAGothic","Noto Sans CJK JP",sans-serif; color:#1a1a1a; font-size:11pt; }
+.page { width:297mm; height:210mm; padding:14mm 16mm; position:relative; page-break-after:always; }
+.page:last-child { page-break-after:auto; }
+h1 { font-size:24pt; margin:0 0 6mm; font-weight:normal; }
+h2 { font-size:15pt; margin:0 0 5mm; font-weight:normal; border-bottom:1px solid #d8d8d8; padding-bottom:2mm; }
+.cover { padding-top:60mm; text-align:center; }
+.cover p { margin:1.5mm 0; font-size:11pt; color:#333; }
+.warnband { background:#fdf3e3; border:1px solid #e0b877; padding:3mm 5mm; font-size:10pt; margin-bottom:6mm; }
+table { border-collapse:collapse; width:100%; }
+td { vertical-align:top; }
+.lead { font-size:9.5pt; color:#5b5b5b; margin:0 0 4mm; }
+.hexbox { background:#33587f; color:#fff; font-size:9pt; line-height:1.7; padding:6mm 4mm; text-align:center; width:44mm; }
+.sumhead { font-size:10.5pt; font-weight:bold; margin:0 0 2mm; }
+.sum { font-size:10pt; line-height:1.8; margin:0; padding-left:5mm; }
+.legend { text-align:center; font-size:9pt; color:#5b5b5b; margin-top:1mm; }
+.sw { display:inline-block; width:9px; height:9px; margin:0 2px 0 10px; }
+.bandrow td { color:#fff; text-align:center; font-size:10.5pt; font-weight:bold; padding:2mm; }
+.axcell { width:16.66%; padding:0 1mm; }
+.axhead { border:1px solid #d8d8d8; background:#f4f6f8; text-align:center; font-size:10pt; font-weight:bold; padding:1.5mm; }
+.axbody { border:1px solid #d8d8d8; border-top:none; padding:2mm; height:34mm; }
+.cnt { font-size:8.5pt; color:#5b5b5b; margin:0 0 1mm; }
+.hits { margin:0; padding-left:4mm; font-size:9pt; line-height:1.6; }
+.none { font-size:9pt; color:#8a8a8a; margin:0; }
+.darkband { background:#33587f; color:#fff; padding:4mm 5mm; margin-top:5mm; }
+.darkband p { margin:1mm 0; font-size:10pt; line-height:1.7; }
+.pane { border:1px solid #33587f; padding:4mm; width:48%; }
+.pane h4 { margin:0 0 2mm; font-size:11pt; }
+.pane ul { margin:0; padding-left:5mm; font-size:10pt; line-height:1.9; }
+.arrow { text-align:center; font-size:20pt; color:#33587f; padding:3mm 0; }
+.one { border:1px solid #d8d8d8; padding:4mm; }
+.one h4 { margin:0 0 2mm; font-size:11pt; }
+.one p { margin:0; font-size:10pt; line-height:1.8; }
+.pcell { width:50%; padding:0 3mm 6mm 0; }
+.pbox { border:1px solid #d8d8d8; padding:4mm; height:100%; }
+.ptitle { font-size:11.5pt; margin:0 0 2mm; }
+.badge { display:inline-block; padding:0.8mm 3mm; font-size:9pt; }
+.good { background:#e6f4ea; color:#1e6b38; }
+.warn { background:#fdecea; color:#9b2c22; }
+.pdesc { font-size:10pt; line-height:1.8; margin:2.5mm 0 0; }
+.reccell { width:33.3%; padding:0 2mm; }
+.rectitle { font-size:11pt; margin:0 0 2mm; }
+.recdesc { font-size:9.5pt; line-height:1.8; margin:0 0 3mm; }
+.recmeta { font-size:9pt; color:#5b5b5b; margin:0; }
+.recbox { border:1px solid #d8d8d8; padding:4mm; height:46mm; }
+.foot { position:absolute; left:16mm; right:16mm; bottom:9mm; font-size:8.5pt; color:#7a7a7a; line-height:1.6; }
+.cta { text-align:center; padding-top:45mm; }
+.cta p { font-size:12pt; line-height:2; }
+</style></head><body>
+
+<div class="page cover">
+  <div class="warnband">これはレイアウト確認用のサンプルです。記載されている数値・文章はすべてダミーで、実際の診断結果ではありません。</div>
+  <h1>Webサイト診断レポート</h1>
+  <p>株式会社サンプル 様</p>
+  <p>対象サイト: https://recruit.example.com/vision/</p>
+  <p>比較サイト: https://careers.example.co.jp/</p>
+  <p>2026年8月3日</p>
+</div>
+
+<div class="page">
+  <h2>自社ページの分析結果</h2>
+  <table><tr>
+    <td class="hexbox">各項目について<br>該当する内容が<br>何件読み取れたかを<br>集計しています</td>
+    <td style="padding-left:8mm;">
+      <p class="sumhead">サマリー</p>
+      <ul class="sum">
+        <li>解析したURL：https://recruit.example.com/vision/</li>
+        <li>金銭的便益が最も内容として充足しています。</li>
+        <li>就業環境に関する記載はなく、全体的に緑の項目の情報は少なめです。</li>
+      </ul>
+    </td>
+    <td style="width:105mm;">
+      <img src="radar-sample.png" style="width:105mm;">
+      <div class="legend"><span class="sw" style="background:#2a78d6"></span>自社サイト<span class="sw" style="background:#eb6834"></span>競合サイト</div>
+    </td>
+  </tr></table>
+
+  <table class="bandrow" style="margin-top:4mm;"><tr>
+    <td colspan="2" style="background:#3f6fa3">青／会社の魅力</td>
+    <td colspan="2" style="background:#4a7d5f">緑／会社との距離</td>
+    <td colspan="2" style="background:#a3413c">赤／仕事の魅力</td>
+  </tr></table>
+  <table style="margin-top:2mm;"><tr><td class="axcell">
+      <div class="axhead">活動的魅力</div>
+      <div class="axbody"><p class="cnt">読み取れた内容 3 / 4件</p><ul class='hits'><li>パーパス</li><li>展開事業・商品</li><li>PJ・新たな取組</li></ul></div>
+    </td><td class="axcell">
+      <div class="axhead">資産的魅力</div>
+      <div class="axbody"><p class="cnt">読み取れた内容 2 / 4件</p><ul class='hits'><li>知名度・評判</li><li>規模・影響力</li></ul></div>
+    </td><td class="axcell">
+      <div class="axhead">経営スタイル</div>
+      <div class="axbody"><p class="cnt">読み取れた内容 1 / 4件</p><ul class='hits'><li>重視する価値</li></ul></div>
+    </td><td class="axcell">
+      <div class="axhead">就業環境</div>
+      <div class="axbody"><p class="cnt">読み取れた内容 0 / 4件</p><p class='none'>読み取れた内容はありません</p></div>
+    </td><td class="axcell">
+      <div class="axhead">情緒的便益</div>
+      <div class="axbody"><p class="cnt">読み取れた内容 1 / 4件</p><ul class='hits'><li>誇りに思える</li></ul></div>
+    </td><td class="axcell">
+      <div class="axhead">金銭的便益</div>
+      <div class="axbody"><p class="cnt">読み取れた内容 4 / 4件</p><ul class='hits'><li>給与水準</li><li>福利厚生</li><li>成長機会</li><li>雇用の安定性</li></ul></div>
+    </td></tr></table>
+
+  <div class="darkband">
+    <p><b>キーメッセージ：</b>技術で社会基盤を支える、という主題が一貫して置かれています。</p>
+    <p><b>AI解析による印象：</b>幅広さは伝わるものの、それが働く人にとって何の嬉しさにつながるのかという点との距離があり、情緒的便益の記述が薄いのがもったいないところです。</p>
+  </div>
+</div>
+
+<div class="page">
+  <h2>他社ページ比較とのまとめ</h2>
+  <table><tr>
+    <td class="pane">
+      <h4>【自社ページ】</h4>
+      <ul><li>金銭的便益が最も内容として充足しています。</li><li>就業環境に関する記載はなく、全体的に緑の項目の情報は少なめです。</li></ul>
+    </td>
+    <td style="width:4%"></td>
+    <td class="pane">
+      <h4>【他社ページ】</h4>
+      <ul><li>全体的に情報が充足しています。</li><li>キーメッセージがぼやけています。</li></ul>
+    </td>
+  </tr></table>
+  <div class="arrow">▼</div>
+  <div class="one">
+    <h4>【ワンポイント】</h4>
+    <p><b>情報充足が出来ていない</b>：候補者が十分な情報を得られず、エントリーの土俵に上がれない可能性があります。</p>
+  </div>
+  <p class="foot">ブランド・ホイールは本来、サイトだけでなくグループインタビュー・口コミ・内定者/辞退者インタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。キーメッセージと印象の読み取りにはAIを使用しています。</p>
+</div>
+
+<div class="page">
+  <h2>採用担当の視点で見た診断結果</h2>
+  <p class="lead">4つの観点それぞれについて、判定と、その理由を一言で記載しています。</p>
+  <table>
+    <tr><td class="pcell"><div class="pbox"><p class="ptitle">書くべきことが書けているか</p>
+      <span class="badge good">良好</span><p class="pdesc">採用ページを確認できました。募集要項の記載内容そのものの確認は今後追加予定で、現時点では採用ページの有無と情報量のみを見ています。</p></div></td><td class="pcell"><div class="pbox"><p class="ptitle">伝えたいことが分かりやすく伝わっているか</p>
+      <span class="badge good">良好</span><p class="pdesc">ページの見出しと紹介文が整理されており、何の会社かが伝わる状態でした。</p></div></td></tr>
+    <tr><td class="pcell"><div class="pbox"><p class="ptitle">知りたい情報にたどり着けるか</p>
+      <span class="badge warn">改善の余地があります</span><p class="pdesc">応募・問い合わせへの入口が少なく、候補者が連絡手段を見つけにくい状態でした。</p></div></td><td class="pcell"><div class="pbox"><p class="ptitle">見やすく、使いやすいか</p>
+      <span class="badge warn">改善の余地があります</span><p class="pdesc">画像の説明文と表示速度に改善の余地がありました。配色やレイアウトの印象そのものは自動判定の対象外です。</p></div></td></tr>
+  </table>
+  <p class="foot">取得できなかった項目は0点として扱わず、算出の対象から外しています（測定カバー率 90.9%／確信度 93.3%）。</p>
+</div>
+
+<div class="page">
+  <h2>改善提案</h2>
+  <p class="lead">特に改善効果が見込まれる項目を、優先度の高い順に記載しています。</p>
+  <table><tr><td class="reccell"><div class="recbox"><p class="rectitle">画像の説明文(読み上げ対応)</p><p class="recdesc">重要な画像に読み上げソフト向けの説明文を設定すると、より多くの方に内容が伝わります。</p>
+      <p class="recmeta">優先度: 緊急　影響度: 高　対応工数: 中</p></div></td><td class="reccell"><div class="recbox"><p class="rectitle">ページの表示の速さ</p><p class="recdesc">表示速度を改善すると、閲覧中に離脱されにくくなります。</p>
+      <p class="recmeta">優先度: 高　影響度: 高　対応工数: 大</p></div></td><td class="reccell"><div class="recbox"><p class="rectitle">応募・問い合わせの受け口</p><p class="recdesc">フォームを設置すると、候補者が直接連絡しやすくなります。</p>
+      <p class="recmeta">優先度: 中　影響度: 中　対応工数: 中</p></div></td></tr></table>
+</div>
+
+<div class="page cta">
+  <h2>より詳しい診断・ご相談はこちら</h2>
+  <p>今回は自社サイト・比較サイト1社の簡易診断結果です。</p>
+  <p>他社比較（3〜5社）や、詳細な改善提案については、担当者までお気軽にご相談ください。</p>
+</div>
+
+</body></html>

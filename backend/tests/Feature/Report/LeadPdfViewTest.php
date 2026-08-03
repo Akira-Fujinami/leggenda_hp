@@ -14,10 +14,11 @@ use Tests\TestCase;
  * 同等のテストが存在しなかった)。2026-08-03、画面(LeadResults)から診断
  * 内容そのものを外したことで、以下の誠実性表示はPDFがリードへ届く唯一の
  * 経路になった:
- * - カバー率70%未満のとき「参考スコア」と明示する
  * - 採用ページを検出できなかった観点を、網羅できているように見せない
+ * - 取得できなかった項目を0点として扱わない旨・カバー率・確信度を明示する
  * - 競合サイトへの改善提案を出さない(ReportViewModelBuilderが
  *   self側のrecommendationsしか渡していないことをここでも再確認する)
+ * - 個別指標名(items[*].label)を4観点ページに出さない(2026-08-04)
  *
  * PDFバイナリのテキスト抽出用ライブラリはこのリポジトリに無いため、dompdfへ
  * 変換する前のBladeテンプレート自体をHTML文字列としてレンダリングして検証
@@ -36,6 +37,59 @@ class LeadPdfViewTest extends TestCase
         ])->render();
     }
 
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function perspectives(): array
+    {
+        return [
+            [
+                'key' => LeadMetricCatalog::PERSPECTIVE_COMPLETENESS,
+                'label' => LeadMetricCatalog::PERSPECTIVE_LABELS[LeadMetricCatalog::PERSPECTIVE_COMPLETENESS],
+                'heading' => LeadMetricCatalog::PERSPECTIVE_HEADINGS[LeadMetricCatalog::PERSPECTIVE_COMPLETENESS],
+                'note' => LeadMetricCatalog::COMPLETENESS_LEGAL_ITEMS_NOTE,
+                'status' => 'not_detected',
+                'summary' => '採用ページを検出できませんでした。トップページに採用に関する案内が見つからなかったため、この観点は今回「計測対象外」です。',
+                'items' => [],
+                // ReportViewModelBuilderが付与する値(summaryをそのまま採用)。
+                'one_liner' => '採用ページを検出できませんでした。トップページに採用に関する案内が見つからなかったため、この観点は今回「計測対象外」です。',
+            ],
+            [
+                'key' => LeadMetricCatalog::PERSPECTIVE_CLARITY,
+                'label' => LeadMetricCatalog::PERSPECTIVE_LABELS[LeadMetricCatalog::PERSPECTIVE_CLARITY],
+                'heading' => LeadMetricCatalog::PERSPECTIVE_HEADINGS[LeadMetricCatalog::PERSPECTIVE_CLARITY],
+                'note' => null,
+                'status' => 'good',
+                'items' => [
+                    ['label' => 'ページタイトルの設定', 'status' => 'good', 'detail' => null],
+                ],
+                'one_liner' => '確認した1項目に大きな問題は見つかりませんでした。',
+            ],
+            [
+                'key' => LeadMetricCatalog::PERSPECTIVE_FINDABILITY,
+                'label' => LeadMetricCatalog::PERSPECTIVE_LABELS[LeadMetricCatalog::PERSPECTIVE_FINDABILITY],
+                'heading' => LeadMetricCatalog::PERSPECTIVE_HEADINGS[LeadMetricCatalog::PERSPECTIVE_FINDABILITY],
+                'note' => null,
+                'status' => 'needs_improvement',
+                'items' => [
+                    ['label' => '応募・問い合わせフォームの設置', 'status' => 'needs_improvement', 'detail' => null],
+                ],
+                'one_liner' => '確認した1項目のうち1項目で改善の余地がありました。',
+            ],
+            [
+                'key' => LeadMetricCatalog::PERSPECTIVE_USABILITY,
+                'label' => LeadMetricCatalog::PERSPECTIVE_LABELS[LeadMetricCatalog::PERSPECTIVE_USABILITY],
+                'heading' => LeadMetricCatalog::PERSPECTIVE_HEADINGS[LeadMetricCatalog::PERSPECTIVE_USABILITY],
+                'note' => LeadMetricCatalog::USABILITY_SECTION_NOTE,
+                'status' => 'needs_review',
+                'items' => [
+                    ['label' => 'スマートフォンでの表示対応', 'status' => 'needs_review', 'detail' => null],
+                ],
+                'one_liner' => '確認した1項目のうち1項目で確認をおすすめします。',
+            ],
+        ];
+    }
+
     private function viewModel(array $overrides = []): ReportViewModel
     {
         $defaults = [
@@ -47,17 +101,7 @@ class LeadPdfViewTest extends TestCase
             'competitorScore' => null,
             'overallSummaryText' => '総合スコア76点という結果になりました。',
             'comparisonSentence' => null,
-            'perspectives' => [
-                [
-                    'key' => LeadMetricCatalog::PERSPECTIVE_COMPLETENESS,
-                    'label' => LeadMetricCatalog::PERSPECTIVE_LABELS[LeadMetricCatalog::PERSPECTIVE_COMPLETENESS],
-                    'heading' => LeadMetricCatalog::PERSPECTIVE_HEADINGS[LeadMetricCatalog::PERSPECTIVE_COMPLETENESS],
-                    'note' => LeadMetricCatalog::COMPLETENESS_LEGAL_ITEMS_NOTE,
-                    'status' => 'not_detected',
-                    'summary' => '採用ページを検出できませんでした。トップページに採用に関する案内が見つからなかったため、この観点は今回「計測対象外」です。',
-                    'items' => [],
-                ],
-            ],
+            'perspectives' => $this->perspectives(),
             'topRecommendations' => [
                 new ReportRecommendationRow('画像を圧縮してください', '表示速度の改善につながります。', '緊急', '高', '小'),
             ],
@@ -75,29 +119,12 @@ class LeadPdfViewTest extends TestCase
             ],
             'brandWheelCompetitor' => null,
             'brandWheelComparison' => ['self_points' => ['活動的魅力が最も内容として充足しています。'], 'competitor_points' => [], 'one_point' => ['key' => 'well_covered', 'text' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。']],
+            'brandWheelRadarPng' => null,
         ];
 
         $values = array_merge($defaults, $overrides);
 
         return new ReportViewModel(...$values);
-    }
-
-    public function test_shows_the_reference_score_badge_when_coverage_is_below_70_percent(): void
-    {
-        $html = $this->render($this->viewModel([
-            'selfScore' => ['display_score' => 40, 'configured_max_score' => 100, 'coverage_rate' => 69.9, 'confidence_rate' => 60.0],
-        ]));
-
-        $this->assertStringContainsString('参考スコア', $html);
-    }
-
-    public function test_does_not_show_the_reference_score_badge_when_coverage_is_at_least_70_percent(): void
-    {
-        $html = $this->render($this->viewModel([
-            'selfScore' => ['display_score' => 76, 'configured_max_score' => 100, 'coverage_rate' => 70.0, 'confidence_rate' => 88.0],
-        ]));
-
-        $this->assertStringNotContainsString('参考スコア', $html);
     }
 
     /**
@@ -110,6 +137,33 @@ class LeadPdfViewTest extends TestCase
 
         $this->assertStringContainsString('採用ページを検出できませんでした', $html);
         $this->assertStringContainsString('計測対象外', $html);
+    }
+
+    /**
+     * 2026-08-04: 個別指標名(items[*].label)は4観点ページに一切出さない
+     * (見出し・判定バッジ・理由1文のみ)。
+     */
+    public function test_never_leaks_individual_metric_labels_on_the_four_perspectives_page(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertStringNotContainsString('スマートフォンでの表示対応', $html);
+        $this->assertStringNotContainsString('応募・問い合わせフォームの設置', $html);
+        $this->assertStringNotContainsString('ページタイトルの設定', $html);
+    }
+
+    /**
+     * 2026-08-04: 「取得できなかった項目は0点として扱わず、算出の対象から
+     * 外している」旨とカバー率・確信度は、個別指標名を畳んだ後も残す
+     * (誠実性の維持に必要な情報のため)。
+     */
+    public function test_states_the_not_counted_as_zero_caveat_with_coverage_and_confidence(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertStringContainsString('0点として扱わず', $html);
+        $this->assertStringContainsString('92.5', $html);
+        $this->assertStringContainsString('88.0', $html);
     }
 
     /**
@@ -164,7 +218,7 @@ class LeadPdfViewTest extends TestCase
     {
         $html = $this->render($this->viewModel());
 
-        $this->assertStringContainsString('採用ブランドの6軸', $html);
+        $this->assertStringContainsString('自社ページの分析結果', $html);
         $this->assertStringContainsString('活動的魅力', $html);
         $this->assertStringContainsString('2 / 4件', $html);
         $this->assertStringContainsString('パーパス', $html);
@@ -175,6 +229,29 @@ class LeadPdfViewTest extends TestCase
         // お断り文言(メールと同趣旨)。
         $this->assertStringContainsString('グループインタビュー', $html);
         $this->assertStringContainsString('AIを使用', $html);
+    }
+
+    /**
+     * 2026-08-04: PNGが生成できなかった場合(brandWheelRadarPng===null)、
+     * 図を省略し、軸ごとの件数の表だけで成立させる(画像の失敗がレポート
+     * 生成全体を止めてはいけない、既存メールと同じ方針)。
+     */
+    public function test_falls_back_to_the_axis_table_only_when_the_radar_png_is_missing(): void
+    {
+        $html = $this->render($this->viewModel(['brandWheelRadarPng' => null]));
+
+        $this->assertStringNotContainsString('<img', $html);
+        // 図が無くても表(件数)は変わらず出る。
+        $this->assertStringContainsString('2 / 4件', $html);
+    }
+
+    public function test_embeds_the_radar_png_as_a_base64_image_when_available(): void
+    {
+        $png = "\x89PNG\r\n\x1a\n".'dummy-bytes-for-test';
+
+        $html = $this->render($this->viewModel(['brandWheelRadarPng' => $png]));
+
+        $this->assertStringContainsString('<img src="data:image/png;base64,'.base64_encode($png).'"', $html);
     }
 
     public function test_never_leaks_evidence_text_into_the_pdf(): void
