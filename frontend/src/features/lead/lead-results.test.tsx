@@ -297,7 +297,7 @@ describe("LeadResults", () => {
 
   // --- 2026-07-30の構成変更(縦の長さを抑え、2社を並べて比べられるようにする) ---
 
-  it("4観点の比較ブロックに、自社と競合を重ねたレーダーの頂点を観点ごとに打つ", () => {
+  it("4観点の比較ブロックに、自社と競合を重ねたレーダー図と数値を出す", () => {
     const twoSites = baseResults({
       websites: [baseWebsite(), baseWebsite({ website_name: "競合株式会社", is_primary: false })],
     });
@@ -305,10 +305,11 @@ describe("LeadResults", () => {
     render(<LeadResults results={twoSites} token="tok" analysisId={1} />);
 
     expect(screen.getByText("4つの観点での比較")).toBeInTheDocument();
+    expect(screen.getByTestId("radar-self")).toHaveAttribute("data-points", "4");
+    expect(screen.getByTestId("radar-competitor")).toHaveAttribute("data-points", "4");
     // completeness: 8/10 = 80%(configured_max_score 10 と同値のため、分母の
     // 取り違えでは差が出ない。分母の検証はlead-perspective-comparison.test.tsx側。)
-    expect(screen.getByTestId("vertex-self-completeness")).toHaveAttribute("data-value", "80");
-    expect(screen.getByTestId("vertex-competitor-completeness")).toHaveAttribute("data-value", "80");
+    expect(screen.getByTestId("value-self-completeness")).toHaveTextContent("80");
   });
 
   it("項目の内訳は既定で折りたたまれており、開くまで縦に伸びない", async () => {

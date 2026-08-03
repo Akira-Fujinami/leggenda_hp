@@ -10,61 +10,45 @@ import type { CategoryScore } from "@/types/analysis";
 import type { LeadPerspective, LeadPerspectiveKey, LeadPerspectiveStatus, LeadWebsiteResult } from "@/types/lead";
 
 /**
- * 4観点を自社/競合で重ねて見せる比較ブロック(レーダー/多角形チャート)。
+ * 4観点を自社/競合で並べて見せる比較ブロック。
  *
- * 背景(2026-08-02のユーザー要望): 観点ごとに自社・競合の棒を並べていた従来の
- * 表示を、2社の形を重ねて全体像を一目で比べられる多角形(レーダー)チャートに
- * 置き換えた。観点は4つなので図形は四角形になる。
+ * 背景(2026-07-30のユーザー指摘): 従来は自社カード・競合カードが縦に2枚積まれ、
+ * 各カード内で4観点が常に全展開されていたため、同じ観点を2社で比べるには
+ * 遠く離れた2箇所をスクロールで往復する必要があった(「縦に長すぎて読みづらい」)。
+ * 全体像をここに集約し、項目単位の内訳だけを折りたたむ。
  *
- * 以前この比較は「レーダーにしない」方針だった ―― 4観点は独立した項目で軸の
- * 並び順に意味がなく、順序を変えるだけで面積が変わり、実際の差より大きく/
- * 小さく見えるため。今回それをユーザー判断で上書きするにあたり、その懸念自体は
- * 消えないので、次の形で従来と同じ誠実性を保つ:
+ * 設計上の制約(いずれも既存の誠実性の維持と同じ考え方):
  *
- * 1. 面積の大小を優劣として読ませない。図の下に「軸の順序に意味はなく、面積は
- *    全体像をつかむための目安」である旨を明記する。
- * 2. 分母はconfigured_max_scoreではなくmax_available_scoreを使う。
- *    configured_max_scoreを分母にすると、取得できなかった項目がある分だけ
- *    達成度が目減りし、「未取得の指標を0点として扱わない」原則を破る。
- * 3. 取得できなかった観点は0の頂点を打たない。頂点を開けたまま(その軸に線を
- *    繋がずに)描き、数値は「数値なし」と明示する ―― 頂点が無い=0点として
- *    読まれないよう、多角形をその角で開ける。
- * 4. 自社のカバー率と競合のカバー率が異なると、それぞれ自分の取得範囲で正規化
- *    した数値が同じ図に重なる。そのためカバー率を必ず併記し、差が大きい場合は
- *    そのまま並べて比較できない旨を注記する。
- * 5. 色だけで系列を区別しない。自社=実線+丸、競合=点線+ひし形の頂点にし、
- *    凡例と各観点の数値(本文テキスト)を併記する。良し悪しを示す緑・赤は
- *    使わない(点数の高低は情報の置き方の話であり、企業としての優劣ではない)。
- * 6. 注記(note)・要約(summary)・正確な数値表は従来どおり残す。SVGは装飾
- *    (aria-hidden)とし、数値は本文テキストと数値表で読める状態を保つ ―― 図が
- *    読めない環境でも同じ情報にたどり着けるようにする。
+ * 1. 分母はconfigured_max_scoreではなくmax_available_scoreを使う。
+ *    configured_max_scoreは「このリリースで何点満点か」という設計上固定の値で、
+ *    実測できたかどうかに左右されない ―― これを分母にすると、取得できなかった
+ *    項目がある分だけ達成度が目減りし、「未取得の指標を0点として扱わない」
+ *    という原則を集計レベルで破ることになる。
+ * 2. 取得できなかった観点を0として描かない。レーダーでは特に危険で、
+ *    中心に落ちた頂点は「その観点が壊滅的に悪い」と読まれる。実際は
+ *    「測れなかった」であって「0」ではないため、その軸は図から除外し、
+ *    除外したこと自体を図の下に明記する。
+ * 3. 2は同時に別の問題を生む。自社のカバー率50%・競合95%のとき、それぞれ
+ *    自分の取得範囲で正規化した数値が同じ軸に並び、直接比較できる形で見えて
+ *    しまう。そのためカバー率を必ず併記し、差が大きい場合は注記を出す。
+ * 4. 色だけで系列を区別しない。凡例に加えて、観点ごとに「自社」「競合」の
+ *    ラベルと数値をテキストで併記する。良し悪しを示す緑・赤は使わない
+ *    (点数の高低は情報の置き方の話であり、企業としての優劣ではない)。
+ * 5. 注記(note)と要約(summary)は折りたたみの外に置く。④の「配色やレイアウトの
+ *    見た目そのものの印象は自動判定の対象外」のような但し書きが隠れていると、
+ *    数値をデザインの評価だと誤読される。
+ * 6. 軸の並び順はバックエンドのperspectives順に固定する。レーダーは軸の
+ *    並べ替えで面積が変わるため、順序を可変にすると見え方を操作できてしまう。
  */
 
 // 2系統(自社/競合)の識別色。色覚特性のシミュレーションを含む検証済みの値で、
 // ブランド・ホイールのヘキサゴンと同一 ―― 片方だけ変更しないこと。
-// 凡例のスウォッチ(背景色)用。
-const SELF_BAR = "bg-[#2a78d6] dark:bg-[#3987e5]";
-const COMPETITOR_BAR = "bg-[#eb6834] dark:bg-[#d95926]";
-
-// レーダー(SVG)用の同一色。stroke=輪郭線、fill=塗り(薄く)、mark=頂点。
-const SERIES_STYLE = {
-  self: {
-    stroke: "stroke-[#2a78d6] dark:stroke-[#3987e5]",
-    fill: "fill-[#2a78d6]/15 dark:fill-[#3987e5]/20",
-    mark: "fill-[#2a78d6] dark:fill-[#3987e5]",
-    dash: undefined as string | undefined,
-    marker: "circle" as const,
-  },
-  competitor: {
-    stroke: "stroke-[#eb6834] dark:stroke-[#d95926]",
-    fill: "fill-[#eb6834]/15 dark:fill-[#d95926]/20",
-    mark: "fill-[#eb6834] dark:fill-[#d95926]",
-    dash: "5 4" as string | undefined,
-    marker: "diamond" as const,
-  },
-} as const;
-
-const GRID_STROKE = "stroke-[#e1e0d9] dark:stroke-[#2c2c2a]";
+const SELF_MARK = "bg-[#2a78d6] dark:bg-[#3987e5]";
+const COMPETITOR_MARK = "bg-[#eb6834] dark:bg-[#d95926]";
+const SELF_SVG = "fill-[#2a78d6] stroke-[#2a78d6] dark:fill-[#3987e5] dark:stroke-[#3987e5]";
+const COMPETITOR_SVG = "fill-[#eb6834] stroke-[#eb6834] dark:fill-[#d95926] dark:stroke-[#d95926]";
+const RING_SVG = "stroke-[#e1e0d9] dark:stroke-[#2c2c2a]";
+const SURFACE_SVG = "stroke-[#fcfcfb] dark:stroke-[#1a1a19]";
 
 /** 達成度を数値で出せるのはこの3状態のときだけ(それ以外は未取得系)。 */
 const MEASURED_STATUSES: readonly LeadPerspectiveStatus[] = ["good", "needs_review", "needs_improvement"];
@@ -74,6 +58,9 @@ export const COVERAGE_GAP_THRESHOLD = 20;
 
 const SELF_LABEL = "自社";
 const COMPETITOR_LABEL = "競合";
+
+/** 図の頂点と観点の対応を示す番号(見出しは長いので図には出さない)。 */
+const AXIS_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥"] as const;
 
 export interface ComparisonRow {
   key: LeadPerspectiveKey;
@@ -114,7 +101,7 @@ export function normalizedValue(website: LeadWebsiteResult, perspective: LeadPer
 /**
  * 観点の並び順と見出しは自社サイトのperspectivesをそのまま使う ―― 見出しの
  * 唯一の定義元はバックエンドのLeadMetricCatalog::PERSPECTIVE_HEADINGSであり、
- * フロント側で別の文言を持たない。レーダーの軸(頂点)の並び順もこの順序に従う。
+ * フロント側で別の文言を持たない。
  */
 export function buildComparisonRows(self: LeadWebsiteResult, competitor: LeadWebsiteResult | null): ComparisonRow[] {
   return self.perspectives.map((perspective) => {
@@ -133,204 +120,158 @@ export function buildComparisonRows(self: LeadWebsiteResult, competitor: LeadWeb
   });
 }
 
-// --- レーダー(多角形)チャートの描画 ---------------------------------------
-//
-// SVGは装飾(aria-hidden)。同じ数値は各観点の本文テキストと数値表で読めるため、
-// スクリーンリーダー向けには重複読み上げを避けてSVGを隠す。
+// --- レーダー図 ---
 
-const VIEWBOX = 232;
-const CENTER = VIEWBOX / 2; // 116
-const RADIUS = 88; // 100%の頂点までの半径
-const RING_TICKS = [25, 50, 75, 100] as const; // 25刻みのグリッド(0は中心)
-const LABEL_OFFSET = 15; // 軸番号を外周のさらに外に置く
+const RADAR_CX = 150;
+const RADAR_CY = 138;
+const RADAR_R = 92;
+const RADAR_RINGS = [25, 50, 75, 100] as const;
 
-interface RadarAxis {
-  key: LeadPerspectiveKey;
-  index: number;
-  unit: { x: number; y: number };
-  value: number | null;
+/** 軸iの、中心からの割合value(0〜100)にあたる座標。0時方向を起点に時計回り。 */
+export function radarPoint(index: number, axisCount: number, value: number): { x: number; y: number } {
+  const angle = ((-90 + (360 / axisCount) * index) * Math.PI) / 180;
+  const radius = (RADAR_R * Math.max(0, Math.min(100, value))) / 100;
+
+  return { x: RADAR_CX + Math.cos(angle) * radius, y: RADAR_CY + Math.sin(angle) * radius };
 }
 
-/** 軸iの単位ベクトル(真上を起点に時計回り。y軸は画面座標で下向き)。 */
-function axisUnit(index: number, count: number): { x: number; y: number } {
-  const angle = ((-90 + (360 * index) / count) * Math.PI) / 180;
-  return { x: Math.cos(angle), y: Math.sin(angle) };
-}
-
-/** 単位ベクトル×達成度(0〜100)を画面座標に変換する。 */
-function toXY(unit: { x: number; y: number }, value: number, radius = RADIUS): { x: number; y: number } {
-  const r = (radius * value) / 100;
-  return { x: CENTER + unit.x * r, y: CENTER + unit.y * r };
-}
-
-function pointsAttr(axes: RadarAxis[], value: number): string {
-  return axes
-    .map((axis) => {
-      const p = toXY(axis.unit, value);
-      return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
-    })
-    .join(" ");
-}
-
-/** 頂点マーカー。自社=丸、競合=ひし形 ―― 色だけに頼らず形でも系列を区別する。 */
-function Vertex({
-  series,
-  axisKey,
-  value,
-  point,
-}: {
-  series: "self" | "competitor";
-  axisKey: LeadPerspectiveKey;
-  value: number;
-  point: { x: number; y: number };
-}) {
-  const style = SERIES_STYLE[series];
-  const testId = `vertex-${series}-${axisKey}`;
-
-  if (style.marker === "diamond") {
-    const d = 3.4;
-    const pts = `${point.x},${point.y - d} ${point.x + d},${point.y} ${point.x},${point.y + d} ${point.x - d},${point.y}`;
-    return <polygon data-testid={testId} data-value={value} points={pts} className={style.mark} />;
-  }
-
-  return <circle data-testid={testId} data-value={value} cx={point.x} cy={point.y} r={2.9} className={style.mark} />;
+function toPoints(coords: { x: number; y: number }[]): string {
+  return coords.map(({ x, y }) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
 }
 
 /**
- * 1系列(自社 or 競合)の多角形。
- *
- * 全4観点が測れている場合は閉じた多角形(塗りあり)。1つでも数値なしの観点が
- * あれば、その角では線を繋がず「頂点を開けたまま」描く(塗りは付けない) ――
- * 未取得の観点を0点として面積に含めないため。
+ * 系列1つ分の面。数値のない軸は頂点を作らない ―― 0として描くと
+ * 「その観点が壊滅的に悪い」と読まれるため。残った頂点が2点以下のときは
+ * 面にせず、線または点のまま描く(存在しない面積を作らない)。
  */
-function RadarSeries({ axes, series }: { axes: RadarAxis[]; series: "self" | "competitor" }) {
-  const style = SERIES_STYLE[series];
-  const count = axes.length;
-  const allMeasured = axes.every((axis) => axis.value !== null);
+function RadarSeries({
+  values,
+  colorClass,
+  series,
+}: {
+  values: (number | null)[];
+  colorClass: string;
+  series: "self" | "competitor";
+}) {
+  const coords = values
+    .map((value, index) => (value === null ? null : { index, ...radarPoint(index, values.length, value) }))
+    .filter((point): point is { index: number; x: number; y: number } => point !== null);
+
+  if (coords.length === 0) {
+    return null;
+  }
 
   return (
-    <g>
-      {allMeasured ? (
+    <g data-testid={`radar-${series}`} data-points={coords.length}>
+      {coords.length >= 3 ? (
         <polygon
-          points={axes.map((axis) => `${toXY(axis.unit, axis.value!).x.toFixed(1)},${toXY(axis.unit, axis.value!).y.toFixed(1)}`).join(" ")}
+          points={toPoints(coords)}
+          className={colorClass}
+          fillOpacity={0.18}
           strokeWidth={2}
           strokeLinejoin="round"
-          strokeDasharray={style.dash}
-          className={cn(style.fill, style.stroke)}
         />
       ) : (
-        axes.map((axis, i) => {
-          const next = axes[(i + 1) % count]!;
-          if (axis.value === null || next.value === null) {
-            return null; // 未取得の観点に隣接する辺は引かない ―― 角を開けたままにする
-          }
-          const from = toXY(axis.unit, axis.value);
-          const to = toXY(next.unit, next.value);
-          return (
-            <line
-              key={`edge-${axis.key}`}
-              x1={from.x}
-              y1={from.y}
-              x2={to.x}
-              y2={to.y}
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeDasharray={style.dash}
-              className={style.stroke}
-            />
-          );
-        })
+        <polyline points={toPoints(coords)} className={colorClass} fill="none" strokeWidth={2} />
       )}
-
-      {axes.map((axis) =>
-        axis.value === null ? null : (
-          <Vertex
-            key={axis.key}
-            series={series}
-            axisKey={axis.key}
-            value={axis.value}
-            point={toXY(axis.unit, axis.value)}
-          />
-        ),
-      )}
+      {coords.map((point) => (
+        <circle key={point.index} cx={point.x} cy={point.y} r={3.5} className={colorClass} strokeWidth={0} />
+      ))}
+      {coords.map((point) => (
+        <circle
+          key={`ring-${point.index}`}
+          cx={point.x}
+          cy={point.y}
+          r={3.5}
+          fill="none"
+          className={SURFACE_SVG}
+          strokeWidth={1.5}
+        />
+      ))}
     </g>
   );
 }
 
-/**
- * 4観点を重ねたレーダー(多角形)チャート。中心が0、外周が100。
- * 数値そのものは各観点の本文テキストと数値表で読めるため、図には頂点の番号
- * (下の観点に対応)だけを添える。
- */
-function PerspectiveRadar({ rows, hasCompetitor }: { rows: ComparisonRow[]; hasCompetitor: boolean }) {
-  const count = rows.length;
-  if (count === 0) {
+function RadarChart({ rows, hasCompetitor }: { rows: ComparisonRow[]; hasCompetitor: boolean }) {
+  const axisCount = rows.length;
+
+  if (axisCount < 3) {
     return null;
   }
 
-  const selfAxes: RadarAxis[] = rows.map((row, index) => ({
-    key: row.key,
-    index,
-    unit: axisUnit(index, count),
-    value: row.self.value,
-  }));
-  const competitorAxes: RadarAxis[] | null = hasCompetitor
-    ? rows.map((row, index) => ({
-        key: row.key,
-        index,
-        unit: axisUnit(index, count),
-        value: row.competitor?.value ?? null,
-      }))
-    : null;
+  const selfValues = rows.map((row) => row.self.value);
+  const competitorValues = rows.map((row) => row.competitor?.value ?? null);
+  const excluded = rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => row.self.value === null && (row.competitor === null || row.competitor.value === null));
 
   return (
-    <svg
-      aria-hidden
-      viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
-      className="mx-auto block h-auto w-full max-w-[280px]"
-    >
-      {/* グリッド(25刻みの同心多角形) */}
-      {RING_TICKS.map((tick) => (
-        <polygon key={tick} points={pointsAttr(selfAxes, tick)} fill="none" strokeWidth={1} className={GRID_STROKE} />
-      ))}
+    <div className="space-y-2">
+      <svg
+        viewBox="0 0 300 300"
+        role="img"
+        aria-label="4つの観点の達成度を自社と競合で重ねた図。各観点の数値は下の一覧に記載しています。"
+        className="mx-auto h-auto w-full max-w-[300px]"
+      >
+        {RADAR_RINGS.map((ring) => (
+          <polygon
+            key={ring}
+            points={toPoints(rows.map((_, index) => radarPoint(index, axisCount, ring)))}
+            fill="none"
+            className={RING_SVG}
+            strokeWidth={1}
+          />
+        ))}
+        {rows.map((_, index) => {
+          const outer = radarPoint(index, axisCount, 100);
 
-      {/* 各軸のスポーク(中心→外周) */}
-      {selfAxes.map((axis) => {
-        const tip = toXY(axis.unit, 100);
-        return <line key={`spoke-${axis.key}`} x1={CENTER} y1={CENTER} x2={tip.x} y2={tip.y} strokeWidth={1} className={GRID_STROKE} />;
-      })}
+          return (
+            <line
+              key={index}
+              x1={RADAR_CX}
+              y1={RADAR_CY}
+              x2={outer.x}
+              y2={outer.y}
+              className={RING_SVG}
+              strokeWidth={1}
+            />
+          );
+        })}
 
-      {/* 競合を先に描いて自社を上に重ねる */}
-      {competitorAxes && <RadarSeries axes={competitorAxes} series="competitor" />}
-      <RadarSeries axes={selfAxes} series="self" />
+        <RadarSeries values={selfValues} colorClass={SELF_SVG} series="self" />
+        {hasCompetitor && <RadarSeries values={competitorValues} colorClass={COMPETITOR_SVG} series="competitor" />}
 
-      {/* 軸番号(下の各観点に対応) */}
-      {selfAxes.map((axis) => {
-        const tip = {
-          x: CENTER + axis.unit.x * (RADIUS + LABEL_OFFSET),
-          y: CENTER + axis.unit.y * (RADIUS + LABEL_OFFSET),
-        };
-        return (
-          <text
-            key={`num-${axis.key}`}
-            x={tip.x}
-            y={tip.y}
-            textAnchor="middle"
-            dominantBaseline="central"
-            className="fill-current text-[11px] font-medium text-muted-foreground"
-          >
-            {axis.index + 1}
-          </text>
-        );
-      })}
-    </svg>
+        {rows.map((_, index) => {
+          const outer = radarPoint(index, axisCount, 118);
+
+          return (
+            <text
+              key={index}
+              x={outer.x}
+              y={outer.y + 4}
+              textAnchor="middle"
+              className="fill-muted-foreground text-[11px]"
+            >
+              {AXIS_NUMBERS[index]}
+            </text>
+          );
+        })}
+      </svg>
+
+      {excluded.length > 0 && (
+        <p className="text-center text-xs text-muted-foreground">
+          {excluded.map(({ index }) => AXIS_NUMBERS[index]).join("")}
+          は数値が出ていないため、図に含まれていません。
+        </p>
+      )}
+    </div>
   );
 }
 
-function LegendSwatch({ label, barClass }: { label: string; barClass: string }) {
+function LegendSwatch({ label, markClass }: { label: string; markClass: string }) {
   return (
     <span className="flex items-center gap-1.5">
-      <span aria-hidden className={cn("size-2.5 rounded-[2px]", barClass)} />
+      <span aria-hidden className={cn("size-2.5 rounded-[2px]", markClass)} />
       {label}
     </span>
   );
@@ -385,21 +326,6 @@ function PerspectiveDetail({ row, showSiteLabels }: { row: ComparisonRow; showSi
   );
 }
 
-/** 観点1つ分の達成度(数値)。数値なしの観点は0点として読ませない文言にする。 */
-function PerspectiveValue({ row }: { row: ComparisonRow }) {
-  return (
-    <p className="text-xs text-muted-foreground">
-      {SELF_LABEL} <span className="tabular-nums">{row.self.value ?? "数値なし"}</span>
-      {row.competitor && (
-        <>
-          {" ／ "}
-          {COMPETITOR_LABEL} <span className="tabular-nums">{row.competitor.value ?? "数値なし"}</span>
-        </>
-      )}
-    </p>
-  );
-}
-
 export function LeadPerspectiveComparison({ websites }: { websites: LeadWebsiteResult[] }) {
   const [tableOpen, setTableOpen] = useState(false);
 
@@ -419,9 +345,6 @@ export function LeadPerspectiveComparison({ websites }: { websites: LeadWebsiteR
   const coverageGap =
     competitorCoverage !== null && Math.abs(selfCoverage - competitorCoverage) >= COVERAGE_GAP_THRESHOLD;
 
-  // 頂点を開けている(数値なしの)観点が1つでもあるか ―― あれば図の下で明示する。
-  const hasOpenVertex = rows.some((row) => row.self.value === null || (row.competitor && row.competitor.value === null));
-
   return (
     <div className="space-y-4 rounded-md border p-4">
       <div className="space-y-1">
@@ -435,36 +358,22 @@ export function LeadPerspectiveComparison({ websites }: { websites: LeadWebsiteR
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <LegendSwatch label={`${SELF_LABEL}(実線・丸)`} barClass={SELF_BAR} />
-        {competitor && <LegendSwatch label={`${COMPETITOR_LABEL}(点線・ひし形)`} barClass={COMPETITOR_BAR} />}
-        <span>中心が0・外周が100(外側ほど高い/25刻み)</span>
+        <LegendSwatch label={SELF_LABEL} markClass={SELF_MARK} />
+        {competitor && <LegendSwatch label={COMPETITOR_LABEL} markClass={COMPETITOR_MARK} />}
+        <span>外側ほど高く、目盛りは25刻みです(0〜100)</span>
       </div>
 
-      <PerspectiveRadar rows={rows} hasCompetitor={competitor !== null} />
-
-      <div className="space-y-1 text-xs text-muted-foreground">
-        <p>各頂点の番号①〜④は、下に並ぶ4つの観点にそのまま対応しています。</p>
-        <p>
-          4つの観点は独立した項目で、軸の並び順に特別な意味はありません。多角形の面積は全体像をつかむための目安で、面積の大きさそのものが企業の優劣を示すものではありません。
-        </p>
-        {hasOpenVertex && (
-          <p>数値が取得できなかった観点は、頂点を置かずに線を開けています(0点ではありません)。</p>
-        )}
-      </div>
+      {/* 図と観点の対応は番号(①〜④)で示す。見出しをそのまま軸ラベルにすると
+          長すぎて図の外へはみ出すうえ、内部名(label)は画面に出さない方針のため。 */}
+      <RadarChart rows={rows} hasCompetitor={competitor !== null} />
 
       {/* 画面が広いときは2列に折り返す ―― 1列のままだと観点ごとの注記が積み上がり、
-          PCでは縦に間延びして全体像が1画面に収まらない(2026-07-30のユーザー指摘)。
-          先頭の番号はレーダーの軸番号と対応する。 */}
+          PCでは縦に間延びして全体像が1画面に収まらない(2026-07-30のユーザー指摘)。 */}
       <div className="grid gap-x-8 gap-y-5 lg:grid-cols-2">
         {rows.map((row, index) => (
           <div key={row.key} className="space-y-1.5">
-            <p className="flex items-center gap-1.5 text-sm font-medium">
-              <span
-                aria-hidden
-                className="inline-flex size-4 shrink-0 items-center justify-center rounded-full border text-[10px] font-normal text-muted-foreground"
-              >
-                {index + 1}
-              </span>
+            <p className="text-sm font-medium">
+              <span className="text-muted-foreground">{AXIS_NUMBERS[index]}</span>
               {row.heading}
             </p>
 
@@ -472,16 +381,22 @@ export function LeadPerspectiveComparison({ websites }: { websites: LeadWebsiteR
                 spanで囲むのは、画面とWord/PDFレポートで文言が食い違っていないことを
                 テストから1語単位で検証できるようにするため。 */}
             <p className="text-xs text-muted-foreground">
-              {SELF_LABEL}: <span>{PERSPECTIVE_STATUS_LABELS[row.self.perspective.status]}</span>
+              {SELF_LABEL}: <span>{PERSPECTIVE_STATUS_LABELS[row.self.perspective.status]}</span>(
+              <span data-testid={`value-self-${row.key}`}>
+                {row.self.value === null ? "数値なし" : row.self.value}
+              </span>
+              )
               {row.competitor && (
                 <>
                   {" ／ "}
-                  {COMPETITOR_LABEL}: <span>{PERSPECTIVE_STATUS_LABELS[row.competitor.perspective.status]}</span>
+                  {COMPETITOR_LABEL}: <span>{PERSPECTIVE_STATUS_LABELS[row.competitor.perspective.status]}</span>(
+                  <span data-testid={`value-competitor-${row.key}`}>
+                    {row.competitor.value === null ? "数値なし" : row.competitor.value}
+                  </span>
+                  )
                 </>
               )}
             </p>
-
-            <PerspectiveValue row={row} />
 
             {row.note && <p className="text-xs text-muted-foreground">{row.note}</p>}
 
