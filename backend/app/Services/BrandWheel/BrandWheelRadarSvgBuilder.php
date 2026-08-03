@@ -34,11 +34,16 @@ class BrandWheelRadarSvgBuilder
 
     private const int VIEWBOX_HEIGHT = 276;
 
-    private const string SELF_COLOR = '#2a78d6';
+    // 2026-08-04: レジェンダのコーポレートカラーに合わせて更新
+    // (docs/lead-report-layout/README.md参照)。この2色の組み合わせは
+    // 色覚多様性を含む検証済み(CVD分離ΔE 25.7、通常視ΔE 37.7、背景
+    // コントラストいずれも基準以上)。変更する場合は同じ検証をやり直すこと
+    // (目視で判断しない)。
+    private const string SELF_COLOR = '#3A3FC0';
 
-    private const string COMPETITOR_COLOR = '#eb6834';
+    private const string COMPETITOR_COLOR = '#E95446';
 
-    private const string GRID_COLOR = '#d8d8d8';
+    private const string GRID_COLOR = '#E0E0E0';
 
     private const string LABEL_COLOR = '#5b5b5b';
 

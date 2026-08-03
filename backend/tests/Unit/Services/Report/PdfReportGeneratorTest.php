@@ -62,6 +62,9 @@ class PdfReportGeneratorTest extends TestCase
             brandWheelCompetitor: null,
             brandWheelComparison: ['self_points' => ['活動的魅力が最も内容として充足しています。'], 'competitor_points' => [], 'one_point' => ['key' => 'well_covered', 'text' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。']],
             brandWheelRadarPng: null,
+            selfBrandWheelEvidenceItems: [
+                ['axis_key' => 'will_activity', 'axis_name' => '活動的魅力', 'group' => 'company_appeal', 'sub_element_name' => 'パーパス', 'evidence' => '技術で社会の「あたり前」を支える。それが私たちの存在意義です。'],
+            ],
         );
     }
 

@@ -5,11 +5,12 @@
 <title>Webサイト診断レポート</title>
 <style>
 {{--
-    2026-08-04: A4横のスライド構成に全面書き直し(docs/lead-report-layout/
-    report-layout-draft.htmlを移植元とする)。dompdfの制約により、
-    flexbox・CSS grid・box-shadow・clip-pathは一切使わない(すべてtable+
-    インラインスタイルで組む)。六角形のラベル(スライドのクリップパス)は
-    紺の矩形(.hexbox)で代用する。
+    2026-08-04: docs/lead-report-layout/report-layout-draft.htmlを移植元に
+    全8ページへ全面書き直し(前置き/自社分析結果/読み取れた記述/他社比較/
+    4観点/改善提案/ご相談 + 表紙)。配色はdocs/lead-report-layout/README.mdが
+    唯一の定義元(レジェンダのコーポレートサイトから実測した値)。
+    dompdfの制約により、flexbox・CSS grid・box-shadow・clip-pathは一切
+    使わない(すべてtable+インラインスタイルで組む)。
 --}}
     @page {
         size: A4 landscape;
@@ -27,11 +28,21 @@
         font-weight: bold;
         font-style: normal;
     }
+    {{--
+        2026-08-04: font-weightは必ず'normal'か'bold'の文字列で指定すること。
+        数値(600等)を使うと、上の@font-face(normal/boldの2つしか定義して
+        いない)のどちらにもマッチせずdompdfがCJKグリフを持たない代替フォントへ
+        フォールバックし、該当テキストが「?????」の羅列として描画される
+        不具合が実PDF確認で見つかった(「サイトから読み取れた記述」ページの
+        項目名列・表ヘッダーで発覚 ―― 同じページ内の他の列は正常だったため
+        原因の特定に手間取った)。
+    --}}
+
     * { box-sizing: border-box; }
     body {
         margin: 0;
         font-family: 'IPAexGothic', sans-serif;
-        color: #1a1a1a;
+        color: #393636;
         font-size: 11pt;
         word-wrap: break-word;
         overflow-wrap: break-word;
@@ -40,81 +51,79 @@
     {{--
         高さ(height/min-height)は一切指定しない ―― 210mm(A4横の高さ)を
         指定すると、内容が短いページでも直後に空白ページが1枚挿入される
-        不具合が実PDF確認で見つかった(2026-08-04、min-height化でも再現)。
-        @page { size: A4 landscape } が既に1ページの大きさを決めているため、
-        div側の高さ指定は不要 ―― 幅とパディングだけ指定し、高さは内容に
-        まかせる(page-break-afterが物理ページの区切りを作る)。
+        不具合が実PDF確認で見つかった(2026-08-04)。@page { size: A4
+        landscape } が既に1ページの大きさを決めているため、div側の高さ指定は
+        不要。下部20mmはロゴ(.logo-mark)のクリアランス確保用
+        (docs/lead-report-layout/README.md ―― 確保しないとキーメッセージの
+        紺帯にロゴが重なる)。
     --}}
-    .page { width: 297mm; padding: 14mm 16mm; position: relative; page-break-after: always; }
-    {{-- :last-child はdompdfで確実に効くとは限らないため、最後のページ
-         (.cta)は個別クラスで明示的にpage-break-afterを打ち消す。 --}}
+    .page { width: 297mm; padding: 14mm 16mm 20mm; position: relative; page-break-after: always; }
     .page.cta { page-break-after: auto; }
     h1 { font-size: 24pt; margin: 0 0 6mm; font-weight: normal; }
-    h2 { font-size: 15pt; margin: 0 0 5mm; font-weight: normal; border-bottom: 1px solid #d8d8d8; padding-bottom: 2mm; }
+    h2 { font-size: 15pt; margin: 0 0 5mm; font-weight: normal; border-bottom: 1px solid #E0E0E0; padding-bottom: 2mm; }
     .cover { padding-top: 60mm; text-align: center; }
     .cover p { margin: 1.5mm 0; font-size: 11pt; color: #333; }
     {{--
         table-layout:fixedを既定にする ―― dompdfのtable-layout:auto(既定)は
         列幅をセル内容から再計算するため、画像やURLを含む列で意図した幅を
         超えてページ右端からはみ出す(2026-08-04の実PDF確認で発覚)。
-        各テーブルの列幅はwidth(%またはmm)で明示済みなので、fixedで
-        その指定値をそのまま使わせる。
+        各テーブルの列幅はwidth(mm)で明示済みなので、fixedでその指定値を
+        そのまま使わせる。
     --}}
     table { border-collapse: collapse; width: 100%; table-layout: fixed; }
     td { vertical-align: top; }
-    .lead { font-size: 9.5pt; color: #5b5b5b; margin: 0 0 4mm; }
-    .hexbox { background: #33587f; color: #fff; font-size: 9pt; line-height: 1.7; padding: 6mm 4mm; text-align: center; width: 44mm; }
+    .lead1 { font-size: 10pt; color: #6B6767; margin: 0 0 3mm; line-height: 1.5; }
     .sumhead { font-size: 10.5pt; font-weight: bold; margin: 0 0 2mm; }
-    .sum { font-size: 10pt; line-height: 1.8; margin: 0; padding-left: 5mm; }
+    .sum { font-size: 10pt; line-height: 1.7; margin: 0; padding-left: 5mm; }
     .legend { text-align: center; font-size: 9pt; color: #5b5b5b; margin-top: 1mm; }
     .sw { display: inline-block; width: 9px; height: 9px; margin: 0 2px 0 10px; }
-    .bandrow td { color: #fff; text-align: center; font-size: 10.5pt; font-weight: bold; padding: 2mm; }
+    .bandrow td { color: #fff; text-align: center; font-size: 10.5pt; font-weight: bold; padding: 1.5mm; }
     {{--
-        2026-08-04: 16.66%のみだと、.pcell/.reccellと同じ理由で右端の列が
-        ページ外へはみ出す不具合が見つかった(自社ページの分析結果ページ、
-        実PDF確認で発覚)。6列×44.16mm=264.96mm(テーブル本体のwidth: 265mm
-        と一致させる)。
+        2026-08-04: 16.66%のみだと右端の列がページ外へはみ出す不具合が
+        あったため(自社ページの分析結果ページ、実PDF確認で発覚)、mm固定に
+        している。6列×44.16mm=264.96mm(テーブル本体のwidth: 265mmと一致)。
+        軸セルの高さは38mmを確保する(docs/lead-report-layout/README.md ――
+        4項目すべて該当したケースで下の帯へめり込んだ実績があるため、必ず
+        実PDFで目視確認すること)。
     --}}
     .axcell { width: 44.16mm; padding: 0 1mm; }
-    .axhead { border: 1px solid #d8d8d8; background: #f4f6f8; text-align: center; font-size: 10pt; font-weight: bold; padding: 1.5mm; }
-    .axbody { border: 1px solid #d8d8d8; border-top: none; padding: 2mm; height: 30mm; }
-    .cnt { font-size: 8.5pt; color: #5b5b5b; margin: 0 0 1mm; }
-    .hits { margin: 0; padding-left: 4mm; font-size: 9pt; line-height: 1.6; }
-    .none { font-size: 9pt; color: #8a8a8a; margin: 0; }
-    .darkband { background: #33587f; color: #fff; padding: 3mm 5mm; margin-top: 3mm; }
-    .darkband p { margin: 1mm 0; font-size: 10pt; line-height: 1.7; }
+    .axhead { border: 1px solid #E0E0E0; background: #F5F5F5; text-align: center; font-size: 10pt; font-weight: bold; padding: 1mm; }
+    .axbody { border: 1px solid #E0E0E0; border-top: none; padding: 2mm; height: 38mm; }
+    .axcnt { font-size: 15pt; font-weight: bold; margin: 0 0 1.5mm; line-height: 1; }
+    .axcnt small { font-size: 9pt; font-weight: normal; color: #6B6767; }
+    .dots { margin: 0 0 2.5mm; }
+    .dot { display: inline-block; width: 10px; height: 10px; margin-right: 3px; background: #DCDCDC; }
+    .dot.on { background: #3A3FC0; }
+    .hits2 { margin: 0; padding-left: 4mm; font-size: 9.5pt; line-height: 1.65; }
+    .none2 { font-size: 9.5pt; color: #9A9A9A; margin: 0; }
+    .darkband { background: #1D2088; color: #fff; padding: 2mm 5mm; margin-top: 2mm; }
+    .darkband p { margin: 0.5mm 0; font-size: 10pt; line-height: 1.6; }
     {{--
-        2026-08-04: 48%のみだと、.pcell/.reccell/.axcellと同じ理由で右側の
-        カードがページ外へはみ出す不具合が見つかった(他社ページ比較との
-        まとめページ、実PDF確認で発覚 ―― この行の直下に「.pcellで既に
-        修正済み」と書かれていたが、実際に.pcellが使われているのは別の
-        4観点ページで、このページ自体は未修正のままだった)。
-        129.5mm×2列+6mm(スペーサー)=265mm。
+        2026-08-04: 48%のみだと右側のカードがページ外へはみ出す不具合が
+        あったため(他社ページ比較とのまとめページ、実PDF確認で発覚)、
+        mm固定にしている。129.5mm×2列+6mm(スペーサー)=265mm。
     --}}
-    .pane { border: 1px solid #33587f; padding: 4mm; width: 129.5mm; }
+    .pane { border: 1px solid #1D2088; padding: 4mm; width: 129.5mm; }
     .pane h4 { margin: 0 0 2mm; font-size: 11pt; }
     .pane ul { margin: 0; padding-left: 5mm; font-size: 10pt; line-height: 1.9; }
-    .arrow { text-align: center; font-size: 20pt; color: #33587f; padding: 3mm 0; }
-    .one { border: 1px solid #d8d8d8; padding: 4mm; }
+    .arrow { text-align: center; font-size: 20pt; color: #1D2088; padding: 3mm 0; }
+    .one { border: 1px solid #E0E0E0; padding: 4mm; }
     .one h4 { margin: 0 0 2mm; font-size: 11pt; }
     .one p { margin: 0; font-size: 10pt; line-height: 1.8; }
     {{--
         50%ではなくmm固定にする ―― 採用担当の視点(4観点)ページで、
         パーセンテージ幅だけの列がdompdfで右端からはみ出す不具合が
-        見つかった(2026-08-04、右カラムのカードが用紙端で切れる。
-        ユーザー環境の実PDFでも確認された)。132.5mm×2列=265mm
-        (ページの実効幅と一致)。他社ページ比較のページの.paneも同じ
-        原因の不具合だったため、別途129.5mm固定で修正済み。
+        見つかった(2026-08-04、右カラムのカードが用紙端で切れる)。
+        132.5mm×2列=265mm(ページの実効幅と一致)。
     --}}
     .pcell { width: 132.5mm; padding: 0 3mm 6mm 0; }
     {{--
-        height:100%は付けない ―― dompdfは制約の無い(高さを持つ祖先が無い)
-        文脈で100%を「ページの残り高さ全体」に近い値として解決することがあり、
-        カード1つがページ全体の高さまで異常に引き伸ばされてfoot(絶対配置)と
-        重なって文字化けする不具合が実PDF確認で見つかった(2026-08-04)。
-        高さはpadding+内容にまかせる(auto)。
+        height:100%は付けない ―― dompdfは制約の無い文脈で100%を「ページの
+        残り高さ全体」に近い値として解決することがあり、カード1つがページ
+        全体の高さまで異常に引き伸ばされて他の内容と重なる不具合が実PDF
+        確認で見つかった(2026-08-04)。高さはpadding+内容にまかせる(auto)。
     --}}
-    .pbox { border: 1px solid #d8d8d8; padding: 4mm; }
+    .pbox { border: 1px solid #E0E0E0; padding: 4mm; }
     .ptitle { font-size: 11.5pt; margin: 0 0 2mm; }
     .badge { display: inline-block; padding: 0.8mm 3mm; font-size: 9pt; }
     .badge.good { background: #e6f4ea; color: #1e6b38; }
@@ -127,30 +136,59 @@
     .rectitle { font-size: 11pt; margin: 0 0 2mm; }
     .recdesc { font-size: 9.5pt; line-height: 1.8; margin: 0 0 3mm; }
     .recmeta { font-size: 9pt; color: #5b5b5b; margin: 0; }
-    .recbox { border: 1px solid #d8d8d8; padding: 4mm; height: 46mm; }
+    .recbox { border: 1px solid #E0E0E0; padding: 4mm; height: 46mm; }
     {{--
-        position:absoluteは使わない ―― 実PDF確認で2つの不具合が見つかった
-        (2026-08-04): (1) 既定のoverflow-wrap:break-wordのままだと、2行に
-        折り返す境界の文字がまれに欠落する、(2) word-wrap:normalに変えると
-        今度は折り返し自体が起きず、右端(right:16mm)より先の文章が丸ごと
-        見えなくなる(2文目が消える)。通常フロー(position指定なし)の段落は
-        このドキュメントの他の場所(AI解析による印象、サマリー等)で問題なく
-        複数行に折り返せているため、position:absolute自体が原因と判断し、
-        通常フローに変更した。ページ最下部への固定配置ではなくなるが、
-        内容が欠落するよりはるかに安全。
+        position:absoluteは文章には使わない ―― 実PDF確認で、2行に折り返す
+        境界の文字がまれに欠落する不具合が見つかった(2026-08-04)。通常
+        フロー(position指定なし)にした上で、ロゴ(右下30mm)と重ならないよう
+        右側52mmを空ける(docs/lead-report-layout/README.mdの指定と同じ
+        クリアランスを、テキスト破損の無い通常フローで実現する)。
     --}}
-    .foot { margin-top: 6mm; font-size: 8.5pt; color: #7a7a7a; line-height: 1.6; }
+    .foot { margin-top: 6mm; font-size: 8.5pt; color: #7a7a7a; line-height: 1.6; max-width: 213mm; }
     .cta { text-align: center; padding-top: 45mm; }
     .cta p { font-size: 12pt; line-height: 2; }
 
-    {{-- 2026-08-04: 「採用ブランドの捉え方」前置きページ(固定の説明図)。 --}}
+    {{-- 「採用ブランドの捉え方」前置きページ(固定の説明図)。 --}}
     .introlead { font-size: 11.5pt; margin: 0 0 4mm; }
     .grouptbl { margin-bottom: 5mm; }
     .grouptbl td { padding: 2mm 0; vertical-align: middle; }
     .gcell { width: 34mm; text-align: center; font-size: 10pt; font-weight: bold; padding: 2.5mm 1mm; }
     .gdesc { width: 105mm; font-size: 10pt; line-height: 1.7; padding-left: 4mm; }
     .introbody { font-size: 10.5pt; line-height: 1.9; margin: 0 0 3.5mm; }
-    .introcaution { font-size: 9.5pt; line-height: 1.8; color: #5b5b5b; border-top: 1px solid #d8d8d8; padding-top: 3mm; margin: 0; }
+    .introcaution { font-size: 9.5pt; line-height: 1.8; color: #5b5b5b; border-top: 1px solid #E0E0E0; padding-top: 3mm; margin: 0; }
+
+    {{-- 自社ページの分析結果ページの合計件数ボックス。 --}}
+    {{--
+        2026-08-04: CSSのpadding-rightで列間の余白を作ると、table-layout:fixed
+        下でdompdfが右端の列(レーダー画像)を宣言幅より狭く解決し、画像の
+        右側が欠けて描画される不具合が実PDF確認で見つかった。padding-rightは
+        使わず、.pane等と同じ実績のある方式(列間に幅固定のスペーサーtdを
+        挟む)で余白を作る。
+    --}}
+    .statrow td { vertical-align: top; }
+    .statbox { border: 1px solid #E0E0E0; padding: 3.5mm 5mm; }
+    .statbox .lab { font-size: 9.5pt; color: #6B6767; margin: 0 0 1.5mm; }
+    .statbox .num { font-size: 26pt; font-weight: bold; line-height: 1; margin: 0; }
+    .statbox .num small { font-size: 11pt; font-weight: normal; color: #6B6767; }
+    .swatch { display: inline-block; width: 9px; height: 9px; margin-right: 4px; }
+
+    {{-- 「サイトから読み取れた記述」ページ(evidence一覧)。 --}}
+    .evtbl { border-collapse: collapse; width: 100%; }
+    .evtbl th { background: #F5F5F5; border: 1px solid #E0E0E0; font-size: 10pt; font-weight: bold; text-align: left; padding: 2.5mm 3mm; }
+    .evtbl td { border: 1px solid #E0E0E0; padding: 2.5mm 3mm; font-size: 10pt; line-height: 1.7; vertical-align: top; }
+    .evaxis { width: 34mm; font-weight: bold; }
+    .evsub { width: 42mm; color: #393636; }
+    .evq { width: 189mm; color: #393636; }
+    .evbar { display: inline-block; width: 4px; height: 11px; margin-right: 5px; vertical-align: -1px; }
+
+    {{-- ロゴ(コーポレートサイト、512x94)。 --}}
+    .logo-cover { display: block; margin: 0 auto 10mm; width: 72mm; }
+    {{--
+        画像のみのposition:absoluteはテキスト折り返しの不具合と無関係
+        (2026-08-04確認: .footと違い改行計算が発生しないため安全)。
+    --}}
+    .logo-mark { position: absolute; right: 16mm; bottom: 7mm; width: 30mm; opacity: .9; }
+    .cta .logo-cover { width: 60mm; margin-bottom: 8mm; }
 </style>
 </head>
 <body>
@@ -163,10 +201,13 @@
     $comparison = $viewModel->brandWheelComparison;
     $hasComparisonContent = ! empty($comparison['self_points']) || ! empty($comparison['competitor_points']) || $comparison['one_point'] !== null;
 
+    // 2026-08-04: グループ名から色名(青/緑/赤)を外している ――
+    // 配色をレジェンダに合わせた結果、緑が青緑に変わり色名と実際の色が
+    // 食い違うため(docs/lead-report-layout/README.md参照)。
     $groupBands = [
-        'company_appeal' => ['label' => '青／会社の魅力', 'color' => '#3f6fa3'],
-        'company_distance' => ['label' => '緑／会社との距離', 'color' => '#4a7d5f'],
-        'job_appeal' => ['label' => '赤／仕事の魅力', 'color' => '#a3413c'],
+        'company_appeal' => ['label' => '会社の魅力', 'color' => '#1D2088', 'tint' => '#D3D4EC'],
+        'company_distance' => ['label' => '会社との距離', 'color' => '#2C7F96', 'tint' => '#CFE3EA'],
+        'job_appeal' => ['label' => '仕事の魅力', 'color' => '#C03A28', 'tint' => '#F7DCD7'],
     ];
 
     $badgeClassByStatus = [
@@ -178,10 +219,19 @@
         'not_detected' => 'neutral',
         'unavailable' => 'neutral',
     ];
+
+    // 合計件数(「N / 24項目」)は固定値ではなく、axesのmax_count合計から
+    // 算出する(config('brand_wheel.axes')の下位要素数が変わっても
+    // コード変更無しに追従させるため、2026-08-04)。
+    $selfTotalMatched = array_sum(array_column($selfWheel['axes'] ?? [], 'matched_count'));
+    $selfTotalMax = array_sum(array_column($selfWheel['axes'] ?? [], 'max_count'));
+    $competitorTotalMatched = array_sum(array_column($competitorWheel['axes'] ?? [], 'matched_count'));
+    $competitorTotalMax = array_sum(array_column($competitorWheel['axes'] ?? [], 'max_count'));
 @endphp
 
 {{-- 1. 表紙 --}}
 <div class="page cover">
+    <img class="logo-cover" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
     <h1>Webサイト診断レポート</h1>
     <p>{{ $viewModel->companyDisplayName }}</p>
     <p>対象サイト: {{ $viewModel->selfWebsiteUrl }}</p>
@@ -200,7 +250,8 @@
     brand-wheel-framework.png)。BrandWheelHexagonRendererは通さない ――
     毎回rsvg-convertを走らせる意味が無い静的アセットのため
     (config('brand_wheel.axes.*.sub_elements')を変更したらこの画像も
-    作り直す必要がある、README「リリース前チェックリスト」参照)。
+    作り直す必要がある、config/brand_wheel.php・README「リリース前
+    チェックリスト」参照)。
 
     この診断で最も誤解を招きやすい点(読み取れなかった=魅力が無い、では
     ない)を、結果を見せる前にここで明示する。この一文は短縮・削除しない。
@@ -214,13 +265,13 @@
         <td style="width: 139mm; vertical-align: top; padding-top: 4mm;">
             <p class="introlead">採用ブランドは、大きく3つの領域に分けて捉えます。</p>
             <table class="grouptbl"><tr>
-                <td class="gcell" style="background: #c3cdf0;">青／会社の魅力</td>
+                <td class="gcell" style="background: {{ $groupBands['company_appeal']['tint'] }};">会社の魅力</td>
                 <td class="gdesc">その会社が何を目指し、どれだけの実績・規模を持っているか。<br><b>活動的魅力</b>・<b>資産的魅力</b></td>
             </tr><tr>
-                <td class="gcell" style="background: #cfe4d4;">緑／会社との距離</td>
+                <td class="gcell" style="background: {{ $groupBands['company_distance']['tint'] }};">会社との距離</td>
                 <td class="gdesc">どんな経営で、どんな人たちが、どんな環境で働いているか。<br><b>経営スタイル</b>・<b>就業環境</b></td>
             </tr><tr>
-                <td class="gcell" style="background: #eed6e2;">赤／仕事の魅力</td>
+                <td class="gcell" style="background: {{ $groupBands['job_appeal']['tint'] }};">仕事の魅力</td>
                 <td class="gdesc">その仕事に就くと、何が得られるか。<br><b>情緒的便益</b>・<b>金銭的便益</b></td>
             </tr></table>
             <p class="introbody">6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。中心の<b>Core Value(約束する価値)</b>は、その24項目を貫く「この会社が候補者に約束するもの」にあたります。</p>
@@ -228,6 +279,7 @@
             <p class="introcaution">読み取れなかった項目は、その魅力が「無い」という意味ではありません。サイトにそう書かれていない、というだけです。また、採用ブランドは本来、グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。</p>
         </td>
     </tr></table>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
 {{-- 3. 自社ページの分析結果 --}}
@@ -239,64 +291,83 @@
              理由の文言はconfig('brand_wheel.status_messages')が唯一の定義元。 --}}
         <p>{{ $selfWheel['status_message'] ?? '' }}</p>
     @else
-        {{--
-            列幅をすべて明示する(hexbox 44mm + summary 126mm + radar 95mm =
-            265mm、ページの実効幅297mm-左右パディング16mm*2と一致)。
-            table-layout:fixedと組み合わせて、右端の列(画像)がページ外へ
-            はみ出さないようにする(2026-08-04の実PDF確認で発覚した崩れの修正)。
-            画像は105mmから95mmに縮小(高さも比例して約69mmに)し、この
-            ページの合計高さが1ページに収まるようにしている(縮小前は
-            「AI解析による印象」の行だけが次ページに追い出されていた)。
-        --}}
-        <table style="width: 265mm;"><tr>
-            <td class="hexbox" style="width: 44mm;">各項目について<br>該当する内容が<br>何件読み取れたかを<br>集計しています</td>
-            <td style="width: 126mm; padding-left: 8mm;">
+        <p class="lead1">6つの項目それぞれについて、該当する内容がサイトの記述から何件読み取れたかを集計しています(点数ではありません)。<br>解析したURL：{{ $selfWheel['analyzed_url'] }}</p>
+
+        <table class="statrow" style="width: 265mm;"><tr>
+            <td style="width: 50mm;">
+                <div class="statbox">
+                    <p class="lab"><span class="swatch" style="background: #3A3FC0;"></span>自社サイト</p>
+                    <p class="num">{{ $selfTotalMatched }}<small> / {{ $selfTotalMax }}項目</small></p>
+                </div>
+            </td>
+            <td style="width: 4mm;"></td>
+            @if ($competitorReadable)
+                <td style="width: 50mm;">
+                    <div class="statbox">
+                        <p class="lab"><span class="swatch" style="background: #E95446;"></span>競合サイト</p>
+                        <p class="num">{{ $competitorTotalMatched }}<small> / {{ $competitorTotalMax }}項目</small></p>
+                    </div>
+                </td>
+                <td style="width: 4mm;"></td>
+            @endif
+            <td style="width: {{ $competitorReadable ? '75mm' : '129mm' }}; vertical-align: top; padding-top: 1mm;">
                 <p class="sumhead">サマリー</p>
                 <ul class="sum">
-                    @if ($selfWheel['analyzed_url'])
-                        <li>解析したURL：{{ $selfWheel['analyzed_url'] }}</li>
-                    @endif
                     @foreach ($comparison['self_points'] as $point)
                         <li>{{ $point }}</li>
                     @endforeach
                 </ul>
             </td>
-            <td style="width: 95mm;">
+            <td style="width: 4mm;"></td>
+            <td style="width: 78mm;">
                 @if ($viewModel->brandWheelRadarPng)
                     {{-- レーダー図のviewBoxは380x276(縦横比380:276)。dompdfは
                          widthのみ指定だと縦横比を正しく保持しないことがあるため、
                          heightも明示して指定どおりの比率で描画させる。 --}}
-                    <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPng) }}" style="width: 95mm; height: 69mm;">
+                    <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPng) }}" style="width: 66mm; height: 48mm;">
                     <div class="legend">
-                        <span class="sw" style="background: #2a78d6;"></span>自社サイト
+                        <span class="sw" style="background: #3A3FC0;"></span>自社サイト
                         @if ($competitorReadable)
-                            <span class="sw" style="background: #eb6834;"></span>競合サイト
+                            <span class="sw" style="background: #E95446;"></span>競合サイト
                         @endif
                     </div>
                 @endif
             </td>
         </tr></table>
 
-        <table class="bandrow" style="margin-top: 4mm;"><tr>
+        <table class="bandrow" style="margin-top: 3mm;"><tr>
             @foreach ($groupBands as $band)
                 <td colspan="2" style="background: {{ $band['color'] }};">{{ $band['label'] }}</td>
             @endforeach
         </tr></table>
 
-        <table style="width: 265mm; margin-top: 2mm;"><tr>
+        <table style="width: 265mm; margin-top: 1mm;"><tr>
             @foreach ($selfWheel['axes'] as $axis)
                 <td class="axcell">
                     <div class="axhead">{{ $axis['name'] }}</div>
                     <div class="axbody">
-                        <p class="cnt">読み取れた内容 {{ $axis['matched_count'] }} / {{ $axis['max_count'] }}件</p>
+                        <p class="axcnt">{{ $axis['matched_count'] }}<small> / {{ $axis['max_count'] }}件</small></p>
+                        {{--
+                            この四角は「壊れて出ていない」のか「調べた結果0件」
+                            なのかを区別するための表示。matched_count===0でも
+                            省略しない(docs/lead-report-layout/README.md)。
+                            四角の数はmax_countから生成する(固定値で書かない)。
+                        --}}
+                        <p class="dots">
+                            @for ($i = 1; $i <= $axis['max_count']; $i++)
+                                <span class="dot {{ $i <= $axis['matched_count'] ? 'on' : '' }}"></span>
+                            @endfor
+                        </p>
                         @if (count($axis['matched_sub_elements']) > 0)
-                            <ul class="hits">
+                            <ul class="hits2">
                                 @foreach ($axis['matched_sub_elements'] as $sub)
                                     <li>{{ $sub['name'] }}</li>
                                 @endforeach
                             </ul>
                         @else
-                            <p class="none">読み取れた内容はありません</p>
+                            {{-- 「読み取れた内容はありません」は使わない
+                                 (内容が無い会社、と読めるため)。 --}}
+                            <p class="none2">該当する記述は見つかりませんでした</p>
                         @endif
                     </div>
                 </td>
@@ -314,9 +385,39 @@
             </div>
         @endif
     @endif
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
-{{-- 4. 他社ページ比較とのまとめ --}}
+{{--
+    4. サイトから読み取れた記述(evidence一覧)。該当0件の場合はこのページ
+    自体を出さない(見出しと空の表だけが残る状態を作らない ―― 画面側で
+    同じ失敗を一度している)。evidenceは要約・整形・省略記号での短縮を
+    一切しない ―― 原文との部分文字列照合を通ったものだけが残っている、
+    というのがこのページの価値(docs/lead-report-layout/README.md)。
+--}}
+@if (count($viewModel->selfBrandWheelEvidenceItems) > 0)
+<div class="page">
+    <h2>サイトから読み取れた記述</h2>
+    <p class="lead1">前ページで「該当あり」とした項目について、サイトのどの記述を根拠にしたかを記載しています。抜粋はサイト上の文章をそのまま引用したもので、要約や言い換えは含みません。</p>
+    <table class="evtbl" style="width: 265mm;">
+        <tr>
+            <th style="width: 34mm;">項目</th>
+            <th style="width: 42mm;">何について</th>
+            <th style="width: 189mm;">サイトからの記述</th>
+        </tr>
+        @foreach ($viewModel->selfBrandWheelEvidenceItems as $item)
+            <tr>
+                <td class="evaxis"><span class="evbar" style="background: {{ $groupBands[$item['group']]['color'] ?? '#999999' }};"></span>{{ $item['axis_name'] }}</td>
+                <td class="evsub">{{ $item['sub_element_name'] }}</td>
+                <td class="evq">「{{ $item['evidence'] }}」</td>
+            </tr>
+        @endforeach
+    </table>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
+</div>
+@endif
+
+{{-- 5. 他社ページ比較とのまとめ --}}
 <div class="page">
     <h2>他社ページ比較とのまとめ</h2>
 
@@ -359,18 +460,17 @@
     {{--
         1つの<p>にまとめず2文に分ける ―― 1つの長い段落のまま2行に折り返す
         と、折り返し境界の文字がまれに欠落する不具合が実PDF確認で見つかった
-        (2026-08-04、position:absolute解消・setPaper修正・フォント
-        サブセット無効化のいずれでも再現し、原因を切り分けられなかった)。
-        文単位で<p>を分けることで折り返し位置自体を変え、回避する。
+        (2026-08-04)。文単位で<p>を分けることで折り返し位置自体を変え、回避する。
     --}}
     <p class="foot">ブランド・ホイールは本来、サイトだけでなくグループインタビュー・口コミ・内定者/辞退者インタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。</p>
     <p class="foot" style="margin-top: 1mm;">キーメッセージと印象の読み取りにはAIを使用しています。</p>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
-{{-- 5. 採用担当の視点で見た診断結果(4観点。判定と理由1文のみ、個別指標名は出さない) --}}
+{{-- 6. 採用担当の視点で見た診断結果(4観点。判定と理由1文のみ、個別指標名は出さない) --}}
 <div class="page">
     <h2>採用担当の視点で見た診断結果</h2>
-    <p class="lead">4つの観点それぞれについて、判定と、その理由を一言で記載しています。</p>
+    <p class="lead1">4つの観点それぞれについて、判定と、その理由を一言で記載しています。</p>
 
     <table style="width: 265mm;">
         @foreach (array_chunk($viewModel->perspectives, 2) as $row)
@@ -393,12 +493,13 @@
     <p class="foot">
         取得できなかった項目は0点として扱わず、算出の対象から外しています(測定カバー率 {{ number_format($viewModel->selfScore['coverage_rate'], 1) }}%／確信度 {{ number_format($viewModel->selfScore['confidence_rate'], 1) }}%)。
     </p>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
-{{-- 6. 改善提案 --}}
+{{-- 7. 改善提案 --}}
 <div class="page">
     <h2>改善提案</h2>
-    <p class="lead">特に改善効果が見込まれる項目を、優先度の高い順に記載しています。</p>
+    <p class="lead1">特に改善効果が見込まれる項目を、優先度の高い順に記載しています。</p>
 
     @if (count($viewModel->topRecommendations) === 0)
         <p>現時点で優先度の高い改善提案はありません。</p>
@@ -421,11 +522,13 @@
     @endif
 </div>
 
-{{-- 7. ご相談 --}}
+{{-- 8. ご相談 --}}
 <div class="page cta">
+    <img class="logo-cover" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
     <h2>より詳しい診断・ご相談はこちら</h2>
     <p>今回は自社サイト{{ $viewModel->competitorWebsiteUrl ? '・比較サイト1社' : '' }}の簡易診断結果です。</p>
     <p>他社比較(3〜5社)や、詳細な改善提案については、担当者までお気軽にご相談ください。</p>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
 </body>

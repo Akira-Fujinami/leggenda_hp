@@ -21,11 +21,11 @@ td { vertical-align:top; }
 .bandrow td { color:#fff; text-align:center; font-size:10.5pt; font-weight:bold; padding:2mm; }
 .axcell { width:16.66%; padding:0 1mm; }
 .axhead { border:1px solid #E0E0E0; background:#F5F5F5; text-align:center; font-size:10pt; font-weight:bold; padding:1.5mm; }
-.axbody { border:1px solid #E0E0E0; border-top:none; padding:2mm; height:29mm; }
+.axbody { border:1px solid #E0E0E0; border-top:none; padding:2mm; height:38mm; }
 .cnt { font-size:8.5pt; color:#5b5b5b; margin:0 0 1mm; }
 .hits { margin:0; padding-left:4mm; font-size:9pt; line-height:1.6; }
 .none { font-size:9pt; color:#8a8a8a; margin:0; }
-.darkband { background:#1D2088; color:#fff; padding:3.5mm 5mm; margin-top:4mm; }
+.darkband { background:#1D2088; color:#fff; padding:3mm 5mm; margin-top:3mm; }
 .darkband p { margin:1mm 0; font-size:10pt; line-height:1.7; }
 .pane { border:1px solid #1D2088; padding:4mm; width:48%; }
 .pane h4 { margin:0 0 2mm; font-size:11pt; }
@@ -65,6 +65,31 @@ td { vertical-align:top; }
 .logo-cover { display:block; margin:0 auto 10mm; width:72mm; }
 .logo-mark { position:absolute; right:16mm; bottom:7mm; width:30mm; opacity:.9; }
 .cta .logo-cover { width:60mm; margin-bottom:8mm; }
+
+.lead1 { font-size:10pt; color:#6B6767; margin:0 0 4mm; line-height:1.6; }
+.statrow td { vertical-align:top; padding-right:5mm; }
+.statbox { border:1px solid #E0E0E0; padding:3.5mm 5mm; }
+.statbox .lab { font-size:9.5pt; color:#6B6767; margin:0 0 1.5mm; }
+.statbox .num { font-size:26pt; font-weight:600; line-height:1; margin:0; }
+.statbox .num small { font-size:11pt; font-weight:normal; color:#6B6767; }
+.swatch { display:inline-block; width:9px; height:9px; margin-right:4px; }
+.axcnt { font-size:15pt; font-weight:600; margin:0 0 1.5mm; line-height:1; }
+.axcnt small { font-size:9pt; font-weight:normal; color:#6B6767; }
+.dots { margin:0 0 2.5mm; }
+.dot { display:inline-block; width:10px; height:10px; margin-right:3px; background:#DCDCDC; }
+.dot.on { background:#3A3FC0; }
+.hits2 { margin:0; padding-left:4mm; font-size:9.5pt; line-height:1.65; }
+.none2 { font-size:9.5pt; color:#9A9A9A; margin:0; }
+
+.evtbl { border-collapse:collapse; width:100%; }
+.evtbl th { background:#F5F5F5; border:1px solid #E0E0E0; font-size:10pt; font-weight:600;
+  text-align:left; padding:2.5mm 3mm; }
+.evtbl td { border:1px solid #E0E0E0; padding:2.5mm 3mm; font-size:10pt; line-height:1.7;
+  vertical-align:top; }
+.evaxis { width:34mm; font-weight:600; }
+.evsub { width:42mm; color:#393636; }
+.evq { color:#393636; }
+.evbar { display:inline-block; width:4px; height:11px; margin-right:5px; vertical-align:-1px; }
 </style></head><body>
 
 <div class="page cover"><div class="stamp">サンプル（ダミーデータ）</div>
@@ -116,54 +141,25 @@ td { vertical-align:top; }
 </div>
 <div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
   <h2>自社ページの分析結果</h2>
-  <table><tr>
-    <td class="hexbox">各項目について<br>該当する内容が<br>何件読み取れたかを<br>集計しています</td>
-    <td style="padding-left:8mm;">
-      <p class="sumhead">サマリー</p>
-      <ul class="sum">
-        <li>解析したURL：https://recruit.example.com/vision/</li>
-        <li>金銭的便益が最も内容として充足しています。</li>
-        <li>就業環境に関する記載はなく、「会社との距離」の情報は全体的に少なめです。</li>
-      </ul>
-    </td>
-    <td style="width:95mm;">
-      <img src="radar-sample.png" style="width:95mm;">
-      <div class="legend"><span class="sw" style="background:#3A3FC0"></span>自社サイト<span class="sw" style="background:#E95446"></span>競合サイト</div>
-    </td>
+  <p class="lead1">6つの項目それぞれについて、該当する内容がサイトの記述から何件読み取れたかを集計しています（点数ではありません）。<br>解析したURL：https://recruit.example.com/vision/</p>
+  <table class="statrow"><tr>
+    <td style="width:50mm;"><div class="statbox"><p class="lab"><span class="swatch" style="background:#3A3FC0"></span>自社サイト</p><p class="num">11<small> / 24項目</small></p></div></td>
+    <td style="width:50mm;"><div class="statbox"><p class="lab"><span class="swatch" style="background:#E95446"></span>競合サイト</p><p class="num">15<small> / 24項目</small></p></div></td>
+    <td style="vertical-align:top; padding-top:1mm;"><p class="sumhead">サマリー</p><ul class="sum"><li>金銭的便益が最も内容として充足しています。</li><li>就業環境に関する記載はなく、「会社との距離」の情報は全体的に少なめです。</li></ul></td>
+    <td style="width:78mm;"><img src="radar-sample.png" style="width:76mm;"></td>
   </tr></table>
-
-  <table class="bandrow" style="margin-top:4mm;"><tr>
-    <td colspan="2" style="background:#1D2088">会社の魅力</td>
-    <td colspan="2" style="background:#2C7F96">会社との距離</td>
-    <td colspan="2" style="background:#C03A28">仕事の魅力</td>
-  </tr></table>
-  <table style="margin-top:2mm;"><tr><td class="axcell">
-      <div class="axhead">活動的魅力</div>
-      <div class="axbody"><p class="cnt">読み取れた内容 3 / 4件</p><ul class='hits'><li>パーパス</li><li>展開事業・商品</li><li>PJ・新たな取組</li></ul></div>
-    </td><td class="axcell">
-      <div class="axhead">資産的魅力</div>
-      <div class="axbody"><p class="cnt">読み取れた内容 2 / 4件</p><ul class='hits'><li>知名度・評判</li><li>規模・影響力</li></ul></div>
-    </td><td class="axcell">
-      <div class="axhead">経営スタイル</div>
-      <div class="axbody"><p class="cnt">読み取れた内容 1 / 4件</p><ul class='hits'><li>重視する価値</li></ul></div>
-    </td><td class="axcell">
-      <div class="axhead">就業環境</div>
-      <div class="axbody"><p class="cnt">読み取れた内容 0 / 4件</p><p class='none'>読み取れた内容はありません</p></div>
-    </td><td class="axcell">
-      <div class="axhead">情緒的便益</div>
-      <div class="axbody"><p class="cnt">読み取れた内容 1 / 4件</p><ul class='hits'><li>誇りに思える</li></ul></div>
-    </td><td class="axcell">
-      <div class="axhead">金銭的便益</div>
-      <div class="axbody"><p class="cnt">読み取れた内容 4 / 4件</p><ul class='hits'><li>給与水準</li><li>福利厚生</li><li>成長機会</li><li>雇用の安定性</li></ul></div>
-    </td></tr></table>
-
-  <div class="darkband">
-    <p><b>キーメッセージ：</b>技術で社会基盤を支える、という主題が一貫して置かれています。</p>
-    <p><b>AI解析による印象：</b>幅広さは伝わるものの、それが働く人にとって何の嬉しさにつながるのかという点との距離があり、情緒的便益の記述が薄いのがもったいないところです。</p>
-  </div>
+  <table class="bandrow" style="margin-top:5mm;"><tr><td colspan="2" style="background:#1D2088">会社の魅力</td><td colspan="2" style="background:#2C7F96">会社との距離</td><td colspan="2" style="background:#C03A28">仕事の魅力</td></tr></table>
+  <table style="margin-top:2mm;"><tr><td class="axcell"><div class="axhead">活動的魅力</div><div class="axbody"><p class="axcnt">3<small> / 4件</small></p><p class="dots"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot"></span></p><ul class="hits2"><li>パーパス</li><li>展開事業・商品</li><li>PJ・新たな取組</li></ul></div></td><td class="axcell"><div class="axhead">資産的魅力</div><div class="axbody"><p class="axcnt">2<small> / 4件</small></p><p class="dots"><span class="dot on"></span><span class="dot on"></span><span class="dot"></span><span class="dot"></span></p><ul class="hits2"><li>知名度・評判</li><li>規模・影響力</li></ul></div></td><td class="axcell"><div class="axhead">経営スタイル</div><div class="axbody"><p class="axcnt">1<small> / 4件</small></p><p class="dots"><span class="dot on"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></p><ul class="hits2"><li>重視する価値</li></ul></div></td><td class="axcell"><div class="axhead">就業環境</div><div class="axbody"><p class="axcnt">0<small> / 4件</small></p><p class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></p><p class="none2">該当する記述は<br>見つかりませんでした</p></div></td><td class="axcell"><div class="axhead">情緒的便益</div><div class="axbody"><p class="axcnt">1<small> / 4件</small></p><p class="dots"><span class="dot on"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></p><ul class="hits2"><li>誇りに思える</li></ul></div></td><td class="axcell"><div class="axhead">金銭的便益</div><div class="axbody"><p class="axcnt">4<small> / 4件</small></p><p class="dots"><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span><span class="dot on"></span></p><ul class="hits2"><li>給与水準</li><li>福利厚生</li><li>成長機会</li><li>雇用の安定性</li></ul></div></td></tr></table>
+  <div class="darkband"><p><b>キーメッセージ：</b>技術で社会基盤を支える、という主題が一貫して置かれています。</p><p><b>AI解析による印象：</b>幅広さは伝わるものの、それが働く人にとって何の嬉しさにつながるのかという点との距離があり、情緒的便益の記述が薄いのがもったいないところです。</p></div>
   <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
 </div>
 
+<div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
+  <h2>サイトから読み取れた記述</h2>
+  <p class="lead1">前ページで「該当あり」とした項目について、サイトのどの記述を根拠にしたかを記載しています。抜粋はサイト上の文章をそのまま引用したもので、要約や言い換えは含みません。</p>
+  <table class="evtbl"><tr><th>項目</th><th>何について</th><th>サイトからの記述</th></tr><tr><td class="evaxis"><span class="evbar" style="background:#1D2088"></span>活動的魅力</td><td class="evsub">パーパス</td><td class="evq">「技術で社会の「あたり前」を支える。それが私たちの存在意義です。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#1D2088"></span>活動的魅力</td><td class="evsub">展開事業・商品</td><td class="evq">「通信インフラ、公共システム、金融基盤の3領域で事業を展開しています。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#1D2088"></span>活動的魅力</td><td class="evsub">PJ・新たな取組</td><td class="evq">「2025年より、次世代交通システムの実証実験に参画しています。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#1D2088"></span>資産的魅力</td><td class="evsub">知名度・評判</td><td class="evq">「国内シェア第2位。導入企業は1,200社を超えます。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#1D2088"></span>資産的魅力</td><td class="evsub">規模・影響力</td><td class="evq">「従業員数3,400名、全国12拠点で事業を運営しています。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#2C7F96"></span>経営スタイル</td><td class="evsub">重視する価値</td><td class="evq">「「まず動く」「相手の立場で考える」を行動指針としています。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#C03A28"></span>情緒的便益</td><td class="evsub">誇りに思える</td><td class="evq">「自分の仕事が社会の土台を支えているという実感があります。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#C03A28"></span>金銭的便益</td><td class="evsub">給与水準</td><td class="evq">「初任給は月額28万円（2026年度実績）。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#C03A28"></span>金銭的便益</td><td class="evsub">福利厚生</td><td class="evq">「住宅補助、社宅制度、確定拠出年金を用意しています。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#C03A28"></span>金銭的便益</td><td class="evsub">成長機会</td><td class="evq">「資格取得支援制度により、受験費用を全額補助します。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#C03A28"></span>金銭的便益</td><td class="evsub">雇用の安定性</td><td class="evq">「設立以来60年、無借金経営を継続しています。」</td></tr></table>
+  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
+</div>
 <div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
   <h2>他社ページ比較とのまとめ</h2>
   <table><tr>

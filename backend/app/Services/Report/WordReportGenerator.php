@@ -44,6 +44,7 @@ class WordReportGenerator
         $this->addBrandWheelFrameworkIntroSection($phpWord);
         $this->addOverallResultsSection($phpWord, $viewModel);
         $this->addBrandWheelSection($phpWord, $viewModel);
+        $this->addBrandWheelEvidenceSection($phpWord, $viewModel);
         $this->addPerspectivesSection($phpWord, $viewModel);
         $this->addRecommendationsSection($phpWord, $viewModel);
         $this->addCallToActionSection($phpWord, $viewModel);
@@ -106,10 +107,13 @@ class WordReportGenerator
         $section->addText('採用ブランドは、大きく3つの領域に分けて捉えます。', ['size' => 10.5]);
 
         $table = $section->addTable(['cellMargin' => 80]);
+        // 2026-08-04: グループ名から色名(青/緑/赤)を外している ―― 配色を
+        // レジェンダに合わせた結果、緑が青緑に変わり色名と実際の色が
+        // 食い違うため(docs/lead-report-layout/README.md参照、PDF版と統一)。
         $groups = [
-            ['label' => '青／会社の魅力', 'desc' => 'その会社が何を目指し、どれだけの実績・規模を持っているか。活動的魅力・資産的魅力'],
-            ['label' => '緑／会社との距離', 'desc' => 'どんな経営で、どんな人たちが、どんな環境で働いているか。経営スタイル・就業環境'],
-            ['label' => '赤／仕事の魅力', 'desc' => 'その仕事に就くと、何が得られるか。情緒的便益・金銭的便益'],
+            ['label' => '会社の魅力', 'desc' => 'その会社が何を目指し、どれだけの実績・規模を持っているか。活動的魅力・資産的魅力'],
+            ['label' => '会社との距離', 'desc' => 'どんな経営で、どんな人たちが、どんな環境で働いているか。経営スタイル・就業環境'],
+            ['label' => '仕事の魅力', 'desc' => 'その仕事に就くと、何が得られるか。情緒的便益・金銭的便益'],
         ];
 
         foreach ($groups as $group) {
@@ -276,6 +280,45 @@ class WordReportGenerator
 
         if ($comparison['one_point'] !== null) {
             $section->addText('【ワンポイント】'.$comparison['one_point']['text']);
+        }
+    }
+
+    /**
+     * PDF版の「サイトから読み取れた記述」ページと同内容(2026-08-04)。
+     * 該当0件の場合はこのセクション自体を出さない(見出しと空の表だけが
+     * 残る状態を作らない ―― 画面側で同じ失敗を一度している)。evidenceは
+     * 要約・整形・省略記号での短縮を一切しない ―― 原文との部分文字列照合を
+     * 通ったものだけが残っている、というのがこのページの価値
+     * (docs/lead-report-layout/README.md)。競合側のevidenceは含めない
+     * (ReportViewModelBuilderが自社分のみ組み立てている、他社サイトの本文を
+     * レポートに出さないため)。
+     */
+    private function addBrandWheelEvidenceSection(PhpWord $phpWord, ReportViewModel $viewModel): void
+    {
+        if ($viewModel->selfBrandWheelEvidenceItems === []) {
+            return;
+        }
+
+        $section = $phpWord->addSection();
+        $section->addTitle('サイトから読み取れた記述', 1);
+        $section->addText(
+            '前ページで「該当あり」とした項目について、サイトのどの記述を根拠にしたかを記載しています。'.
+            '抜粋はサイト上の文章をそのまま引用したもので、要約や言い換えは含みません。',
+            ['size' => 9, 'italic' => true],
+        );
+
+        $table = $section->addTable(['borderSize' => 6, 'borderColor' => 'cccccc', 'cellMargin' => 80]);
+
+        $table->addRow();
+        $table->addCell(2500)->addText('項目', ['bold' => true]);
+        $table->addCell(2500)->addText('何について', ['bold' => true]);
+        $table->addCell(4500)->addText('サイトからの記述', ['bold' => true]);
+
+        foreach ($viewModel->selfBrandWheelEvidenceItems as $item) {
+            $table->addRow();
+            $table->addCell(2500)->addText($item['axis_name']);
+            $table->addCell(2500)->addText($item['sub_element_name']);
+            $table->addCell(4500)->addText('「'.$item['evidence'].'」');
         }
     }
 

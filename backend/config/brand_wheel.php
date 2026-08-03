@@ -31,6 +31,14 @@ return [
     | relationship→emotional_benefit→financial_benefit)。
     | BrandWheelHexagonRenderer側で array_keys() の順序をそのまま
     | 軸の描画角度に使うため、この並びを変更しないこと。
+    |
+    | 【重要】axes.*.sub_elementsを変更した場合、
+    | backend/resources/images/brand-wheel-framework.png
+    | (6軸24項目の固定説明図、リード向けPDF/Wordの前置きページで使用)を
+    | 必ず作り直すこと。この画像はサーバ側で自動生成しない静的アセットのため、
+    | configの下位要素とこの画像の記載内容がずれてもビルド・テストのいずれでも
+    | 検知されない(目視確認以外に検知手段が無い、2026-08-04・README
+    | 「リリース前チェックリスト」にも同じ注記あり)。
     */
     'axes' => [
 

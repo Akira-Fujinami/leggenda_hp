@@ -38,6 +38,7 @@ class LeadPdfViewTest extends TestCase
             // 埋め込むものと同じファイル)。1x1の透明PNGではなく実ファイルを
             // 使う ―― base64文字列自体が壊れていないことも間接的に確認できる。
             'brandWheelFrameworkImageBase64' => base64_encode((string) file_get_contents(resource_path('images/brand-wheel-framework.png'))),
+            'leggendaLogoImageBase64' => base64_encode((string) file_get_contents(resource_path('images/leggenda-logo.png'))),
         ])->render();
     }
 
@@ -124,6 +125,9 @@ class LeadPdfViewTest extends TestCase
             'brandWheelCompetitor' => null,
             'brandWheelComparison' => ['self_points' => ['活動的魅力が最も内容として充足しています。'], 'competitor_points' => [], 'one_point' => ['key' => 'well_covered', 'text' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。']],
             'brandWheelRadarPng' => null,
+            'selfBrandWheelEvidenceItems' => [
+                ['axis_key' => 'will_activity', 'axis_name' => '活動的魅力', 'group' => 'company_appeal', 'sub_element_name' => 'パーパス', 'evidence' => '技術で社会の「あたり前」を支える。それが私たちの存在意義です。'],
+            ],
         ];
 
         $values = array_merge($defaults, $overrides);

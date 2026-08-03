@@ -124,12 +124,15 @@ class ReportViewModelBuilder
             effortLabel: $this->labelFormatter->effortLabel($row['recommendation']->effort),
         ), $topRecommendations));
 
+        $selfBrandWheelRecord = $selfWebsiteAnalysis?->brandWheelAnalysisResults->first();
         $brandWheelSelf = $selfWebsiteAnalysis !== null
-            ? $this->brandWheelComposer->compose($selfWebsiteAnalysis->brandWheelAnalysisResults->first(), $selfWebsiteAnalysis->website)
+            ? $this->brandWheelComposer->compose($selfBrandWheelRecord, $selfWebsiteAnalysis->website)
             : null;
         $brandWheelCompetitor = $competitorWebsiteAnalysis !== null
             ? $this->brandWheelComposer->compose($competitorWebsiteAnalysis->brandWheelAnalysisResults->first(), $competitorWebsiteAnalysis->website)
             : null;
+
+        $selfBrandWheelEvidenceItems = $this->buildSelfBrandWheelEvidenceItems($selfBrandWheelRecord, (array) ($brandWheelSelf['axes'] ?? []));
 
         // 判定ロジックはBrandWheelComparisonSummaryComposerのみに置く(ここでは
         // 呼び出すだけ) ―― 件数からの導出ルールを2箇所に持たない。
@@ -160,7 +163,61 @@ class ReportViewModelBuilder
             brandWheelCompetitor: $brandWheelCompetitor,
             brandWheelComparison: $brandWheelComparison,
             brandWheelRadarPng: $brandWheelRadarPng,
+            selfBrandWheelEvidenceItems: $selfBrandWheelEvidenceItems,
         );
+    }
+
+    /**
+     * 「サイトから読み取れた記述」ページ(evidence一覧)用に、自社のみ生の
+     * BrandWheelAnalysisResult.axesからevidenceを取り出す。
+     * BrandWheelLeadResponseComposer::compose()はJSON API(画面)向けの
+     * 唯一の定義元であり、意図的にevidenceを含めない設計(2026-08-03、
+     * 他社サイトの本文が外部に出ることを避けるため)のため、このメソッドは
+     * そのComposerを変更せず、レポート生成のこの箇所だけで独立して
+     * evidenceを組み立てる。競合側は呼ばない(競合サイトの本文をレポートに
+     * 出さないため、既存の設計意図をそのまま踏襲する)。
+     *
+     * 軸・下位要素の順序と名称・グループは$selfWheelAxes(composerの出力、
+     * config('brand_wheel.axes')の並び順・日本語名が既に解決済み)にそのまま
+     * 従う ―― ここでは(axis_key, sub_element_key)をキーにevidence文字列を
+     * 引き当てるだけで、順序・名称の判定ロジックを重複させない。
+     *
+     * @param  list<array<string, mixed>>  $selfWheelAxes  BrandWheelLeadResponseComposer::compose()['axes']
+     * @return list<array{axis_key: string, axis_name: string, group: string, sub_element_name: string, evidence: string}>
+     */
+    private function buildSelfBrandWheelEvidenceItems(?\App\Models\BrandWheelAnalysisResult $rawSelfRecord, array $selfWheelAxes): array
+    {
+        if ($rawSelfRecord === null) {
+            return [];
+        }
+
+        $evidenceByAxisAndSubKey = [];
+        foreach ((array) ($rawSelfRecord->axes ?? []) as $axis) {
+            foreach ((array) ($axis['matched_sub_elements'] ?? []) as $sub) {
+                $evidenceByAxisAndSubKey[$axis['axis_key']][$sub['key']] = (string) ($sub['evidence'] ?? '');
+            }
+        }
+
+        $items = [];
+        foreach ($selfWheelAxes as $axis) {
+            foreach ((array) ($axis['matched_sub_elements'] ?? []) as $sub) {
+                $evidence = $evidenceByAxisAndSubKey[$axis['key']][$sub['key']] ?? '';
+
+                if ($evidence === '') {
+                    continue;
+                }
+
+                $items[] = [
+                    'axis_key' => $axis['key'],
+                    'axis_name' => $axis['name'],
+                    'group' => $axis['group'],
+                    'sub_element_name' => $sub['name'],
+                    'evidence' => $evidence,
+                ];
+            }
+        }
+
+        return $items;
     }
 
     /**

@@ -28,6 +28,13 @@ class PdfReportGenerator
      */
     private const BRAND_WHEEL_FRAMEWORK_IMAGE_PATH = 'images/brand-wheel-framework.png';
 
+    /**
+     * コーポレートロゴ(512×94、白背景)。docs/lead-report-layout/README.mdの
+     * 指定通り、表紙(72mm中央)・各内容ページ右下(30mm)・ご相談ページ(60mm中央)
+     * の3箇所で使う固定アセット。分析結果に依存しないためbase64で直接埋め込む。
+     */
+    private const LEGGENDA_LOGO_IMAGE_PATH = 'images/leggenda-logo.png';
+
     public function generate(ReportViewModel $viewModel): string
     {
         // 2026-08-04: A4横のスライド構成に変更したため'landscape'に修正。
@@ -39,6 +46,7 @@ class PdfReportGenerator
             'viewModel' => $viewModel,
             'ipaexGothicFontPath' => 'file://'.self::IPAEX_GOTHIC_FONT_PATH,
             'brandWheelFrameworkImageBase64' => base64_encode((string) file_get_contents(resource_path(self::BRAND_WHEEL_FRAMEWORK_IMAGE_PATH))),
+            'leggendaLogoImageBase64' => base64_encode((string) file_get_contents(resource_path(self::LEGGENDA_LOGO_IMAGE_PATH))),
         ])
             ->setPaper('a4', 'landscape')
             ->setOption('enable_font_subsetting', true)

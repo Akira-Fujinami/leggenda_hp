@@ -64,8 +64,8 @@ class BrandWheelRadarSvgBuilderTest extends TestCase
 
         $svg = $this->builder->build($axes, null);
 
-        $this->assertStringContainsString('#2a78d6', $svg);
-        $this->assertStringNotContainsString('#eb6834', $svg);
+        $this->assertStringContainsString('#3A3FC0', $svg);
+        $this->assertStringNotContainsString('#E95446', $svg);
     }
 
     public function test_both_series_are_drawn_when_competitor_axes_are_given(): void
@@ -83,8 +83,8 @@ class BrandWheelRadarSvgBuilderTest extends TestCase
 
         $svg = $this->builder->build($selfAxes, $competitorAxes);
 
-        $this->assertStringContainsString('#2a78d6', $svg);
-        $this->assertStringContainsString('#eb6834', $svg);
+        $this->assertStringContainsString('#3A3FC0', $svg);
+        $this->assertStringContainsString('#E95446', $svg);
         $this->assertStringContainsString('fill-opacity="0.16"', $svg);
         // 点は白フチ付き。
         $this->assertStringContainsString('stroke="#ffffff" stroke-width="1.4"', $svg);
@@ -119,7 +119,7 @@ class BrandWheelRadarSvgBuilderTest extends TestCase
 
         $svg = $this->builder->build($axes, null);
 
-        $this->assertStringNotContainsString('#2a78d6', $svg);
+        $this->assertStringNotContainsString('#3A3FC0', $svg);
     }
 
     public function test_matches_the_first_axis_point_computed_by_the_same_formula_as_the_frontend(): void
