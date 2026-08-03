@@ -33,6 +33,12 @@ use Illuminate\Support\Facades\Log;
  * レンダリング済みHTMLが利用可能ならそれで再解析する
  * (onWebsiteJobTerminal参照。process()自身のtry/finallyで行わない理由は
  * BaseWebsiteAnalysisJob::onWebsiteJobTerminal()のdocblockを参照)。
+ *
+ * ブランド・ホイール(6軸)分析(GenerateBrandWheelAnalysisJob)も同じ終端
+ * フックから起動する(2026-08-04) ―― 以前はdispatchWebsiteFanOut()から
+ * このジョブと並列に起動していたが、レンダリング後HTMLがまだ無い状態で
+ * 静的HTMLだけを読んで判定してしまう競合が本番で確認されたため、
+ * このジョブの完了後(成功・失敗いずれでも)に必ず起動する形へ変更した。
  */
 class RenderPageJob extends BaseWebsiteAnalysisJob
 {
@@ -111,6 +117,7 @@ class RenderPageJob extends BaseWebsiteAnalysisJob
     protected function onWebsiteJobTerminal(AnalysisPipeline $pipeline): void
     {
         $pipeline->dispatchReanalysis($this->analysisId, $this->websiteAnalysisId);
+        $pipeline->dispatchBrandWheelAnalysisIfDue($this->analysisId, $this->websiteAnalysisId);
         $pipeline->dispatchNextAnalyzerJob($this->analysisId, $this->websiteAnalysisId, $this->jobType());
     }
 }

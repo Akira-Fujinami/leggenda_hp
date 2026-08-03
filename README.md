@@ -450,6 +450,12 @@ FRONTEND_ORIGIN=https://<frontend-service>.onrender.com
     `skip_brand_wheel`の既定はtrue(実行しない)で、リード向け経路
     (`LeadAnalysisController::store()`)のみが明示的にfalseを渡す ――
     社内向けダッシュボード分析ではこれまでどおり一切呼び出されない。
+  - **[2026-08-04追加] `config/brand_wheel.php`の`axes.*.sub_elements`を
+    変更したら、`backend/resources/images/brand-wheel-framework.png`(6軸24項目の
+    固定説明図、リード向けPDF/Wordの前置きページで使用)を必ず作り直すこと**。
+    この画像は分析結果に依存しない静的アセットのため、サーバ側で自動生成
+    していない ―― configの下位要素とこの画像の記載内容がずれても、
+    ビルド・テストのいずれでも検知されない(目視確認以外に検知手段が無い)。
 
 ## テスト
 

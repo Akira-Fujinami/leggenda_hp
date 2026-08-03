@@ -219,6 +219,66 @@ class WordReportGeneratorTest extends TestCase
 
         $this->assertStringContainsString('採用ページの内容を取得できなかったため', $documentXml);
         $this->assertStringNotContainsString('パーパス', $documentXml);
-        $this->assertStringNotContainsString('活動的魅力', $documentXml);
+        // 2026-08-04: 前置きページ(addBrandWheelFrameworkIntroSection)の3領域
+        // 説明に「活動的魅力」等のグループ内訳が固定文言として含まれるため、
+        // このアサーションは実際の解析結果テーブルにだけ出る列見出しで判定する。
+        $this->assertStringNotContainsString('読み取れた内容', $documentXml);
+    }
+
+    /**
+     * 2026-08-04: PDF版の2ページ目と同内容の前置き。ブランド・ホイールが
+     * 「読み取れなかった=無い」ではないことを説明する一文は、この診断で
+     * 最も誤解を招きやすい箇所のため、原文のまま出ることを確認する。
+     */
+    public function test_includes_the_brand_wheel_framework_intro_section_with_the_required_caveat_verbatim(): void
+    {
+        $docx = app(WordReportGenerator::class)->generate($this->viewModel());
+        $documentXml = $this->extractDocumentXml($docx);
+
+        $this->assertStringContainsString('採用ブランドの捉え方', $documentXml);
+        $this->assertStringContainsString(
+            '読み取れなかった項目は、その魅力が「無い」という意味ではありません。'
+            .'サイトにそう書かれていない、というだけです。',
+            $documentXml,
+        );
+    }
+
+    /**
+     * 前置きは分析結果に依存しない固定コンテンツのため、ブランド・ホイールが
+     * success以外(読み取り不可等)でも変わらず出ることを確認する。
+     */
+    public function test_includes_the_brand_wheel_framework_intro_section_even_when_brand_wheel_is_not_success(): void
+    {
+        $viewModel = $this->viewModel();
+        $unreadable = new ReportViewModel(
+            companyDisplayName: $viewModel->companyDisplayName,
+            generatedAtLabel: $viewModel->generatedAtLabel,
+            selfWebsiteUrl: $viewModel->selfWebsiteUrl,
+            competitorWebsiteUrl: $viewModel->competitorWebsiteUrl,
+            selfScore: $viewModel->selfScore,
+            competitorScore: $viewModel->competitorScore,
+            overallSummaryText: $viewModel->overallSummaryText,
+            comparisonSentence: $viewModel->comparisonSentence,
+            perspectives: $viewModel->perspectives,
+            topRecommendations: $viewModel->topRecommendations,
+            isPartial: $viewModel->isPartial,
+            brandWheelSelf: [
+                'status' => 'insufficient_input',
+                'status_message' => 'サイトから十分な文章を読み取れなかったため、この項目の分析は行っていません。',
+                'analyzed_url' => null,
+                'axes' => [],
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'absent', 'home_page' => 'read'],
+            ],
+            brandWheelCompetitor: null,
+            brandWheelComparison: ['self_points' => [], 'competitor_points' => [], 'one_point' => null],
+            brandWheelRadarPng: null,
+        );
+
+        $documentXml = $this->extractDocumentXml(app(WordReportGenerator::class)->generate($unreadable));
+
+        $this->assertStringContainsString('採用ブランドの捉え方', $documentXml);
+        $this->assertStringContainsString('読み取れなかった項目は、その魅力が「無い」という意味ではありません。', $documentXml);
     }
 }

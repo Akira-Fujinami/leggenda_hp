@@ -6,6 +6,7 @@ use App\Enums\PageType;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\HtmlSeoAnalyzer;
+use App\Services\Analysis\PageHtmlResolver;
 use App\Services\BrandWheel\Data\BrandWheelAnalysisInput;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -24,7 +25,7 @@ use Illuminate\Support\Facades\Storage;
  * このFactory経由でAIへ渡る経路が構造的に存在しない。
  *
  * 採用ページ/トップページの本文テキスト・H1〜H3見出し・ナビゲーションリンク
- * ラベルは、いずれも保存済みの生HTMLをHtmlSeoAnalyzer::extractBodyText()/
+ * ラベルは、いずれも保存済みのHTMLをHtmlSeoAnalyzer::extractBodyText()/
  * extractHeadingTexts()/extractNavigationLinkLabels()へ通してその場で
  * 抽出する ―― これらの値はこれまでどこにも永続化されていないため
  * (AnalysisPage.word_count/h1_countは集計値のみ)、既存のMetricResultからの
@@ -35,7 +36,20 @@ use Illuminate\Support\Facades\Storage;
  * ラベル)を示すものではないため差し戻され、header/nav/footer配下の
  * リンクテキストを直接抽出する方式に変更した。
  *
- * 【仕様】診断実行時に保存された生HTMLのスナップショットを読む(ライブサイトを
+ * レンダリング後HTML(rendered_html_path、RenderPageJobがJS実行後のDOMを
+ * 保存したもの)が利用可能ならそちらを優先し、無ければ静的HTML
+ * (raw_html_path)にフォールバックする(PageHtmlResolver経由、
+ * AnalyzeHtmlSeoJob/DetectTechnologyJobと同じ優先順位)。2026-08-04まで
+ * このFactoryだけが常にraw_html_pathしか読まない実装になっており、
+ * JSで本文を描画するサイト(recruit.lifull.com/culture/、
+ * hello-world.smarthr.co.jp/で実際に再現)では静的HTMLが実質空になり、
+ * 200文字のinsufficient_inputしきい値を必ず下回っていた。ただし
+ * RenderPageJobは別ジョブとして並行dispatchされているため、この
+ * Factoryが呼ばれる時点でまだrendered_html_pathが用意できていない
+ * (=レースに負ける)ケースは残る。dispatch順序自体の見直しは別途
+ * 検討中(AnalysisPipeline::dispatchWebsiteFanOut()参照)。
+ *
+ * 【仕様】診断実行時に保存されたHTMLのスナップショットを読む(ライブサイトを
  * 再取得しない)。これは実装上の近道ではなく、維持すべき仕様である ――
  * 相談ボタンは診断からある程度時間が経ってから押されることがあるが、この間に
  * サイトが更新されていても、ブランド・ホイール評価は診断時と同一のスナップショットに
@@ -73,6 +87,7 @@ class BrandWheelAnalysisInputFactory
 
     public function __construct(
         private readonly HtmlSeoAnalyzer $htmlSeoAnalyzer,
+        private readonly PageHtmlResolver $htmlResolver,
     ) {}
 
     public function build(WebsiteAnalysis $websiteAnalysis): BrandWheelAnalysisInput
@@ -87,8 +102,19 @@ class BrandWheelAnalysisInputFactory
             ->where('page_type', PageType::Homepage)
             ->first();
 
-        [$recruitBodyText, $recruitHeadings, $recruitNavLabels, $recruitPageStatus] = $this->extractPageText($recruitPage);
-        [$homepageBodyText, $homepageHeadings, $homepageNavLabels, $homepageStatus] = $this->extractPageText($homepage);
+        [$recruitBodyText, $recruitHeadings, $recruitNavLabels, $recruitPageStatus, $recruitHtmlSource] = $this->extractPageText($recruitPage);
+        [$homepageBodyText, $homepageHeadings, $homepageNavLabels, $homepageStatus, $homepageHtmlSource] = $this->extractPageText($homepage);
+
+        // どちらのHTML(rendered/static)を読んだかは、レース(RenderPageJobが
+        // まだ完了していない)が実際に起きているかを事後に判別できるよう
+        // ログにのみ残す。sourcePages(下記)はBrandWheelAnalysisResult経由で
+        // リード向けJSON API・メールへそのまま渡っているため、新しい値を
+        // 混ぜて既存のレスポンス形状を変えないようにする(2026-08-04)。
+        Log::info('Brand wheel analysis input: html source resolved', [
+            'website_analysis_id' => $websiteAnalysis->id,
+            'recruit_page_html_source' => $recruitHtmlSource,
+            'home_page_html_source' => $homepageHtmlSource,
+        ]);
 
         // グローバルナビは通常トップページ側が正とみなせるため先に採用し、
         // 採用ページ独自のナビ項目(例: 採用サイト側にしかない事業紹介導線)を
@@ -121,44 +147,59 @@ class BrandWheelAnalysisInputFactory
     }
 
     /**
-     * @return array{0: string, 1: list<array{level: int, text: string}>, 2: list<string>, 3: string}
+     * @return array{0: string, 1: list<array{level: int, text: string}>, 2: list<string>, 3: string, 4: ?string}
      */
     private function extractPageText(?AnalysisPage $page): array
     {
-        if ($page === null || $page->raw_html_path === null) {
+        if ($page === null) {
             // AnalysisPage行自体が無い(例: 採用ページが検出されなかった)のは
             // 正当な状態であり、想定内の経路として無言で空扱いにする。
-            return ['', [], [], self::PAGE_STATUS_ABSENT];
+            return ['', [], [], self::PAGE_STATUS_ABSENT, null];
         }
 
-        $disk = Storage::disk('analysis');
+        // レンダリング後HTML(JS実行後)が既に利用可能ならそちらを優先する
+        // (AnalyzeHtmlSeoJob/DetectTechnologyJobと同じ優先順位、
+        // PageHtmlResolver参照)。RenderPageJobは別ジョブとして並行
+        // dispatchされているため、この時点でまだrendered_html_pathが
+        // 用意できていないことは正常系であり、その場合は静的HTMLへ
+        // フォールバックする。
+        $resolved = $this->htmlResolver->resolve($page);
 
-        if (! $disk->exists($page->raw_html_path)) {
-            // 行はあるがファイル実体が無い/読めない(ファイル欠損・パス不整合)。
-            // 「ページが元々無い」(正常系、AnalysisPage行自体が存在しない)とは
-            // 明確に異なり、こちらはストレージ到達性の障害である可能性がある
-            // (例: Renderで生HTMLを書き込むワーカーとこのJobが別サービスに
-            // 分かれ、永続ディスクを共有できていない場合、症状はまさにこれと
-            // 一致する)。運用上検知されるべき障害のためLog::errorで記録する
-            // (2026-07-29の指摘。例外は投げず処理は継続する ―― 呼び出し元が
-            // 入力の充足度を見て評価不可として扱う)。
-            Log::error('Brand wheel analysis: stored raw HTML file is missing', [
-                'analysis_page_id' => $page->id,
-                'website_analysis_id' => $page->website_analysis_id,
-                'page_type' => $page->page_type->value,
-            ]);
+        if ($resolved !== null) {
+            $html = Storage::disk('analysis')->get($resolved['path']);
 
-            return ['', [], [], self::PAGE_STATUS_UNREADABLE];
+            return [
+                $this->htmlSeoAnalyzer->extractBodyText($html),
+                $this->htmlSeoAnalyzer->extractHeadingTexts($html),
+                $this->htmlSeoAnalyzer->extractNavigationLinkLabels($html),
+                self::PAGE_STATUS_READ,
+                $resolved['source'],
+            ];
         }
 
-        $html = $disk->get($page->raw_html_path);
+        if ($page->raw_html_path === null) {
+            // 生HTMLのパス自体が記録されていない(FetchStaticPageJob/
+            // RenderPageJobのいずれもまだ完了していない等)。異常ではないため
+            // 無言でABSENT扱いにする(既存挙動を維持)。
+            return ['', [], [], self::PAGE_STATUS_ABSENT, null];
+        }
 
-        return [
-            $this->htmlSeoAnalyzer->extractBodyText($html),
-            $this->htmlSeoAnalyzer->extractHeadingTexts($html),
-            $this->htmlSeoAnalyzer->extractNavigationLinkLabels($html),
-            self::PAGE_STATUS_READ,
-        ];
+        // raw_html_pathは記録されているのにファイル実体が無い/読めない
+        // (ファイル欠損・パス不整合)。「ページが元々無い」(正常系、
+        // AnalysisPage行自体が存在しない)とは明確に異なり、こちらは
+        // ストレージ到達性の障害である可能性がある(例: Renderで生HTMLを
+        // 書き込むワーカーとこのJobが別サービスに分かれ、永続ディスクを
+        // 共有できていない場合、症状はまさにこれと一致する)。運用上検知
+        // されるべき障害のためLog::errorで記録する(2026-07-29の指摘。
+        // 例外は投げず処理は継続する ―― 呼び出し元が入力の充足度を見て
+        // 評価不可として扱う)。
+        Log::error('Brand wheel analysis: stored raw HTML file is missing', [
+            'analysis_page_id' => $page->id,
+            'website_analysis_id' => $page->website_analysis_id,
+            'page_type' => $page->page_type->value,
+        ]);
+
+        return ['', [], [], self::PAGE_STATUS_UNREADABLE, null];
     }
 
     /**

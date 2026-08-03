@@ -84,7 +84,14 @@
     .one { border: 1px solid #d8d8d8; padding: 4mm; }
     .one h4 { margin: 0 0 2mm; font-size: 11pt; }
     .one p { margin: 0; font-size: 10pt; line-height: 1.8; }
-    .pcell { width: 50%; padding: 0 3mm 6mm 0; }
+    {{--
+        50%ではなくmm固定にする ―― 自社ページの分析結果ページで、
+        パーセンテージ幅だけの列がdompdfで右端からはみ出す不具合が
+        見つかった(2026-08-04)のと同じ理由。他社ページ比較のページでは
+        同じ理由で崩れがユーザー環境の実PDFでも確認された(右カラムの
+        カードが用紙端で切れる)。132.5mm×2列=265mm(ページの実効幅と一致)。
+    --}}
+    .pcell { width: 132.5mm; padding: 0 3mm 6mm 0; }
     {{--
         height:100%は付けない ―― dompdfは制約の無い(高さを持つ祖先が無い)
         文脈で100%を「ページの残り高さ全体」に近い値として解決することがあり、
@@ -100,7 +107,8 @@
     .badge.warn { background: #fdecea; color: #9b2c22; }
     .badge.neutral { background: #eeeeee; color: #555555; }
     .pdesc { font-size: 10pt; line-height: 1.8; margin: 2.5mm 0 0; }
-    .reccell { width: 33.3%; padding: 0 2mm 4mm 0; }
+    {{-- .pcellと同じ理由でmm固定にする(2026-08-04)。88.3mm×3列=264.9mm。 --}}
+    .reccell { width: 88.3mm; padding: 0 2mm 4mm 0; }
     .rectitle { font-size: 11pt; margin: 0 0 2mm; }
     .recdesc { font-size: 9.5pt; line-height: 1.8; margin: 0 0 3mm; }
     .recmeta { font-size: 9pt; color: #5b5b5b; margin: 0; }
@@ -119,6 +127,15 @@
     .foot { margin-top: 6mm; font-size: 8.5pt; color: #7a7a7a; line-height: 1.6; }
     .cta { text-align: center; padding-top: 45mm; }
     .cta p { font-size: 12pt; line-height: 2; }
+
+    {{-- 2026-08-04: 「採用ブランドの捉え方」前置きページ(固定の説明図)。 --}}
+    .introlead { font-size: 11.5pt; margin: 0 0 4mm; }
+    .grouptbl { margin-bottom: 5mm; }
+    .grouptbl td { padding: 2mm 0; vertical-align: middle; }
+    .gcell { width: 34mm; text-align: center; font-size: 10pt; font-weight: bold; padding: 2.5mm 1mm; }
+    .gdesc { width: 105mm; font-size: 10pt; line-height: 1.7; padding-left: 4mm; }
+    .introbody { font-size: 10.5pt; line-height: 1.9; margin: 0 0 3.5mm; }
+    .introcaution { font-size: 9.5pt; line-height: 1.8; color: #5b5b5b; border-top: 1px solid #d8d8d8; padding-top: 3mm; margin: 0; }
 </style>
 </head>
 <body>
@@ -162,7 +179,43 @@
     @endif
 </div>
 
-{{-- 2. 自社ページの分析結果 --}}
+{{--
+    2. 採用ブランドの捉え方 ―― ブランド・ホイール(前置き)。
+    分析結果に依存しない固定の説明図(backend/resources/images/
+    brand-wheel-framework.png)。BrandWheelHexagonRendererは通さない ――
+    毎回rsvg-convertを走らせる意味が無い静的アセットのため
+    (config('brand_wheel.axes.*.sub_elements')を変更したらこの画像も
+    作り直す必要がある、README「リリース前チェックリスト」参照)。
+
+    この診断で最も誤解を招きやすい点(読み取れなかった=魅力が無い、では
+    ない)を、結果を見せる前にここで明示する。この一文は短縮・削除しない。
+--}}
+<div class="page">
+    <h2>採用ブランドの捉え方 ―― ブランド・ホイール</h2>
+    <table style="width: 265mm;"><tr>
+        <td style="width: 126mm; padding-right: 8mm;">
+            <img src="data:image/png;base64,{{ $brandWheelFrameworkImageBase64 }}" style="width: 124mm;">
+        </td>
+        <td style="width: 139mm; vertical-align: top; padding-top: 4mm;">
+            <p class="introlead">採用ブランドは、大きく3つの領域に分けて捉えます。</p>
+            <table class="grouptbl"><tr>
+                <td class="gcell" style="background: #c3cdf0;">青／会社の魅力</td>
+                <td class="gdesc">その会社が何を目指し、どれだけの実績・規模を持っているか。<br><b>活動的魅力</b>・<b>資産的魅力</b></td>
+            </tr><tr>
+                <td class="gcell" style="background: #cfe4d4;">緑／会社との距離</td>
+                <td class="gdesc">どんな経営で、どんな人たちが、どんな環境で働いているか。<br><b>経営スタイル</b>・<b>就業環境</b></td>
+            </tr><tr>
+                <td class="gcell" style="background: #eed6e2;">赤／仕事の魅力</td>
+                <td class="gdesc">その仕事に就くと、何が得られるか。<br><b>情緒的便益</b>・<b>金銭的便益</b></td>
+            </tr></table>
+            <p class="introbody">6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。中心の<b>Core Value(約束する価値)</b>は、その24項目を貫く「この会社が候補者に約束するもの」にあたります。</p>
+            <p class="introbody">本レポートでは、<b>この24項目のうち何件が、サイトの記述から読み取れたか</b>を数えています。点数付けではなく、件数の集計です。</p>
+            <p class="introcaution">読み取れなかった項目は、その魅力が「無い」という意味ではありません。サイトにそう書かれていない、というだけです。また、採用ブランドは本来、グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。</p>
+        </td>
+    </tr></table>
+</div>
+
+{{-- 3. 自社ページの分析結果 --}}
 <div class="page">
     <h2>自社ページの分析結果</h2>
 
@@ -248,7 +301,7 @@
     @endif
 </div>
 
-{{-- 3. 他社ページ比較とのまとめ --}}
+{{-- 4. 他社ページ比較とのまとめ --}}
 <div class="page">
     <h2>他社ページ比較とのまとめ</h2>
 
@@ -299,12 +352,12 @@
     <p class="foot" style="margin-top: 1mm;">キーメッセージと印象の読み取りにはAIを使用しています。</p>
 </div>
 
-{{-- 4. 採用担当の視点で見た診断結果(4観点。判定と理由1文のみ、個別指標名は出さない) --}}
+{{-- 5. 採用担当の視点で見た診断結果(4観点。判定と理由1文のみ、個別指標名は出さない) --}}
 <div class="page">
     <h2>採用担当の視点で見た診断結果</h2>
     <p class="lead">4つの観点それぞれについて、判定と、その理由を一言で記載しています。</p>
 
-    <table>
+    <table style="width: 265mm;">
         @foreach (array_chunk($viewModel->perspectives, 2) as $row)
             <tr>
                 @foreach ($row as $perspective)
@@ -327,7 +380,7 @@
     </p>
 </div>
 
-{{-- 5. 改善提案 --}}
+{{-- 6. 改善提案 --}}
 <div class="page">
     <h2>改善提案</h2>
     <p class="lead">特に改善効果が見込まれる項目を、優先度の高い順に記載しています。</p>
@@ -335,7 +388,7 @@
     @if (count($viewModel->topRecommendations) === 0)
         <p>現時点で優先度の高い改善提案はありません。</p>
     @else
-        <table>
+        <table style="width: 265mm;">
             @foreach (array_chunk($viewModel->topRecommendations, 3) as $row)
                 <tr>
                     @foreach ($row as $recommendation)
@@ -353,7 +406,7 @@
     @endif
 </div>
 
-{{-- 6. ご相談 --}}
+{{-- 7. ご相談 --}}
 <div class="page cta">
     <h2>より詳しい診断・ご相談はこちら</h2>
     <p>今回は自社サイト{{ $viewModel->competitorWebsiteUrl ? '・比較サイト1社' : '' }}の簡易診断結果です。</p>

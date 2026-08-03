@@ -34,6 +34,10 @@ class LeadPdfViewTest extends TestCase
         return view('reports.lead-pdf', [
             'viewModel' => $viewModel,
             'ipaexGothicFontPath' => 'file:///dev/null',
+            // ブランド・ホイールの固定説明図(PdfReportGeneratorが実際に
+            // 埋め込むものと同じファイル)。1x1の透明PNGではなく実ファイルを
+            // 使う ―― base64文字列自体が壊れていないことも間接的に確認できる。
+            'brandWheelFrameworkImageBase64' => base64_encode((string) file_get_contents(resource_path('images/brand-wheel-framework.png'))),
         ])->render();
     }
 
@@ -211,7 +215,10 @@ class LeadPdfViewTest extends TestCase
 
         $this->assertStringContainsString('サイトの記述からは、6つの項目に該当する内容を読み取れませんでした', $html);
         $this->assertStringNotContainsString('パーパス', $html);
-        $this->assertStringNotContainsString('活動的魅力', $html);
+        // 「採用ブランドの捉え方」前置きページは軸名(活動的魅力等)を固定の
+        // 説明文として常に含むため、軸名そのものの有無ではなく、実際の
+        // 軸カード(件数表示)が出ていないことで判定する。
+        $this->assertStringNotContainsString('読み取れた内容', $html);
     }
 
     public function test_includes_the_brand_wheel_section_with_counts_and_summary(): void
@@ -232,6 +239,52 @@ class LeadPdfViewTest extends TestCase
     }
 
     /**
+     * 2026-08-04: 「採用ブランドの捉え方」前置きページ。分析結果に依存しない
+     * 固定ページのため、status(success以外を含む)によらず常に出る。
+     * 誤解を招きやすい一文(読み取れなかった=魅力が無い、ではない)は
+     * 一字一句削らずに含めること。
+     */
+    public function test_includes_the_brand_wheel_framework_intro_page_with_the_required_caveat_verbatim(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertStringContainsString('採用ブランドの捉え方', $html);
+        $this->assertStringContainsString(
+            '読み取れなかった項目は、その魅力が「無い」という意味ではありません。'
+            .'サイトにそう書かれていない、というだけです。',
+            $html,
+        );
+        // 固定説明図(base64埋め込み)。BrandWheelHexagonRendererを通していない
+        // ―― 生成時刻に依存するデータは無いため、テストの固定資産(PNG)の
+        // base64表現がそのまま出ていることだけを確認すれば足りる。
+        $expectedBase64 = base64_encode((string) file_get_contents(resource_path('images/brand-wheel-framework.png')));
+        $this->assertStringContainsString('data:image/png;base64,'.$expectedBase64, $html);
+    }
+
+    /**
+     * 前置きページは分析結果に依存しない固定ページのため、
+     * ブランド・ホイールがstatus!=='success'の場合でも出る。
+     */
+    public function test_includes_the_brand_wheel_framework_intro_page_even_when_brand_wheel_is_not_success(): void
+    {
+        $html = $this->render($this->viewModel([
+            'brandWheelSelf' => [
+                'status' => 'insufficient_input',
+                'status_message' => 'サイトから十分な文章を読み取れなかったため、この項目の分析は行っていません。',
+                'analyzed_url' => null,
+                'axes' => [],
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'absent', 'home_page' => 'read'],
+            ],
+            'brandWheelComparison' => ['self_points' => [], 'competitor_points' => [], 'one_point' => null],
+        ]));
+
+        $this->assertStringContainsString('採用ブランドの捉え方', $html);
+        $this->assertStringContainsString('読み取れなかった項目は、その魅力が「無い」という意味ではありません。', $html);
+    }
+
+    /**
      * 2026-08-04: PNGが生成できなかった場合(brandWheelRadarPng===null)、
      * 図を省略し、軸ごとの件数の表だけで成立させる(画像の失敗がレポート
      * 生成全体を止めてはいけない、既存メールと同じ方針)。
@@ -240,7 +293,10 @@ class LeadPdfViewTest extends TestCase
     {
         $html = $this->render($this->viewModel(['brandWheelRadarPng' => null]));
 
-        $this->assertStringNotContainsString('<img', $html);
+        // 2026-08-04: 前置きページの固定説明図(brand-wheel-framework.png)は
+        // レーダー画像の有無に関わらず常に出るため、<img>自体の有無ではなく、
+        // レーダー画像に固有のスタイル(width: 95mm; height: 69mm;)の有無で判定する。
+        $this->assertStringNotContainsString('width: 95mm; height: 69mm;', $html);
         // 図が無くても表(件数)は変わらず出る。
         $this->assertStringContainsString('2 / 4件', $html);
     }

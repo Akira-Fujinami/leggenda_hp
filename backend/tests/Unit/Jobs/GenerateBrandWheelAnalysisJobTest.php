@@ -571,6 +571,56 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $this->assertNotNull($record->axes);
     }
 
+    /**
+     * 2026-08-04: JSで本文を描画するサイト(recruit.lifull.com/culture/、
+     * hello-world.smarthr.co.jp/で実際に再現)は、静的HTML(raw_html_path)
+     * だけでは本文が実質空になり、200文字のinsufficient_inputしきい値を
+     * 必ず下回っていた。BrandWheelAnalysisInputFactoryがrendered_html_pathを
+     * 優先するようになったことで、このJobを直接実行してもinsufficient_input
+     * にならないことをエンドツーエンドで確認する。
+     */
+    public function test_does_not_become_insufficient_input_when_static_html_is_empty_but_rendered_html_has_content(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'mock', 'analysis.allow_mock_providers' => true]);
+
+        $project = Project::factory()->create();
+        $website = Website::factory()->for($project)->create(['is_primary' => true]);
+        $analysis = Analysis::factory()->for($project)->completed()->create();
+        $websiteAnalysis = WebsiteAnalysis::factory()->completed()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id]);
+
+        $paths = app(AnalysisStoragePaths::class);
+        $staticPath = $paths->rawHtmlPath($analysis->id, $websiteAnalysis->id, 'homepage.html');
+        $renderedPath = $paths->rawHtmlPath($analysis->id, $websiteAnalysis->id, 'homepage.rendered.html');
+        // 静的HTMLはJS実行前のシェルのみ(本文が実質空、SPA的なサイトを模す)。
+        Storage::disk('analysis')->put($staticPath, '<html><head><title>Example</title></head><body><div id="app"></div></body></html>');
+        // レンダリング後HTMLには実際の本文がある。
+        Storage::disk('analysis')->put($renderedPath, '<html><head><title>Example</title></head><body><p>'.str_repeat('会社の紹介文です。', 30).'</p></body></html>');
+
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'final_url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+            'http_status' => 200,
+            'raw_html_path' => $staticPath,
+            'rendered_html_path' => $renderedPath,
+            'title' => 'Example',
+            'fetched_at' => now(),
+        ]);
+
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'pending',
+        ]);
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $record->refresh();
+        $this->assertNotSame('insufficient_input', $record->status);
+        $this->assertSame('success', $record->status);
+    }
+
     public function test_completion_sends_the_staff_notification_and_marks_staff_notified_at(): void
     {
         config(['services.brand_wheel_ai.provider' => 'mock', 'analysis.allow_mock_providers' => true, 'lead.notification_to' => 'staff@example.com']);

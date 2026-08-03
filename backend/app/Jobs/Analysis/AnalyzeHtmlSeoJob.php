@@ -12,6 +12,7 @@ use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\HtmlSeoAnalyzer;
 use App\Services\Analysis\HtmlSeoMetricRecorder;
+use App\Services\Analysis\PageHtmlResolver;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -61,16 +62,12 @@ class AnalyzeHtmlSeoJob extends BaseWebsiteAnalysisJob
         // AnalyzeHtmlSeoJobはFetchStaticPageJobの完了直後に起動されるため、
         // RenderPageJob(別途並行実行)がまだ完了していないことも多く、
         // その場合は静的HTMLで暫定解析し、ReanalyzeRenderedHtmlJobによる
-        // 再解析に委ねる。
-        $htmlSource = null;
-        $htmlPath = null;
-        if ($page?->rendered_html_path !== null && $disk->exists($page->rendered_html_path)) {
-            $htmlPath = $page->rendered_html_path;
-            $htmlSource = 'rendered';
-        } elseif ($page?->raw_html_path !== null && $disk->exists($page->raw_html_path)) {
-            $htmlPath = $page->raw_html_path;
-            $htmlSource = 'static';
-        }
+        // 再解析に委ねる。優先順位の解決自体はPageHtmlResolverへ切り出した
+        // (2026-08-04、BrandWheelAnalysisInputFactory/DetectTechnologyJobとの
+        // 3箇所目の重複を避けるため)。
+        $resolved = app(PageHtmlResolver::class)->resolve($page);
+        $htmlPath = $resolved['path'] ?? null;
+        $htmlSource = $resolved['source'] ?? null;
 
         if ($htmlPath === null) {
             $recorder->recordAllUnavailable($this->websiteAnalysisId);

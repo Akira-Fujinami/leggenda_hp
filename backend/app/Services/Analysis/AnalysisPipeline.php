@@ -96,7 +96,13 @@ class AnalysisPipeline
     /**
      * サイト単位で最初に起動するジョブ群。AnalyzeHtmlSeoJobだけは
      * FetchStaticPageJobが取得したHTMLに依存するため、FetchStaticPageJob側の
-     * 完了時に個別に起動する(ここでは起動しない)。Analyzerを呼び出す
+     * 完了時に個別に起動する(ここでは起動しない)。ブランド・ホイール
+     * (6軸)分析も同じ理由でここでは起動しない ―― RenderPageJobが完了する
+     * 前に走ると、レンダリング後HTMLがまだ無くBrandWheelAnalysisInputFactoryが
+     * 静的HTMLだけで判定してしまう(2026-08-04、本番のinsufficient_input
+     * 誤判定の原因の1つとして確認された)。RenderPageJob::onWebsiteJobTerminal()
+     * から必ず起動する(成功・失敗いずれでも、AnalyzeHtmlSeoJob→
+     * ReanalyzeRenderedHtmlJobと同じ方針)。Analyzerを呼び出す
      * render/screenshot(desktop/mobile)/technology/lighthouseは同時fan-outせず、
      * ANALYZER_CHAINの先頭(RenderPage)のみをここで起動し、以降は
      * dispatchNextAnalyzerJob()による順次カスケードに委ねる。
@@ -111,25 +117,29 @@ class AnalysisPipeline
         FetchSitemapJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::FetchSitemap->queueName());
         FetchExternalSeoDataJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::FetchExternalSeoData->queueName());
 
-        if ($websiteAnalysis->analysis?->skip_brand_wheel !== true) {
-            $this->dispatchBrandWheelAnalysis($analysisId, $websiteAnalysisId);
-        }
-
         $this->dispatchAnalyzerChainJob($analysisId, $websiteAnalysisId, self::ANALYZER_CHAIN[0]);
     }
 
     /**
-     * ブランド・ホイール(6軸)分析。skip_brand_wheel=trueの場合はここに来ない
+     * ブランド・ホイール(6軸)分析。skip_brand_wheel=trueの場合は何もしない
      * (excludeSkippedJobTypes()によりwebsiteFanOutTypes()からも除外され、
      * 進捗・完了判定の対象から一貫して外れる)。Analyzerを使わないため
-     * ANALYZER_CHAINには入れず、ここで他の初回fan-outジョブと並列に起動する。
+     * ANALYZER_CHAINには入れないが、RenderPageJobが保存するレンダリング後
+     * HTMLに依存するため、RenderPageJobの終端(成功・失敗いずれも)から
+     * 呼び出す(2026-08-04、以前はdispatchWebsiteFanOut()から他の初回
+     * fan-outジョブと並列に起動していたが、RenderPageJobより先に完了して
+     * しまい静的HTMLだけで判定される競合が本番で確認されたため変更)。
      *
      * 相談ボタン(#96)起点のディスパッチは廃止(2026-08-03) ―― 診断実行時に
      * 自社・競合の両方について生成し、相談ボタンは生成済みの結果を読むだけに
      * なる(input_hashによる再利用は既にあるため、二重にAPIを呼ばない)。
      */
-    private function dispatchBrandWheelAnalysis(int $analysisId, int $websiteAnalysisId): void
+    public function dispatchBrandWheelAnalysisIfDue(int $analysisId, int $websiteAnalysisId): void
     {
+        if (Analysis::find($analysisId)?->skip_brand_wheel === true) {
+            return;
+        }
+
         $record = BrandWheelAnalysisResult::query()->create([
             'analysis_id' => $analysisId,
             'website_analysis_id' => $websiteAnalysisId,

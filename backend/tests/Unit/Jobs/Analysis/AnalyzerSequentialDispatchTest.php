@@ -8,6 +8,8 @@ use App\Jobs\Analysis\DetectTechnologyJob;
 use App\Jobs\Analysis\RenderPageJob;
 use App\Jobs\Analysis\RunLighthouseJob;
 use App\Jobs\Analysis\RunRecruitLighthouseJob;
+use App\Jobs\GenerateBrandWheelAnalysisJob;
+use App\Models\Analysis;
 use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
@@ -39,6 +41,14 @@ class AnalyzerSequentialDispatchTest extends TestCase
         return WebsiteAnalysis::factory()->create(['website_id' => $website->id]);
     }
 
+    private function makeWebsiteAnalysisWithBrandWheelEnabled(): WebsiteAnalysis
+    {
+        $analysis = Analysis::factory()->create(['skip_brand_wheel' => false]);
+        $website = Website::factory()->create(['url' => 'https://example.com', 'normalized_url' => 'https://example.com']);
+
+        return WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id]);
+    }
+
     public function test_render_page_job_completion_dispatches_only_the_desktop_screenshot_job_next(): void
     {
         Queue::fake([CaptureScreenshotJob::class, DetectTechnologyJob::class, RunLighthouseJob::class]);
@@ -64,6 +74,41 @@ class AnalyzerSequentialDispatchTest extends TestCase
         (new RenderPageJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
 
         Queue::assertPushed(CaptureScreenshotJob::class, fn ($job) => $job->device === Device::Desktop);
+    }
+
+    /**
+     * 2026-08-04: ブランド・ホイール(6軸)分析は、以前はdispatchWebsiteFanOut()
+     * からRenderPageJobと並列に起動していたが、レンダリング後HTMLがまだ無い
+     * 状態で静的HTMLだけを読んで判定してしまう競合が本番で確認された
+     * (BrandWheelAnalysisInputFactoryがrendered_html_pathを優先するように
+     * なったことで、この競合が結果に影響するようになった)。RenderPageJobの
+     * 終端から必ず起動する形に変更したことを確認する。
+     */
+    public function test_render_page_job_completion_dispatches_the_brand_wheel_analysis_job(): void
+    {
+        Queue::fake([CaptureScreenshotJob::class, GenerateBrandWheelAnalysisJob::class]);
+        Http::fake(['*/analyze/render' => Http::response(['success' => true, 'data' => ['html' => '<html></html>', 'fixed_cta' => ['detected' => false]]], 200)]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysisWithBrandWheelEnabled();
+        (new RenderPageJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        Queue::assertPushed(GenerateBrandWheelAnalysisJob::class);
+    }
+
+    /**
+     * ReanalyzeRenderedHtmlJobと同じく、RenderPageJob自体が失敗しても
+     * ブランド・ホイールの起動は妨げられない(その場合は静的HTMLへ
+     * フォールバックして判定される、既存の耐障害設計を維持する)。
+     */
+    public function test_render_page_job_failure_still_dispatches_the_brand_wheel_analysis_job(): void
+    {
+        Queue::fake([CaptureScreenshotJob::class, GenerateBrandWheelAnalysisJob::class]);
+        Http::fake(['*/analyze/render' => Http::response([], 500)]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysisWithBrandWheelEnabled();
+        (new RenderPageJob($websiteAnalysis->analysis_id, $websiteAnalysis->id))->handle(app(AnalysisPipeline::class));
+
+        Queue::assertPushed(GenerateBrandWheelAnalysisJob::class);
     }
 
     public function test_desktop_screenshot_completion_dispatches_only_the_mobile_screenshot_job_next(): void

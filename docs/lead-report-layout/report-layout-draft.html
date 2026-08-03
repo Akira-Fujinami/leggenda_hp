@@ -1,41 +1,41 @@
-<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>診断レポート レイアウト案（ダミーデータ）</title>
+<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>Webサイト診断レポート（サンプル）</title>
 <style>
 @page { size: A4 landscape; margin: 0; }
 * { box-sizing: border-box; }
-body { margin:0; font-family:"IPAGothic","Noto Sans CJK JP",sans-serif; color:#1a1a1a; font-size:11pt; }
-.page { width:297mm; height:210mm; padding:14mm 16mm; position:relative; page-break-after:always; }
+body { margin:0; font-family:"IPAGothic","Noto Sans CJK JP",sans-serif; color:#393636; font-size:11pt; }
+.page { width:297mm; height:210mm; padding:14mm 16mm 20mm; position:relative; page-break-after:always; }
 .page:last-child { page-break-after:auto; }
-h1 { font-size:24pt; margin:0 0 6mm; font-weight:normal; }
-h2 { font-size:15pt; margin:0 0 5mm; font-weight:normal; border-bottom:1px solid #d8d8d8; padding-bottom:2mm; }
+h1 { font-size:24pt; margin:0 0 6mm; font-weight:600; letter-spacing:.02em; }
+h2 { font-size:15pt; margin:0 0 5mm; font-weight:600; letter-spacing:.02em; border-bottom:1px solid #E0E0E0; padding-bottom:2mm; }
 .cover { padding-top:60mm; text-align:center; }
 .cover p { margin:1.5mm 0; font-size:11pt; color:#333; }
-.warnband { background:#fdf3e3; border:1px solid #e0b877; padding:3mm 5mm; font-size:10pt; margin-bottom:6mm; }
+.warnband_unused { background:#fdf3e3; border:1px solid #e0b877; padding:3mm 5mm; font-size:10pt; margin-bottom:6mm; }
 table { border-collapse:collapse; width:100%; }
 td { vertical-align:top; }
 .lead { font-size:9.5pt; color:#5b5b5b; margin:0 0 4mm; }
-.hexbox { background:#33587f; color:#fff; font-size:9pt; line-height:1.7; padding:6mm 4mm; text-align:center; width:44mm; }
+.hexbox { background:#1D2088; color:#fff; font-size:9pt; line-height:1.7; padding:6mm 4mm; text-align:center; width:44mm; }
 .sumhead { font-size:10.5pt; font-weight:bold; margin:0 0 2mm; }
 .sum { font-size:10pt; line-height:1.8; margin:0; padding-left:5mm; }
 .legend { text-align:center; font-size:9pt; color:#5b5b5b; margin-top:1mm; }
 .sw { display:inline-block; width:9px; height:9px; margin:0 2px 0 10px; }
 .bandrow td { color:#fff; text-align:center; font-size:10.5pt; font-weight:bold; padding:2mm; }
 .axcell { width:16.66%; padding:0 1mm; }
-.axhead { border:1px solid #d8d8d8; background:#f4f6f8; text-align:center; font-size:10pt; font-weight:bold; padding:1.5mm; }
-.axbody { border:1px solid #d8d8d8; border-top:none; padding:2mm; height:34mm; }
+.axhead { border:1px solid #E0E0E0; background:#F5F5F5; text-align:center; font-size:10pt; font-weight:bold; padding:1.5mm; }
+.axbody { border:1px solid #E0E0E0; border-top:none; padding:2mm; height:29mm; }
 .cnt { font-size:8.5pt; color:#5b5b5b; margin:0 0 1mm; }
 .hits { margin:0; padding-left:4mm; font-size:9pt; line-height:1.6; }
 .none { font-size:9pt; color:#8a8a8a; margin:0; }
-.darkband { background:#33587f; color:#fff; padding:4mm 5mm; margin-top:5mm; }
+.darkband { background:#1D2088; color:#fff; padding:3.5mm 5mm; margin-top:4mm; }
 .darkband p { margin:1mm 0; font-size:10pt; line-height:1.7; }
-.pane { border:1px solid #33587f; padding:4mm; width:48%; }
+.pane { border:1px solid #1D2088; padding:4mm; width:48%; }
 .pane h4 { margin:0 0 2mm; font-size:11pt; }
 .pane ul { margin:0; padding-left:5mm; font-size:10pt; line-height:1.9; }
-.arrow { text-align:center; font-size:20pt; color:#33587f; padding:3mm 0; }
-.one { border:1px solid #d8d8d8; padding:4mm; }
+.arrow { text-align:center; font-size:20pt; color:#1D2088; padding:3mm 0; }
+.one { border:1px solid #E0E0E0; padding:4mm; }
 .one h4 { margin:0 0 2mm; font-size:11pt; }
 .one p { margin:0; font-size:10pt; line-height:1.8; }
 .pcell { width:50%; padding:0 3mm 6mm 0; }
-.pbox { border:1px solid #d8d8d8; padding:4mm; height:100%; }
+.pbox { border:1px solid #E0E0E0; padding:4mm; height:100%; }
 .ptitle { font-size:11.5pt; margin:0 0 2mm; }
 .badge { display:inline-block; padding:0.8mm 3mm; font-size:9pt; }
 .good { background:#e6f4ea; color:#1e6b38; }
@@ -45,22 +45,76 @@ td { vertical-align:top; }
 .rectitle { font-size:11pt; margin:0 0 2mm; }
 .recdesc { font-size:9.5pt; line-height:1.8; margin:0 0 3mm; }
 .recmeta { font-size:9pt; color:#5b5b5b; margin:0; }
-.recbox { border:1px solid #d8d8d8; padding:4mm; height:46mm; }
-.foot { position:absolute; left:16mm; right:16mm; bottom:9mm; font-size:8.5pt; color:#7a7a7a; line-height:1.6; }
+.recbox { border:1px solid #E0E0E0; padding:4mm; height:46mm; }
+.foot { position:absolute; left:16mm; right:52mm; bottom:8mm; font-size:8.5pt; color:#7a7a7a; line-height:1.6; }
 .cta { text-align:center; padding-top:45mm; }
 .cta p { font-size:12pt; line-height:2; }
+
+.stamp { position:absolute; top:6mm; right:16mm; font-size:8.5pt; color:#9a7b3f;
+  border:1px solid #e0b877; background:#fdf3e3; padding:1mm 3mm; }
+.covernote { margin-top:10mm; font-size:10pt; color:#7a6a4a; }
+
+.introlead { font-size:11.5pt; margin:0 0 4mm; }
+.grouptbl { margin-bottom:5mm; }
+.grouptbl td { padding:2mm 0; vertical-align:middle; }
+.gcell { width:34mm; text-align:center; font-size:10pt; font-weight:bold; padding:2.5mm 1mm; }
+.gdesc { font-size:10pt; line-height:1.7; padding-left:4mm; }
+.introbody { font-size:10.5pt; line-height:1.9; margin:0 0 3.5mm; }
+.introcaution { font-size:9.5pt; line-height:1.8; color:#5b5b5b; border-top:1px solid #E0E0E0; padding-top:3mm; margin:0; }
+
+.logo-cover { display:block; margin:0 auto 10mm; width:72mm; }
+.logo-mark { position:absolute; right:16mm; bottom:7mm; width:30mm; opacity:.9; }
+.cta .logo-cover { width:60mm; margin-bottom:8mm; }
 </style></head><body>
 
-<div class="page cover">
-  <div class="warnband">これはレイアウト確認用のサンプルです。記載されている数値・文章はすべてダミーで、実際の診断結果ではありません。</div>
-  <h1>Webサイト診断レポート</h1>
+<div class="page cover"><div class="stamp">サンプル（ダミーデータ）</div>
+  
+  <img class="logo-cover" src="leggenda-logo.png" alt="LEGGENDA"><h1>Webサイト診断レポート</h1>
   <p>株式会社サンプル 様</p>
   <p>対象サイト: https://recruit.example.com/vision/</p>
   <p>比較サイト: https://careers.example.co.jp/</p>
-  <p>2026年8月3日</p>
+  <p>2026年8月3日</p><p class="covernote">本レポートは画面構成をご確認いただくためのサンプルです。<br>記載の数値・文章はすべて架空のもので、実在するサイトの診断結果ではありません。</p>
 </div>
 
-<div class="page">
+
+<div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
+  <h2>採用ブランドの捉え方 ―― ブランド・ホイール</h2>
+  <table><tr>
+    <td style="width:126mm; padding-right:8mm;">
+      <img src="brand-wheel-framework.png" style="width:124mm;">
+    </td>
+    <td style="vertical-align:top; padding-top:4mm;">
+      <p class="introlead">採用ブランドは、大きく3つの領域に分けて捉えます。</p>
+      <table class="grouptbl">
+        <tr><td class="gcell" style="background:#D3D4EC;">会社の魅力</td>
+            <td class="gdesc">その会社が何を目指し、どれだけの実績・規模を持っているか。<br>
+              <b>活動的魅力</b>・<b>資産的魅力</b></td></tr>
+        <tr><td class="gcell" style="background:#CFE3EA;">会社との距離</td>
+            <td class="gdesc">どんな経営で、どんな人たちが、どんな環境で働いているか。<br>
+              <b>経営スタイル</b>・<b>就業環境</b></td></tr>
+        <tr><td class="gcell" style="background:#F7DCD7;">仕事の魅力</td>
+            <td class="gdesc">その仕事に就くと、何が得られるか。<br>
+              <b>情緒的便益</b>・<b>金銭的便益</b></td></tr>
+      </table>
+      <p class="introbody">
+        6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。中心の
+        <b>Core Value（約束する価値）</b>は、その24項目を貫く「この会社が候補者に約束するもの」にあたります。
+      </p>
+      <p class="introbody">
+        本レポートでは、<b>この24項目のうち何件が、サイトの記述から読み取れたか</b>を数えています。
+        点数付けではなく、件数の集計です。
+      </p>
+      <p class="introcaution">
+        読み取れなかった項目は、その魅力が「無い」という意味ではありません。
+        サイトにそう書かれていない、というだけです。また、採用ブランドは本来、
+        グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども
+        併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。
+      </p>
+    </td>
+  </tr></table>
+  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
+</div>
+<div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
   <h2>自社ページの分析結果</h2>
   <table><tr>
     <td class="hexbox">各項目について<br>該当する内容が<br>何件読み取れたかを<br>集計しています</td>
@@ -69,19 +123,19 @@ td { vertical-align:top; }
       <ul class="sum">
         <li>解析したURL：https://recruit.example.com/vision/</li>
         <li>金銭的便益が最も内容として充足しています。</li>
-        <li>就業環境に関する記載はなく、全体的に緑の項目の情報は少なめです。</li>
+        <li>就業環境に関する記載はなく、「会社との距離」の情報は全体的に少なめです。</li>
       </ul>
     </td>
-    <td style="width:105mm;">
-      <img src="radar-sample.png" style="width:105mm;">
-      <div class="legend"><span class="sw" style="background:#2a78d6"></span>自社サイト<span class="sw" style="background:#eb6834"></span>競合サイト</div>
+    <td style="width:95mm;">
+      <img src="radar-sample.png" style="width:95mm;">
+      <div class="legend"><span class="sw" style="background:#3A3FC0"></span>自社サイト<span class="sw" style="background:#E95446"></span>競合サイト</div>
     </td>
   </tr></table>
 
   <table class="bandrow" style="margin-top:4mm;"><tr>
-    <td colspan="2" style="background:#3f6fa3">青／会社の魅力</td>
-    <td colspan="2" style="background:#4a7d5f">緑／会社との距離</td>
-    <td colspan="2" style="background:#a3413c">赤／仕事の魅力</td>
+    <td colspan="2" style="background:#1D2088">会社の魅力</td>
+    <td colspan="2" style="background:#2C7F96">会社との距離</td>
+    <td colspan="2" style="background:#C03A28">仕事の魅力</td>
   </tr></table>
   <table style="margin-top:2mm;"><tr><td class="axcell">
       <div class="axhead">活動的魅力</div>
@@ -107,14 +161,15 @@ td { vertical-align:top; }
     <p><b>キーメッセージ：</b>技術で社会基盤を支える、という主題が一貫して置かれています。</p>
     <p><b>AI解析による印象：</b>幅広さは伝わるものの、それが働く人にとって何の嬉しさにつながるのかという点との距離があり、情緒的便益の記述が薄いのがもったいないところです。</p>
   </div>
+  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
 </div>
 
-<div class="page">
+<div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
   <h2>他社ページ比較とのまとめ</h2>
   <table><tr>
     <td class="pane">
       <h4>【自社ページ】</h4>
-      <ul><li>金銭的便益が最も内容として充足しています。</li><li>就業環境に関する記載はなく、全体的に緑の項目の情報は少なめです。</li></ul>
+      <ul><li>金銭的便益が最も内容として充足しています。</li><li>就業環境に関する記載はなく、「会社との距離」の情報は全体的に少なめです。</li></ul>
     </td>
     <td style="width:4%"></td>
     <td class="pane">
@@ -128,9 +183,10 @@ td { vertical-align:top; }
     <p><b>情報充足が出来ていない</b>：候補者が十分な情報を得られず、エントリーの土俵に上がれない可能性があります。</p>
   </div>
   <p class="foot">ブランド・ホイールは本来、サイトだけでなくグループインタビュー・口コミ・内定者/辞退者インタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。キーメッセージと印象の読み取りにはAIを使用しています。</p>
+  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
 </div>
 
-<div class="page">
+<div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
   <h2>採用担当の視点で見た診断結果</h2>
   <p class="lead">4つの観点それぞれについて、判定と、その理由を一言で記載しています。</p>
   <table>
@@ -142,9 +198,10 @@ td { vertical-align:top; }
       <span class="badge warn">改善の余地があります</span><p class="pdesc">画像の説明文と表示速度に改善の余地がありました。配色やレイアウトの印象そのものは自動判定の対象外です。</p></div></td></tr>
   </table>
   <p class="foot">取得できなかった項目は0点として扱わず、算出の対象から外しています（測定カバー率 90.9%／確信度 93.3%）。</p>
+  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
 </div>
 
-<div class="page">
+<div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
   <h2>改善提案</h2>
   <p class="lead">特に改善効果が見込まれる項目を、優先度の高い順に記載しています。</p>
   <table><tr><td class="reccell"><div class="recbox"><p class="rectitle">画像の説明文(読み上げ対応)</p><p class="recdesc">重要な画像に読み上げソフト向けの説明文を設定すると、より多くの方に内容が伝わります。</p>
@@ -153,10 +210,11 @@ td { vertical-align:top; }
       <p class="recmeta">優先度: 中　影響度: 中　対応工数: 中</p></div></td></tr></table>
 </div>
 
-<div class="page cta">
-  <h2>より詳しい診断・ご相談はこちら</h2>
+<div class="page cta"><div class="stamp">サンプル（ダミーデータ）</div>
+  <img class="logo-cover" src="leggenda-logo.png" alt="LEGGENDA"><h2>より詳しい診断・ご相談はこちら</h2>
   <p>今回は自社サイト・比較サイト1社の簡易診断結果です。</p>
   <p>他社比較（3〜5社）や、詳細な改善提案については、担当者までお気軽にご相談ください。</p>
+  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
 </div>
 
 </body></html>

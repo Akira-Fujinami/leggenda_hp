@@ -77,11 +77,19 @@ class AnalysisPipelineSkipBrandWheelTest extends TestCase
         FetchExternalSeoDataJob::class, RenderPageJob::class,
     ];
 
-    public function test_dispatch_website_fan_out_skips_brand_wheel_when_flag_is_true(): void
+    /**
+     * 2026-08-04: ブランド・ホイールのdispatchはdispatchWebsiteFanOut()から
+     * 削除し、RenderPageJob::onWebsiteJobTerminal()経由の
+     * dispatchBrandWheelAnalysisIfDue()に移した(RenderPageJobより先に完了して
+     * しまい静的HTMLだけで判定される競合が本番で確認されたため)。
+     * dispatchWebsiteFanOut()自体はもうブランド・ホイールに一切触れない
+     * ことを確認する。
+     */
+    public function test_dispatch_website_fan_out_never_touches_brand_wheel_regardless_of_the_flag(): void
     {
         Queue::fake([GenerateBrandWheelAnalysisJob::class, ...self::OTHER_FAN_OUT_JOBS]);
 
-        $websiteAnalysis = $this->makeWebsiteAnalysis(skipBrandWheel: true);
+        $websiteAnalysis = $this->makeWebsiteAnalysis(skipBrandWheel: false);
 
         app(AnalysisPipeline::class)->dispatchWebsiteFanOut($websiteAnalysis);
 
@@ -89,13 +97,25 @@ class AnalysisPipelineSkipBrandWheelTest extends TestCase
         $this->assertSame(0, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
     }
 
-    public function test_dispatch_website_fan_out_dispatches_brand_wheel_when_flag_is_false(): void
+    public function test_dispatch_brand_wheel_analysis_if_due_skips_when_flag_is_true(): void
     {
-        Queue::fake([GenerateBrandWheelAnalysisJob::class, ...self::OTHER_FAN_OUT_JOBS]);
+        Queue::fake([GenerateBrandWheelAnalysisJob::class]);
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis(skipBrandWheel: true);
+
+        app(AnalysisPipeline::class)->dispatchBrandWheelAnalysisIfDue($websiteAnalysis->analysis_id, $websiteAnalysis->id);
+
+        Queue::assertNotPushed(GenerateBrandWheelAnalysisJob::class);
+        $this->assertSame(0, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+    }
+
+    public function test_dispatch_brand_wheel_analysis_if_due_dispatches_when_flag_is_false(): void
+    {
+        Queue::fake([GenerateBrandWheelAnalysisJob::class]);
 
         $websiteAnalysis = $this->makeWebsiteAnalysis(skipBrandWheel: false);
 
-        app(AnalysisPipeline::class)->dispatchWebsiteFanOut($websiteAnalysis);
+        app(AnalysisPipeline::class)->dispatchBrandWheelAnalysisIfDue($websiteAnalysis->analysis_id, $websiteAnalysis->id);
 
         $record = BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->first();
         $this->assertNotNull($record);

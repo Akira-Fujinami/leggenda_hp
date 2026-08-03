@@ -25,6 +25,14 @@ class WordReportGenerator
 {
     private const FONT_NAME = '游ゴシック';
 
+    /**
+     * ブランド・ホイール(6軸24項目)の固定説明図。PdfReportGeneratorと同じ
+     * 静的アセットを使う ―― 分析結果に依存しないため、ここでも動的生成はしない。
+     * config('brand_wheel.axes.*.sub_elements')を変更したら、この画像も
+     * 作り直すこと(README「リリース前チェックリスト」参照)。
+     */
+    private const BRAND_WHEEL_FRAMEWORK_IMAGE_PATH = 'images/brand-wheel-framework.png';
+
     public function generate(ReportViewModel $viewModel): string
     {
         $phpWord = new PhpWord;
@@ -33,6 +41,7 @@ class WordReportGenerator
         $phpWord->getSettings()->setThemeFontLang(new Language(Language::JA_JP));
 
         $this->addCoverSection($phpWord, $viewModel);
+        $this->addBrandWheelFrameworkIntroSection($phpWord);
         $this->addOverallResultsSection($phpWord, $viewModel);
         $this->addBrandWheelSection($phpWord, $viewModel);
         $this->addPerspectivesSection($phpWord, $viewModel);
@@ -72,6 +81,60 @@ class WordReportGenerator
                 ['alignment' => Jc::CENTER],
             );
         }
+    }
+
+    /**
+     * PDF版の「採用ブランドの捉え方 ―― ブランド・ホイール」ページ(2ページ目)
+     * と同内容の前置き。分析結果に依存しない固定コンテンツのため、
+     * ReportViewModelを受け取らない(PDF側と同じ理由でBrandWheelHexagonRenderer
+     * も通さない、2026-08-04)。
+     *
+     * ここに含む「読み取れなかった項目は…」の一文は、この診断で最も誤解を
+     * 招きやすい箇所の断り書きのため、要約・省略せず原文のまま出すこと。
+     */
+    private function addBrandWheelFrameworkIntroSection(PhpWord $phpWord): void
+    {
+        $section = $phpWord->addSection();
+        $section->addTitle('採用ブランドの捉え方 ―― ブランド・ホイール', 1);
+
+        $section->addImage(
+            resource_path(self::BRAND_WHEEL_FRAMEWORK_IMAGE_PATH),
+            ['width' => 260, 'height' => 260, 'alignment' => Jc::CENTER],
+        );
+
+        $section->addTextBreak(1);
+        $section->addText('採用ブランドは、大きく3つの領域に分けて捉えます。', ['size' => 10.5]);
+
+        $table = $section->addTable(['cellMargin' => 80]);
+        $groups = [
+            ['label' => '青／会社の魅力', 'desc' => 'その会社が何を目指し、どれだけの実績・規模を持っているか。活動的魅力・資産的魅力'],
+            ['label' => '緑／会社との距離', 'desc' => 'どんな経営で、どんな人たちが、どんな環境で働いているか。経営スタイル・就業環境'],
+            ['label' => '赤／仕事の魅力', 'desc' => 'その仕事に就くと、何が得られるか。情緒的便益・金銭的便益'],
+        ];
+
+        foreach ($groups as $group) {
+            $table->addRow();
+            $table->addCell(2500)->addText($group['label'], ['bold' => true]);
+            $table->addCell(6500)->addText($group['desc']);
+        }
+
+        $section->addTextBreak(1);
+        $section->addText(
+            '6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。中心のCore Value(約束する価値)は、'.
+            'その24項目を貫く「この会社が候補者に約束するもの」にあたります。',
+        );
+        $section->addText(
+            'このレポートでは、この24項目のうち何件が、サイトの記述から読み取れたかを数えています。'.
+            '点数付けではなく、件数の集計です。',
+        );
+
+        $section->addTextBreak(1);
+        $section->addText(
+            '読み取れなかった項目は、その魅力が「無い」という意味ではありません。サイトにそう書かれていない、というだけです。'.
+            'また、採用ブランドは本来、グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども併せて構築するものです。'.
+            '今回はそのうちサイトの記述のみを拝見しています。',
+            ['size' => 9, 'color' => '666666'],
+        );
     }
 
     private function addOverallResultsSection(PhpWord $phpWord, ReportViewModel $viewModel): void

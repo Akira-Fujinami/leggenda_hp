@@ -14,6 +14,7 @@ use App\Models\MetricResult;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalyzerClient;
+use App\Services\Analysis\PageHtmlResolver;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -72,13 +73,11 @@ class DetectTechnologyJob extends BaseWebsiteAnalysisJob
             ->where('page_type', PageType::Homepage)
             ->first();
 
-        $html = null;
-        $disk = Storage::disk('analysis');
-        if ($page?->rendered_html_path !== null && $disk->exists($page->rendered_html_path)) {
-            $html = $disk->get($page->rendered_html_path);
-        } elseif ($page?->raw_html_path !== null && $disk->exists($page->raw_html_path)) {
-            $html = $disk->get($page->raw_html_path);
-        }
+        // 優先順位の解決はPageHtmlResolverへ切り出した(2026-08-04、
+        // AnalyzeHtmlSeoJob/BrandWheelAnalysisInputFactoryとの3箇所目の
+        // 重複を避けるため)。
+        $resolved = app(PageHtmlResolver::class)->resolve($page);
+        $html = $resolved !== null ? Storage::disk('analysis')->get($resolved['path']) : null;
 
         /** @var AnalyzerClient $client */
         $client = app(AnalyzerClient::class);

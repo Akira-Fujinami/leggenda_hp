@@ -46,6 +46,33 @@ class BrandWheelAnalysisInputFactoryTest extends TestCase
         ]);
     }
 
+    /**
+     * JSで本文を描画するサイト(recruit.lifull.com/culture/、
+     * hello-world.smarthr.co.jp/で実際に再現)を模したフィクスチャ。
+     * 静的HTML(raw_html_path)は本文がほぼ空、レンダリング後HTML
+     * (rendered_html_path)にだけ実際の本文がある状態。
+     */
+    private function putStaticAndRenderedPage(WebsiteAnalysis $websiteAnalysis, PageType $pageType, string $staticHtml, string $renderedHtml): AnalysisPage
+    {
+        $filenamePrefix = $pageType === PageType::Recruit ? 'recruit' : 'homepage';
+        $paths = app(AnalysisStoragePaths::class);
+        $staticPath = $paths->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, "{$filenamePrefix}.html");
+        $renderedPath = $paths->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, "{$filenamePrefix}.rendered.html");
+        Storage::disk('analysis')->put($staticPath, $staticHtml);
+        Storage::disk('analysis')->put($renderedPath, $renderedHtml);
+
+        return AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'final_url' => 'https://example.com',
+            'page_type' => $pageType,
+            'http_status' => 200,
+            'raw_html_path' => $staticPath,
+            'rendered_html_path' => $renderedPath,
+            'fetched_at' => now(),
+        ]);
+    }
+
     public function test_it_builds_input_from_recruit_and_homepage_html_without_leaking_raw_html(): void
     {
         $websiteAnalysis = WebsiteAnalysis::factory()->create();
@@ -212,5 +239,59 @@ class BrandWheelAnalysisInputFactoryTest extends TestCase
             ->withArgs(fn (string $message, array $context) => $message === 'Brand wheel analysis: stored raw HTML file is missing'
                 && $context['website_analysis_id'] === $websiteAnalysis->id)
             ->once();
+    }
+
+    /**
+     * 2026-08-04: JSで本文を描画するサイト(recruit.lifull.com/culture/、
+     * hello-world.smarthr.co.jp/で実際に再現)は、静的HTML(raw_html_path)
+     * だけでは本文が実質空になり、200文字のinsufficient_inputしきい値を
+     * 必ず下回っていた。レンダリング後HTML(rendered_html_path)が既に
+     * 保存されている場合はそちらを優先して読むことを確認する
+     * (AnalyzeHtmlSeoJob/DetectTechnologyJobと同じ優先順位)。
+     */
+    public function test_prefers_rendered_html_over_static_html_when_static_body_is_effectively_empty(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        // 静的HTMLは本文がほぼ空(JS実行前のシェルのみ、SPA的なサイトを模す)。
+        $staticRecruitHtml = '<html><head><title>採用情報</title></head><body><div id="app"></div></body></html>';
+        $staticHomepageHtml = '<html><head><title>Example</title></head><body><div id="app"></div></body></html>';
+
+        // レンダリング後HTMLには実際の本文がある。
+        $renderedRecruitBody = str_repeat('採用ページの本文です。', 30);
+        $renderedHomepageBody = str_repeat('トップページの本文です。', 30);
+        $renderedRecruitHtml = '<html><head><title>採用情報</title></head><body><h1>採用情報</h1><p>'.$renderedRecruitBody.'</p></body></html>';
+        $renderedHomepageHtml = '<html><head><title>Example</title></head><body><h1>Example</h1><p>'.$renderedHomepageBody.'</p></body></html>';
+
+        $this->putStaticAndRenderedPage($websiteAnalysis, PageType::Recruit, $staticRecruitHtml, $renderedRecruitHtml);
+        $this->putStaticAndRenderedPage($websiteAnalysis, PageType::Homepage, $staticHomepageHtml, $renderedHomepageHtml);
+
+        $input = $this->factory->build($websiteAnalysis->fresh());
+
+        // 静的HTMLだけを読んでいたら合計0文字でinsufficient_inputの
+        // しきい値(200文字)を割ってしまう。レンダリング後HTMLの本文が
+        // 実際に読めていることを直接確認する。
+        $this->assertStringContainsString('採用ページの本文です', $input->recruitPageBodyText);
+        $this->assertStringContainsString('トップページの本文です', $input->homepageBodyText);
+        $this->assertGreaterThanOrEqual(
+            (int) config('brand_wheel.insufficient_input_min_total_chars', 200),
+            mb_strlen($input->recruitPageBodyText) + mb_strlen($input->homepageBodyText),
+        );
+    }
+
+    /**
+     * RenderPageJobは別ジョブとして並行実行されるため、この時点でまだ
+     * rendered_html_pathが用意できていないことは正常系。その場合は
+     * 静的HTMLへフォールバックする(従来どおりの挙動を維持)。
+     */
+    public function test_falls_back_to_static_html_when_rendered_html_is_not_yet_available(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        $this->putHtmlPage($websiteAnalysis, PageType::Homepage, '<html><body><h1>Example</h1><p>会社の紹介文です。</p></body></html>', 'Example');
+
+        $input = $this->factory->build($websiteAnalysis->fresh());
+
+        $this->assertStringContainsString('会社の紹介文です', $input->homepageBodyText);
     }
 }
