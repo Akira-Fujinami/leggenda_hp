@@ -208,7 +208,7 @@ function RadarChart({ rows, hasCompetitor }: { rows: ComparisonRow[]; hasCompeti
   return (
     <div className="space-y-2">
       <svg
-        viewBox="0 0 300 300"
+        viewBox="0 0 300 276"
         role="img"
         aria-label="4つの観点の達成度を自社と競合で重ねた図。各観点の数値は下の一覧に記載しています。"
         className="mx-auto h-auto w-full max-w-[300px]"
@@ -363,59 +363,61 @@ export function LeadPerspectiveComparison({ websites }: { websites: LeadWebsiteR
         <span>外側ほど高く、目盛りは25刻みです(0〜100)</span>
       </div>
 
-      {/* 図と観点の対応は番号(①〜④)で示す。見出しをそのまま軸ラベルにすると
+      {/* 画面が広いときは図を左、観点ごとの内訳を右に置く ―― 図を単独で中央に
+          置くと左右に大きな余白ができ、そのぶん縦に伸びる(2026-07-30のユーザー指摘)。
+          図と観点の対応は番号(①〜④)で示す。見出しをそのまま軸ラベルにすると
           長すぎて図の外へはみ出すうえ、内部名(label)は画面に出さない方針のため。 */}
-      <RadarChart rows={rows} hasCompetitor={competitor !== null} />
+      <div className="grid items-start gap-6 lg:grid-cols-[300px_1fr]">
+        <RadarChart rows={rows} hasCompetitor={competitor !== null} />
 
-      {/* 画面が広いときは2列に折り返す ―― 1列のままだと観点ごとの注記が積み上がり、
-          PCでは縦に間延びして全体像が1画面に収まらない(2026-07-30のユーザー指摘)。 */}
-      <div className="grid gap-x-8 gap-y-5 lg:grid-cols-2">
-        {rows.map((row, index) => (
-          <div key={row.key} className="space-y-1.5">
-            <p className="text-sm font-medium">
-              <span className="text-muted-foreground">{AXIS_NUMBERS[index]}</span>
-              {row.heading}
-            </p>
+        <div className="space-y-5">
+          {rows.map((row, index) => (
+              <div key={row.key} className="space-y-1.5">
+              <p className="text-sm font-medium">
+                <span className="text-muted-foreground">{AXIS_NUMBERS[index]}</span>
+                {row.heading}
+              </p>
 
-            {/* 定性判定はバックエンドのstatusLabel()と同じ文言をそのまま出す。
-                spanで囲むのは、画面とWord/PDFレポートで文言が食い違っていないことを
-                テストから1語単位で検証できるようにするため。 */}
-            <p className="text-xs text-muted-foreground">
-              {SELF_LABEL}: <span>{PERSPECTIVE_STATUS_LABELS[row.self.perspective.status]}</span>(
-              <span data-testid={`value-self-${row.key}`}>
-                {row.self.value === null ? "数値なし" : row.self.value}
-              </span>
-              )
-              {row.competitor && (
-                <>
-                  {" ／ "}
-                  {COMPETITOR_LABEL}: <span>{PERSPECTIVE_STATUS_LABELS[row.competitor.perspective.status]}</span>(
-                  <span data-testid={`value-competitor-${row.key}`}>
-                    {row.competitor.value === null ? "数値なし" : row.competitor.value}
-                  </span>
-                  )
-                </>
+              {/* 定性判定はバックエンドのstatusLabel()と同じ文言をそのまま出す。
+                  spanで囲むのは、画面とWord/PDFレポートで文言が食い違っていないことを
+                  テストから1語単位で検証できるようにするため。 */}
+              <p className="text-xs text-muted-foreground">
+                {SELF_LABEL}: <span>{PERSPECTIVE_STATUS_LABELS[row.self.perspective.status]}</span>(
+                <span data-testid={`value-self-${row.key}`}>
+                  {row.self.value === null ? "数値なし" : row.self.value}
+                </span>
+                )
+                {row.competitor && (
+                  <>
+                    {" ／ "}
+                    {COMPETITOR_LABEL}: <span>{PERSPECTIVE_STATUS_LABELS[row.competitor.perspective.status]}</span>(
+                    <span data-testid={`value-competitor-${row.key}`}>
+                      {row.competitor.value === null ? "数値なし" : row.competitor.value}
+                    </span>
+                    )
+                  </>
+                )}
+              </p>
+
+              {row.note && <p className="text-xs text-muted-foreground">{row.note}</p>}
+
+              {row.self.perspective.summary && (
+                <div>
+                  {competitor && <p className="text-[11px] text-muted-foreground">自社サイト</p>}
+                  <p className="text-sm">{row.self.perspective.summary}</p>
+                </div>
               )}
-            </p>
+              {row.competitor?.perspective.summary && (
+                <div>
+                  <p className="text-[11px] text-muted-foreground">競合サイト</p>
+                  <p className="text-sm">{row.competitor.perspective.summary}</p>
+                </div>
+              )}
 
-            {row.note && <p className="text-xs text-muted-foreground">{row.note}</p>}
-
-            {row.self.perspective.summary && (
-              <div>
-                {competitor && <p className="text-[11px] text-muted-foreground">自社サイト</p>}
-                <p className="text-sm">{row.self.perspective.summary}</p>
-              </div>
-            )}
-            {row.competitor?.perspective.summary && (
-              <div>
-                <p className="text-[11px] text-muted-foreground">競合サイト</p>
-                <p className="text-sm">{row.competitor.perspective.summary}</p>
-              </div>
-            )}
-
-            <PerspectiveDetail row={row} showSiteLabels={competitor !== null} />
-          </div>
-        ))}
+              <PerspectiveDetail row={row} showSiteLabels={competitor !== null} />
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="space-y-1 border-t pt-3 text-xs text-muted-foreground">
