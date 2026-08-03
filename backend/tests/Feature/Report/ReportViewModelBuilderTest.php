@@ -320,11 +320,21 @@ class ReportViewModelBuilderTest extends TestCase
         $this->assertSame('success', $viewModel->brandWheelCompetitor['status']);
         $this->assertNotEmpty($viewModel->brandWheelComparison['self_points']);
 
-        // evidence(原文の抜粋)はレポート層にも一切渡さない
-        // (BrandWheelLeadResponseComposerと同じ方針)。
+        // evidence(原文の抜粋)は$brandWheelSelf/$brandWheelCompetitor
+        // (BrandWheelLeadResponseComposerの戻り値、JSON APIと共有)には
+        // 一切渡さない。
         $raw = json_encode($viewModel->brandWheelSelf, JSON_UNESCAPED_UNICODE).json_encode($viewModel->brandWheelCompetitor, JSON_UNESCAPED_UNICODE);
         $this->assertStringNotContainsString('自社サイトの抜粋', $raw);
         $this->assertStringNotContainsString('競合サイトの抜粋', $raw);
+
+        // 2026-08-04: 「サイトから読み取れた記述」ページ用のevidenceは、
+        // 自社のみ$selfBrandWheelEvidenceItemsという別フィールドで渡す
+        // (競合サイトの本文をレポートに出さないため、競合分は含めない)。
+        $this->assertCount(1, $viewModel->selfBrandWheelEvidenceItems);
+        $this->assertSame('自社サイトの抜粋', $viewModel->selfBrandWheelEvidenceItems[0]['evidence']);
+        $this->assertSame('will_activity', $viewModel->selfBrandWheelEvidenceItems[0]['axis_key']);
+        $selfEvidenceRaw = json_encode($viewModel->selfBrandWheelEvidenceItems, JSON_UNESCAPED_UNICODE);
+        $this->assertStringNotContainsString('競合サイトの抜粋', $selfEvidenceRaw);
     }
 
     /**

@@ -186,6 +186,52 @@ class WordReportGeneratorTest extends TestCase
     }
 
     /**
+     * 2026-08-04: PDF版の「サイトから読み取れた記述」ページと同内容。
+     * evidenceは要約・整形をせずそのまま出す。
+     */
+    public function test_includes_the_evidence_section_with_verbatim_text_when_there_are_matched_items(): void
+    {
+        $docx = app(WordReportGenerator::class)->generate($this->viewModel());
+        $documentXml = $this->extractDocumentXml($docx);
+
+        $this->assertStringContainsString('サイトから読み取れた記述', $documentXml);
+        $this->assertStringContainsString('活動的魅力', $documentXml);
+        $this->assertStringContainsString('パーパス', $documentXml);
+        $this->assertStringContainsString('技術で社会の「あたり前」を支える。それが私たちの存在意義です。', $documentXml);
+    }
+
+    /**
+     * 該当0件のときはセクション自体を出さない(見出しと空の表だけが残る
+     * 状態を作らない ―― 画面側で同じ失敗を一度している、PDF版と同じ方針)。
+     */
+    public function test_omits_the_evidence_section_entirely_when_there_are_no_evidence_items(): void
+    {
+        $viewModel = $this->viewModel();
+        $noEvidence = new ReportViewModel(
+            companyDisplayName: $viewModel->companyDisplayName,
+            generatedAtLabel: $viewModel->generatedAtLabel,
+            selfWebsiteUrl: $viewModel->selfWebsiteUrl,
+            competitorWebsiteUrl: $viewModel->competitorWebsiteUrl,
+            selfScore: $viewModel->selfScore,
+            competitorScore: $viewModel->competitorScore,
+            overallSummaryText: $viewModel->overallSummaryText,
+            comparisonSentence: $viewModel->comparisonSentence,
+            perspectives: $viewModel->perspectives,
+            topRecommendations: $viewModel->topRecommendations,
+            isPartial: $viewModel->isPartial,
+            brandWheelSelf: $viewModel->brandWheelSelf,
+            brandWheelCompetitor: $viewModel->brandWheelCompetitor,
+            brandWheelComparison: $viewModel->brandWheelComparison,
+            brandWheelRadarPng: $viewModel->brandWheelRadarPng,
+            selfBrandWheelEvidenceItems: [],
+        );
+
+        $documentXml = $this->extractDocumentXml(app(WordReportGenerator::class)->generate($noEvidence));
+
+        $this->assertStringNotContainsString('サイトから読み取れた記述', $documentXml);
+    }
+
+    /**
      * 2026-08-03: status!=='success'のとき表を出さず、status_messageのみを
      * 出す(6項目すべて0件の表を出すことを禁止 ―― 「魅力のない会社」の
      * 意味になるため)。
@@ -246,6 +292,24 @@ class WordReportGeneratorTest extends TestCase
             .'サイトにそう書かれていない、というだけです。',
             $documentXml,
         );
+    }
+
+    /**
+     * 2026-08-04: グループ名から色名(青/緑/赤)を外している ―― 配色を
+     * レジェンダに合わせた結果、緑が青緑に変わり色名と実際の色が食い違う
+     * ため(docs/lead-report-layout/README.md参照、PDF版と統一)。
+     */
+    public function test_intro_section_group_labels_do_not_include_color_names(): void
+    {
+        $docx = app(WordReportGenerator::class)->generate($this->viewModel());
+        $documentXml = $this->extractDocumentXml($docx);
+
+        $this->assertStringContainsString('会社の魅力', $documentXml);
+        $this->assertStringContainsString('会社との距離', $documentXml);
+        $this->assertStringContainsString('仕事の魅力', $documentXml);
+        $this->assertStringNotContainsString('青／会社の魅力', $documentXml);
+        $this->assertStringNotContainsString('緑／会社との距離', $documentXml);
+        $this->assertStringNotContainsString('赤／仕事の魅力', $documentXml);
     }
 
     /**

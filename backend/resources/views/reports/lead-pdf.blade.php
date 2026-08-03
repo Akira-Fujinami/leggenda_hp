@@ -72,9 +72,9 @@
     --}}
     table { border-collapse: collapse; width: 100%; table-layout: fixed; }
     td { vertical-align: top; }
-    .lead1 { font-size: 10pt; color: #6B6767; margin: 0 0 3mm; line-height: 1.5; }
-    .sumhead { font-size: 10.5pt; font-weight: bold; margin: 0 0 2mm; }
-    .sum { font-size: 10pt; line-height: 1.7; margin: 0; padding-left: 5mm; }
+    .lead1 { font-size: 10pt; color: #6B6767; margin: 0 0 2mm; line-height: 1.4; }
+    .sumhead { font-size: 10.5pt; font-weight: bold; margin: 0 0 1.5mm; }
+    .sum { font-size: 9.5pt; line-height: 1.5; margin: 0; padding-left: 5mm; }
     .legend { text-align: center; font-size: 9pt; color: #5b5b5b; margin-top: 1mm; }
     .sw { display: inline-block; width: 9px; height: 9px; margin: 0 2px 0 10px; }
     .bandrow td { color: #fff; text-align: center; font-size: 10.5pt; font-weight: bold; padding: 1.5mm; }
@@ -184,10 +184,13 @@
     {{-- ロゴ(コーポレートサイト、512x94)。 --}}
     .logo-cover { display: block; margin: 0 auto 10mm; width: 72mm; }
     {{--
-        画像のみのposition:absoluteはテキスト折り返しの不具合と無関係
-        (2026-08-04確認: .footと違い改行計算が発生しないため安全)。
+        2026-08-04: right:16mmで指定すると、ロゴ画像が右端で「LE」までしか
+        描画されず途中で切れる不具合が実PDF確認で見つかった(.footのテキスト
+        折り返し不具合とは別に、dompdfのposition:absoluteでは`right`指定自体が
+        信頼できないことが判明)。leftへ変更して回避する。
+        left = ページ幅297mm - 右余白16mm - ロゴ幅30mm = 251mm。
     --}}
-    .logo-mark { position: absolute; right: 16mm; bottom: 7mm; width: 30mm; opacity: .9; }
+    .logo-mark { position: absolute; left: 251mm; bottom: 7mm; width: 30mm; opacity: .9; }
     .cta .logo-cover { width: 60mm; margin-bottom: 8mm; }
 </style>
 </head>
@@ -293,6 +296,15 @@
     @else
         <p class="lead1">6つの項目それぞれについて、該当する内容がサイトの記述から何件読み取れたかを集計しています(点数ではありません)。<br>解析したURL：{{ $selfWheel['analyzed_url'] }}</p>
 
+        {{--
+            2026-08-04: 「サマリー」の箇条書きはBrandWheelComparisonSummaryComposerが
+            軸数に応じて可変長(0件の軸1つにつき1件、最大で数件)で生成するため、
+            統計ボックス・レーダー画像と同じ行に置くと、テキストの折り返し量
+            次第でその行全体の高さが不安定になり、実データ(自社側5件)で
+            軸カード表・キーメッセージ帯がまるごと次ページへあふれる不具合が
+            実PDF確認で見つかった(ダミーデータの3件では再現しなかった)。
+            統計・レーダーの行とサマリーを別ブロックに分離し、影響を切り離す。
+        --}}
         <table class="statrow" style="width: 265mm;"><tr>
             <td style="width: 50mm;">
                 <div class="statbox">
@@ -310,21 +322,13 @@
                 </td>
                 <td style="width: 4mm;"></td>
             @endif
-            <td style="width: {{ $competitorReadable ? '75mm' : '129mm' }}; vertical-align: top; padding-top: 1mm;">
-                <p class="sumhead">サマリー</p>
-                <ul class="sum">
-                    @foreach ($comparison['self_points'] as $point)
-                        <li>{{ $point }}</li>
-                    @endforeach
-                </ul>
-            </td>
-            <td style="width: 4mm;"></td>
-            <td style="width: 78mm;">
+            <td style="width: {{ $competitorReadable ? '77mm' : '131mm' }};"></td>
+            <td style="width: 80mm;">
                 @if ($viewModel->brandWheelRadarPng)
                     {{-- レーダー図のviewBoxは380x276(縦横比380:276)。dompdfは
                          widthのみ指定だと縦横比を正しく保持しないことがあるため、
                          heightも明示して指定どおりの比率で描画させる。 --}}
-                    <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPng) }}" style="width: 66mm; height: 48mm;">
+                    <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPng) }}" style="width: 76mm; height: 55mm;">
                     <div class="legend">
                         <span class="sw" style="background: #3A3FC0;"></span>自社サイト
                         @if ($competitorReadable)
@@ -334,6 +338,13 @@
                 @endif
             </td>
         </tr></table>
+
+        <p class="sumhead" style="margin-top: 3mm;">サマリー</p>
+        <ul class="sum">
+            @foreach ($comparison['self_points'] as $point)
+                <li>{{ $point }}</li>
+            @endforeach
+        </ul>
 
         <table class="bandrow" style="margin-top: 3mm;"><tr>
             @foreach ($groupBands as $band)

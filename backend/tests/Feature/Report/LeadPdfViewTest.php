@@ -20,6 +20,9 @@ use Tests\TestCase;
  *   self側のrecommendationsしか渡していないことをここでも再確認する)
  * - 個別指標名(items[*].label)を4観点ページに出さない(2026-08-04)
  *
+ * 2026-08-04: docs/lead-report-layout/report-layout-draft.htmlを移植元に
+ * 全8ページへ全面書き直し。このテストファイルもそれに合わせて全面書き直し。
+ *
  * PDFバイナリのテキスト抽出用ライブラリはこのリポジトリに無いため、dompdfへ
  * 変換する前のBladeテンプレート自体をHTML文字列としてレンダリングして検証
  * する(PdfReportGenerator::generate()が使うのと同じビュー
@@ -199,7 +202,7 @@ class LeadPdfViewTest extends TestCase
     }
 
     /**
-     * status!=='success'のとき表を出さず、status_messageのみを出す。
+     * status!=='success'のとき図も表も出さず、status_messageのみを出す。
      * 6項目すべて0件の表(「魅力のない会社」に見えてしまう)は禁止。
      */
     public function test_does_not_render_the_brand_wheel_table_when_status_is_not_success(): void
@@ -215,14 +218,20 @@ class LeadPdfViewTest extends TestCase
                 'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
             ],
             'brandWheelComparison' => ['self_points' => [], 'competitor_points' => [], 'one_point' => null],
+            // 実際のReportViewModelBuilderは、axesが空ならevidenceも自動的に
+            // 空になる(buildSelfBrandWheelEvidenceItems()が$selfWheelAxesを
+            // 反復するだけのため)。このfixtureでも同じ状態を再現する。
+            'selfBrandWheelEvidenceItems' => [],
         ]));
 
         $this->assertStringContainsString('サイトの記述からは、6つの項目に該当する内容を読み取れませんでした', $html);
         $this->assertStringNotContainsString('パーパス', $html);
         // 「採用ブランドの捉え方」前置きページは軸名(活動的魅力等)を固定の
         // 説明文として常に含むため、軸名そのものの有無ではなく、実際の
-        // 軸カード(件数表示)が出ていないことで判定する。
-        $this->assertStringNotContainsString('読み取れた内容', $html);
+        // 軸カード(件数の丸)が出ていないことで判定する。
+        $this->assertStringNotContainsString('class="axcnt"', $html);
+        // evidence一覧ページ自体も出ない。
+        $this->assertStringNotContainsString('サイトから読み取れた記述', $html);
     }
 
     public function test_includes_the_brand_wheel_section_with_counts_and_summary(): void
@@ -231,7 +240,7 @@ class LeadPdfViewTest extends TestCase
 
         $this->assertStringContainsString('自社ページの分析結果', $html);
         $this->assertStringContainsString('活動的魅力', $html);
-        $this->assertStringContainsString('2 / 4件', $html);
+        $this->assertStringContainsString('2<small> / 4件</small>', $html);
         $this->assertStringContainsString('パーパス', $html);
         $this->assertStringContainsString('技術で社会基盤を支える', $html);
         $this->assertStringContainsString('情緒的便益の記述が薄い', $html);
@@ -282,6 +291,7 @@ class LeadPdfViewTest extends TestCase
                 'source_pages' => ['recruit_page' => 'absent', 'home_page' => 'read'],
             ],
             'brandWheelComparison' => ['self_points' => [], 'competitor_points' => [], 'one_point' => null],
+            'selfBrandWheelEvidenceItems' => [],
         ]));
 
         $this->assertStringContainsString('採用ブランドの捉え方', $html);
@@ -297,12 +307,12 @@ class LeadPdfViewTest extends TestCase
     {
         $html = $this->render($this->viewModel(['brandWheelRadarPng' => null]));
 
-        // 2026-08-04: 前置きページの固定説明図(brand-wheel-framework.png)は
-        // レーダー画像の有無に関わらず常に出るため、<img>自体の有無ではなく、
-        // レーダー画像に固有のスタイル(width: 95mm; height: 69mm;)の有無で判定する。
-        $this->assertStringNotContainsString('width: 95mm; height: 69mm;', $html);
+        // レーダー画像に固有のスタイル(width: 76mm; height: 55mm;)が無いこと
+        // (前置きページ・ロゴのimgタグと混同しないよう、レーダー画像固有の
+        // スタイル文字列で判定する)。
+        $this->assertStringNotContainsString('width: 76mm; height: 55mm;', $html);
         // 図が無くても表(件数)は変わらず出る。
-        $this->assertStringContainsString('2 / 4件', $html);
+        $this->assertStringContainsString('2<small> / 4件</small>', $html);
     }
 
     public function test_embeds_the_radar_png_as_a_base64_image_when_available(): void
@@ -339,18 +349,192 @@ class LeadPdfViewTest extends TestCase
     {
         $html = $this->render($this->viewModel());
 
-        $this->assertStringContainsString('.pane { border: 1px solid #33587f; padding: 4mm; width: 129.5mm; }', $html);
+        $this->assertStringContainsString('.pane { border: 1px solid #1D2088; padding: 4mm; width: 129.5mm; }', $html);
         $this->assertStringNotContainsString('width: 48%', $html);
     }
 
-    public function test_never_leaks_evidence_text_into_the_pdf(): void
+    public function test_never_leaks_evidence_text_into_the_competitor_only_data(): void
     {
-        // BrandWheelLeadResponseComposerはevidenceを一切含めないため、
-        // このテストのfixture自体にevidenceキーは存在しない。万一、将来
-        // どこかでevidenceを含む配列がそのまま渡された場合に備え、
-        // "evidence"という語自体がPDFに出ないことを確認する。
+        // brandWheelCompetitorにはevidenceを持たせていない(競合の本文が
+        // レポートに出ない設計)ため、競合側からevidence文字列が漏れないことを
+        // 確認する。自社側のselfBrandWheelEvidenceItemsは意図的にPDFへ出す
+        // ものなので、このテストの対象外(下のevidenceページ専用テストで別途検証)。
+        $html = $this->render($this->viewModel([
+            'competitorWebsiteUrl' => 'https://competitor.example.com',
+            'brandWheelCompetitor' => [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://competitor.example.com/careers',
+                'axes' => [
+                    ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 1, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']]],
+                ],
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+        ]));
+
+        $this->assertStringNotContainsString('"evidence"', $html);
+    }
+
+    // ------------------------------------------------------------------
+    // 「サイトから読み取れた記述」ページ(evidence一覧、2026-08-04新設)。
+    // ------------------------------------------------------------------
+
+    /**
+     * 該当0件のときはページ自体を出さない(見出しと空の表だけが残る状態を
+     * 作らない ―― 画面側で同じ失敗を一度している)。
+     */
+    public function test_omits_the_evidence_page_entirely_when_there_are_no_evidence_items(): void
+    {
+        $html = $this->render($this->viewModel(['selfBrandWheelEvidenceItems' => []]));
+
+        $this->assertStringNotContainsString('サイトから読み取れた記述', $html);
+        $this->assertStringNotContainsString('class="evtbl"', $html);
+    }
+
+    public function test_includes_the_evidence_page_when_there_are_matched_items(): void
+    {
         $html = $this->render($this->viewModel());
 
-        $this->assertStringNotContainsString('evidence', $html);
+        $this->assertStringContainsString('サイトから読み取れた記述', $html);
+        $this->assertStringContainsString('class="evtbl"', $html);
+        $this->assertStringContainsString('活動的魅力', $html);
+        $this->assertStringContainsString('パーパス', $html);
+    }
+
+    /**
+     * evidenceは要約・整形・省略記号での短縮を一切せず、そのまま出す
+     * (原文との部分文字列照合を通ったものだけが残っている、というのが
+     * このページの価値のため)。長い文でも省略記号(…)を挟まないことを含めて
+     * 確認する。
+     */
+    public function test_evidence_text_is_rendered_verbatim_without_truncation(): void
+    {
+        $longEvidence = '資格取得支援制度により、受験費用を全額補助します。この制度は入社1年目から利用可能で、年間の利用上限額は設けていません。';
+
+        $html = $this->render($this->viewModel([
+            'selfBrandWheelEvidenceItems' => [
+                ['axis_key' => 'financial_benefit', 'axis_name' => '金銭的便益', 'group' => 'job_appeal', 'sub_element_name' => '成長機会', 'evidence' => $longEvidence],
+            ],
+        ]));
+
+        $this->assertStringContainsString($longEvidence, $html);
+        $this->assertStringNotContainsString('…', $html);
+        $this->assertStringNotContainsString('...', $html);
+    }
+
+    /**
+     * リード向け文書のため、evidence(サイトの原文からの抜粋)にも
+     * forbidden_phrasesが含まれないことを確認する。evidenceはAIの自由記述
+     * ではなくサイト原文からの抜粋だが、万一の混入がないことを最後の防波堤
+     * として確認しておく。
+     */
+    public function test_evidence_page_does_not_contain_forbidden_phrases(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        // evidence一覧ページ本体のみを対象にする(他のページの正当な用法
+        // ―― 例えば「4観点」ページの badge.warn文言等 ―― と混同しないため)。
+        $start = mb_strpos($html, 'サイトから読み取れた記述');
+        $this->assertNotFalse($start);
+        $end = mb_strpos($html, '他社ページ比較とのまとめ', $start) ?: mb_strlen($html);
+        $evidencePageHtml = mb_substr($html, $start, $end - $start);
+
+        foreach ((array) config('brand_wheel.forbidden_phrases') as $phrase) {
+            $this->assertStringNotContainsString($phrase, $evidencePageHtml);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 軸カードの四角(dots)。max_countから動的に生成すること(2026-08-04)。
+    // ------------------------------------------------------------------
+
+    /**
+     * 四角の数はmax_countから生成する(4を固定値で書かない)。max_count=5の
+     * フィクスチャで、四角が5個・分母が5になることを確認する。
+     */
+    public function test_axis_card_dots_are_generated_from_max_count_not_a_hardcoded_four(): void
+    {
+        $html = $this->render($this->viewModel([
+            'brandWheelSelf' => [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://example.com/careers',
+                'axes' => [
+                    ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 3, 'max_count' => 5, 'matched_sub_elements' => [
+                        ['key' => 'purpose', 'name' => 'パーパス'], ['key' => 'a', 'name' => 'A'], ['key' => 'b', 'name' => 'B'],
+                    ]],
+                ],
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+        ]));
+
+        $this->assertStringContainsString('3<small> / 5件</small>', $html);
+
+        // このfixtureは軸を1件しか渡していないため、ページ全体でdotタグを
+        // 数えれば、そのまま活動的魅力の軸カード1枚分の数になる。
+        $this->assertSame(5, substr_count($html, '<span class="dot'));
+        $this->assertSame(3, substr_count($html, 'class="dot on"'));
+    }
+
+    /**
+     * matched_count===0でも四角(dots)自体は省略しない ―― 「壊れて出ていない」
+     * のか「調べた結果0件」なのかを区別するための表示のため。
+     */
+    public function test_axis_card_still_shows_empty_dots_when_matched_count_is_zero(): void
+    {
+        $html = $this->render($this->viewModel([
+            'brandWheelSelf' => [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://example.com/careers',
+                'axes' => [
+                    ['key' => 'relationship', 'group' => 'company_distance', 'name' => '就業環境', 'matched_count' => 0, 'max_count' => 4, 'matched_sub_elements' => []],
+                ],
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+        ]));
+
+        $this->assertStringContainsString('0<small> / 4件</small>', $html);
+        $this->assertSame(4, substr_count($html, '<span class="dot'));
+        $this->assertSame(0, substr_count($html, 'class="dot on"'));
+        // 「読み取れた内容はありません」は使わない(内容が無い会社、と読める)。
+        $this->assertStringNotContainsString('読み取れた内容はありません', $html);
+        $this->assertStringContainsString('該当する記述は見つかりませんでした', $html);
+    }
+
+    /**
+     * 4項目すべて該当したケースで、38mmの軸セル高さ指定が維持されている
+     * こと。実際のはみ出し(下の帯への視覚的なめり込み)は文字列アサーション
+     * では検出できないため、実PDFを生成して目視確認済み(4/4件の軸を含む
+     * フィクスチャでも1ページに収まり、下の帯と重ならないことを確認した)。
+     */
+    public function test_axis_body_height_is_38mm_even_when_all_four_sub_elements_matched(): void
+    {
+        $html = $this->render($this->viewModel([
+            'brandWheelSelf' => [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://example.com/careers',
+                'axes' => [
+                    ['key' => 'financial_benefit', 'group' => 'job_appeal', 'name' => '金銭的便益', 'matched_count' => 4, 'max_count' => 4, 'matched_sub_elements' => [
+                        ['key' => 'salary_level', 'name' => '給与水準'], ['key' => 'benefits', 'name' => '福利厚生'],
+                        ['key' => 'growth_opportunity', 'name' => '成長機会'], ['key' => 'employment_stability', 'name' => '雇用の安定性'],
+                    ]],
+                ],
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+        ]));
+
+        $this->assertStringContainsString('height: 38mm', $html);
+        $this->assertStringContainsString('4<small> / 4件</small>', $html);
+        $this->assertSame(4, substr_count($html, 'class="dot on"'));
     }
 }
