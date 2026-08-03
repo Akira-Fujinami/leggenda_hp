@@ -169,7 +169,12 @@ class BrandWheelAnalysisInputFactory
             $html = Storage::disk('analysis')->get($resolved['path']);
 
             return [
-                $this->htmlSeoAnalyzer->extractBodyText($html),
+                // 2026-08-04: ブランド・ホイールの入力に限りnav/header/footer/
+                // asideを除いた本文を渡す(HtmlSeoAnalyzer::extractBodyText()の
+                // $excludeNavigation docblock参照)。extractHeadingTexts()/
+                // extractNavigationLinkLabels()はここでは変更しない ――
+                // 見出し構造・ナビゲーションラベル自体は既存どおり別途入力に含める。
+                $this->htmlSeoAnalyzer->extractBodyText($html, excludeNavigation: true),
                 $this->htmlSeoAnalyzer->extractHeadingTexts($html),
                 $this->htmlSeoAnalyzer->extractNavigationLinkLabels($html),
                 self::PAGE_STATUS_READ,

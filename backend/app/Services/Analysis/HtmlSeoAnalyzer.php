@@ -273,6 +273,14 @@ class HtmlSeoAnalyzer
     ];
 
     /**
+     * extractBodyText($excludeNavigation: true)で除去するナビゲーション系
+     * 要素のXPath式。role="navigation"は大小文字を無視して比較する
+     * (他の属性判定箇所と同じtranslate()方式)。
+     */
+    private const NAVIGATION_ELEMENTS_XPATH =
+        '//nav | //header | //footer | //aside | //*[translate(@role, "NAVIGATION", "navigation")="navigation"]';
+
+    /**
      * ページ本文のプレーンテキストを返す(script/style除去後、空白正規化済み)。
      * ブロックレベル要素の境界は改行として保持する(段落単位で改行区切りに
      * 並ぶ)。Phase 4(ブランド・ホイール6軸分析)がAIへ渡す入力を組み立てる
@@ -282,15 +290,52 @@ class HtmlSeoAnalyzer
      * 独立して行う新規メソッドとして追加する(既存の呼び出し元・テストへの
      * 影響をゼロにするため ―― extractBodyText()自体の呼び出し元は
      * BrandWheelAnalysisInputFactoryのみで、既存の指標算出は一切参照しない)。
+     *
+     * $excludeNavigation=true(2026-08-04、ブランド・ホイール専用): nav/header/
+     * footer/aside(role="navigation"の要素も含む)を除いた本文を返す。
+     * 実データ(website_analysis_id=57)で、本文の大半がグローバルナビ・
+     * セクション見出しの繰り返し・「READ MORE」のようなナビゲーション文言に
+     * 占められ、AIへ渡す実質的な情報量を圧迫していたことへの対応。
+     * 専用メソッドではなく引数にした理由: 専用メソッドとして複製すると、
+     * DOM読み込み・ブロック境界処理・空白正規化の3ステップがそのまま重複し、
+     * 将来どちらかだけを修正して食い違う実装差の温床になる。この引数を
+     * 追加しても、呼び出し元が明示的にtrueを渡さない限り既定値falseで
+     * 従来と完全に同じ挙動のままのため、既存呼び出し元への影響はゼロ
+     * (extractBodyText()の呼び出し元は現状BrandWheelAnalysisInputFactoryのみ)。
      */
-    public function extractBodyText(string $html): string
+    public function extractBodyText(string $html, bool $excludeNavigation = false): string
     {
         [, $xpath] = $this->loadDomForTextExtraction($html);
+
+        if ($excludeNavigation) {
+            $this->stripNavigationElements($xpath);
+        }
 
         $bodyNodes = $xpath->query('//body');
         $rawText = ($bodyNodes?->length ?? 0) > 0 ? $this->textWithBlockBoundaries($bodyNodes->item(0)) : '';
 
         return $this->normalizeBlockText($rawText);
+    }
+
+    /**
+     * nav/header/footer/aside(role="navigation"の要素も含む)の部分木を
+     * DOMから除去する。stripNonContentElements()(script/style等)とは目的が
+     * 異なる別メソッドとして分離する ―― こちらはextractBodyText()の
+     * $excludeNavigation=true時のみ呼ばれ、他の全メソッド(analyze()経由の
+     * 指標算出、extractHeadingTexts()、extractNavigationLinkLabels()自身)には
+     * 一切影響しない。
+     */
+    private function stripNavigationElements(\DOMXPath $xpath): void
+    {
+        $toRemove = [];
+
+        foreach ($xpath->query(self::NAVIGATION_ELEMENTS_XPATH) ?? [] as $node) {
+            $toRemove[] = $node;
+        }
+
+        foreach ($toRemove as $node) {
+            $node->parentNode?->removeChild($node);
+        }
     }
 
     /**

@@ -69,7 +69,13 @@
     .legend { text-align: center; font-size: 9pt; color: #5b5b5b; margin-top: 1mm; }
     .sw { display: inline-block; width: 9px; height: 9px; margin: 0 2px 0 10px; }
     .bandrow td { color: #fff; text-align: center; font-size: 10.5pt; font-weight: bold; padding: 2mm; }
-    .axcell { width: 16.66%; padding: 0 1mm; }
+    {{--
+        2026-08-04: 16.66%のみだと、.pcell/.reccellと同じ理由で右端の列が
+        ページ外へはみ出す不具合が見つかった(自社ページの分析結果ページ、
+        実PDF確認で発覚)。6列×44.16mm=264.96mm(テーブル本体のwidth: 265mm
+        と一致させる)。
+    --}}
+    .axcell { width: 44.16mm; padding: 0 1mm; }
     .axhead { border: 1px solid #d8d8d8; background: #f4f6f8; text-align: center; font-size: 10pt; font-weight: bold; padding: 1.5mm; }
     .axbody { border: 1px solid #d8d8d8; border-top: none; padding: 2mm; height: 30mm; }
     .cnt { font-size: 8.5pt; color: #5b5b5b; margin: 0 0 1mm; }
@@ -77,7 +83,15 @@
     .none { font-size: 9pt; color: #8a8a8a; margin: 0; }
     .darkband { background: #33587f; color: #fff; padding: 3mm 5mm; margin-top: 3mm; }
     .darkband p { margin: 1mm 0; font-size: 10pt; line-height: 1.7; }
-    .pane { border: 1px solid #33587f; padding: 4mm; width: 48%; }
+    {{--
+        2026-08-04: 48%のみだと、.pcell/.reccell/.axcellと同じ理由で右側の
+        カードがページ外へはみ出す不具合が見つかった(他社ページ比較との
+        まとめページ、実PDF確認で発覚 ―― この行の直下に「.pcellで既に
+        修正済み」と書かれていたが、実際に.pcellが使われているのは別の
+        4観点ページで、このページ自体は未修正のままだった)。
+        129.5mm×2列+6mm(スペーサー)=265mm。
+    --}}
+    .pane { border: 1px solid #33587f; padding: 4mm; width: 129.5mm; }
     .pane h4 { margin: 0 0 2mm; font-size: 11pt; }
     .pane ul { margin: 0; padding-left: 5mm; font-size: 10pt; line-height: 1.9; }
     .arrow { text-align: center; font-size: 20pt; color: #33587f; padding: 3mm 0; }
@@ -85,11 +99,12 @@
     .one h4 { margin: 0 0 2mm; font-size: 11pt; }
     .one p { margin: 0; font-size: 10pt; line-height: 1.8; }
     {{--
-        50%ではなくmm固定にする ―― 自社ページの分析結果ページで、
+        50%ではなくmm固定にする ―― 採用担当の視点(4観点)ページで、
         パーセンテージ幅だけの列がdompdfで右端からはみ出す不具合が
-        見つかった(2026-08-04)のと同じ理由。他社ページ比較のページでは
-        同じ理由で崩れがユーザー環境の実PDFでも確認された(右カラムの
-        カードが用紙端で切れる)。132.5mm×2列=265mm(ページの実効幅と一致)。
+        見つかった(2026-08-04、右カラムのカードが用紙端で切れる。
+        ユーザー環境の実PDFでも確認された)。132.5mm×2列=265mm
+        (ページの実効幅と一致)。他社ページ比較のページの.paneも同じ
+        原因の不具合だったため、別途129.5mm固定で修正済み。
     --}}
     .pcell { width: 132.5mm; padding: 0 3mm 6mm 0; }
     {{--
@@ -268,7 +283,7 @@
             @endforeach
         </tr></table>
 
-        <table style="margin-top: 2mm;"><tr>
+        <table style="width: 265mm; margin-top: 2mm;"><tr>
             @foreach ($selfWheel['axes'] as $axis)
                 <td class="axcell">
                     <div class="axhead">{{ $axis['name'] }}</div>
@@ -308,7 +323,7 @@
     @if (! $hasComparisonContent)
         <p>{{ $selfWheel['status_message'] ?? '比較のまとめを今回はご用意できませんでした。' }}</p>
     @else
-        <table><tr>
+        <table style="width: 265mm;"><tr>
             @if (! empty($comparison['self_points']))
                 <td class="pane">
                     <h4>【自社ページ】</h4>
@@ -318,7 +333,7 @@
                         @endforeach
                     </ul>
                 </td>
-                <td style="width: 4%;"></td>
+                <td style="width: 6mm;"></td>
             @endif
             @if (! empty($comparison['competitor_points']))
                 <td class="pane">

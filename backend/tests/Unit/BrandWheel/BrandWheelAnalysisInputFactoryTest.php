@@ -109,6 +109,56 @@ class BrandWheelAnalysisInputFactoryTest extends TestCase
         $this->assertStringNotContainsString('/energy', $json);
     }
 
+    /**
+     * 2026-08-04: 本文抽出からnav/header/footer/asideを除く
+     * (HtmlSeoAnalyzer::extractBodyText($excludeNavigation: true))。
+     * website_analysis_id=57の実データで、本文の大半がグローバルナビ・
+     * セクション見出しの繰り返し・「READ MORE」の羅列だったことへの対応。
+     * businessLinkLabels(extractNavigationLinkLabels()由来、別メソッド)は
+     * この変更の影響を受けず、nav由来のラベルを引き続き含むことも併せて確認する。
+     */
+    public function test_body_text_excludes_navigation_header_footer_and_aside_content(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        $recruitHtml = '<html><head><title>採用情報</title></head><body>'
+            .'<header><nav><a href="/about">会社案内メニュー</a><a href="/careers">採用情報メニュー</a></nav></header>'
+            .'<main><h1>採用情報</h1><p>私たちは挑戦を続けます。</p></main>'
+            .'<aside><p>関連求人はこちら READ MORE</p></aside>'
+            .'<footer><p>© Example Corp READ MORE</p></footer>'
+            .'</body></html>';
+        $homepageHtml = '<html><head><title>Example</title></head><body>'
+            .'<header><nav><a href="/energy">エネルギー事業</a></nav></header>'
+            .'<main><h1>Example</h1><p>会社概要のご案内です。</p></main>'
+            .'<footer><a href="/healthcare">ヘルスケア事業</a></footer>'
+            .'</body></html>';
+
+        $this->putHtmlPage($websiteAnalysis, PageType::Recruit, $recruitHtml, '採用情報');
+        $this->putHtmlPage($websiteAnalysis, PageType::Homepage, $homepageHtml, 'Example');
+
+        $input = $this->factory->build($websiteAnalysis->fresh());
+
+        // <main>内(nav/header/footer/aside配下ではない)の見出し・本文は残る。
+        $this->assertStringContainsString('採用情報', $input->recruitPageBodyText);
+        $this->assertStringContainsString('私たちは挑戦を続けます', $input->recruitPageBodyText);
+        // nav/aside/footer配下は除かれる。
+        $this->assertStringNotContainsString('READ MORE', $input->recruitPageBodyText);
+        $this->assertStringNotContainsString('会社案内メニュー', $input->recruitPageBodyText);
+        $this->assertStringNotContainsString('採用情報メニュー', $input->recruitPageBodyText);
+
+        $this->assertStringContainsString('会社概要のご案内です', $input->homepageBodyText);
+        $this->assertStringNotContainsString('エネルギー事業', $input->homepageBodyText);
+        $this->assertStringNotContainsString('ヘルスケア事業', $input->homepageBodyText);
+
+        // ナビゲーションラベル自体は別メソッド(extractNavigationLinkLabels())の
+        // 責務のため、除外の影響を受けず引き続き含まれる
+        // (homepage分が先、recruit分が後にmergeNavLabels()で統合される)。
+        $this->assertSame(
+            ['エネルギー事業', 'ヘルスケア事業', '会社案内メニュー', '採用情報メニュー'],
+            $input->businessLinkLabels,
+        );
+    }
+
     public function test_it_does_not_reference_any_lead_model_or_lead_pii_field(): void
     {
         // リードPIIがAIへ渡る経路自体が存在しないことを、依存関係の欠如として

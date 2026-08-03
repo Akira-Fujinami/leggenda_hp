@@ -310,6 +310,35 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('<img src="data:image/png;base64,'.base64_encode($png).'"', $html);
     }
 
+    /**
+     * 2026-08-04: 自社ページの分析結果ページの6軸カード表(.axcell)が
+     * 幅16.66%のみで右端の列がページ外へはみ出す不具合を、実PDF確認で発見。
+     * .pcell/.reccellと同じくmm固定に修正した ―― CSSがパーセンテージ指定に
+     * 戻された場合に検知できるよう、明示幅の存在を確認する。
+     */
+    public function test_axis_card_table_uses_explicit_mm_widths_not_percentages(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertStringContainsString('.axcell { width: 44.16mm;', $html);
+        $this->assertStringNotContainsString('.axcell { width: 16.66%;', $html);
+    }
+
+    /**
+     * 2026-08-04: 他社ページ比較とのまとめページの左右カード(.pane)が
+     * 幅48%のみで右側のカードがページ外へはみ出す不具合を、実PDF確認で発見。
+     * (このページは以前「.pcellの修正で崩れが直っている」と誤って
+     * コメントされていたが、実際には.paneが未修正のまま残っていた。)
+     * mm固定に修正したことを、CSSが戻された場合に検知できるよう確認する。
+     */
+    public function test_comparison_pane_table_uses_explicit_mm_widths_not_percentages(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertStringContainsString('.pane { border: 1px solid #33587f; padding: 4mm; width: 129.5mm; }', $html);
+        $this->assertStringNotContainsString('width: 48%', $html);
+    }
+
     public function test_never_leaks_evidence_text_into_the_pdf(): void
     {
         // BrandWheelLeadResponseComposerはevidenceを一切含めないため、

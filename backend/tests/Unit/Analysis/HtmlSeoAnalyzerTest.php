@@ -879,6 +879,53 @@ class HtmlSeoAnalyzerTest extends TestCase
         $this->assertStringContainsString('本当の本文。', $text);
     }
 
+    /**
+     * 2026-08-04: ブランド・ホイール専用の$excludeNavigation=true。
+     * 既定値(false)を渡す既存呼び出しは一切挙動を変えないことを
+     * 上のテスト群がそのまま保証しているため、ここではtrue指定時の
+     * 除外挙動のみを確認する。
+     */
+    public function test_extract_body_text_with_exclude_navigation_removes_nav_header_footer_aside(): void
+    {
+        $html = '<html><body>'
+            .'<header><p>会社ロゴ ヘッダーの案内文</p></header>'
+            .'<nav><a href="/about">会社概要</a><a href="/careers">採用情報</a></nav>'
+            .'<main><p>これが本当に読ませたい本文です。</p></main>'
+            .'<aside><p>関連リンク集</p></aside>'
+            .'<footer><p>コピーライト フッターの案内文</p></footer>'
+            .'</body></html>';
+
+        $text = $this->analyzer->extractBodyText($html, excludeNavigation: true);
+
+        $this->assertSame('これが本当に読ませたい本文です。', $text);
+    }
+
+    public function test_extract_body_text_with_exclude_navigation_removes_role_navigation_regardless_of_tag(): void
+    {
+        // role="navigation"は<nav>以外のタグ(<div>等)にも付与され得る。
+        // 大文字小文字も無視して判定する(他の属性判定箇所と同じtranslate()方式)。
+        $html = '<html><body>'
+            .'<div role="Navigation"><a href="/menu">メニュー</a></div>'
+            .'<p>本文はここだけ。</p>'
+            .'</body></html>';
+
+        $text = $this->analyzer->extractBodyText($html, excludeNavigation: true);
+
+        $this->assertSame('本文はここだけ。', $text);
+    }
+
+    public function test_extract_body_text_without_exclude_navigation_still_includes_nav_by_default(): void
+    {
+        // 既定値(false)は他の全呼び出しに影響しないことの確認 ――
+        // 引数を追加する前と完全に同じ挙動を維持する。
+        $html = '<html><body><nav><a href="/about">会社概要</a></nav><p>本文。</p></body></html>';
+
+        $text = $this->analyzer->extractBodyText($html);
+
+        $this->assertStringContainsString('会社概要', $text);
+        $this->assertStringContainsString('本文。', $text);
+    }
+
     public function test_extract_heading_texts_returns_h1_to_h3_in_document_order(): void
     {
         $html = '<html><body>'
