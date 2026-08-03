@@ -55,6 +55,8 @@ class BrandWheelAnalysisResponseParser
         return new BrandWheelAnalysisResult(
             axes: $axisResults,
             coreValue: $this->parseCoreValue($raw['core_value'] ?? null, $haystack),
+            keyMessage: $this->parseForbiddenPhraseSafeText($raw['key_message'] ?? null),
+            impression: $this->parseForbiddenPhraseSafeText($raw['impression'] ?? null),
             qualityDimensionNotes: $this->parseQualityDimensionNotes($raw['quality_notes'] ?? []),
             cautions: $this->parseStringList($raw['cautions'] ?? []),
             axisStateCounts: $axisStateCounts,
@@ -63,6 +65,34 @@ class BrandWheelAnalysisResponseParser
             isMock: $isMock,
             promptVersion: $promptVersion,
         );
+    }
+
+    /**
+     * key_message/impressionは下位要素のような「原文にこの語句があるか」という
+     * 個別の主張ではなく、サイト全体から読み取れる要約・印象のためevidence実在
+     * 検証の対象外とする。ただしimpressionはリード向け画面に表示される社外向け
+     * 文章のため、config('brand_wheel.forbidden_phrases')を含む場合は
+     * (プロンプト側の指示だけに頼らず)ここでnullにする ―― AIの出力を
+     * 無条件に信用しないという既存方針を、evidence検証とは別の形でここにも
+     * 適用する(2026-08-03のユーザー指摘)。key_messageも同じ画面に表示される
+     * ため、安全側に倒して同じ検証を適用する。
+     */
+    private function parseForbiddenPhraseSafeText(mixed $raw): ?string
+    {
+        if (! is_string($raw) || trim($raw) === '') {
+            return null;
+        }
+
+        $text = trim($raw);
+        $forbiddenPhrases = (array) config('brand_wheel.forbidden_phrases', []);
+
+        foreach ($forbiddenPhrases as $phrase) {
+            if (is_string($phrase) && $phrase !== '' && str_contains($text, $phrase)) {
+                return null;
+            }
+        }
+
+        return $text;
     }
 
     /**

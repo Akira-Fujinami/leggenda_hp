@@ -26,9 +26,16 @@ enum JobType: string
     case FetchRecruitPage = 'fetch_recruit_page';
     case AnalyzeRecruitPage = 'analyze_recruit_page';
     case RunRecruitLighthouse = 'run_recruit_lighthouse';
+    // Phase 4: ブランド・ホイール(6軸)分析。Analyzerを一切使わない
+    // (OpenAIへのHTTPのみ)ためANALYZER_CHAINには入れず、
+    // AnalysisPipeline::dispatchWebsiteFanOut()から他の初回fan-outジョブと
+    // 並列にdispatchする。skip_brand_wheel=trueのAnalysis(既定値、内部向け
+    // ダッシュボード分析)ではexcludeSkippedJobTypes()により対象から
+    // 除外される。
+    case GenerateBrandWheelAnalysis = 'generate_brand_wheel_analysis';
 
     /**
-     * WebsiteAnalysisの進捗(0-100)に対する重み。サイト単位のジョブ15種で
+     * WebsiteAnalysisの進捗(0-100)に対する重み。サイト単位のジョブ16種で
      * 合計100になるようにしてある (Start/FinalizeAnalysisはAnalysis単位の
      * オーケストレーション用ジョブのため重みを持たない)。
      *
@@ -41,25 +48,32 @@ enum JobType: string
      * RunRecruitLighthouse、合計12点)を追加した際は、既存12種の重みを
      * 一律88%(=88/100)に比例スケールし、端数は四捨五入した
      * (合計は引き続き100。厳密な検算はJobTypeWeightTestを参照)。
+     *
+     * Phase 4でGenerateBrandWheelAnalysis(1件のみ、重み10 ―― 単発の重い
+     * 外部API呼び出しという性質がFetchExternalSeoDataと同格と判断)を
+     * 追加した際は、既存15種の重みを一律90%(=90/100)に比例スケールし、
+     * 端数は最大剰余法(largest remainder method)で配分した(合計は
+     * 引き続き100。厳密な検算はJobTypeWeightTestを参照)。
      */
     public function weight(): int
     {
         return match ($this) {
-            self::FetchStaticPage => 11,
+            self::FetchStaticPage => 10,
             self::FetchRobots => 4,
             self::FetchSitemap => 4,
-            self::RenderPage => 8,
-            self::CaptureScreenshotDesktop => 8,
-            self::CaptureScreenshotMobile => 8,
-            self::RunLighthouse => 15,
-            self::AnalyzeHtmlSeo => 8,
+            self::RenderPage => 7,
+            self::CaptureScreenshotDesktop => 7,
+            self::CaptureScreenshotMobile => 7,
+            self::RunLighthouse => 13,
+            self::AnalyzeHtmlSeo => 7,
             self::ReanalyzeRenderedHtml => 4,
             self::DetectTechnology => 4,
-            self::FetchExternalSeoData => 10,
-            self::FinalizeWebsiteAnalysis => 4,
+            self::FetchExternalSeoData => 9,
+            self::FinalizeWebsiteAnalysis => 3,
             self::FetchRecruitPage => 3,
             self::AnalyzeRecruitPage => 3,
-            self::RunRecruitLighthouse => 6,
+            self::RunRecruitLighthouse => 5,
+            self::GenerateBrandWheelAnalysis => 10,
             self::StartAnalysis, self::FinalizeAnalysis => 0,
         };
     }
@@ -75,6 +89,8 @@ enum JobType: string
      * RunRecruitLighthouseはAnalyzerを呼び出す重い処理のためanalysis-heavy。
      * FetchRecruitPage/AnalyzeRecruitPageはFetchRobots/AnalyzeHtmlSeo同様、
      * 軽量なHTTP取得・静的HTML解析のためanalysis。
+     * GenerateBrandWheelAnalysisはOpenAI呼び出しのため、既存の
+     * GenerateAiAnalysisJobと同じaiキュー(queue-worker-externalが処理)。
      */
     public function queueName(): string
     {
@@ -86,6 +102,7 @@ enum JobType: string
             self::DetectTechnology,
             self::RunRecruitLighthouse => 'analysis-heavy',
             self::FetchExternalSeoData => 'external-api',
+            self::GenerateBrandWheelAnalysis => 'ai',
             default => 'analysis',
         };
     }
@@ -112,6 +129,7 @@ enum JobType: string
             self::FetchRecruitPage,
             self::AnalyzeRecruitPage,
             self::RunRecruitLighthouse,
+            self::GenerateBrandWheelAnalysis,
             self::FinalizeWebsiteAnalysis,
         ];
     }

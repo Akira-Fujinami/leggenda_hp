@@ -394,4 +394,67 @@ class LeadAnalysisTest extends TestCase
             }
         }
     }
+
+    /**
+     * 2026-08-03: ブランド・ホイール(6軸)は診断実行時に自社・競合の両方に
+     * ついて生成される(相談ボタン起点のディスパッチは廃止)。Mockプロバイダ
+     * (外部通信なし)で一連が通ること、レスポンスにリードの個人情報・
+     * evidence(原文の抜粋)が一切含まれないことを実エンドポイント経由で確認する。
+     */
+    public function test_diagnosis_generates_brand_wheel_for_both_self_and_competitor_via_mock_provider(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'mock',
+            'analysis.allow_mock_providers' => true,
+        ]);
+
+        $minimalHtml = '<html><body><p>本文のみ</p></body></html>';
+        $fakes = [
+            '*/analyze/render' => Http::response(['success' => true, 'data' => ['html' => $minimalHtml, 'fixed_cta' => ['detected' => false]]], 200),
+            '*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => []]], 200),
+            '*/analyze/lighthouse' => Http::response(['success' => true, 'data' => ['scores' => [], 'metrics' => []]], 200),
+            '*/health' => Http::response(['success' => true, 'data' => ['active_contexts' => 0, 'queued_sessions' => 0, 'browser_connected' => true]], 200),
+        ];
+        foreach (['https://example.com', 'https://www.iana.org'] as $baseUrl) {
+            $fakes[$baseUrl] = Http::response($minimalHtml, 200, ['Content-Type' => 'text/html; charset=UTF-8']);
+            $fakes["{$baseUrl}/robots.txt"] = Http::response('', 404);
+            $fakes["{$baseUrl}/sitemap.xml"] = Http::response('', 404);
+        }
+        Http::fake($fakes);
+
+        $token = $this->issueToken();
+        $analysisId = $this->postJson("/api/lead/analyses?token={$token}", [
+            'self_url' => 'https://example.com',
+            'competitor_url' => 'https://www.iana.org',
+        ])->json('data.analysis_id');
+
+        // ブランド・ホイールは自社・競合それぞれのWebsiteAnalysisに対して
+        // 1件ずつ生成される(相談ボタンを一度も押していない)。
+        $this->assertSame(2, \App\Models\BrandWheelAnalysisResult::query()->where('analysis_id', $analysisId)->count());
+
+        $response = $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}");
+        $response->assertOk();
+
+        $websites = $response->json('data.websites');
+        $this->assertCount(2, $websites);
+
+        foreach ($websites as $website) {
+            $this->assertArrayHasKey('brand_wheel', $website);
+            $this->assertContains(
+                $website['brand_wheel']['status'],
+                ['success', 'pending', 'insufficient_input', 'recruit_page_unreadable', 'no_matched_content', 'error'],
+            );
+        }
+
+        $comparison = $response->json('data.brand_wheel_comparison');
+        $this->assertArrayHasKey('self_points', $comparison);
+        $this->assertArrayHasKey('competitor_points', $comparison);
+        $this->assertArrayHasKey('one_point', $comparison);
+
+        // リードの個人情報・evidence(原文の抜粋)がレスポンスに一切含まれない。
+        $raw = $response->getContent();
+        foreach (['山田太郎', '株式会社サンプル', 'lead@example.com', 'evidence', 'core_value_evidence'] as $forbidden) {
+            $this->assertStringNotContainsString($forbidden, $raw);
+        }
+    }
 }

@@ -47,9 +47,21 @@ return [
         'provider' => env('AI_PROVIDER', 'mock'),
         'timeout' => (int) env('AI_TIMEOUT', 60),
         'max_retries' => (int) env('AI_MAX_RETRIES', 1),
+        // 2026-08-03: 既定値を未設定(無制限)から6000tokenへ変更。ブランド・
+        // ホイールの固定プロンプト部分(フレームワーク定義+実例+教示事項)が
+        // 約2,700token、本文の多い実サイト1件でも通常はこれを大きく超えない
+        // ―― 6000tokenは概算で本文+ナビラベル合計約18,000文字相当
+        // (BrandWheelAnalysisInputFactory::applyTokenLimit()の
+        // 「文字数≒token数×3」という同じ概算を使用)にあたり、実際の採用
+        // ページ・トップページ本文(通常数百〜数千文字)を十分に上回りつつ、
+        // 極端に文章量の多い外れ値サイト1件で際限なくコスト・コンテキストが
+        // 膨らむことを防ぐ上限として機能する。超過時は既存の切り詰め処理
+        // (採用ページ本文を優先して残し、input_truncated=trueを記録)が働く。
+        // env未設定でも必ずこの上限が効く(2026-08-03のユーザー指摘: 「無制限」を
+        // 既定にしない)。
         'max_input_tokens' => env('AI_MAX_INPUT_TOKENS') !== null && env('AI_MAX_INPUT_TOKENS') !== ''
             ? (int) env('AI_MAX_INPUT_TOKENS')
-            : null,
+            : 6000,
         'max_output_tokens' => (int) env('AI_MAX_OUTPUT_TOKENS', 2000),
     ],
 

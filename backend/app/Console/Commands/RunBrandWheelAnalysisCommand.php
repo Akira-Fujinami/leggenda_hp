@@ -2,9 +2,12 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\JobType;
 use App\Jobs\GenerateBrandWheelAnalysisJob;
+use App\Models\AnalysisJob;
 use App\Models\BrandWheelAnalysisResult;
 use App\Models\WebsiteAnalysis;
+use App\Services\Analysis\AnalysisPipeline;
 use App\Services\BrandWheel\BrandWheelAnalysisInputFactory;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
@@ -41,7 +44,7 @@ use Illuminate\Console\Command;
 #[Description('非本番環境限定: 既存のWebsiteAnalysisに対しブランド・ホイール分析だけを単体実行する(#99の実測作業向け)')]
 class RunBrandWheelAnalysisCommand extends Command
 {
-    public function handle(BrandWheelAnalysisInputFactory $inputFactory): int
+    public function handle(BrandWheelAnalysisInputFactory $inputFactory, AnalysisPipeline $pipeline): int
     {
         if (app()->environment('production')) {
             $this->error('production環境ではこのコマンドを実行できません。');
@@ -61,6 +64,21 @@ class RunBrandWheelAnalysisCommand extends Command
         $force = (bool) $this->option('force');
         $outputPath = $this->option('output');
 
+        // #99の安定性確認は、同一WebsiteAnalysisに対しこのコマンドを複数回
+        // 実行することを前提にしている(--forceで同一input_hashでも
+        // 再度AIを呼ぶ)。2026-08-03のAnalysisJob連携により、
+        // GenerateBrandWheelAnalysisJobは(analysis_id, website_analysis_id,
+        // job_type)単位で1回しか完了できなくなった(診断1回につき1回だけ
+        // 生成する、という本来の仕様どおりの制約)ため、このコマンドは
+        // 手動の単体実行のたびに前回のAnalysisJob行を明示的に削除し、
+        // 複数回の再実行を引き続き可能にする。通常の診断フロー
+        // (dispatchWebsiteFanOut())はこの削除を一切行わない。
+        AnalysisJob::query()
+            ->where('analysis_id', $websiteAnalysis->analysis_id)
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('job_type', JobType::GenerateBrandWheelAnalysis)
+            ->delete();
+
         $record = BrandWheelAnalysisResult::query()->create([
             'analysis_id' => $websiteAnalysis->analysis_id,
             'website_analysis_id' => $websiteAnalysis->id,
@@ -69,7 +87,7 @@ class RunBrandWheelAnalysisCommand extends Command
             'input_hash' => '',
         ]);
 
-        (new GenerateBrandWheelAnalysisJob($record->id, forceRefresh: $force))->handle($inputFactory);
+        (new GenerateBrandWheelAnalysisJob($record->id, forceRefresh: $force))->handle($inputFactory, $pipeline);
 
         $record->refresh();
 

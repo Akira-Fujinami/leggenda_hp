@@ -53,6 +53,8 @@ class MockBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
         $result = new BrandWheelAnalysisResult(
             axes: $axes,
             coreValue: new BrandWheelCoreValueResult(readable: false, evidence: null),
+            keyMessage: '[デモデータ] モックプロバイダのためキーメッセージはありません。',
+            impression: '[デモデータ] モックプロバイダのため印象の記述はありません。',
             qualityDimensionNotes: $qualityDimensionNotes,
             cautions: ['これはモックデータです。実際のAI分析結果ではありません。'],
             axisStateCounts: ['read' => 0, 'partial' => 0, 'unread' => count($axisKeys)],

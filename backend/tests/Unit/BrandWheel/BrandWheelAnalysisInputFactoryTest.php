@@ -142,6 +142,31 @@ class BrandWheelAnalysisInputFactoryTest extends TestCase
         $this->assertSame(str_repeat('会', 50), $input->homepageBodyText);
     }
 
+    /**
+     * 2026-08-03: AI_MAX_INPUT_TOKENS未設定時の既定値が「無制限」ではなく
+     * 6000tokenになったことを、config()を一切上書きせず(=実運用の既定値の
+     * まま)確認する。目安: 6000token≒18,000文字(文字数≒token数×3の概算)。
+     */
+    public function test_default_ai_max_input_tokens_is_not_unlimited_and_truncates_oversized_input(): void
+    {
+        $this->assertSame(6000, config('services.ai.max_input_tokens'), 'AI_MAX_INPUT_TOKENS should default to 6000 when unset, not unlimited');
+
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        // 18,000文字(6000token相当)を明確に超える本文。
+        $recruitHtml = '<html><body><p>'.str_repeat('採用ページの本文です。', 2000).'</p></body></html>';
+        $homepageHtml = '<html><body><p>'.str_repeat('トップページの本文です。', 2000).'</p></body></html>';
+
+        $this->putHtmlPage($websiteAnalysis, PageType::Recruit, $recruitHtml);
+        $this->putHtmlPage($websiteAnalysis, PageType::Homepage, $homepageHtml);
+
+        $input = $this->factory->build($websiteAnalysis->fresh());
+
+        $this->assertTrue($input->inputTruncated);
+        // 採用ページ本文を優先して残す(既存の切り詰め処理の方針)。
+        $this->assertGreaterThan(0, mb_strlen($input->recruitPageBodyText));
+    }
+
     public function test_it_does_not_throw_when_recruit_page_is_missing(): void
     {
         $websiteAnalysis = WebsiteAnalysis::factory()->create();

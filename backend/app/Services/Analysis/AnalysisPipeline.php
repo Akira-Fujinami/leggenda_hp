@@ -22,9 +22,11 @@ use App\Jobs\Analysis\ReanalyzeRenderedHtmlJob;
 use App\Jobs\Analysis\RenderPageJob;
 use App\Jobs\Analysis\RunLighthouseJob;
 use App\Jobs\Analysis\RunRecruitLighthouseJob;
+use App\Jobs\GenerateBrandWheelAnalysisJob;
 use App\Models\Analysis;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\AnalysisPage;
+use App\Models\BrandWheelAnalysisResult;
 use App\Models\MetricDefinition;
 use App\Models\MetricResult;
 use App\Models\WebsiteAnalysis;
@@ -109,7 +111,34 @@ class AnalysisPipeline
         FetchSitemapJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::FetchSitemap->queueName());
         FetchExternalSeoDataJob::dispatch($analysisId, $websiteAnalysisId)->onQueue(JobType::FetchExternalSeoData->queueName());
 
+        if ($websiteAnalysis->analysis?->skip_brand_wheel !== true) {
+            $this->dispatchBrandWheelAnalysis($analysisId, $websiteAnalysisId);
+        }
+
         $this->dispatchAnalyzerChainJob($analysisId, $websiteAnalysisId, self::ANALYZER_CHAIN[0]);
+    }
+
+    /**
+     * ブランド・ホイール(6軸)分析。skip_brand_wheel=trueの場合はここに来ない
+     * (excludeSkippedJobTypes()によりwebsiteFanOutTypes()からも除外され、
+     * 進捗・完了判定の対象から一貫して外れる)。Analyzerを使わないため
+     * ANALYZER_CHAINには入れず、ここで他の初回fan-outジョブと並列に起動する。
+     *
+     * 相談ボタン(#96)起点のディスパッチは廃止(2026-08-03) ―― 診断実行時に
+     * 自社・競合の両方について生成し、相談ボタンは生成済みの結果を読むだけに
+     * なる(input_hashによる再利用は既にあるため、二重にAPIを呼ばない)。
+     */
+    private function dispatchBrandWheelAnalysis(int $analysisId, int $websiteAnalysisId): void
+    {
+        $record = BrandWheelAnalysisResult::query()->create([
+            'analysis_id' => $analysisId,
+            'website_analysis_id' => $websiteAnalysisId,
+            'status' => 'pending',
+            'is_mock' => false,
+            'input_hash' => '',
+        ]);
+
+        GenerateBrandWheelAnalysisJob::dispatch($record->id)->onQueue(JobType::GenerateBrandWheelAnalysis->queueName());
     }
 
     /**
@@ -157,6 +186,10 @@ class AnalysisPipeline
         if ($analysis->skip_screenshots === true) {
             $excluded[] = JobType::CaptureScreenshotDesktop;
             $excluded[] = JobType::CaptureScreenshotMobile;
+        }
+
+        if ($analysis->skip_brand_wheel === true) {
+            $excluded[] = JobType::GenerateBrandWheelAnalysis;
         }
 
         if ($excluded === []) {

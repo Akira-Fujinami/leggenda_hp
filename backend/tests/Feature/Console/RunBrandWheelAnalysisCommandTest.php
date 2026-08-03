@@ -188,10 +188,20 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
             'status' => 'pending',
         ]);
 
+        // 1回目(コマンド経由)が既にこのWebsiteAnalysisのAnalysisJob行を
+        // 終端まで進めているため、直接handle()を呼ぶ前に同じ理由で明示的に
+        // リセットする(RunBrandWheelAnalysisCommand本体が--force実行のたびに
+        // 行うのと同じ操作)。
+        \App\Models\AnalysisJob::query()
+            ->where('analysis_id', $websiteAnalysis->analysis_id)
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('job_type', \App\Enums\JobType::GenerateBrandWheelAnalysis)
+            ->delete();
+
         app()->detectEnvironment(fn () => 'production');
         try {
             (new \App\Jobs\GenerateBrandWheelAnalysisJob($second->id, forceRefresh: true))
-                ->handle(app(\App\Services\BrandWheel\BrandWheelAnalysisInputFactory::class));
+                ->handle(app(\App\Services\BrandWheel\BrandWheelAnalysisInputFactory::class), app(\App\Services\Analysis\AnalysisPipeline::class));
         } finally {
             app()->detectEnvironment(fn () => 'testing');
         }

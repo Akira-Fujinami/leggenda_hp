@@ -282,4 +282,72 @@ class BrandWheelAnalysisResponseParserTest extends TestCase
             $this->assertArrayNotHasKey('score', $axis);
         }
     }
+
+    public function test_key_message_and_impression_are_parsed_when_present(): void
+    {
+        $input = $this->makeInput(recruitBody: '本文。');
+
+        $result = $this->parser->parse([
+            'key_message' => 'このページから読み取れるキーメッセージ。',
+            'impression' => 'このページが与える印象は、事実の記載が中心という印象です。',
+        ], $input, 'openai', 'gpt-4o-mini', false, 'v2');
+
+        $this->assertSame('このページから読み取れるキーメッセージ。', $result->keyMessage);
+        $this->assertSame('このページが与える印象は、事実の記載が中心という印象です。', $result->impression);
+    }
+
+    public function test_key_message_and_impression_are_null_when_absent(): void
+    {
+        $input = $this->makeInput(recruitBody: '本文。');
+
+        $result = $this->parser->parse([], $input, 'openai', 'gpt-4o-mini', false, 'v2');
+
+        $this->assertNull($result->keyMessage);
+        $this->assertNull($result->impression);
+    }
+
+    /**
+     * impression/key_messageは社外に出る文章のため、evidence実在検証とは別に
+     * forbidden_phrasesを含む場合はnullにする(プロンプト側の指示だけに
+     * 頼らない、AIの出力を無条件に信用しないという既存方針の適用、
+     * 2026-08-03のユーザー指摘)。
+     */
+    public function test_impression_containing_a_forbidden_phrase_is_discarded_to_null(): void
+    {
+        $input = $this->makeInput(recruitBody: '本文。');
+        $forbiddenPhrase = ((array) config('brand_wheel.forbidden_phrases'))[0];
+
+        $result = $this->parser->parse([
+            'impression' => "この記述は{$forbiddenPhrase}という印象です。",
+        ], $input, 'openai', 'gpt-4o-mini', false, 'v2');
+
+        $this->assertNull($result->impression);
+    }
+
+    public function test_key_message_containing_a_forbidden_phrase_is_also_discarded_to_null(): void
+    {
+        // impressionだけでなくkey_messageも同じ画面の紺帯に表示されるため、
+        // 安全側に倒して同じ検証を適用する。
+        $input = $this->makeInput(recruitBody: '本文。');
+        $forbiddenPhrase = ((array) config('brand_wheel.forbidden_phrases'))[0];
+
+        $result = $this->parser->parse([
+            'key_message' => "{$forbiddenPhrase}な状態です。",
+        ], $input, 'openai', 'gpt-4o-mini', false, 'v2');
+
+        $this->assertNull($result->keyMessage);
+    }
+
+    public function test_blank_key_message_and_impression_are_normalized_to_null(): void
+    {
+        $input = $this->makeInput(recruitBody: '本文。');
+
+        $result = $this->parser->parse([
+            'key_message' => '   ',
+            'impression' => '',
+        ], $input, 'openai', 'gpt-4o-mini', false, 'v2');
+
+        $this->assertNull($result->keyMessage);
+        $this->assertNull($result->impression);
+    }
 }

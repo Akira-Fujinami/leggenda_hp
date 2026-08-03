@@ -13,9 +13,15 @@ namespace App\Services\BrandWheel\Data;
  * それ以外の数値フィールドを持たせないことで、既存の採点系(7カテゴリ
  * 100点)への混入を構造的に防ぐ)。
  *
- * 内部向け(社内スタッフ)にのみ表示され、リード向け画面・Word/PDFレポート
- * には一切表示しない ―― この境界はDTOの型ではなく呼び出し側(通知・画面)の
- * 責務だが、コメントとして明記しておく。
+ * 2026-08-03: リード向け画面の主役がブランド・ホイールへ変わったため、
+ * axes/quality_dimension_notes等は社内向け画面・レポートに加え、リード向け
+ * 画面(LeadAnalysisController::results()の`brand_wheel`)にも表示される
+ * (ただしevidence原文はリード向けAPIには含めない ―― BrandWheelLeadResponse
+ * Composer参照)。keyMessage/impressionはリード向け画面下部の紺帯専用に
+ * 追加した2項目で、下位要素のような「原文にこの語句があるか」という個別の
+ * 主張ではなく、サイト全体から読み取れる要約・印象のためevidence実在検証の
+ * 対象外(BrandWheelAnalysisResponseParser参照)。impressionは社外に出る
+ * 文章のため、config('brand_wheel.forbidden_phrases')を含む場合はnullにする。
  */
 readonly class BrandWheelAnalysisResult
 {
@@ -28,6 +34,8 @@ readonly class BrandWheelAnalysisResult
     public function __construct(
         public array $axes,
         public BrandWheelCoreValueResult $coreValue,
+        public ?string $keyMessage,
+        public ?string $impression,
         public array $qualityDimensionNotes,
         public array $cautions,
         public array $axisStateCounts,
@@ -45,6 +53,8 @@ readonly class BrandWheelAnalysisResult
         return [
             'axes' => array_map(fn (BrandWheelAxisResult $a) => $a->toArray(), $this->axes),
             'core_value' => $this->coreValue->toArray(),
+            'key_message' => $this->keyMessage,
+            'impression' => $this->impression,
             'quality_dimension_notes' => $this->qualityDimensionNotes,
             'cautions' => $this->cautions,
             'axis_state_counts' => $this->axisStateCounts,

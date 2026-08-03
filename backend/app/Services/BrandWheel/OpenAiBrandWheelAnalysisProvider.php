@@ -24,8 +24,12 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
      * config/brand_wheel.php(軸定義・教師データ・閾値)の内容を変更した際は、
      * このバージョンを更新すること。結果に保存され、どの基準で生成された
      * 結果かを後から判別できるようにする。
+     *
+     * v2(2026-08-03): key_message/impressionの2項目を出力構造へ追加。
+     * 出力構造そのものが変わるため、v1で生成された既存結果はinput_hashの
+     * 再利用対象から自動的に外れる(input_hashにpromptVersion()が含まれるため)。
      */
-    public const string PROMPT_VERSION = 'v1';
+    public const string PROMPT_VERSION = 'v2';
 
     public function __construct(
         private readonly BrandWheelAnalysisResponseParser $parser,
@@ -103,11 +107,23 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
 - 使ってよい表現: 「サイトからは読み取れませんでした」「〜という記述が確認できました」「6軸のうち◯軸を読み取りました」
 - 禁止する表現: 「〜がありません/不足しています」「〜が優れています/劣っています」のような魅力そのものへの評価、
   「6軸中3軸の評価です」「3点です」のような採点・順位付けを示唆する表現は一切使わないでください。
-- 以下の語は、quality_notes・cautions等の自由記述を含め一切使わないでください:
+- 以下の語は、quality_notes・cautions・key_message・impression等の自由記述を含め
+  一切使わないでください:
   「{$forbiddenPhrases}」。これらは「魅力が無い/劣っている」という評価を示唆するため、
   このフレームワークの前提(サイトの記述からの読み取り可否のみを判定する)と矛盾します。
+  代わりに「〜は伝わるが、〜との距離がある」「〜がもったいない」のような、読み取れた
+  ことと読み取れなかったことの両方を事実として述べる言い回しを使ってください。
 - あなたはstate(read/partial/unread)やスコアを出力する必要はありません。出力するのは
   下位要素ごとの該当有無(matched_sub_elements)のみで、判定(state)はシステム側が別途計算します。
+
+【key_message・impression(リード向け画面下部に表示する2項目)】
+- key_message: このページ(採用ページ・トップページ)の記述から読み取れるキーメッセージを
+  1〜2文で。「何を伝えようとしているページか」という要約であり、下位要素の該当有無とは
+  別の、ページ全体を通した読み取りです。
+- impression: このページが与える印象を1〜3文で。禁止語を使わず、読み取れたことと
+  読み取れなかったことの両方を事実として述べてください(教師データの分析文体に揃える)。
+- いずれもサイトに実在する記述の要約・言い換えとして書いてください(evidence抜粋のような
+  原文一致検証は行いませんが、原文に無い内容の創作はしないでください)。
 
 【下位要素ごとの根拠】
 下位要素ごとに、それを裏づける原文抜粋を必ず1つ添えてください。抜粋を示せない下位要素は
@@ -136,6 +152,8 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
     "<axis_key>": {"matched_sub_elements": [{"key": "string", "evidence": "原文からの抜粋"}]}
   },
   "core_value": {"readable": true, "evidence": "原文からの抜粋"},
+  "key_message": "string",
+  "impression": "string",
   "quality_notes": {"consistency": "string", "credibility": "string", "distance": "string", "differentiation": "string", "corporate_alignment": "string"},
   "cautions": ["string"]
 }

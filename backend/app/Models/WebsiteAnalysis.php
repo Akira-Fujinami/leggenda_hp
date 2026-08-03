@@ -86,6 +86,14 @@ class WebsiteAnalysis extends Model
         return $this->hasMany(Recommendation::class);
     }
 
+    /**
+     * @return HasMany<BrandWheelAnalysisResult, $this>
+     */
+    public function brandWheelAnalysisResults(): HasMany
+    {
+        return $this->hasMany(BrandWheelAnalysisResult::class);
+    }
+
     public function homepage(): HasOne
     {
         return $this->hasOne(AnalysisPage::class)->where('page_type', 'homepage');

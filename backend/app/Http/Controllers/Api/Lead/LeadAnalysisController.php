@@ -6,7 +6,6 @@ use App\Enums\AnalysisStatus;
 use App\Enums\ReportFormat;
 use App\Enums\ReportGenerationStatus;
 use App\Http\Controllers\Controller;
-use App\Jobs\GenerateBrandWheelAnalysisJob;
 use App\Jobs\Report\GenerateLeadReportJob;
 use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
@@ -15,6 +14,9 @@ use App\Models\MetricDefinition;
 use App\Models\Project;
 use App\Models\Report;
 use App\Services\Analysis\AnalysisService;
+use App\Services\BrandWheel\BrandWheelCompletionNotifier;
+use App\Services\BrandWheel\BrandWheelComparisonSummaryComposer;
+use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
 use App\Services\Lead\LeadNotificationService;
 use App\Services\Lead\LeadPerspectiveComposer;
 use App\Services\Lead\LeadRecommendationComposer;
@@ -47,6 +49,9 @@ class LeadAnalysisController extends Controller
         private readonly AnalysisService $analyses,
         private readonly LeadNotificationService $notifications,
         private readonly LeadRecommendationComposer $recommendationComposer,
+        private readonly BrandWheelLeadResponseComposer $brandWheelComposer,
+        private readonly BrandWheelComparisonSummaryComposer $brandWheelSummaryComposer,
+        private readonly BrandWheelCompletionNotifier $brandWheelNotifier,
     ) {}
 
     /**
@@ -106,6 +111,11 @@ class LeadAnalysisController extends Controller
             // CaptureScreenshotJobは77指標のうち1つも記録しないため、
             // リード分析では撮影自体を省略する(採点への影響はゼロ)。
             'skip_screenshots' => (bool) config('lead.skip_screenshots'),
+            // ブランド・ホイール(6軸)分析は診断実行時に自社・競合の両方で
+            // 生成する(2026-08-03、相談ボタン起点のディスパッチは廃止)。
+            // skip_brand_wheelの既定はtrue(実行しない)なので、リード側だけが
+            // 明示的にfalseを渡す。
+            'skip_brand_wheel' => false,
         ], $sentinelUser);
 
         $this->leadSessions->recordAnalysisStarted($leadSession);
@@ -139,50 +149,90 @@ class LeadAnalysisController extends Controller
             'websiteAnalyses.website',
             'websiteAnalyses.recommendations.metricResult.metricDefinition',
             'websiteAnalyses.metricResults.metricDefinition',
+            // is_mock/status以外に絞る必要はない(1件のみ使うため軽量)。
+            // latest('id')でwebsite_analysis_idあたり1件(最新)に絞る。
+            'websiteAnalyses.brandWheelAnalysisResults' => fn ($query) => $query->latest('id')->limit(1),
         ]);
 
         $activeDefinitions = MetricDefinition::query()->where('is_active', true)->get();
         $calculator = app(LeadScoreCalculator::class);
         $perspectiveComposer = app(LeadPerspectiveComposer::class);
 
+        $brandWheelByWebsiteAnalysisId = $analysis->websiteAnalyses->mapWithKeys(
+            fn ($wa) => [$wa->id => $this->brandWheelComposer->compose($wa->brandWheelAnalysisResults->first(), $wa->website)],
+        );
+
+        $websites = $analysis->websiteAnalyses->map(function ($wa) use ($activeDefinitions, $calculator, $perspectiveComposer, $brandWheelByWebsiteAnalysisId) {
+            // 社内版(OverallScoreCalculator、7カテゴリ100点)とは別建ての
+            // リード向け点数 ―― 4観点(LeadMetricCatalog)に表示している
+            // 指標だけを対象に算出するため、画面の4観点表示と数値が
+            // 完全に一致する(2026-07-28のユーザー指摘への対応)。
+            // 社内版のスコアとは満点も内訳も異なるため、商談時に
+            // 混同しないこと。
+            $score = $calculator->calculate($activeDefinitions, $wa->metricResults);
+
+            return [
+                'website_name' => $wa->website?->name,
+                'is_primary' => (bool) $wa->website?->is_primary,
+                'score' => $score->toArray(),
+                // 採用担当向けの4観点(書くべきこと/メッセージ/導線/見やすさ)。
+                // 内部の7カテゴリ(technical_seo等)は意図的に含めない
+                // ―― 採用担当の関心に沿わない情報量を増やさないため。
+                'perspectives' => $perspectiveComposer->compose($wa->metricResults),
+                // 指標77件の詳細一覧・Job名・エラーコード・内部IDは
+                // 意図的に含めない(社内担当が説明する余地を残すため)。
+                // title/descriptionはLeadRecommendationComposer経由 ―― 4観点
+                // (LeadMetricCatalog)に無いキー(例: アクセス解析タグ検出)は
+                // ここで絞り込まれ、一切表示されない(2026-08-03)。
+                'top_recommendations' => collect($this->recommendationComposer->compose(
+                    $wa->recommendations,
+                    self::TOP_RECOMMENDATIONS_LIMIT,
+                ))->map(fn (array $row) => [
+                    'title' => $row['title'],
+                    'description' => $row['description'],
+                    'priority' => $row['recommendation']->priority->value,
+                    'impact' => $row['recommendation']->impact->value,
+                    'effort' => $row['recommendation']->effort->value,
+                ])->values(),
+                // ブランド・ホイール(6軸)。2026-08-03からリード向け画面の主役。
+                // evidence(原文の抜粋)は含めない ―― 社員向けメールには必要だが、
+                // 画面に出す必要はなく、含めればそれだけ他社サイトの本文が
+                // 外部に出る。
+                'brand_wheel' => $brandWheelByWebsiteAnalysisId->get($wa->id),
+            ];
+        })->values();
+
         return $this->success([
             'status' => $this->leadFacingStatus($analysis->status),
             'reports' => $this->reportStatusPayload($analysis),
-            'websites' => $analysis->websiteAnalyses->map(function ($wa) use ($activeDefinitions, $calculator, $perspectiveComposer) {
-                // 社内版(OverallScoreCalculator、7カテゴリ100点)とは別建ての
-                // リード向け点数 ―― 4観点(LeadMetricCatalog)に表示している
-                // 指標だけを対象に算出するため、画面の4観点表示と数値が
-                // 完全に一致する(2026-07-28のユーザー指摘への対応)。
-                // 社内版のスコアとは満点も内訳も異なるため、商談時に
-                // 混同しないこと。
-                $score = $calculator->calculate($activeDefinitions, $wa->metricResults);
-
-                return [
-                    'website_name' => $wa->website?->name,
-                    'is_primary' => (bool) $wa->website?->is_primary,
-                    'score' => $score->toArray(),
-                    // 採用担当向けの4観点(書くべきこと/メッセージ/導線/見やすさ)。
-                    // 内部の7カテゴリ(technical_seo等)は意図的に含めない
-                    // ―― 採用担当の関心に沿わない情報量を増やさないため。
-                    'perspectives' => $perspectiveComposer->compose($wa->metricResults),
-                    // 指標77件の詳細一覧・Job名・エラーコード・内部IDは
-                    // 意図的に含めない(社内担当が説明する余地を残すため)。
-                    // title/descriptionはLeadRecommendationComposer経由 ―― 4観点
-                    // (LeadMetricCatalog)に無いキー(例: アクセス解析タグ検出)は
-                    // ここで絞り込まれ、一切表示されない(2026-08-03)。
-                    'top_recommendations' => collect($this->recommendationComposer->compose(
-                        $wa->recommendations,
-                        self::TOP_RECOMMENDATIONS_LIMIT,
-                    ))->map(fn (array $row) => [
-                        'title' => $row['title'],
-                        'description' => $row['description'],
-                        'priority' => $row['recommendation']->priority->value,
-                        'impact' => $row['recommendation']->impact->value,
-                        'effort' => $row['recommendation']->effort->value,
-                    ])->values(),
-                ];
-            })->values(),
+            'websites' => $websites,
+            'brand_wheel_comparison' => $this->composeBrandWheelComparison($analysis, $brandWheelByWebsiteAnalysisId),
         ]);
+    }
+
+    /**
+     * 【自社ページ】【他社ページ】【ワンポイント】。いずれもAIには書かせず、
+     * BrandWheelLeadResponseComposerが組み立てたaxes(status!=='success'なら
+     * 空配列)の件数から機械的に導出する(2026-08-03のユーザー指摘)。
+     * ワンポイントは自社サイトの軸のみを対象に判定する(競合の状態では
+     * 分岐させない)。
+     *
+     * @param  \Illuminate\Support\Collection<int, array<string, mixed>>  $brandWheelByWebsiteAnalysisId
+     * @return array{self_points: list<string>, competitor_points: list<string>, one_point: array{key: string, text: string}|null}
+     */
+    private function composeBrandWheelComparison(Analysis $analysis, $brandWheelByWebsiteAnalysisId): array
+    {
+        $selfWa = $analysis->websiteAnalyses->first(fn ($wa) => (bool) $wa->website?->is_primary);
+        $competitorWa = $analysis->websiteAnalyses->first(fn ($wa) => ! (bool) $wa->website?->is_primary);
+
+        $selfAxes = $selfWa !== null ? (array) ($brandWheelByWebsiteAnalysisId->get($selfWa->id)['axes'] ?? []) : [];
+        $competitorAxes = $competitorWa !== null ? (array) ($brandWheelByWebsiteAnalysisId->get($competitorWa->id)['axes'] ?? []) : [];
+
+        return [
+            'self_points' => $this->brandWheelSummaryComposer->points($selfAxes),
+            'competitor_points' => $this->brandWheelSummaryComposer->points($competitorAxes),
+            'one_point' => $this->brandWheelSummaryComposer->onePoint($selfAxes),
+        ];
     }
 
     /**
@@ -232,10 +282,13 @@ class LeadAnalysisController extends Controller
      * 2回目以降の押下もエラーにはせず、既に送信済みである旨を返す
      * (ユーザーから見て連打が失敗として見えないようにするため)。
      *
-     * ブランド・ホイール(6軸)分析Jobの起動もここで行うが、1通目
-     * (相談受付)メールの送信が確定した「後」に行う ―― 評価Job側の
-     * 失敗が相談受付そのもの・1通目メールを巻き込まないようにするため
-     * (同一トランザクション・同一ジョブチェーンには置かない)。
+     * 2026-08-03: ブランド・ホイール(6軸)分析Jobのdispatchはここでは
+     * 行わない(診断実行時にAnalysisPipeline::dispatchWebsiteFanOut()から
+     * 自社・競合の両方について既に生成済み、または生成中)。ここでは
+     * 生成済みの結果を読み、2通目メールを送ってよいか
+     * (BrandWheelCompletionNotifier)を判定するだけ ―― まだ生成が完了して
+     * いなければ、Job側の終端時に同じ判定が再度行われ、その時点で送られる
+     * (どちらが先に起きても送られる、2026-08-03のユーザー指摘)。
      */
     public function requestConsultation(Request $request, Analysis $analysis): JsonResponse
     {
@@ -255,29 +308,18 @@ class LeadAnalysisController extends Controller
                 $this->scoreSummaryFor($analysis),
             );
 
-            $this->dispatchBrandWheelAnalysis($analysis);
+            $this->notifyBrandWheelCompletionIfReady($analysis);
         }
 
         return $this->success(['already_requested' => ! $isFirstRequest]);
     }
 
     /**
-     * ブランド・ホイール(6軸)分析Jobを起動する。生成物は社内向けのみで
-     * リードには一切表示されないため、失敗してもこのレスポンス・1通目
-     * メールには一切影響させない(例外はここで握りつぶし、ログにのみ残す)。
-     *
-     * リードの個人情報(会社名・担当者名・電話番号・メールアドレス・
-     * フォーム入力値)はJobへ一切渡さない ―― 渡すのはBrandWheelAnalysisResult
-     * のIDのみで、GenerateBrandWheelAnalysisJob自身もWebsiteAnalysisのIDしか
-     * 受け取らない(LeadSessionへの依存を持たない設計、BrandWheelAnalysis
-     * InputFactory参照)。
-     *
-     * OpenAIの二重呼び出し防止はGenerateBrandWheelAnalysisJobのShouldBeUnique
-     * (#95)に一任する。このメソッド自体は$isFirstRequestのゲート
-     * (recordConsultationRequestedの条件付きUPDATE)により、同一相談リクエストで
-     * 二重に呼ばれることはない。
+     * 自社サイトのBrandWheelAnalysisResultを読み、2通目メールを送ってよいかを
+     * BrandWheelCompletionNotifierに判定させる。失敗してもこのレスポンス・
+     * 1通目メールには一切影響させない(例外はここで握りつぶし、ログにのみ残す)。
      */
-    private function dispatchBrandWheelAnalysis(Analysis $analysis): void
+    private function notifyBrandWheelCompletionIfReady(Analysis $analysis): void
     {
         try {
             $analysis->loadMissing('websiteAnalyses.website');
@@ -288,25 +330,32 @@ class LeadAnalysisController extends Controller
                 // 作られるため、ここに来るのは想定外のデータ不整合である可能性が
                 // 高い。運用上検知されるべき障害としてLog::errorで記録する
                 // (2026-07-29の指摘によりLog::warningから格上げ)。
-                Log::error('Brand wheel analysis dispatch skipped: no primary WebsiteAnalysis found', [
+                Log::error('Brand wheel completion check skipped: no primary WebsiteAnalysis found', [
                     'analysis_id' => $analysis->id,
                 ]);
 
                 return;
             }
 
-            $record = BrandWheelAnalysisResult::query()->create([
-                'analysis_id' => $analysis->id,
-                'website_analysis_id' => $selfWebsiteAnalysis->id,
-                'status' => 'pending',
-                'is_mock' => false,
-                'input_hash' => '',
-            ]);
+            $record = BrandWheelAnalysisResult::query()
+                ->where('website_analysis_id', $selfWebsiteAnalysis->id)
+                ->latest('id')
+                ->first();
 
-            GenerateBrandWheelAnalysisJob::dispatch($record->id)->onQueue('ai');
+            if ($record === null) {
+                // skip_brand_wheelがtrueだった等、生成そのものが行われて
+                // いない(通常のリード診断経路では起こらないはずの状態不整合)。
+                Log::warning('Brand wheel completion check skipped: no BrandWheelAnalysisResult found', [
+                    'analysis_id' => $analysis->id,
+                ]);
+
+                return;
+            }
+
+            $this->brandWheelNotifier->notifyIfReady($record);
         } catch (Throwable $e) {
             report($e);
-            Log::warning('Brand wheel analysis dispatch failed', ['analysis_id' => $analysis->id]);
+            Log::warning('Brand wheel completion check failed', ['analysis_id' => $analysis->id]);
         }
     }
 

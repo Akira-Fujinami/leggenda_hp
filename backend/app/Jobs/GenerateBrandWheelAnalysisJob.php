@@ -2,15 +2,18 @@
 
 namespace App\Jobs;
 
-use App\Models\Analysis;
+use App\Enums\AnalysisErrorCode;
+use App\Enums\JobType;
+use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\BrandWheelAnalysisResult as BrandWheelAnalysisResultRecord;
 use App\Models\WebsiteAnalysis;
+use App\Services\Analysis\AnalysisPipeline;
 use App\Services\BrandWheel\BrandWheelAnalysisException;
 use App\Services\BrandWheel\BrandWheelAnalysisInputFactory;
 use App\Services\BrandWheel\BrandWheelAnalysisProvider;
 use App\Services\BrandWheel\BrandWheelAnalysisProviderFactory;
+use App\Services\BrandWheel\BrandWheelCompletionNotifier;
 use App\Services\BrandWheel\Data\BrandWheelAnalysisInput;
-use App\Services\Lead\LeadNotificationService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -22,13 +25,14 @@ use Illuminate\Support\Facades\Log;
 /**
  * WebsiteAnalysis単位でブランド・ホイール(6軸)分析を生成する。
  * GenerateAiAnalysisJobと同じ設計方針:
- * - 事前に相談ボタンのController(Task #96)がbrand_wheel_analysis_resultsへ
- *   status=pendingの行を作成し、そのIDだけを受け取る。
+ * - 事前にAnalysisPipeline::dispatchWebsiteFanOut()がbrand_wheel_analysis_
+ *   resultsへstatus=pendingの行を作成し(自社・競合の両方、診断実行時)、
+ *   そのIDだけを受け取る。
  * - 同一website_analysis_id×同一input_hashで既に成功している結果があれば、
  *   APIを再度呼ばずそれを複製する(冪等・コスト削減)。
  * - Provider未設定/認証エラー等は永久に待ち続けず、明確なエラーとして
  *   記録して正常終了する(このJob自体がfailedになるのは想定外の例外のみ)。
- *   これにより、このJobの成否が相談受付フロー全体(1通目メール等)を
+ *   これにより、このJobの成否が診断・1通目メールの完了フロー全体を
  *   ブロックすることはない。
  * - レート制限のみリトライ対象とし、認証エラーはリトライしない。
  *
@@ -36,6 +40,16 @@ use Illuminate\Support\Facades\Log;
  * 必ずAI呼び出しのHTTPタイムアウト(services.brand_wheel_ai.timeout)+30秒以上に
  * なるよう、固定値ではなくconstructorで動的に計算する ―― 運用でタイムアウト値を
  * 変更しても、この不変条件が自動的に保たれるようにするため。
+ *
+ * AnalysisJob連携(2026-08-03、JobType::GenerateBrandWheelAnalysisへ追加時):
+ * このJobはAnalyzerを使わないためBaseWebsiteAnalysisJob(ANALYZER_CHAIN系の
+ * try/catch/finallyテンプレート)を継承しない。既存の複雑な分岐
+ * (forceRefreshバイパス・再利用キャッシュ命中・insufficient_input早期return・
+ * リトライ対象エラーのrelease())をそのまま保ちつつ、各終端経路
+ * (insufficient_input/再利用キャッシュ命中/成功/リトライ不可エラー)で
+ * 個別にmarkRunning()/markCompleted()/markFailed()+進捗カスケードを呼ぶ。
+ * リトライ対象エラーでrelease()する経路は、他のBaseWebsiteAnalysisJob系
+ * ジョブと同じく進捗カスケードを呼ばない(まだ結果が確定していないため)。
  */
 class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
 {
@@ -53,8 +67,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
     public function __construct(
         public readonly int $brandWheelAnalysisResultId,
         // #99の安定性確認(同一サイトを複数回評価し、AIの出力自体が揺れるかを
-        // 見る)専用のバイパス。既定はfalseで、既存の呼び出し元(#96の相談ボタン
-        // からのdispatch)は一切このパラメータを渡さないため、本番の挙動は
+        // 見る)専用のバイパス。既定はfalseで、既存の呼び出し元(診断実行時の
+        // fan-out)は一切このパラメータを渡さないため、本番の挙動は
         // 変わらない。production環境ではhandle()内で強制的に無効化する
         // (2026-07-30の指摘 ―― このバイパス自体も本番では使えないこと)。
         public readonly bool $forceRefresh = false,
@@ -71,7 +85,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         return "brand-wheel-analysis:{$this->brandWheelAnalysisResultId}";
     }
 
-    public function handle(BrandWheelAnalysisInputFactory $inputFactory): void
+    public function handle(BrandWheelAnalysisInputFactory $inputFactory, AnalysisPipeline $pipeline): void
     {
         $record = BrandWheelAnalysisResultRecord::find($this->brandWheelAnalysisResultId);
 
@@ -79,10 +93,21 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             return;
         }
 
-        $websiteAnalysis = WebsiteAnalysis::find($record->website_analysis_id);
+        $analysisId = $record->analysis_id;
+        $websiteAnalysisId = $record->website_analysis_id;
+
+        $jobRecord = $pipeline->markRunning($analysisId, $websiteAnalysisId, JobType::GenerateBrandWheelAnalysis);
+
+        if ($jobRecord === null) {
+            // 既に終端状態(重複実行・キュー再処理等)。二重に処理しない。
+            return;
+        }
+
+        $websiteAnalysis = $websiteAnalysisId !== null ? WebsiteAnalysis::find($websiteAnalysisId) : null;
 
         if ($websiteAnalysis === null) {
             $record->update(['status' => 'error', 'error_code' => 'WEBSITE_ANALYSIS_NOT_FOUND', 'error_message' => '対象のWebsiteAnalysisが見つかりません。']);
+            $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, '対象のWebsiteAnalysisが見つかりません。');
 
             return;
         }
@@ -93,6 +118,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             $input = $inputFactory->build($websiteAnalysis);
         } catch (\Throwable $e) {
             $record->update(['status' => 'error', 'error_code' => 'BRAND_WHEEL_INPUT_BUILD_FAILED', 'error_message' => $e->getMessage()]);
+            $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
         }
@@ -111,6 +137,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'axes' => null,
                 'core_value_readable' => null,
                 'core_value_evidence' => null,
+                'key_message' => null,
+                'impression' => null,
                 'quality_dimension_notes' => null,
                 'cautions' => null,
                 'axis_state_counts' => null,
@@ -133,7 +161,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'homepage_body_chars' => mb_strlen($input->homepageBodyText),
             ]);
 
-            $this->sendCompletionNotificationIfNeeded($record, $websiteAnalysis);
+            app(BrandWheelCompletionNotifier::class)->notifyIfReady($record);
+            $this->completeAsSuccess($pipeline, $jobRecord, $analysisId, $websiteAnalysisId);
 
             return;
         }
@@ -142,6 +171,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             $provider = app(BrandWheelAnalysisProviderFactory::class)->make();
         } catch (BrandWheelAnalysisException $e) {
             $record->update(['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage()]);
+            $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
         }
@@ -170,6 +200,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'axes' => $reusable->axes,
                 'core_value_readable' => $reusable->core_value_readable,
                 'core_value_evidence' => $reusable->core_value_evidence,
+                'key_message' => $reusable->key_message,
+                'impression' => $reusable->impression,
                 'quality_dimension_notes' => $reusable->quality_dimension_notes,
                 'cautions' => $reusable->cautions,
                 'axis_state_counts' => $reusable->axis_state_counts,
@@ -185,7 +217,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'generated_at' => now(),
             ]);
 
-            $this->sendCompletionNotificationIfNeeded($record, $websiteAnalysis);
+            app(BrandWheelCompletionNotifier::class)->notifyIfReady($record);
+            $this->completeAsSuccess($pipeline, $jobRecord, $analysisId, $websiteAnalysisId);
 
             return;
         }
@@ -199,10 +232,14 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 $record->update(['status' => 'pending']);
                 $this->release($e->retryAfterSeconds ?? $this->backoff[0]);
 
+                // リトライ対象: まだ結果が確定していないため、markCompleted/
+                // markFailed・進捗カスケードのいずれも呼ばない
+                // (BaseWebsiteAnalysisJobのrelease()経路と同じ扱い)。
                 return;
             }
 
             $record->update(['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_hash' => $inputHash, 'input_truncated' => $input->inputTruncated]);
+            $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
         }
@@ -218,6 +255,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             'axes' => array_map(fn ($axis) => $axis->toArray(), $result->axes),
             'core_value_readable' => $result->coreValue->readable,
             'core_value_evidence' => $result->coreValue->evidence,
+            'key_message' => $result->keyMessage,
+            'impression' => $result->impression,
             'quality_dimension_notes' => $result->qualityDimensionNotes,
             'cautions' => $result->cautions,
             'axis_state_counts' => $result->axisStateCounts,
@@ -246,58 +285,36 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             'input_truncated' => $input->inputTruncated,
         ]);
 
-        $this->sendCompletionNotificationIfNeeded($record, $websiteAnalysis);
+        app(BrandWheelCompletionNotifier::class)->notifyIfReady($record);
+        $this->completeAsSuccess($pipeline, $jobRecord, $analysisId, $websiteAnalysisId);
     }
 
     /**
-     * 2通目(ブランド・ホイール分析結果)メールを社内スタッフへ送る。
-     * staff_notified_atで冪等性を保証する ―― Jobのリトライやキュー再処理で
-     * 複数回送信されるのを防ぐ(2026-07-30の指摘)。送信に失敗した場合は
-     * staff_notified_atを更新しない(nullのままにする)ことで、次回の実行
-     * (再送)で再度送信を試みられるようにする。
-     *
-     * リードの会社名・担当者名・メールアドレスはこの時点でDBから読み出すが、
-     * Job自身のプロパティ(シリアライズされてjobsテーブルに載る値)には
-     * 一切保持しない ―― ローカル変数としてこのメソッド内で使い切るのみ。
-     *
-     * 社内スタッフ向け・リード企業向けは受信者・送信条件・内容がすべて
-     * 独立したメールのため、staff_notified_at/lead_notified_atを別々に
-     * 判定・更新する。片方の送信に失敗しても、成功した側を再送せず
-     * 失敗した側だけ次回の実行で再送できる(2026-07-30の指摘)。
+     * insufficient_input/再利用キャッシュ命中/成功のいずれも、BrandWheelAnalysisResult
+     * としては正常な終端(判定結果が確定した)であり、AnalysisJobとしても
+     * Completed扱いにする(ProgressCalculatorの既存方針: 「失敗したJobも
+     * 完了扱いとして進捗には加算する」の逆で、正常に終わったものは当然
+     * completedにする)。
      */
-    private function sendCompletionNotificationIfNeeded(BrandWheelAnalysisResultRecord $record, WebsiteAnalysis $websiteAnalysis): void
+    private function completeAsSuccess(AnalysisPipeline $pipeline, AnalysisJobRecord $jobRecord, int $analysisId, ?int $websiteAnalysisId): void
     {
-        $analysis = Analysis::find($record->analysis_id);
-        $analysis?->loadMissing(['project.leadSession', 'websiteAnalyses.website']);
-        $leadSession = $analysis?->project?->leadSession;
+        $pipeline->markCompleted($jobRecord);
+        $this->cascadeProgress($pipeline, $analysisId, $websiteAnalysisId);
+    }
 
-        $websiteAnalysis->loadMissing('website');
-        $targetUrl = (string) ($websiteAnalysis->website?->normalized_url ?? '');
+    private function completeAsFailed(AnalysisPipeline $pipeline, AnalysisJobRecord $jobRecord, int $analysisId, ?int $websiteAnalysisId, string $message): void
+    {
+        $pipeline->markFailed($jobRecord, AnalysisErrorCode::UnknownError, $message);
+        $this->cascadeProgress($pipeline, $analysisId, $websiteAnalysisId);
+    }
 
-        if ($record->staff_notified_at === null) {
-            $staffSent = app(LeadNotificationService::class)->notifyBrandWheelAnalysisCompleted(
-                $record,
-                $leadSession?->company_name ?? '(不明)',
-                $leadSession?->contact_name ?? '(不明)',
-                $targetUrl,
-            );
-
-            if ($staffSent) {
-                $record->update(['staff_notified_at' => now()]);
-            }
+    private function cascadeProgress(AnalysisPipeline $pipeline, int $analysisId, ?int $websiteAnalysisId): void
+    {
+        if ($websiteAnalysisId !== null) {
+            $pipeline->updateWebsiteAnalysisProgress($websiteAnalysisId);
+            $pipeline->maybeFinalizeWebsiteAnalysis($websiteAnalysisId);
         }
-
-        if ($record->lead_notified_at === null) {
-            $leadSent = app(LeadNotificationService::class)->notifyBrandWheelAnalysisCompletedToLead(
-                $record,
-                $leadSession?->email,
-                $targetUrl,
-            );
-
-            if ($leadSent) {
-                $record->update(['lead_notified_at' => now()]);
-            }
-        }
+        $pipeline->updateAnalysisProgress($analysisId);
     }
 
     /**
@@ -336,10 +353,35 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
     public function failed(?\Throwable $exception): void
     {
         $record = BrandWheelAnalysisResultRecord::find($this->brandWheelAnalysisResultId);
-        $record?->update([
+
+        if ($record === null) {
+            return;
+        }
+
+        $record->update([
             'status' => 'error',
             'error_code' => 'BRAND_WHEEL_JOB_FAILED',
             'error_message' => $exception?->getMessage(),
         ]);
+
+        // Laravelのキュー基盤自身がJobを終了させた場合(timeout超過・tries使い
+        // 切り後の再スケジュール失敗)、handle()内のtry/catchを経由せずここへ
+        // 直接来る。ここでmarkFailed()しておかないとAnalysisJob.statusが
+        // runningのまま残り、maybeFinalizeWebsiteAnalysis()の「全Job終端待ち」が
+        // 完了しない(BaseWebsiteAnalysisJob::failed()と同じ理由、2026-07-25の
+        // 本番障害の再発防止)。
+        $pipeline = app(AnalysisPipeline::class);
+        $jobRecord = AnalysisJobRecord::query()
+            ->where('analysis_id', $record->analysis_id)
+            ->where('website_analysis_id', $record->website_analysis_id)
+            ->where('job_type', JobType::GenerateBrandWheelAnalysis)
+            ->first();
+
+        if ($jobRecord === null || $jobRecord->status->isTerminal()) {
+            return;
+        }
+
+        $pipeline->markFailed($jobRecord, AnalysisErrorCode::JobTimeout, $exception?->getMessage() ?? 'ジョブがタイムアウトしたか、想定外のエラーで終了しました。');
+        $this->cascadeProgress($pipeline, $record->analysis_id, $record->website_analysis_id);
     }
 }

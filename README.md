@@ -438,6 +438,18 @@ FRONTEND_ORIGIN=https://<frontend-service>.onrender.com
   - **Resendのドメイン検証(SPF/DKIM)**。リード企業向けメール
     (`BrandWheelLeadAnalysisCompletedMail`)が新たに追加され、社外の受信者へ
     送るメールが増えたため、到達性の検証はこれまで以上に重要になっている。
+  - **[2026-08-03変更] ブランド・ホイール生成タイミングとコストの母数が変わった**。
+    従来は「相談ボタンを押したリードの自社サイト1件のみ」がOpenAI呼び出しの
+    対象だった(=全診断のうち相談に至った割合分×1回)。2026-08-03以降は
+    「**診断を開始した全リード**×自社・競合の2回」が対象になる ―― 母数・
+    呼び出し回数のいずれも変わるため、単純な「1回→2回」以上のコスト増加に
+    なりうる。相談ボタンのクリック率の実測データが無いため、事前の総コスト
+    見積もりでは止めていない。運用開始後、`Log::info('Brand wheel analysis
+    completed', ...)`が記録する`usage_input_tokens`/`usage_output_tokens`
+    から実測すること(ログにサイト本文・evidence等の実内容は一切含まれない)。
+    `skip_brand_wheel`の既定はtrue(実行しない)で、リード向け経路
+    (`LeadAnalysisController::store()`)のみが明示的にfalseを渡す ――
+    社内向けダッシュボード分析ではこれまでどおり一切呼び出されない。
 
 ## テスト
 

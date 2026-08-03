@@ -74,6 +74,15 @@ export interface PerspectiveCell {
   perspective: LeadPerspective;
   /** 0〜100に正規化した達成度。数値として出せない場合はnull。 */
   value: number | null;
+  /**
+   * この観点が「そもそも点数を持たない」ものかどうか。
+   *
+   * ①(書くべきことが書けているか)に属する指標はすべてscoring_type=not_scored /
+   * points=0で登録されており、configured_max_scoreが常に0になる。
+   * 「測れなかったので数値が出ない」のとは意味がまったく違うため、
+   * 表示でも図でも区別する(誠実性の維持と同じ考え方)。
+   */
+  unscored: boolean;
 }
 
 /**
@@ -99,6 +108,17 @@ export function normalizedValue(website: LeadWebsiteResult, perspective: LeadPer
 }
 
 /**
+ * その観点が設計上そもそも点数を持たないか。configured_max_scoreは
+ * 「このリリースで何点満点か」という固定値なので、これが0ということは
+ * 採点対象の指標が1件も割り当てられていないことを意味する。
+ */
+export function isUnscoredPerspective(website: LeadWebsiteResult, perspective: LeadPerspective): boolean {
+  const category = website.score.category_scores.find((score) => score.key === perspective.key);
+
+  return category !== undefined && category.configured_max_score <= 0;
+}
+
+/**
  * 観点の並び順と見出しは自社サイトのperspectivesをそのまま使う ―― 見出しの
  * 唯一の定義元はバックエンドのLeadMetricCatalog::PERSPECTIVE_HEADINGSであり、
  * フロント側で別の文言を持たない。
@@ -111,10 +131,18 @@ export function buildComparisonRows(self: LeadWebsiteResult, competitor: LeadWeb
       key: perspective.key,
       heading: perspective.heading,
       note: perspective.note,
-      self: { perspective, value: normalizedValue(self, perspective) },
+      self: {
+        perspective,
+        value: normalizedValue(self, perspective),
+        unscored: isUnscoredPerspective(self, perspective),
+      },
       competitor:
         competitor && counterpart
-          ? { perspective: counterpart, value: normalizedValue(competitor, counterpart) }
+          ? {
+              perspective: counterpart,
+              value: normalizedValue(competitor, counterpart),
+              unscored: isUnscoredPerspective(competitor, counterpart),
+            }
           : null,
     };
   });
@@ -201,9 +229,11 @@ function RadarChart({ rows, hasCompetitor }: { rows: ComparisonRow[]; hasCompeti
 
   const selfValues = rows.map((row) => row.self.value);
   const competitorValues = rows.map((row) => row.competitor?.value ?? null);
-  const excluded = rows
+  const missing = rows
     .map((row, index) => ({ row, index }))
     .filter(({ row }) => row.self.value === null && (row.competitor === null || row.competitor.value === null));
+  const unscored = missing.filter(({ row }) => row.self.unscored);
+  const unmeasured = missing.filter(({ row }) => !row.self.unscored);
 
   return (
     <div className="space-y-2">
@@ -258,9 +288,15 @@ function RadarChart({ rows, hasCompetitor }: { rows: ComparisonRow[]; hasCompeti
         })}
       </svg>
 
-      {excluded.length > 0 && (
+      {unscored.length > 0 && (
         <p className="text-center text-xs text-muted-foreground">
-          {excluded.map(({ index }) => AXIS_NUMBERS[index]).join("")}
+          {unscored.map(({ index }) => AXIS_NUMBERS[index]).join("")}
+          は点数をつけない観点のため、図には含めていません（内容は下に記載しています）。
+        </p>
+      )}
+      {unmeasured.length > 0 && (
+        <p className="text-center text-xs text-muted-foreground">
+          {unmeasured.map(({ index }) => AXIS_NUMBERS[index]).join("")}
           は数値が出ていないため、図に含まれていません。
         </p>
       )}
