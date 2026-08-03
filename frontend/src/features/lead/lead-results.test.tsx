@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LeadResults } from "@/features/lead/lead-results";
 import { useRequestConsultation } from "@/features/lead/hooks";
-import type { LeadPerspective, LeadResults as LeadResultsType } from "@/types/lead";
+import type { BrandWheelResult, LeadPerspective, LeadResults as LeadResultsType } from "@/types/lead";
 
 vi.mock("@/features/lead/hooks", () => ({
   useRequestConsultation: vi.fn(),
@@ -131,9 +131,46 @@ function baseResults(overrides: Partial<LeadResultsType> = {}): LeadResultsType 
   };
 }
 
+function brandWheel(): BrandWheelResult {
+  return {
+    status: "success",
+    status_message: null,
+    analyzed_url: "https://careers.example.co.jp/",
+    axes: [
+      { key: "will_activity", group: "company_appeal", name: "活動的魅力", matched_count: 3, max_count: 4, matched_sub_elements: [{ key: "purpose", name: "パーパス" }] },
+      { key: "asset", group: "company_appeal", name: "資産的魅力", matched_count: 2, max_count: 4, matched_sub_elements: [] },
+      { key: "personality", group: "company_distance", name: "経営スタイル", matched_count: 1, max_count: 4, matched_sub_elements: [] },
+      { key: "relationship", group: "company_distance", name: "就業環境", matched_count: 0, max_count: 4, matched_sub_elements: [] },
+      { key: "emotional_benefit", group: "job_appeal", name: "情緒的便益", matched_count: 1, max_count: 4, matched_sub_elements: [] },
+      { key: "financial_benefit", group: "job_appeal", name: "金銭的便益", matched_count: 4, max_count: 4, matched_sub_elements: [] },
+    ],
+    key_message: "技術で社会基盤を支える、という主題が置かれています。",
+    impression: "情緒的便益の記述が薄いのがもったいないところです。",
+    source_pages: { recruit_page: "read", home_page: "read" },
+  };
+}
+
 describe("LeadResults", () => {
   beforeEach(() => {
     mockConsultationState();
+  });
+
+  it("ブランド・ホイール(6軸)を4観点より先に置く", () => {
+    const withWheel = baseResults({ websites: [baseWebsite({ brand_wheel: brandWheel() })] });
+
+    render(<LeadResults results={withWheel} token="tok" analysisId={1} />);
+
+    const wheelTitle = screen.getByText("自社ページの分析結果");
+    const perspectiveTitle = screen.getByText("4つの観点での評価");
+    // 6軸が主、4観点が従。DOM順で6軸が先に来ていることを確認する。
+    expect(wheelTitle.compareDocumentPosition(perspectiveTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("ブランド・ホイールの結果が無い場合でも4観点の表示は壊れない", () => {
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+
+    expect(screen.queryByText("自社ページの分析結果")).not.toBeInTheDocument();
+    expect(screen.getByText("4つの観点での評価")).toBeInTheDocument();
   });
 
   it("shows the recruiter-scoped score label (not the internal 総合スコア wording) at or above the honesty threshold", () => {

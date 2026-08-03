@@ -158,7 +158,12 @@ class FinalizeJobsTest extends TestCase
     {
         Queue::fake([FinalizeWebsiteAnalysisJob::class]);
 
-        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+        // skip_brand_wheel=false(明示)にする ―― 既定のtrueのままだと
+        // GenerateBrandWheelAnalysisがrequiredTypesから除外され、この
+        // テストが検証したい「websiteFanOutTypesの最後の1件が終端になるまで
+        // finalizeが起動しない」というループの前提(全件が必須)が崩れる。
+        $analysis = Analysis::factory()->create(['skip_brand_wheel' => false]);
+        $websiteAnalysis = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id]);
         $pipeline = app(AnalysisPipeline::class);
 
         // FinalizeWebsiteAnalysis自身は「他の9件が終端になった結果」として
@@ -223,7 +228,21 @@ class FinalizeJobsTest extends TestCase
 
         $this->assertSame(AnalysisStatus::Running, $analysis->refresh()->status);
 
+        // GenerateBrandWheelAnalysisは対象外 ―― このテストのAnalysisは
+        // skip_brand_wheelを明示していないため既定のtrue(実行しない)になり、
+        // 意図どおりプレースホルダー自体が登録されない
+        // (AnalysisPipelineSkipBrandWheelTestが既定値の挙動を別途検証する)。
         foreach (JobType::websiteLevelTypes() as $jobType) {
+            if ($jobType === JobType::GenerateBrandWheelAnalysis) {
+                $this->assertDatabaseMissing('analysis_jobs', [
+                    'analysis_id' => $analysis->id,
+                    'website_analysis_id' => $websiteAnalysis->id,
+                    'job_type' => $jobType->value,
+                ]);
+
+                continue;
+            }
+
             $this->assertDatabaseHas('analysis_jobs', [
                 'analysis_id' => $analysis->id,
                 'website_analysis_id' => $websiteAnalysis->id,

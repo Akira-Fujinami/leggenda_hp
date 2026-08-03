@@ -92,6 +92,7 @@ export interface LeadWebsiteResult {
   score: LeadWebsiteScore;
   perspectives: LeadPerspective[];
   top_recommendations: LeadRecommendation[];
+  brand_wheel?: BrandWheelResult | null;
 }
 
 export interface LeadConsultationResult {
@@ -104,4 +105,55 @@ export interface LeadResults {
   status: LeadAnalysisPhase;
   reports: { docx: LeadReportStatus; pdf: LeadReportStatus };
   websites: LeadWebsiteResult[];
+  brand_wheel_comparison?: BrandWheelComparison | null;
+}
+
+// --- ブランド・ホイール（採用ブランドの6軸） ---
+
+/**
+ * 6軸の判定結果。件数(matched_count)は「サイトの記述から、その軸に該当する
+ * 下位要素がいくつ読み取れたか」であり、点数ではない。max_countは
+ * config/brand_wheel.phpのsub_elements件数から算出されるため、軸ごとに
+ * 異なり得るし、将来4から5に変わり得る ―― フロント側で固定値を持たない。
+ */
+export interface BrandWheelAxis {
+  key: string;
+  group: BrandWheelGroup;
+  name: string;
+  matched_count: number;
+  max_count: number;
+  matched_sub_elements: { key: string; name: string }[];
+}
+
+export type BrandWheelGroup = "company_appeal" | "company_distance" | "job_appeal";
+
+/**
+ * statusは分岐用の閉じた集合、status_messageは画面とレポートに出す文言
+ * (唯一の定義元はバックエンドのconfig)。success以外ではaxesが空になり、
+ * 図を描いてはいけない ―― 6軸すべて0件の図は「魅力のない会社」に見えるが、
+ * 実際は「読み取れなかった」であるため。
+ */
+export type BrandWheelStatus =
+  | "success"
+  | "pending"
+  | "insufficient_input"
+  | "recruit_page_unreadable"
+  | "no_matched_content"
+  | "error";
+
+export interface BrandWheelResult {
+  status: BrandWheelStatus;
+  status_message: string | null;
+  analyzed_url: string | null;
+  axes: BrandWheelAxis[];
+  key_message: string | null;
+  impression: string | null;
+  source_pages: { recruit_page: string; home_page: string } | null;
+}
+
+/** 件数から機械的に導出する比較まとめ(AIには書かせない)。 */
+export interface BrandWheelComparison {
+  self_points: string[];
+  competitor_points: string[];
+  one_point: { key: string; text: string } | null;
 }

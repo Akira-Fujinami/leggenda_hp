@@ -15,6 +15,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { DataQualityNotice } from "@/features/analysis/results/data-quality-notice";
 import { leadApi } from "@/features/lead/api";
 import { useRequestConsultation } from "@/features/lead/hooks";
+import { LeadBrandWheel } from "@/features/lead/lead-brand-wheel";
 import { LeadPerspectiveComparison } from "@/features/lead/lead-perspective-comparison";
 import type { LeadReportStatus, LeadResults as LeadResultsType, LeadWebsiteResult } from "@/types/lead";
 
@@ -224,7 +225,20 @@ export function LeadResults({
         </p>
       )}
 
-      {results.websites.length > 0 && <LeadPerspectiveComparison websites={results.websites} />}
+      {/* ブランド・ホイール(6軸)を主、4観点を従にする(2026-08-02のユーザー選択)。
+          4観点のうち①(書くべきことが書けているか)は採点対象の指標を持たない
+          ため、4観点だけでは図形が必ず欠ける。採用サイトに何が書かれているかを
+          直接見ているのは6軸のほうなので、こちらを先に置く。 */}
+      {results.websites.length > 0 && (
+        <LeadBrandWheel websites={results.websites} comparison={results.brand_wheel_comparison ?? null} />
+      )}
+
+      {results.websites.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">あわせて、サイトの状態を4つの観点で確認しています。</p>
+          <LeadPerspectiveComparison websites={results.websites} />
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         {results.websites.map((website, i) => (
