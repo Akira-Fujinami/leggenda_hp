@@ -149,6 +149,28 @@
         font-size: 10pt;
         margin-bottom: 3px;
     }
+    .brand-wheel-site {
+        margin-bottom: 18px;
+    }
+    .brand-wheel-site h3 {
+        font-size: 13pt;
+        margin-bottom: 4px;
+    }
+    .brand-wheel-summary {
+        margin-top: 14px;
+    }
+    .brand-wheel-summary h4 {
+        font-size: 11pt;
+        margin-bottom: 4px;
+    }
+    .brand-wheel-summary ul {
+        margin: 4px 0 10px 0;
+        padding-left: 18px;
+    }
+    .brand-wheel-summary li {
+        font-size: 10pt;
+        margin-bottom: 3px;
+    }
 </style>
 </head>
 <body>
@@ -180,6 +202,118 @@
     @if ($viewModel->comparisonSentence)
         <p class="summary-text">{{ $viewModel->comparisonSentence }}</p>
     @endif
+</div>
+
+<div class="page">
+    <h2>採用ブランドの6軸(ブランド・ホイール)</h2>
+    <p class="footnote" style="margin-top: 0;">サイトの記述から、各項目に該当する内容がどれだけ読み取れたかをまとめています(人による評価ではありません)。</p>
+
+    <div class="brand-wheel-site">
+        <h3>自社サイト: {{ $viewModel->selfWebsiteUrl }}</h3>
+        @if (($viewModel->brandWheelSelf['status'] ?? null) === 'success')
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 22%;">項目</th>
+                        <th style="width: 15%;">件数</th>
+                        <th>読み取れた内容</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach ($viewModel->brandWheelSelf['axes'] as $axis)
+                        <tr>
+                            <td>{{ $axis['name'] }}</td>
+                            <td>{{ $axis['matched_count'] }} / {{ $axis['max_count'] }}件</td>
+                            <td>
+                                @if (count($axis['matched_sub_elements']) > 0)
+                                    {{ implode('、', array_column($axis['matched_sub_elements'], 'name')) }}
+                                @else
+                                    ―
+                                @endif
+                            </td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+            @if ($viewModel->brandWheelSelf['key_message'] || $viewModel->brandWheelSelf['impression'])
+                <p class="summary-text">
+                    @if ($viewModel->brandWheelSelf['key_message'])
+                        <strong>キーメッセージ：</strong>{{ $viewModel->brandWheelSelf['key_message'] }}<br>
+                    @endif
+                    @if ($viewModel->brandWheelSelf['impression'])
+                        <strong>AI解析による印象：</strong>{{ $viewModel->brandWheelSelf['impression'] }}
+                    @endif
+                </p>
+            @endif
+        @else
+            {{-- 6項目すべて0件の表は「魅力のない会社」の意味になるため出さない。
+                 理由の文言はconfig('brand_wheel.status_messages')が唯一の定義元。 --}}
+            <p>{{ $viewModel->brandWheelSelf['status_message'] ?? '' }}</p>
+        @endif
+    </div>
+
+    @if ($viewModel->competitorWebsiteUrl)
+        <div class="brand-wheel-site">
+            <h3>比較サイト: {{ $viewModel->competitorWebsiteUrl }}</h3>
+            @if (($viewModel->brandWheelCompetitor['status'] ?? null) === 'success')
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 22%;">項目</th>
+                            <th style="width: 15%;">件数</th>
+                            <th>読み取れた内容</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach ($viewModel->brandWheelCompetitor['axes'] as $axis)
+                            <tr>
+                                <td>{{ $axis['name'] }}</td>
+                                <td>{{ $axis['matched_count'] }} / {{ $axis['max_count'] }}件</td>
+                                <td>
+                                    @if (count($axis['matched_sub_elements']) > 0)
+                                        {{ implode('、', array_column($axis['matched_sub_elements'], 'name')) }}
+                                    @else
+                                        ―
+                                    @endif
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            @else
+                <p>{{ $viewModel->brandWheelCompetitor['status_message'] ?? '' }}</p>
+            @endif
+        </div>
+    @endif
+
+    @if (!empty($viewModel->brandWheelComparison['self_points']) || !empty($viewModel->brandWheelComparison['competitor_points']) || $viewModel->brandWheelComparison['one_point'])
+        <div class="brand-wheel-summary">
+            <h4>比較まとめ</h4>
+            @if (!empty($viewModel->brandWheelComparison['self_points']))
+                <p style="margin-bottom: 2px;"><strong>【自社ページ】</strong></p>
+                <ul>
+                    @foreach ($viewModel->brandWheelComparison['self_points'] as $point)
+                        <li>{{ $point }}</li>
+                    @endforeach
+                </ul>
+            @endif
+            @if (!empty($viewModel->brandWheelComparison['competitor_points']))
+                <p style="margin-bottom: 2px;"><strong>【他社ページ】</strong></p>
+                <ul>
+                    @foreach ($viewModel->brandWheelComparison['competitor_points'] as $point)
+                        <li>{{ $point }}</li>
+                    @endforeach
+                </ul>
+            @endif
+            @if ($viewModel->brandWheelComparison['one_point'])
+                <p><strong>【ワンポイント】</strong>{{ $viewModel->brandWheelComparison['one_point']['text'] }}</p>
+            @endif
+        </div>
+    @endif
+
+    <p class="footnote">
+        ブランド・ホイールは本来、サイトだけでなくグループインタビュー・口コミ・内定者/辞退者インタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。キーメッセージと印象の読み取りにはAIを使用しています。
+    </p>
 </div>
 
 <div class="page">

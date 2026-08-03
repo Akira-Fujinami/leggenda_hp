@@ -8,6 +8,7 @@ use App\Enums\RecommendationEffort;
 use App\Enums\RecommendationImpact;
 use App\Enums\RecommendationPriority;
 use App\Models\Analysis;
+use App\Models\BrandWheelAnalysisResult;
 use App\Models\LeadSession;
 use App\Models\MetricDefinition;
 use App\Models\MetricResult;
@@ -250,5 +251,127 @@ class ReportViewModelBuilderTest extends TestCase
 
         $this->assertTrue($viewModel->isPartial);
         $this->assertNotEmpty($viewModel->perspectives);
+    }
+
+    /**
+     * 2026-08-03: 画面(LeadResults)から診断内容そのものを外したことで、
+     * レポート(Word/PDF)が「競合サイトへの改善提案は出さない」という
+     * 誠実性保証の唯一の配信経路になった。ReportViewModelBuilder::build()は
+     * $selfWebsiteAnalysis->recommendationsのみをComposerへ渡す実装だが、
+     * それを固定するリグレッションテストが存在しなかった(既存テストは
+     * いずれもself側にしかrecommendationsを作っていない) ―― この抜けを埋める。
+     */
+    public function test_top_recommendations_never_include_the_competitor_sites_recommendations(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        $this->recommendationWithCatalogKey($selfWa, 'form_present', 1.0);
+        // 競合側にsort_scoreを圧倒的に高く設定する ―― もし将来の実装ミスで
+        // 競合のrecommendationsが混ざってしまった場合、catalog上位に来て
+        // このテストが検出できるようにするため。
+        $this->recommendationWithCatalogKey($competitorWa, 'title_present', 999.0);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+        $catalog = new LeadRecommendationCatalog(new LeadMetricCatalog);
+
+        $this->assertCount(1, $viewModel->topRecommendations);
+        $this->assertSame($catalog->title('form_present'), $viewModel->topRecommendations[0]->title);
+    }
+
+    public function test_brand_wheel_is_composed_for_self_and_competitor_websites(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => '自社サイトの抜粋']]]],
+            'key_message' => '自社のキーメッセージ',
+            'impression' => '自社の印象',
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'asset', 'matched_sub_elements' => [['key' => 'brand_recognition', 'evidence' => '競合サイトの抜粋']]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame('success', $viewModel->brandWheelSelf['status']);
+        $this->assertSame('自社のキーメッセージ', $viewModel->brandWheelSelf['key_message']);
+        $this->assertSame('success', $viewModel->brandWheelCompetitor['status']);
+        $this->assertNotEmpty($viewModel->brandWheelComparison['self_points']);
+
+        // evidence(原文の抜粋)はレポート層にも一切渡さない
+        // (BrandWheelLeadResponseComposerと同じ方針)。
+        $raw = json_encode($viewModel->brandWheelSelf, JSON_UNESCAPED_UNICODE).json_encode($viewModel->brandWheelCompetitor, JSON_UNESCAPED_UNICODE);
+        $this->assertStringNotContainsString('自社サイトの抜粋', $raw);
+        $this->assertStringNotContainsString('競合サイトの抜粋', $raw);
+    }
+
+    /**
+     * status!=='success'のとき(6項目すべて0件の表を出すことは禁止のため)
+     * axesが空配列でReportViewModelへ渡ること。実際に表を出さない判断は
+     * Blade/WordReportGenerator側のstatus分岐に一任する。
+     */
+    public function test_brand_wheel_axes_are_empty_when_status_is_not_success(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'insufficient_input',
+            'source_pages' => ['recruit_page' => 'absent', 'home_page' => 'read'],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame('insufficient_input', $viewModel->brandWheelSelf['status']);
+        $this->assertSame([], $viewModel->brandWheelSelf['axes']);
+        $this->assertNotNull($viewModel->brandWheelSelf['status_message']);
+        $this->assertNull($viewModel->brandWheelComparison['one_point']);
+    }
+
+    public function test_brand_wheel_competitor_is_null_for_a_self_only_analysis(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNull($viewModel->brandWheelCompetitor);
+        $this->assertSame([], $viewModel->brandWheelComparison['competitor_points']);
     }
 }

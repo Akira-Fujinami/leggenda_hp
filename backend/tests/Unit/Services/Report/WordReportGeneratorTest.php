@@ -47,13 +47,24 @@ class WordReportGeneratorTest extends TestCase
                 new ReportRecommendationRow('画像を圧縮してください', '表示速度の改善につながります。', '緊急', '高', '小'),
             ],
             isPartial: false,
+            brandWheelSelf: [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://example.com/careers',
+                'axes' => [
+                    ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 2, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']]],
+                ],
+                'key_message' => '技術で社会基盤を支える、という主題が置かれています。',
+                'impression' => '情緒的便益の記述が薄いのがもったいないところです。',
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+            brandWheelCompetitor: null,
+            brandWheelComparison: ['self_points' => ['活動的魅力が最も内容として充足しています。'], 'competitor_points' => [], 'one_point' => ['key' => 'well_covered', 'text' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。']],
         );
     }
 
-    public function test_it_generates_a_valid_docx_document_with_correct_japanese_text(): void
+    private function extractDocumentXml(string $docx): string
     {
-        $docx = app(WordReportGenerator::class)->generate($this->viewModel());
-
         $tempPath = tempnam(sys_get_temp_dir(), 'word-report-test-').'.docx';
         file_put_contents($tempPath, $docx);
 
@@ -65,6 +76,15 @@ class WordReportGeneratorTest extends TestCase
         unlink($tempPath);
 
         $this->assertNotFalse($documentXml);
+
+        return $documentXml;
+    }
+
+    public function test_it_generates_a_valid_docx_document_with_correct_japanese_text(): void
+    {
+        $docx = app(WordReportGenerator::class)->generate($this->viewModel());
+        $documentXml = $this->extractDocumentXml($docx);
+
         $this->assertStringContainsString('株式会社サンプル様', $documentXml);
         $this->assertStringContainsString('総合結果', $documentXml);
         $this->assertStringContainsString('計測対象外', $documentXml);
@@ -77,5 +97,97 @@ class WordReportGeneratorTest extends TestCase
         // 内部専用情報が絶対に含まれないこと。
         $this->assertStringNotContainsString('job_type', $documentXml);
         $this->assertStringNotContainsString('error_code', $documentXml);
+    }
+
+    /**
+     * 2026-08-03: カバー率70%未満を「参考スコア」と明示する誠実性保証。
+     * 画面(LeadResults)から診断内容そのものを外したため、この保証が
+     * 実際にリードへ届く経路はWord/PDFレポートのみになった。従来の
+     * fixture(coverage_rate=92.5)はこの分岐を一度も通していなかった
+     * ―― この分岐を実際に通すテストが存在しなかった、という抜けを埋める。
+     */
+    public function test_shows_the_reference_score_badge_when_coverage_is_below_70_percent(): void
+    {
+        $viewModel = $this->viewModel();
+        $lowCoverage = new ReportViewModel(
+            companyDisplayName: $viewModel->companyDisplayName,
+            generatedAtLabel: $viewModel->generatedAtLabel,
+            selfWebsiteUrl: $viewModel->selfWebsiteUrl,
+            competitorWebsiteUrl: $viewModel->competitorWebsiteUrl,
+            selfScore: ['display_score' => 40, 'configured_max_score' => 100, 'coverage_rate' => 69.9, 'confidence_rate' => 60.0],
+            competitorScore: $viewModel->competitorScore,
+            overallSummaryText: $viewModel->overallSummaryText,
+            comparisonSentence: $viewModel->comparisonSentence,
+            perspectives: $viewModel->perspectives,
+            topRecommendations: $viewModel->topRecommendations,
+            isPartial: $viewModel->isPartial,
+            brandWheelSelf: $viewModel->brandWheelSelf,
+            brandWheelCompetitor: $viewModel->brandWheelCompetitor,
+            brandWheelComparison: $viewModel->brandWheelComparison,
+        );
+
+        $documentXml = $this->extractDocumentXml(app(WordReportGenerator::class)->generate($lowCoverage));
+
+        $this->assertStringContainsString('参考スコア', $documentXml);
+    }
+
+    /**
+     * 2026-08-03: 6軸(ブランド・ホイール)。項目名・件数・読み取れた下位要素・
+     * キーメッセージ・印象・比較まとめが出ること、満点(max_count)を
+     * 固定値(4)で書いていないことを確認する。
+     */
+    public function test_includes_the_brand_wheel_section_with_counts_and_summary(): void
+    {
+        $docx = app(WordReportGenerator::class)->generate($this->viewModel());
+        $documentXml = $this->extractDocumentXml($docx);
+
+        $this->assertStringContainsString('採用ブランドの6軸', $documentXml);
+        $this->assertStringContainsString('活動的魅力', $documentXml);
+        $this->assertStringContainsString('2 / 4件', $documentXml);
+        $this->assertStringContainsString('パーパス', $documentXml);
+        $this->assertStringContainsString('技術で社会基盤を支える', $documentXml);
+        $this->assertStringContainsString('情緒的便益の記述が薄い', $documentXml);
+        $this->assertStringContainsString('活動的魅力が最も内容として充足しています', $documentXml);
+        $this->assertStringContainsString('バランス良く読み取れる状態です', $documentXml);
+    }
+
+    /**
+     * 2026-08-03: status!=='success'のとき表を出さず、status_messageのみを
+     * 出す(6項目すべて0件の表を出すことを禁止 ―― 「魅力のない会社」の
+     * 意味になるため)。
+     */
+    public function test_does_not_render_the_brand_wheel_table_when_status_is_not_success(): void
+    {
+        $viewModel = $this->viewModel();
+        $unreadable = new ReportViewModel(
+            companyDisplayName: $viewModel->companyDisplayName,
+            generatedAtLabel: $viewModel->generatedAtLabel,
+            selfWebsiteUrl: $viewModel->selfWebsiteUrl,
+            competitorWebsiteUrl: $viewModel->competitorWebsiteUrl,
+            selfScore: $viewModel->selfScore,
+            competitorScore: $viewModel->competitorScore,
+            overallSummaryText: $viewModel->overallSummaryText,
+            comparisonSentence: $viewModel->comparisonSentence,
+            perspectives: $viewModel->perspectives,
+            topRecommendations: $viewModel->topRecommendations,
+            isPartial: $viewModel->isPartial,
+            brandWheelSelf: [
+                'status' => 'recruit_page_unreadable',
+                'status_message' => '採用ページの内容を取得できなかったため、この項目の分析は行っていません。',
+                'analyzed_url' => 'https://example.com/careers',
+                'axes' => [],
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'unreadable', 'home_page' => 'read'],
+            ],
+            brandWheelCompetitor: null,
+            brandWheelComparison: ['self_points' => [], 'competitor_points' => [], 'one_point' => null],
+        );
+
+        $documentXml = $this->extractDocumentXml(app(WordReportGenerator::class)->generate($unreadable));
+
+        $this->assertStringContainsString('採用ページの内容を取得できなかったため', $documentXml);
+        $this->assertStringNotContainsString('パーパス', $documentXml);
+        $this->assertStringNotContainsString('活動的魅力', $documentXml);
     }
 }

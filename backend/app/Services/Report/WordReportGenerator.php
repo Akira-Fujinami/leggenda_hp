@@ -34,6 +34,7 @@ class WordReportGenerator
 
         $this->addCoverSection($phpWord, $viewModel);
         $this->addOverallResultsSection($phpWord, $viewModel);
+        $this->addBrandWheelSection($phpWord, $viewModel);
         $this->addPerspectivesSection($phpWord, $viewModel);
         $this->addRecommendationsSection($phpWord, $viewModel);
         $this->addCallToActionSection($phpWord, $viewModel);
@@ -103,6 +104,115 @@ class WordReportGenerator
         if ($viewModel->comparisonSentence !== null) {
             $section->addTextBreak(1);
             $section->addText($viewModel->comparisonSentence);
+        }
+    }
+
+    /**
+     * 採用ブランドの6軸(ブランド・ホイール)。2026-08-03、画面から診断内容を
+     * 外したことでレポートが6軸の唯一の配信経路になったため追加。
+     * 判定ロジックは一切持たず、BrandWheelLeadResponseComposer/
+     * BrandWheelComparisonSummaryComposerが組み立てた結果をそのまま
+     * レイアウトへ差し込むだけ(PDF版と表示内容を一致させるため)。
+     */
+    private function addBrandWheelSection(PhpWord $phpWord, ReportViewModel $viewModel): void
+    {
+        $section = $phpWord->addSection();
+        $section->addTitle('採用ブランドの6軸(ブランド・ホイール)', 1);
+        $section->addText(
+            'サイトの記述から、各項目に該当する内容がどれだけ読み取れたかをまとめています(人による評価ではありません)。',
+            ['size' => 9, 'italic' => true],
+        );
+
+        $section->addTextBreak(1);
+        $section->addText('自社サイト: '.$viewModel->selfWebsiteUrl, ['bold' => true]);
+        $this->addBrandWheelSiteBody($section, $viewModel->brandWheelSelf);
+
+        if ($viewModel->competitorWebsiteUrl !== null) {
+            $section->addTextBreak(1);
+            $section->addText('比較サイト: '.$viewModel->competitorWebsiteUrl, ['bold' => true]);
+            $this->addBrandWheelSiteBody($section, $viewModel->brandWheelCompetitor);
+        }
+
+        $this->addBrandWheelComparison($section, $viewModel->brandWheelComparison);
+
+        $section->addTextBreak(1);
+        $section->addText(
+            'ブランド・ホイールは本来、サイトだけでなくグループインタビュー・口コミ・内定者/辞退者インタビュー・説明会・SNSなども併せて構築するものです。'.
+            '今回はそのうちサイトの記述のみを拝見しています。キーメッセージと印象の読み取りにはAIを使用しています。',
+            ['size' => 8.5, 'color' => '666666'],
+        );
+    }
+
+    /**
+     * @param  ?array<string, mixed>  $brandWheel  BrandWheelLeadResponseComposer::compose()の戻り値
+     */
+    private function addBrandWheelSiteBody(Section $section, ?array $brandWheel): void
+    {
+        if (($brandWheel['status'] ?? null) !== 'success') {
+            // 6項目すべて0件の表は「魅力のない会社」の意味になるため出さない。
+            // 理由の文言はconfig('brand_wheel.status_messages')が唯一の定義元。
+            $section->addText((string) ($brandWheel['status_message'] ?? ''));
+
+            return;
+        }
+
+        $table = $section->addTable(['borderSize' => 6, 'borderColor' => 'cccccc', 'cellMargin' => 80]);
+
+        $table->addRow();
+        $table->addCell(2500)->addText('項目', ['bold' => true]);
+        $table->addCell(1500)->addText('件数', ['bold' => true]);
+        $table->addCell(5000)->addText('読み取れた内容', ['bold' => true]);
+
+        foreach ($brandWheel['axes'] as $axis) {
+            $matchedNames = array_column($axis['matched_sub_elements'], 'name');
+
+            $table->addRow();
+            $table->addCell(2500)->addText($axis['name']);
+            $table->addCell(1500)->addText("{$axis['matched_count']} / {$axis['max_count']}件");
+            $table->addCell(5000)->addText($matchedNames === [] ? '―' : implode('、', $matchedNames));
+        }
+
+        if ($brandWheel['key_message'] || $brandWheel['impression']) {
+            $section->addTextBreak(1);
+
+            if ($brandWheel['key_message']) {
+                $section->addText('キーメッセージ：'.$brandWheel['key_message']);
+            }
+
+            if ($brandWheel['impression']) {
+                $section->addText('AI解析による印象：'.$brandWheel['impression']);
+            }
+        }
+    }
+
+    /**
+     * @param  array{self_points: list<string>, competitor_points: list<string>, one_point: ?array{key: string, text: string}}  $comparison
+     */
+    private function addBrandWheelComparison(Section $section, array $comparison): void
+    {
+        if ($comparison['self_points'] === [] && $comparison['competitor_points'] === [] && $comparison['one_point'] === null) {
+            return;
+        }
+
+        $section->addTextBreak(1);
+        $section->addText('比較まとめ', ['bold' => true]);
+
+        if ($comparison['self_points'] !== []) {
+            $section->addText('【自社ページ】', ['bold' => true]);
+            foreach ($comparison['self_points'] as $point) {
+                $section->addText("・{$point}");
+            }
+        }
+
+        if ($comparison['competitor_points'] !== []) {
+            $section->addText('【他社ページ】', ['bold' => true]);
+            foreach ($comparison['competitor_points'] as $point) {
+                $section->addText("・{$point}");
+            }
+        }
+
+        if ($comparison['one_point'] !== null) {
+            $section->addText('【ワンポイント】'.$comparison['one_point']['text']);
         }
     }
 

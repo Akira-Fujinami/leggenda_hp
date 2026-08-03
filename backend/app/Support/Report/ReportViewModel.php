@@ -24,6 +24,9 @@ readonly class ReportViewModel
      * @param  ?array<string, mixed>  $competitorScore  WebsiteScoreResult::toArray()、競合なしの場合はnull
      * @param  list<array<string, mixed>>  $perspectives  LeadPerspectiveComposer::compose()の戻り値
      * @param  list<ReportRecommendationRow>  $topRecommendations
+     * @param  ?array<string, mixed>  $brandWheelSelf  BrandWheelLeadResponseComposer::compose()の戻り値
+     * @param  ?array<string, mixed>  $brandWheelCompetitor  BrandWheelLeadResponseComposer::compose()の戻り値、競合なしの場合はnull
+     * @param  array{self_points: list<string>, competitor_points: list<string>, one_point: ?array{key: string, text: string}}  $brandWheelComparison  BrandWheelComparisonSummaryComposerの戻り値
      */
     public function __construct(
         public string $companyDisplayName,
@@ -37,5 +40,8 @@ readonly class ReportViewModel
         public array $perspectives,
         public array $topRecommendations,
         public bool $isPartial,
+        public ?array $brandWheelSelf,
+        public ?array $brandWheelCompetitor,
+        public array $brandWheelComparison,
     ) {}
 }

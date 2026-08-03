@@ -235,6 +235,10 @@ export function LeadBrandWheel({
   }
 
   const readable = selfWheel.status === "success" && selfWheel.axes.length > 0;
+  const hasComparisonContent =
+    comparison !== null &&
+    comparison !== undefined &&
+    (comparison.self_points.length > 0 || comparison.competitor_points.length > 0 || comparison.one_point !== null);
   const competitorAxes =
     competitorWheel && competitorWheel.status === "success" && competitorWheel.axes.length > 0
       ? competitorWheel.axes
@@ -328,7 +332,10 @@ export function LeadBrandWheel({
         )}
       </div>
 
-      {comparison && competitor && (
+      {/* 中身が1つも無いcomparisonで枠だけ描かない ―― 見出しと枠線だけが並んだ
+          状態は「何かがあるはずなのに空」に見え、実際には比較を出せていない
+          ことが伝わらない(2026-08-03に本番画面で発生)。 */}
+      {hasComparisonContent && competitor && (
         <div className="space-y-3 rounded-md border p-4" data-testid="wheel-comparison">
           <p className="text-sm font-medium">他社ページ比較とのまとめ</p>
 
@@ -336,7 +343,7 @@ export function LeadBrandWheel({
             <div className="rounded-md border border-[#33587f] p-3" data-testid="wheel-self-points">
               <p className="text-xs font-semibold">【自社ページ】</p>
               <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs leading-relaxed">
-                {comparison.self_points.map((point, i) => (
+                {comparison!.self_points.map((point, i) => (
                   <li key={i}>{point}</li>
                 ))}
               </ul>
@@ -344,14 +351,14 @@ export function LeadBrandWheel({
             <div className="rounded-md border border-[#33587f] p-3" data-testid="wheel-competitor-points">
               <p className="text-xs font-semibold">【他社ページ】</p>
               <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs leading-relaxed">
-                {comparison.competitor_points.map((point, i) => (
+                {comparison!.competitor_points.map((point, i) => (
                   <li key={i}>{point}</li>
                 ))}
               </ul>
             </div>
           </div>
 
-          {comparison.one_point && (
+          {comparison!.one_point && (
             <>
               {/* 2社の所見からワンポイントを導いている、という流れを示す矢印
                   (スライドと同じ)。装飾なのでaria-hiddenにする。 */}
@@ -363,7 +370,7 @@ export function LeadBrandWheel({
               <div className="rounded-md border p-3">
                 <p className="text-xs font-semibold">【ワンポイント】</p>
                 <p className="mt-1.5 text-xs leading-relaxed" data-testid="wheel-one-point">
-                  {comparison.one_point.text}
+                  {comparison!.one_point.text}
                 </p>
               </div>
             </>

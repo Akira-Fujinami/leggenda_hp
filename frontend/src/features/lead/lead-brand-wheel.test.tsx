@@ -194,6 +194,15 @@ describe("LeadBrandWheel", () => {
     expect(screen.getByTestId("wheel-one-point")).toHaveTextContent("候補者が十分な情報を得られない可能性があります。");
   });
 
+  it("比較まとめの中身が空の場合は、枠だけを描かない", () => {
+    const empty: BrandWheelComparison = { self_points: [], competitor_points: [], one_point: null };
+
+    render(<LeadBrandWheel websites={[site(), competitor()]} comparison={empty} />);
+
+    expect(screen.queryByTestId("wheel-comparison")).not.toBeInTheDocument();
+    expect(screen.queryByText("他社ページ比較とのまとめ")).not.toBeInTheDocument();
+  });
+
   it("競合サイトが無い場合は比較まとめを出さない", () => {
     render(<LeadBrandWheel websites={[site()]} comparison={COMPARISON} />);
 

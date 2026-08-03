@@ -7,6 +7,8 @@ use App\Models\Analysis;
 use App\Models\LeadSession;
 use App\Models\MetricDefinition;
 use App\Models\WebsiteAnalysis;
+use App\Services\BrandWheel\BrandWheelComparisonSummaryComposer;
+use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
 use App\Services\Lead\LeadPerspectiveComposer;
 use App\Services\Lead\LeadRecommendationComposer;
 use App\Services\Lead\LeadScoreCalculator;
@@ -38,6 +40,12 @@ class ReportViewModelBuilder
         private readonly HonorificNameFormatter $nameFormatter,
         private readonly RecommendationLabelFormatter $labelFormatter,
         private readonly LeadRecommendationComposer $recommendationComposer,
+        // ブランド・ホイール(6軸)。JSON API(LeadAnalysisController)と同じ
+        // Composerを共有する ―― 画面(旧)・レポートで判定ロジックが
+        // 食い違わないようにするため(2026-08-03、画面から診断内容を
+        // 外したことでレポートが6軸の唯一の配信経路になった)。
+        private readonly BrandWheelLeadResponseComposer $brandWheelComposer,
+        private readonly BrandWheelComparisonSummaryComposer $brandWheelSummaryComposer,
     ) {}
 
     public function build(Analysis $analysis, LeadSession $leadSession): ReportViewModel
@@ -46,6 +54,10 @@ class ReportViewModelBuilder
             'websiteAnalyses.website',
             'websiteAnalyses.recommendations.metricResult.metricDefinition',
             'websiteAnalyses.metricResults.metricDefinition',
+            // is_mock/status以外に絞る必要はない(1件のみ使うため軽量)。
+            // latest('id')でwebsite_analysis_idあたり1件(最新)に絞る
+            // (LeadAnalysisController::results()と同じ方針)。
+            'websiteAnalyses.brandWheelAnalysisResults' => fn ($query) => $query->latest('id')->limit(1),
         ]);
 
         $activeDefinitions = MetricDefinition::query()->where('is_active', true)->get();
@@ -89,6 +101,24 @@ class ReportViewModelBuilder
             effortLabel: $this->labelFormatter->effortLabel($row['recommendation']->effort),
         ), $topRecommendations));
 
+        $brandWheelSelf = $selfWebsiteAnalysis !== null
+            ? $this->brandWheelComposer->compose($selfWebsiteAnalysis->brandWheelAnalysisResults->first(), $selfWebsiteAnalysis->website)
+            : null;
+        $brandWheelCompetitor = $competitorWebsiteAnalysis !== null
+            ? $this->brandWheelComposer->compose($competitorWebsiteAnalysis->brandWheelAnalysisResults->first(), $competitorWebsiteAnalysis->website)
+            : null;
+
+        // 判定ロジックはBrandWheelComparisonSummaryComposerのみに置く(ここでは
+        // 呼び出すだけ) ―― 件数からの導出ルールを2箇所に持たない。
+        $selfAxes = (array) ($brandWheelSelf['axes'] ?? []);
+        $competitorAxes = (array) ($brandWheelCompetitor['axes'] ?? []);
+
+        $brandWheelComparison = [
+            'self_points' => $this->brandWheelSummaryComposer->points($selfAxes),
+            'competitor_points' => $this->brandWheelSummaryComposer->points($competitorAxes),
+            'one_point' => $this->brandWheelSummaryComposer->onePoint($selfAxes),
+        ];
+
         return new ReportViewModel(
             companyDisplayName: $this->nameFormatter->format($leadSession->company_name),
             generatedAtLabel: sprintf('%d年%d月%d日', now()->year, now()->month, now()->day),
@@ -101,6 +131,9 @@ class ReportViewModelBuilder
             perspectives: $perspectives,
             topRecommendations: $recommendationRows,
             isPartial: $analysis->status === AnalysisStatus::Partial,
+            brandWheelSelf: $brandWheelSelf,
+            brandWheelCompetitor: $brandWheelCompetitor,
+            brandWheelComparison: $brandWheelComparison,
         );
     }
 }
