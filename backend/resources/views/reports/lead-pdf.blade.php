@@ -106,6 +106,7 @@
     .pane { border: 1px solid #1D2088; padding: 4mm; width: 129.5mm; }
     .pane h4 { margin: 0 0 2mm; font-size: 11pt; }
     .pane ul { margin: 0; padding-left: 5mm; font-size: 10pt; line-height: 1.9; }
+    .pane p { margin: 0; font-size: 10pt; color: #8a8a8a; }
     .arrow { text-align: center; font-size: 20pt; color: #1D2088; padding: 3mm 0; }
     .one { border: 1px solid #E0E0E0; padding: 4mm; }
     .one h4 { margin: 0 0 2mm; font-size: 11pt; }
@@ -435,26 +436,43 @@
     @if (! $hasComparisonContent)
         <p>{{ $selfWheel['status_message'] ?? '比較のまとめを今回はご用意できませんでした。' }}</p>
     @else
+        {{--
+            2026-08-04: 自社側のself_pointsが0件(競合側はmatchedあり)の場合に
+            【自社ページ】の枠自体が描画されず、【他社ページ】の枠だけが
+            出てしまう不具合が実PDF確認で見つかった。片側だけの表示は
+            「比較」になっていないため、自社側の枠は常に描画し、0件のときは
+            軸カードの0件表示(.none2)と同じ言い回しで「該当する所見は
+            ありませんでした」と明示する。競合側は、競合サイト自体が
+            存在する場合(competitorWebsiteUrlがある場合)のみ枠を出す ――
+            競合が存在しない自社単独レポートで「該当なし」の枠を出すと、
+            「比較を試みて何も無かった」ように誤読されるため区別する。
+        --}}
         <table style="width: 265mm;"><tr>
-            @if (! empty($comparison['self_points']))
-                <td class="pane">
-                    <h4>【自社ページ】</h4>
+            <td class="pane">
+                <h4>【自社ページ】</h4>
+                @if (! empty($comparison['self_points']))
                     <ul>
                         @foreach ($comparison['self_points'] as $point)
                             <li>{{ $point }}</li>
                         @endforeach
                     </ul>
-                </td>
+                @else
+                    <p>該当する所見はありませんでした</p>
+                @endif
+            </td>
+            @if ($viewModel->competitorWebsiteUrl !== null)
                 <td style="width: 6mm;"></td>
-            @endif
-            @if (! empty($comparison['competitor_points']))
                 <td class="pane">
                     <h4>【他社ページ】</h4>
-                    <ul>
-                        @foreach ($comparison['competitor_points'] as $point)
-                            <li>{{ $point }}</li>
-                        @endforeach
-                    </ul>
+                    @if (! empty($comparison['competitor_points']))
+                        <ul>
+                            @foreach ($comparison['competitor_points'] as $point)
+                                <li>{{ $point }}</li>
+                            @endforeach
+                        </ul>
+                    @else
+                        <p>該当する所見はありませんでした</p>
+                    @endif
                 </td>
             @endif
         </tr></table>

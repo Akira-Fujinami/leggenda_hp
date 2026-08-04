@@ -200,7 +200,7 @@ class WordReportGenerator
             $this->addBrandWheelSiteBody($section, $viewModel->brandWheelCompetitor);
         }
 
-        $this->addBrandWheelComparison($section, $viewModel->brandWheelComparison);
+        $this->addBrandWheelComparison($section, $viewModel->brandWheelComparison, $viewModel->competitorWebsiteUrl !== null);
 
         $section->addTextBreak(1);
         $section->addText(
@@ -253,9 +253,17 @@ class WordReportGenerator
     }
 
     /**
+     * 2026-08-04: 自社側のself_pointsが0件(競合側はmatchedあり)の場合に
+     * 【自社ページ】の見出し自体が出ず、【他社ページ】だけが出てしまう
+     * 不具合をPDF版の実PDF確認で見つけた(片側だけの表示は「比較」に
+     * なっていない)。自社側は常に見出しを出し、0件のときはそう明示する。
+     * 競合側は競合サイトが存在する場合(hasCompetitor)のみ見出しを出す ――
+     * 競合が存在しない自社単独レポートで「該当なし」を出すと、比較を
+     * 試みて何も無かったかのように誤読されるため区別する(PDF版と同じ方針)。
+     *
      * @param  array{self_points: list<string>, competitor_points: list<string>, one_point: ?array{key: string, text: string}}  $comparison
      */
-    private function addBrandWheelComparison(Section $section, array $comparison): void
+    private function addBrandWheelComparison(Section $section, array $comparison, bool $hasCompetitor): void
     {
         if ($comparison['self_points'] === [] && $comparison['competitor_points'] === [] && $comparison['one_point'] === null) {
             return;
@@ -264,17 +272,23 @@ class WordReportGenerator
         $section->addTextBreak(1);
         $section->addText('比較まとめ', ['bold' => true]);
 
+        $section->addText('【自社ページ】', ['bold' => true]);
         if ($comparison['self_points'] !== []) {
-            $section->addText('【自社ページ】', ['bold' => true]);
             foreach ($comparison['self_points'] as $point) {
                 $section->addText("・{$point}");
             }
+        } else {
+            $section->addText('該当する所見はありませんでした');
         }
 
-        if ($comparison['competitor_points'] !== []) {
+        if ($hasCompetitor) {
             $section->addText('【他社ページ】', ['bold' => true]);
-            foreach ($comparison['competitor_points'] as $point) {
-                $section->addText("・{$point}");
+            if ($comparison['competitor_points'] !== []) {
+                foreach ($comparison['competitor_points'] as $point) {
+                    $section->addText("・{$point}");
+                }
+            } else {
+                $section->addText('該当する所見はありませんでした');
             }
         }
 

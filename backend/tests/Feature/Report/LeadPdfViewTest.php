@@ -537,4 +537,75 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('4<small> / 4件</small>', $html);
         $this->assertSame(4, substr_count($html, 'class="dot on"'));
     }
+
+    // ------------------------------------------------------------------
+    // 「他社ページ比較とのまとめ」ページ。自社側が0件のとき片側だけ描画
+    // される不具合(2026-08-04、実PDF確認で発見)。
+    // ------------------------------------------------------------------
+
+    /**
+     * 自社側のself_pointsが0件・競合側はmatchedありの場合、【自社ページ】
+     * の枠も常に出し、「該当する所見はありませんでした」と明示する
+     * (片側だけの表示は「比較」になっていないため)。
+     */
+    public function test_shows_the_self_pane_with_a_fallback_message_when_self_points_are_empty(): void
+    {
+        $html = $this->render($this->viewModel([
+            'competitorWebsiteUrl' => 'https://competitor.example.com',
+            'brandWheelComparison' => [
+                'self_points' => [],
+                'competitor_points' => ['全体的に情報が充足しています。'],
+                'one_point' => null,
+            ],
+        ]));
+
+        $this->assertStringContainsString('【自社ページ】', $html);
+        $this->assertStringContainsString('【他社ページ】', $html);
+        $this->assertStringContainsString('該当する所見はありませんでした', $html);
+        $this->assertStringContainsString('全体的に情報が充足しています。', $html);
+    }
+
+    /**
+     * 競合サイト自体が存在しない(自社単独レポート)場合は、
+     * 【他社ページ】の枠自体を出さない ―― 「該当なし」の枠を出すと、
+     * 比較を試みて何も無かったかのように誤読されるため。
+     */
+    public function test_does_not_show_the_competitor_pane_when_there_is_no_competitor_website(): void
+    {
+        $html = $this->render($this->viewModel([
+            'competitorWebsiteUrl' => null,
+            'brandWheelComparison' => [
+                'self_points' => ['活動的魅力が最も内容として充足しています。'],
+                'competitor_points' => [],
+                'one_point' => null,
+            ],
+        ]));
+
+        $this->assertStringContainsString('【自社ページ】', $html);
+        $this->assertStringNotContainsString('【他社ページ】', $html);
+    }
+
+    /**
+     * 競合サイトが存在し、かつ競合側のcompetitor_pointsも0件の場合
+     * (競合も「該当する所見なし」)は、両方の枠を出し、両方とも
+     * フォールバック文言を表示する。self_points/competitor_pointsが
+     * 両方とも空だとhasComparisonContent自体がfalseになり単一行の
+     * status_message表示に切り替わってしまうため、one_pointだけは
+     * 存在させてこの分岐(2枠表示)に入るようにする。
+     */
+    public function test_shows_both_panes_with_fallback_messages_when_both_sides_have_no_points(): void
+    {
+        $html = $this->render($this->viewModel([
+            'competitorWebsiteUrl' => 'https://competitor.example.com',
+            'brandWheelComparison' => [
+                'self_points' => [],
+                'competitor_points' => [],
+                'one_point' => ['key' => 'insufficient_content', 'text' => '6つの項目のうち複数で、サイトの記述から内容を読み取ることができませんでした。'],
+            ],
+        ]));
+
+        $this->assertStringContainsString('【自社ページ】', $html);
+        $this->assertStringContainsString('【他社ページ】', $html);
+        $this->assertSame(2, substr_count($html, '該当する所見はありませんでした'));
+    }
 }

@@ -68,6 +68,31 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
     }
 
     /**
+     * 2026-08-04: モデル比較測定用のBRAND_WHEEL_AI_MODEL上書き
+     * (services.brand_wheel_ai.model)。未設定時は既存のservices.openai.model
+     * (共有設定)にフォールバックすることも合わせて確認する。
+     */
+    public function test_model_can_be_overridden_independently_of_the_shared_openai_model(): void
+    {
+        config(['services.openai.model' => 'gpt-4o-mini']);
+        config(['services.brand_wheel_ai.model' => 'gpt-4o']);
+
+        $provider = new OpenAiBrandWheelAnalysisProvider(new BrandWheelAnalysisResponseParser);
+
+        $this->assertSame('gpt-4o', $provider->model());
+    }
+
+    public function test_model_falls_back_to_the_shared_openai_model_when_not_overridden(): void
+    {
+        config(['services.openai.model' => 'gpt-4o-mini']);
+        config(['services.brand_wheel_ai.model' => null]);
+
+        $provider = new OpenAiBrandWheelAnalysisProvider(new BrandWheelAnalysisResponseParser);
+
+        $this->assertSame('gpt-4o-mini', $provider->model());
+    }
+
+    /**
      * 判定システムのため、揺らぎを避けるべくtemperatureは既定で最小値(0.0)を
      * 使う。既存のOpenAiAnalysisProvider(スコアリング要約用、0.2固定)とは
      * 異なりconfig駆動にすること自体も、この試験で担保する(2026-07-30の指摘)。

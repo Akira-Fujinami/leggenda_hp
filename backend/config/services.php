@@ -78,6 +78,11 @@ return [
     // base_urlは同じOpenAIアカウントを使うため openai.* をそのまま流用する。
     'brand_wheel_ai' => [
         'provider' => env('BRAND_WHEEL_AI_PROVIDER', env('AI_PROVIDER', 'mock')),
+        // 2026-08-04: モデル比較測定用に追加。未設定時はopenai.model
+        // (=OPENAI_MODEL、既定gpt-4o-mini)をそのまま使うため、既存の挙動は
+        // 変えない。入力・プロンプト(teaching_points/examples/caveat)・
+        // temperatureはこの測定では一切変更しないこと。
+        'model' => env('BRAND_WHEEL_AI_MODEL'),
         'timeout' => (int) env('BRAND_WHEEL_AI_TIMEOUT', env('AI_TIMEOUT', 60)),
         'max_retries' => (int) env('BRAND_WHEEL_AI_MAX_RETRIES', env('AI_MAX_RETRIES', 1)),
         'max_output_tokens' => (int) env('BRAND_WHEEL_AI_MAX_OUTPUT_TOKENS', env('AI_MAX_OUTPUT_TOKENS', 2000)),

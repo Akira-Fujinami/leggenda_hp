@@ -186,6 +186,67 @@ class WordReportGeneratorTest extends TestCase
     }
 
     /**
+     * 2026-08-04: 自社側のself_pointsが0件・競合側はmatchedありの場合、
+     * 【自社ページ】の見出し自体が出ず【他社ページ】だけが出てしまう
+     * 不具合をPDF版の実PDF確認で見つけた(片側だけの表示は「比較」に
+     * なっていない、PDF版と同じ方針で修正)。
+     */
+    public function test_shows_the_self_pane_heading_with_a_fallback_message_when_self_points_are_empty(): void
+    {
+        $viewModel = $this->viewModel();
+        $withCompetitor = new ReportViewModel(
+            companyDisplayName: $viewModel->companyDisplayName,
+            generatedAtLabel: $viewModel->generatedAtLabel,
+            selfWebsiteUrl: $viewModel->selfWebsiteUrl,
+            competitorWebsiteUrl: 'https://competitor.example.com',
+            selfScore: $viewModel->selfScore,
+            competitorScore: $viewModel->competitorScore,
+            overallSummaryText: $viewModel->overallSummaryText,
+            comparisonSentence: $viewModel->comparisonSentence,
+            perspectives: $viewModel->perspectives,
+            topRecommendations: $viewModel->topRecommendations,
+            isPartial: $viewModel->isPartial,
+            brandWheelSelf: $viewModel->brandWheelSelf,
+            brandWheelCompetitor: [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://competitor.example.com/careers',
+                'axes' => [],
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+            brandWheelComparison: [
+                'self_points' => [],
+                'competitor_points' => ['全体的に情報が充足しています。'],
+                'one_point' => null,
+            ],
+            brandWheelRadarPng: null,
+            selfBrandWheelEvidenceItems: $viewModel->selfBrandWheelEvidenceItems,
+        );
+
+        $documentXml = $this->extractDocumentXml(app(WordReportGenerator::class)->generate($withCompetitor));
+
+        $this->assertStringContainsString('【自社ページ】', $documentXml);
+        $this->assertStringContainsString('【他社ページ】', $documentXml);
+        $this->assertStringContainsString('該当する所見はありませんでした', $documentXml);
+        $this->assertStringContainsString('全体的に情報が充足しています。', $documentXml);
+    }
+
+    /**
+     * 競合サイト自体が存在しない(自社単独レポート)場合は、
+     * 【他社ページ】の見出し自体を出さない。
+     */
+    public function test_does_not_show_the_competitor_pane_heading_when_there_is_no_competitor_website(): void
+    {
+        $docx = app(WordReportGenerator::class)->generate($this->viewModel());
+        $documentXml = $this->extractDocumentXml($docx);
+
+        $this->assertStringContainsString('【自社ページ】', $documentXml);
+        $this->assertStringNotContainsString('【他社ページ】', $documentXml);
+    }
+
+    /**
      * 2026-08-04: PDF版の「サイトから読み取れた記述」ページと同内容。
      * evidenceは要約・整形をせずそのまま出す。
      */

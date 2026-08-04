@@ -40,9 +40,14 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
         return 'openai';
     }
 
+    /**
+     * 2026-08-04: モデル比較測定用にBRAND_WHEEL_AI_MODELでの上書きに対応。
+     * 未設定時はconfig('services.openai.model')(既存の共有設定)を
+     * そのまま使うため、この変更自体は既存の挙動に影響しない。
+     */
     public function model(): ?string
     {
-        return (string) config('services.openai.model', 'gpt-4o-mini');
+        return (string) (config('services.brand_wheel_ai.model') ?: config('services.openai.model', 'gpt-4o-mini'));
     }
 
     public function promptVersion(): ?string
