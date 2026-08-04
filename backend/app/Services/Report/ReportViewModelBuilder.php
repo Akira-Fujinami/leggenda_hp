@@ -9,8 +9,10 @@ use App\Models\MetricDefinition;
 use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelComparisonSummaryComposer;
 use App\Services\BrandWheel\BrandWheelHexagonRenderer;
+use App\Services\BrandWheel\BrandWheelImprovementFocusComposer;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
 use App\Services\BrandWheel\BrandWheelRadarSvgBuilder;
+use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
 use App\Services\Lead\LeadPerspectiveComposer;
 use App\Services\Lead\LeadRecommendationComposer;
 use App\Services\Lead\LeadScoreCalculator;
@@ -61,6 +63,11 @@ class ReportViewModelBuilder
         // ラスタライズ経路は作らない方針)。
         private readonly BrandWheelRadarSvgBuilder $radarSvgBuilder,
         private readonly BrandWheelHexagonRenderer $pngRenderer,
+        // 「24項目の対比」「サイトで触れられていなかった項目」ページの唯一の
+        // 情報源(2026-08-04、docs/lead-report-layout/README.md「設計の要」)。
+        private readonly BrandWheelSubElementComparisonComposer $subElementComparisonComposer,
+        // 「改善提案」ページの領域選択・3項目選定(決定的な規則)。
+        private readonly BrandWheelImprovementFocusComposer $improvementFocusComposer,
     ) {}
 
     public function build(Analysis $analysis, LeadSession $leadSession): ReportViewModel
@@ -125,11 +132,12 @@ class ReportViewModelBuilder
         ), $topRecommendations));
 
         $selfBrandWheelRecord = $selfWebsiteAnalysis?->brandWheelAnalysisResults->first();
+        $competitorBrandWheelRecord = $competitorWebsiteAnalysis?->brandWheelAnalysisResults->first();
         $brandWheelSelf = $selfWebsiteAnalysis !== null
             ? $this->brandWheelComposer->compose($selfBrandWheelRecord, $selfWebsiteAnalysis->website)
             : null;
         $brandWheelCompetitor = $competitorWebsiteAnalysis !== null
-            ? $this->brandWheelComposer->compose($competitorWebsiteAnalysis->brandWheelAnalysisResults->first(), $competitorWebsiteAnalysis->website)
+            ? $this->brandWheelComposer->compose($competitorBrandWheelRecord, $competitorWebsiteAnalysis->website)
             : null;
 
         $selfBrandWheelEvidenceItems = $this->buildSelfBrandWheelEvidenceItems($selfBrandWheelRecord, (array) ($brandWheelSelf['axes'] ?? []));
@@ -138,12 +146,44 @@ class ReportViewModelBuilder
         // 呼び出すだけ) ―― 件数からの導出ルールを2箇所に持たない。
         $selfAxes = (array) ($brandWheelSelf['axes'] ?? []);
         $competitorAxes = (array) ($brandWheelCompetitor['axes'] ?? []);
+        $selfReadable = ($brandWheelSelf['status'] ?? null) === 'success' && $selfAxes !== [];
+        $competitorReadable = ($brandWheelCompetitor['status'] ?? null) === 'success' && $competitorAxes !== [];
 
+        // 2026-08-04: 「他社ページ比較とのまとめ」ページを削除したため
+        // competitor_pointsは廃止(所見が「24項目の対比」ページの言い換えに
+        // なっていた、docs/lead-report-layout/README.md)。one_pointは
+        // 「改善提案」ページ冒頭のワンポイントとして引き続き使う。
         $brandWheelComparison = [
             'self_points' => $this->brandWheelSummaryComposer->points($selfAxes),
-            'competitor_points' => $this->brandWheelSummaryComposer->points($competitorAxes),
             'one_point' => $this->brandWheelSummaryComposer->onePoint($selfAxes),
         ];
+
+        // 「自社ページの分析結果」「24項目の対比」「改善提案」の3ページが
+        // 必ず同じ値を参照するよう、合計件数はここで1回だけ集計する
+        // (docs/lead-report-layout/README.md「合計件数Nは3・6・8ページ目で
+        // 必ず同じソースから算出すること。別々に集計しないでください」)。
+        $selfTotalMatched = array_sum(array_column($selfAxes, 'matched_count'));
+        $selfTotalMax = array_sum(array_column($selfAxes, 'max_count'));
+        $competitorTotalMatched = array_sum(array_column($competitorAxes, 'matched_count'));
+        $competitorTotalMax = array_sum(array_column($competitorAxes, 'max_count'));
+
+        // 「24項目の対比」「サイトで触れられていなかった項目」「改善提案」の
+        // 唯一の情報源(2026-08-04)。
+        $subElementComparison = $this->subElementComparisonComposer->compose($selfAxes, $competitorAxes);
+        $gapAnalysis = $this->subElementComparisonComposer->splitByGap($subElementComparison);
+
+        // 改善提案ページの3項目分だけ、比較サイトの実際のevidenceを渡す
+        // (2026-08-04、README「その領域から3項目を、比較サイトの実際の
+        // evidenceつきで提示する」への対応 ―― これまでの「競合サイトの本文を
+        // レポートに出さない」方針からの意図的な例外。ViewModelへは
+        // improvementFocusが選んだ最大3件分のevidenceしか渡らないため、
+        // 競合サイトの本文を広く露出させるものではない)。
+        $improvementFocus = $selfReadable && $competitorReadable
+            ? $this->improvementFocusComposer->compose(
+                $subElementComparison,
+                $this->buildEvidenceByAxisAndSubKey($competitorBrandWheelRecord),
+            )
+            : null;
 
         $brandWheelRadarPng = $this->buildBrandWheelRadarPng($brandWheelSelf, $brandWheelCompetitor);
 
@@ -164,6 +204,13 @@ class ReportViewModelBuilder
             brandWheelComparison: $brandWheelComparison,
             brandWheelRadarPng: $brandWheelRadarPng,
             selfBrandWheelEvidenceItems: $selfBrandWheelEvidenceItems,
+            selfTotalMatched: $selfTotalMatched,
+            selfTotalMax: $selfTotalMax,
+            competitorTotalMatched: $competitorTotalMatched,
+            competitorTotalMax: $competitorTotalMax,
+            subElementComparison: $subElementComparison,
+            gapAnalysis: $gapAnalysis,
+            improvementFocus: $improvementFocus,
         );
     }
 
@@ -191,12 +238,7 @@ class ReportViewModelBuilder
             return [];
         }
 
-        $evidenceByAxisAndSubKey = [];
-        foreach ((array) ($rawSelfRecord->axes ?? []) as $axis) {
-            foreach ((array) ($axis['matched_sub_elements'] ?? []) as $sub) {
-                $evidenceByAxisAndSubKey[$axis['axis_key']][$sub['key']] = (string) ($sub['evidence'] ?? '');
-            }
-        }
+        $evidenceByAxisAndSubKey = $this->buildEvidenceByAxisAndSubKey($rawSelfRecord);
 
         $items = [];
         foreach ($selfWheelAxes as $axis) {
@@ -218,6 +260,36 @@ class ReportViewModelBuilder
         }
 
         return $items;
+    }
+
+    /**
+     * 生のBrandWheelAnalysisResult.axesから(axis_key => (sub_element_key =>
+     * evidence))のルックアップを組み立てる。self/competitorのどちらの
+     * レコードにも使える共通処理として切り出したもの(2026-08-04)。
+     *
+     * このメソッド自体はレコードを受け取れば誰の分でも組み立てるが、
+     * 呼び出し側の使い方には非対称な制約がある: 自社分は
+     * buildSelfBrandWheelEvidenceItems()経由で「サイトから読み取れた記述」
+     * ページ全体に使われる一方、競合分はbuild()内でimprovementFocusComposer
+     * が選んだ最大3件にしか使われない(競合サイトの本文を広く露出させない、
+     * という既存方針を保つため)。
+     *
+     * @return array<string, array<string, string>>
+     */
+    private function buildEvidenceByAxisAndSubKey(?\App\Models\BrandWheelAnalysisResult $record): array
+    {
+        if ($record === null) {
+            return [];
+        }
+
+        $evidenceByAxisAndSubKey = [];
+        foreach ((array) ($record->axes ?? []) as $axis) {
+            foreach ((array) ($axis['matched_sub_elements'] ?? []) as $sub) {
+                $evidenceByAxisAndSubKey[$axis['axis_key']][$sub['key']] = (string) ($sub['evidence'] ?? '');
+            }
+        }
+
+        return $evidenceByAxisAndSubKey;
     }
 
     /**

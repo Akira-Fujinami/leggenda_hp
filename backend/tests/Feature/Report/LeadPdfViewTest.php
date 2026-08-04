@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Report;
 
+use App\Services\BrandWheel\BrandWheelImprovementFocusComposer;
+use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
 use App\Support\Lead\LeadMetricCatalog;
 use App\Support\Report\ReportRecommendationRow;
 use App\Support\Report\ReportViewModel;
@@ -21,7 +23,8 @@ use Tests\TestCase;
  * - 個別指標名(items[*].label)を4観点ページに出さない(2026-08-04)
  *
  * 2026-08-04: docs/lead-report-layout/report-layout-draft.htmlを移植元に
- * 全8ページへ全面書き直し。このテストファイルもそれに合わせて全面書き直し。
+ * 全9ページへ全面書き直し(旧「他社ページ比較とのまとめ」ページは削除)。
+ * このテストファイルもそれに合わせて全面書き直し。
  *
  * PDFバイナリのテキスト抽出用ライブラリはこのリポジトリに無いため、dompdfへ
  * 変換する前のBladeテンプレート自体をHTML文字列としてレンダリングして検証
@@ -100,6 +103,10 @@ class LeadPdfViewTest extends TestCase
 
     private function viewModel(array $overrides = []): ReportViewModel
     {
+        $selfAxes = [
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 2, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']]],
+        ];
+
         $defaults = [
             'companyDisplayName' => '株式会社サンプル様',
             'generatedAtLabel' => '2026年8月3日',
@@ -118,19 +125,27 @@ class LeadPdfViewTest extends TestCase
                 'status' => 'success',
                 'status_message' => null,
                 'analyzed_url' => 'https://example.com/careers',
-                'axes' => [
-                    ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 2, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']]],
-                ],
+                'axes' => $selfAxes,
                 'key_message' => '技術で社会基盤を支える、という主題が置かれています。',
                 'impression' => '情緒的便益の記述が薄いのがもったいないところです。',
                 'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
             ],
             'brandWheelCompetitor' => null,
-            'brandWheelComparison' => ['self_points' => ['活動的魅力が最も内容として充足しています。'], 'competitor_points' => [], 'one_point' => ['key' => 'well_covered', 'text' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。']],
+            'brandWheelComparison' => [
+                'self_points' => ['活動的魅力が最も内容として充足しています。'],
+                'one_point' => ['key' => 'well_covered', 'text' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。'],
+            ],
             'brandWheelRadarPng' => null,
             'selfBrandWheelEvidenceItems' => [
                 ['axis_key' => 'will_activity', 'axis_name' => '活動的魅力', 'group' => 'company_appeal', 'sub_element_name' => 'パーパス', 'evidence' => '技術で社会の「あたり前」を支える。それが私たちの存在意義です。'],
             ],
+            'selfTotalMatched' => 2,
+            'selfTotalMax' => 4,
+            'competitorTotalMatched' => 0,
+            'competitorTotalMax' => 0,
+            'subElementComparison' => app(BrandWheelSubElementComparisonComposer::class)->compose($selfAxes, []),
+            'gapAnalysis' => ['a' => [], 'b' => [], 'c' => []],
+            'improvementFocus' => null,
         ];
 
         $values = array_merge($defaults, $overrides);
@@ -139,9 +154,68 @@ class LeadPdfViewTest extends TestCase
     }
 
     /**
-     * 採用ページを検出できなかった観点(not_detected)が、網羅しているかの
-     * ように見せず、正直な文面(計測対象外)で出ること。
+     * 自社・競合ともにブランド・ホイールが揃っている状態のfixture
+     * (6・7・8ページ目のテスト用)。BrandWheelSubElementComparisonComposer/
+     * BrandWheelImprovementFocusComposerを実際に呼び出して組み立てる ――
+     * 手書きの24項目リストとの食い違いを防ぐため(ReportViewModelBuilderが
+     * 実際に行うのと同じ組み立て方)。
      */
+    private function comparisonViewModel(array $overrides = []): ReportViewModel
+    {
+        $selfAxes = [
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 1, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']]],
+        ];
+        $competitorAxes = [
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 1, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']]],
+            ['key' => 'relationship', 'group' => 'company_distance', 'name' => '就業環境', 'matched_count' => 2, 'max_count' => 4, 'matched_sub_elements' => [
+                ['key' => 'colleagues', 'name' => '同僚・先輩像'], ['key' => 'atmosphere', 'name' => '職場の雰囲気'],
+            ]],
+        ];
+
+        $comparisonComposer = app(BrandWheelSubElementComparisonComposer::class);
+        $subElementComparison = $comparisonComposer->compose($selfAxes, $competitorAxes);
+        $gapAnalysis = $comparisonComposer->splitByGap($subElementComparison);
+        $improvementFocus = app(BrandWheelImprovementFocusComposer::class)->compose($subElementComparison, [
+            'relationship' => [
+                'colleagues' => '入社3年目の先輩が、日々どんな判断をしているかを紹介しています。',
+                'atmosphere' => '部署をまたいだ相談が日常的に起きる、フラットな環境です。',
+            ],
+        ]);
+
+        return $this->viewModel(array_merge([
+            'competitorWebsiteUrl' => 'https://competitor.example.com',
+            'brandWheelSelf' => [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://example.com/careers',
+                'axes' => $selfAxes,
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+            'brandWheelCompetitor' => [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://competitor.example.com/careers',
+                'axes' => $competitorAxes,
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+            'selfTotalMatched' => 1,
+            'selfTotalMax' => 4,
+            'competitorTotalMatched' => 3,
+            'competitorTotalMax' => 8,
+            'subElementComparison' => $subElementComparison,
+            'gapAnalysis' => $gapAnalysis,
+            'improvementFocus' => $improvementFocus,
+        ], $overrides));
+    }
+
+    // ------------------------------------------------------------------
+    // 既存(4観点・改善提案の誠実性表示等)。
+    // ------------------------------------------------------------------
+
     public function test_honestly_reports_a_perspective_it_could_not_detect_instead_of_hiding_it(): void
     {
         $html = $this->render($this->viewModel());
@@ -150,10 +224,6 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('計測対象外', $html);
     }
 
-    /**
-     * 2026-08-04: 個別指標名(items[*].label)は4観点ページに一切出さない
-     * (見出し・判定バッジ・理由1文のみ)。
-     */
     public function test_never_leaks_individual_metric_labels_on_the_four_perspectives_page(): void
     {
         $html = $this->render($this->viewModel());
@@ -163,11 +233,6 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringNotContainsString('ページタイトルの設定', $html);
     }
 
-    /**
-     * 2026-08-04: 「取得できなかった項目は0点として扱わず、算出の対象から
-     * 外している」旨とカバー率・確信度は、個別指標名を畳んだ後も残す
-     * (誠実性の維持に必要な情報のため)。
-     */
     public function test_states_the_not_counted_as_zero_caveat_with_coverage_and_confidence(): void
     {
         $html = $this->render($this->viewModel());
@@ -177,12 +242,6 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('88.0', $html);
     }
 
-    /**
-     * ReportViewModelBuilderがself側のrecommendationsしか渡さない設計を
-     * ここでも再確認する(ReportViewModelBuilderTest側でビルダーの入力を
-     * 検証済みだが、実際にPDFへ出す段階でも競合の提案が混ざらないことを
-     * 直接確認する)。
-     */
     public function test_never_renders_a_recommendation_for_the_competitor_site(): void
     {
         $html = $this->render($this->viewModel([
@@ -204,6 +263,7 @@ class LeadPdfViewTest extends TestCase
     /**
      * status!=='success'のとき図も表も出さず、status_messageのみを出す。
      * 6項目すべて0件の表(「魅力のない会社」に見えてしまう)は禁止。
+     * 3・6・7・8ページ目すべてが同じ理由でstatus_messageに切り替わる。
      */
     public function test_does_not_render_the_brand_wheel_table_when_status_is_not_success(): void
     {
@@ -217,7 +277,10 @@ class LeadPdfViewTest extends TestCase
                 'impression' => null,
                 'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
             ],
-            'brandWheelComparison' => ['self_points' => [], 'competitor_points' => [], 'one_point' => null],
+            'brandWheelComparison' => ['self_points' => [], 'one_point' => null],
+            'selfTotalMatched' => 0,
+            'selfTotalMax' => 0,
+            'subElementComparison' => app(BrandWheelSubElementComparisonComposer::class)->compose([], []),
             // 実際のReportViewModelBuilderは、axesが空ならevidenceも自動的に
             // 空になる(buildSelfBrandWheelEvidenceItems()が$selfWheelAxesを
             // 反復するだけのため)。このfixtureでも同じ状態を再現する。
@@ -232,6 +295,11 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringNotContainsString('class="axcnt"', $html);
         // evidence一覧ページ自体も出ない。
         $this->assertStringNotContainsString('サイトから読み取れた記述', $html);
+        // 24項目の対比・触れられていなかった項目・改善提案のいずれも
+        // 実際のグリッド/カードを描画しない。
+        $this->assertStringNotContainsString('class="vstbl"', $html);
+        $this->assertStringNotContainsString('class="gcard"', $html);
+        $this->assertStringNotContainsString('class="rcard"', $html);
     }
 
     public function test_includes_the_brand_wheel_section_with_counts_and_summary(): void
@@ -246,8 +314,7 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('情緒的便益の記述が薄い', $html);
         $this->assertStringContainsString('活動的魅力が最も内容として充足しています', $html);
         $this->assertStringContainsString('バランス良く読み取れる状態です', $html);
-        // お断り文言(メールと同趣旨)。
-        $this->assertStringContainsString('グループインタビュー', $html);
+        // AI生成コンテンツ(key_message/impression)である旨の開示。
         $this->assertStringContainsString('AIを使用', $html);
     }
 
@@ -255,7 +322,8 @@ class LeadPdfViewTest extends TestCase
      * 2026-08-04: 「採用ブランドの捉え方」前置きページ。分析結果に依存しない
      * 固定ページのため、status(success以外を含む)によらず常に出る。
      * 誤解を招きやすい一文(読み取れなかった=魅力が無い、ではない)は
-     * 一字一句削らずに含めること。
+     * 一字一句削らずに含めること(引用符は『』を使う ―― ユーザー指定の
+     * 「絶対に消してはいけない文言」原文どおり)。
      */
     public function test_includes_the_brand_wheel_framework_intro_page_with_the_required_caveat_verbatim(): void
     {
@@ -263,7 +331,7 @@ class LeadPdfViewTest extends TestCase
 
         $this->assertStringContainsString('採用ブランドの捉え方', $html);
         $this->assertStringContainsString(
-            '読み取れなかった項目は、その魅力が「無い」という意味ではありません。'
+            '読み取れなかった項目は、その魅力が『無い』という意味ではありません。'
             .'サイトにそう書かれていない、というだけです。',
             $html,
         );
@@ -274,10 +342,6 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('data:image/png;base64,'.$expectedBase64, $html);
     }
 
-    /**
-     * 前置きページは分析結果に依存しない固定ページのため、
-     * ブランド・ホイールがstatus!=='success'の場合でも出る。
-     */
     public function test_includes_the_brand_wheel_framework_intro_page_even_when_brand_wheel_is_not_success(): void
     {
         $html = $this->render($this->viewModel([
@@ -290,28 +354,22 @@ class LeadPdfViewTest extends TestCase
                 'impression' => null,
                 'source_pages' => ['recruit_page' => 'absent', 'home_page' => 'read'],
             ],
-            'brandWheelComparison' => ['self_points' => [], 'competitor_points' => [], 'one_point' => null],
+            'brandWheelComparison' => ['self_points' => [], 'one_point' => null],
+            'selfTotalMatched' => 0,
+            'selfTotalMax' => 0,
+            'subElementComparison' => app(BrandWheelSubElementComparisonComposer::class)->compose([], []),
             'selfBrandWheelEvidenceItems' => [],
         ]));
 
         $this->assertStringContainsString('採用ブランドの捉え方', $html);
-        $this->assertStringContainsString('読み取れなかった項目は、その魅力が「無い」という意味ではありません。', $html);
+        $this->assertStringContainsString('読み取れなかった項目は、その魅力が『無い』という意味ではありません。', $html);
     }
 
-    /**
-     * 2026-08-04: PNGが生成できなかった場合(brandWheelRadarPng===null)、
-     * 図を省略し、軸ごとの件数の表だけで成立させる(画像の失敗がレポート
-     * 生成全体を止めてはいけない、既存メールと同じ方針)。
-     */
     public function test_falls_back_to_the_axis_table_only_when_the_radar_png_is_missing(): void
     {
         $html = $this->render($this->viewModel(['brandWheelRadarPng' => null]));
 
-        // レーダー画像に固有のスタイル(width: 76mm; height: 55mm;)が無いこと
-        // (前置きページ・ロゴのimgタグと混同しないよう、レーダー画像固有の
-        // スタイル文字列で判定する)。
         $this->assertStringNotContainsString('width: 76mm; height: 55mm;', $html);
-        // 図が無くても表(件数)は変わらず出る。
         $this->assertStringContainsString('2<small> / 4件</small>', $html);
     }
 
@@ -324,12 +382,6 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('<img src="data:image/png;base64,'.base64_encode($png).'"', $html);
     }
 
-    /**
-     * 2026-08-04: 自社ページの分析結果ページの6軸カード表(.axcell)が
-     * 幅16.66%のみで右端の列がページ外へはみ出す不具合を、実PDF確認で発見。
-     * .pcell/.reccellと同じくmm固定に修正した ―― CSSがパーセンテージ指定に
-     * 戻された場合に検知できるよう、明示幅の存在を確認する。
-     */
     public function test_axis_card_table_uses_explicit_mm_widths_not_percentages(): void
     {
         $html = $this->render($this->viewModel());
@@ -338,53 +390,10 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringNotContainsString('.axcell { width: 16.66%;', $html);
     }
 
-    /**
-     * 2026-08-04: 他社ページ比較とのまとめページの左右カード(.pane)が
-     * 幅48%のみで右側のカードがページ外へはみ出す不具合を、実PDF確認で発見。
-     * (このページは以前「.pcellの修正で崩れが直っている」と誤って
-     * コメントされていたが、実際には.paneが未修正のまま残っていた。)
-     * mm固定に修正したことを、CSSが戻された場合に検知できるよう確認する。
-     */
-    public function test_comparison_pane_table_uses_explicit_mm_widths_not_percentages(): void
-    {
-        $html = $this->render($this->viewModel());
-
-        $this->assertStringContainsString('.pane { border: 1px solid #1D2088; padding: 4mm; width: 129.5mm; }', $html);
-        $this->assertStringNotContainsString('width: 48%', $html);
-    }
-
-    public function test_never_leaks_evidence_text_into_the_competitor_only_data(): void
-    {
-        // brandWheelCompetitorにはevidenceを持たせていない(競合の本文が
-        // レポートに出ない設計)ため、競合側からevidence文字列が漏れないことを
-        // 確認する。自社側のselfBrandWheelEvidenceItemsは意図的にPDFへ出す
-        // ものなので、このテストの対象外(下のevidenceページ専用テストで別途検証)。
-        $html = $this->render($this->viewModel([
-            'competitorWebsiteUrl' => 'https://competitor.example.com',
-            'brandWheelCompetitor' => [
-                'status' => 'success',
-                'status_message' => null,
-                'analyzed_url' => 'https://competitor.example.com/careers',
-                'axes' => [
-                    ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 1, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']]],
-                ],
-                'key_message' => null,
-                'impression' => null,
-                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
-            ],
-        ]));
-
-        $this->assertStringNotContainsString('"evidence"', $html);
-    }
-
     // ------------------------------------------------------------------
-    // 「サイトから読み取れた記述」ページ(evidence一覧、2026-08-04新設)。
+    // 「サイトから読み取れた記述」ページ(evidence一覧)。
     // ------------------------------------------------------------------
 
-    /**
-     * 該当0件のときはページ自体を出さない(見出しと空の表だけが残る状態を
-     * 作らない ―― 画面側で同じ失敗を一度している)。
-     */
     public function test_omits_the_evidence_page_entirely_when_there_are_no_evidence_items(): void
     {
         $html = $this->render($this->viewModel(['selfBrandWheelEvidenceItems' => []]));
@@ -403,12 +412,6 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('パーパス', $html);
     }
 
-    /**
-     * evidenceは要約・整形・省略記号での短縮を一切せず、そのまま出す
-     * (原文との部分文字列照合を通ったものだけが残っている、というのが
-     * このページの価値のため)。長い文でも省略記号(…)を挟まないことを含めて
-     * 確認する。
-     */
     public function test_evidence_text_is_rendered_verbatim_without_truncation(): void
     {
         $longEvidence = '資格取得支援制度により、受験費用を全額補助します。この制度は入社1年目から利用可能で、年間の利用上限額は設けていません。';
@@ -424,21 +427,16 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringNotContainsString('...', $html);
     }
 
-    /**
-     * リード向け文書のため、evidence(サイトの原文からの抜粋)にも
-     * forbidden_phrasesが含まれないことを確認する。evidenceはAIの自由記述
-     * ではなくサイト原文からの抜粋だが、万一の混入がないことを最後の防波堤
-     * として確認しておく。
-     */
     public function test_evidence_page_does_not_contain_forbidden_phrases(): void
     {
         $html = $this->render($this->viewModel());
 
-        // evidence一覧ページ本体のみを対象にする(他のページの正当な用法
-        // ―― 例えば「4観点」ページの badge.warn文言等 ―― と混同しないため)。
+        // evidence一覧ページ本体のみを対象にする(次ページの見出しまでを
+        // 切り出す。2026-08-04: 次ページが「採用担当の視点で見た診断結果」に
+        // 変わったため境界マーカーを更新)。
         $start = mb_strpos($html, 'サイトから読み取れた記述');
         $this->assertNotFalse($start);
-        $end = mb_strpos($html, '他社ページ比較とのまとめ', $start) ?: mb_strlen($html);
+        $end = mb_strpos($html, '採用担当の視点で見た診断結果', $start) ?: mb_strlen($html);
         $evidencePageHtml = mb_substr($html, $start, $end - $start);
 
         foreach ((array) config('brand_wheel.forbidden_phrases') as $phrase) {
@@ -447,13 +445,9 @@ class LeadPdfViewTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // 軸カードの四角(dots)。max_countから動的に生成すること(2026-08-04)。
+    // 軸カードの四角(dots)。max_countから動的に生成すること。
     // ------------------------------------------------------------------
 
-    /**
-     * 四角の数はmax_countから生成する(4を固定値で書かない)。max_count=5の
-     * フィクスチャで、四角が5個・分母が5になることを確認する。
-     */
     public function test_axis_card_dots_are_generated_from_max_count_not_a_hardcoded_four(): void
     {
         $html = $this->render($this->viewModel([
@@ -473,17 +467,10 @@ class LeadPdfViewTest extends TestCase
         ]));
 
         $this->assertStringContainsString('3<small> / 5件</small>', $html);
-
-        // このfixtureは軸を1件しか渡していないため、ページ全体でdotタグを
-        // 数えれば、そのまま活動的魅力の軸カード1枚分の数になる。
         $this->assertSame(5, substr_count($html, '<span class="dot'));
         $this->assertSame(3, substr_count($html, 'class="dot on"'));
     }
 
-    /**
-     * matched_count===0でも四角(dots)自体は省略しない ―― 「壊れて出ていない」
-     * のか「調べた結果0件」なのかを区別するための表示のため。
-     */
     public function test_axis_card_still_shows_empty_dots_when_matched_count_is_zero(): void
     {
         $html = $this->render($this->viewModel([
@@ -503,17 +490,10 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('0<small> / 4件</small>', $html);
         $this->assertSame(4, substr_count($html, '<span class="dot'));
         $this->assertSame(0, substr_count($html, 'class="dot on"'));
-        // 「読み取れた内容はありません」は使わない(内容が無い会社、と読める)。
         $this->assertStringNotContainsString('読み取れた内容はありません', $html);
         $this->assertStringContainsString('該当する記述は見つかりませんでした', $html);
     }
 
-    /**
-     * 4項目すべて該当したケースで、38mmの軸セル高さ指定が維持されている
-     * こと。実際のはみ出し(下の帯への視覚的なめり込み)は文字列アサーション
-     * では検出できないため、実PDFを生成して目視確認済み(4/4件の軸を含む
-     * フィクスチャでも1ページに収まり、下の帯と重ならないことを確認した)。
-     */
     public function test_axis_body_height_is_38mm_even_when_all_four_sub_elements_matched(): void
     {
         $html = $this->render($this->viewModel([
@@ -539,73 +519,217 @@ class LeadPdfViewTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // 「他社ページ比較とのまとめ」ページ。自社側が0件のとき片側だけ描画
-    // される不具合(2026-08-04、実PDF確認で発見)。
+    // 6. 24項目の対比(2026-08-04新設)。
     // ------------------------------------------------------------------
 
-    /**
-     * 自社側のself_pointsが0件・競合側はmatchedありの場合、【自社ページ】
-     * の枠も常に出し、「該当する所見はありませんでした」と明示する
-     * (片側だけの表示は「比較」になっていないため)。
-     */
-    public function test_shows_the_self_pane_with_a_fallback_message_when_self_points_are_empty(): void
+    public function test_comparison_page_uses_filled_and_dash_marks_not_circle_cross(): void
     {
-        $html = $this->render($this->viewModel([
-            'competitorWebsiteUrl' => 'https://competitor.example.com',
-            'brandWheelComparison' => [
-                'self_points' => [],
-                'competitor_points' => ['全体的に情報が充足しています。'],
-                'one_point' => null,
-            ],
-        ]));
+        $html = $this->render($this->comparisonViewModel());
 
-        $this->assertStringContainsString('【自社ページ】', $html);
-        $this->assertStringContainsString('【他社ページ】', $html);
-        $this->assertStringContainsString('該当する所見はありませんでした', $html);
-        $this->assertStringContainsString('全体的に情報が充足しています。', $html);
+        $start = mb_strpos($html, '24項目の対比');
+        $this->assertNotFalse($start);
+        $end = mb_strpos($html, 'サイトで触れられていなかった項目', $start) ?: mb_strlen($html);
+        $pageHtml = mb_substr($html, $start, $end - $start);
+
+        $this->assertStringContainsString('●', $pageHtml);
+        $this->assertStringContainsString('－', $pageHtml);
+        // ○×は正解・不正解の記号であり使わない(docs/lead-report-layout/README.md)。
+        $this->assertStringNotContainsString('○', $pageHtml);
+        $this->assertStringNotContainsString('×', $pageHtml);
     }
 
     /**
-     * 競合サイト自体が存在しない(自社単独レポート)場合は、
-     * 【他社ページ】の枠自体を出さない ―― 「該当なし」の枠を出すと、
-     * 比較を試みて何も無かったかのように誤読されるため。
+     * 引用符は『』を使う(ユーザー指定の「絶対に消してはいけない文言」原文どおり)。
      */
-    public function test_does_not_show_the_competitor_pane_when_there_is_no_competitor_website(): void
+    public function test_comparison_page_keeps_the_required_caveat_sentence_verbatim(): void
     {
-        $html = $this->render($this->viewModel([
-            'competitorWebsiteUrl' => null,
-            'brandWheelComparison' => [
-                'self_points' => ['活動的魅力が最も内容として充足しています。'],
-                'competitor_points' => [],
-                'one_point' => null,
-            ],
-        ]));
+        $html = $this->render($this->comparisonViewModel());
 
-        $this->assertStringContainsString('【自社ページ】', $html);
-        $this->assertStringNotContainsString('【他社ページ】', $html);
+        $this->assertStringContainsString(
+            '－は『その魅力が無い』という意味ではなく、そのサイトでは触れられていなかった、という意味です。',
+            $html,
+        );
+    }
+
+    public function test_comparison_page_drops_the_competitor_column_when_there_is_no_competitor_website(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $start = mb_strpos($html, '24項目の対比');
+        $this->assertNotFalse($start);
+        $end = mb_strpos($html, 'サイトで触れられていなかった項目', $start) ?: mb_strlen($html);
+        $pageHtml = mb_substr($html, $start, $end - $start);
+
+        $this->assertStringNotContainsString('<th>比較</th>', $pageHtml);
+    }
+
+    public function test_comparison_page_shows_the_competitor_column_when_a_competitor_website_exists(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        $start = mb_strpos($html, '24項目の対比');
+        $end = mb_strpos($html, 'サイトで触れられていなかった項目', $start) ?: mb_strlen($html);
+        $pageHtml = mb_substr($html, $start, $end - $start);
+
+        $this->assertStringContainsString('<th>比較</th>', $pageHtml);
     }
 
     /**
-     * 競合サイトが存在し、かつ競合側のcompetitor_pointsも0件の場合
-     * (競合も「該当する所見なし」)は、両方の枠を出し、両方とも
-     * フォールバック文言を表示する。self_points/competitor_pointsが
-     * 両方とも空だとhasComparisonContent自体がfalseになり単一行の
-     * status_message表示に切り替わってしまうため、one_pointだけは
-     * 存在させてこの分岐(2枠表示)に入るようにする。
+     * 合計は自社ページの分析結果ページと同じ$viewModel->selfTotalMatched等
+     * (単一のソース)を使う ―― ページごとに個別集計しない
+     * (docs/lead-report-layout/README.md)。
      */
-    public function test_shows_both_panes_with_fallback_messages_when_both_sides_have_no_points(): void
+    public function test_comparison_page_total_matches_the_same_source_as_the_self_results_page(): void
     {
-        $html = $this->render($this->viewModel([
-            'competitorWebsiteUrl' => 'https://competitor.example.com',
-            'brandWheelComparison' => [
-                'self_points' => [],
-                'competitor_points' => [],
-                'one_point' => ['key' => 'insufficient_content', 'text' => '6つの項目のうち複数で、サイトの記述から内容を読み取ることができませんでした。'],
+        $viewModel = $this->comparisonViewModel();
+        $html = $this->render($viewModel);
+
+        $this->assertStringContainsString("自社サイト {$viewModel->selfTotalMatched} / {$viewModel->selfTotalMax}項目", $html);
+        $this->assertStringContainsString("比較サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目", $html);
+    }
+
+    // ------------------------------------------------------------------
+    // 7. サイトで触れられていなかった項目(2026-08-04新設)。
+    // ------------------------------------------------------------------
+
+    public function test_gap_page_keeps_the_required_lead_sentence_verbatim(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        $this->assertStringContainsString(
+            '書かれていないことが弱みという意味ではありません。候補者が2つのサイトを見比べたとき、'
+            .'その情報を比較サイト側でしか得られない、という事実を示しています。',
+            $html,
+        );
+    }
+
+    public function test_gap_page_lists_items_competitor_has_and_self_does_not_under_section_a(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        $start = mb_strpos($html, 'サイトで触れられていなかった項目');
+        $end = mb_strpos($html, '改善提案', $start) ?: mb_strlen($html);
+        $pageHtml = mb_substr($html, $start, $end - $start);
+
+        // fixtureでは自社=purposeのみ、競合=purpose+colleagues+atmosphere。
+        // A(競合のみ)はcolleagues/atmosphereの2件。
+        $this->assertStringContainsString('同僚・先輩像', $pageHtml);
+        $this->assertStringContainsString('職場の雰囲気', $pageHtml);
+    }
+
+    /**
+     * Bを省略しない ―― 自社のみ該当する項目が0件でも、枠と
+     * 「該当する項目はありませんでした」を必ず出す(Aだけ並べると詰問状に
+     * なる、docs/lead-report-layout/README.md)。
+     */
+    public function test_gap_page_always_shows_section_b_even_when_there_are_zero_self_only_items(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        $start = mb_strpos($html, 'サイトで触れられていなかった項目');
+        $end = mb_strpos($html, '改善提案', $start) ?: mb_strlen($html);
+        $pageHtml = mb_substr($html, $start, $end - $start);
+
+        $this->assertStringContainsString('御社のサイトにあり、比較サイトでは触れられていなかった項目', $pageHtml);
+        $this->assertStringContainsString('該当する項目はありませんでした', $pageHtml);
+    }
+
+    public function test_gap_page_shows_a_fallback_message_when_there_is_no_competitor(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $start = mb_strpos($html, 'サイトで触れられていなかった項目');
+        $end = mb_strpos($html, '改善提案', $start) ?: mb_strlen($html);
+        $pageHtml = mb_substr($html, $start, $end - $start);
+
+        $this->assertStringContainsString('比較サイトが指定されていないため', $pageHtml);
+        $this->assertStringNotContainsString('class="gcard"', $pageHtml);
+    }
+
+    // ------------------------------------------------------------------
+    // 8. 改善提案(2026-08-04新設、ブランド・ホイール起点)。
+    // ------------------------------------------------------------------
+
+    public function test_improvement_page_keeps_both_required_sentences_verbatim(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        $this->assertStringContainsString(
+            'なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、'
+            .'まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。',
+            $html,
+        );
+        $this->assertStringContainsString(
+            'いずれもサイトの作りに関するもので、上の『何を書くか』とは別の話です。',
+            $html,
+        );
+    }
+
+    public function test_improvement_page_shows_the_selected_group_and_competitor_evidence_for_its_items(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        // fixtureはcompany_distance(会社との距離)の差が最大になるよう
+        // 組んである(自社relationship=0件、競合relationship=2件)。
+        $this->assertStringContainsString('会社との距離', $html);
+        $this->assertStringContainsString('入社3年目の先輩が、日々どんな判断をしているかを紹介しています。', $html);
+        $this->assertStringContainsString('部署をまたいだ相談が日常的に起きる、フラットな環境です。', $html);
+        $this->assertStringContainsString('記述が見つかりませんでした', $html);
+    }
+
+    public function test_improvement_page_never_offers_comparing_three_to_five_competitor_sites(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        $this->assertStringNotContainsString('他社比較', $html);
+        $this->assertStringNotContainsString('3〜5社', $html);
+    }
+
+    public function test_improvement_page_shows_a_fallback_note_when_there_is_no_competitor(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $start = mb_strpos($html, '改善提案');
+        $this->assertNotFalse($start);
+        $pageHtml = mb_substr($html, $start);
+
+        $this->assertStringContainsString('比較サイトが無いため、領域ごとの比較はご用意できません。', $pageHtml);
+        $this->assertStringNotContainsString('class="rcard"', $pageHtml);
+    }
+
+    public function test_improvement_page_includes_a_compact_technical_recommendations_note(): void
+    {
+        $html = $this->render($this->comparisonViewModel([
+            'topRecommendations' => [
+                new ReportRecommendationRow('画像を圧縮してください', '表示速度の改善につながります。', '緊急', '高', '小'),
             ],
         ]));
 
-        $this->assertStringContainsString('【自社ページ】', $html);
-        $this->assertStringContainsString('【他社ページ】', $html);
-        $this->assertSame(2, substr_count($html, '該当する所見はありませんでした'));
+        $this->assertStringContainsString('あわせて、サイトの作りについて', $html);
+        $this->assertStringContainsString('画像を圧縮してください', $html);
+    }
+
+    // ------------------------------------------------------------------
+    // 9. ここから先は、サイトの外の話です(2026-08-04新設)。
+    // ------------------------------------------------------------------
+
+    public function test_final_page_uses_the_new_heading_and_never_offers_the_old_site_comparison_cta(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertStringContainsString('ここから先は、サイトの外の話です', $html);
+        $this->assertStringNotContainsString('他社比較(3〜5社)', $html);
+        $this->assertStringNotContainsString('他社比較（3〜5社）', $html);
+    }
+
+    public function test_final_page_includes_the_three_block_structure(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertStringContainsString('書かれていない項目には', $html);
+        $this->assertStringContainsString('その切り分けは', $html);
+        $this->assertStringContainsString('サイトからはできません', $html);
+        $this->assertStringContainsString('私たちは採用ブランドの', $html);
+        $this->assertStringContainsString('設計からご一緒します', $html);
     }
 }

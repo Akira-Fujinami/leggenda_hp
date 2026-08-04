@@ -38,12 +38,30 @@ class BrandWheelAnalysisResponseParser
         $axesConfig = (array) config('brand_wheel.axes', []);
         $rawAxes = is_array($raw['axes'] ?? null) ? $raw['axes'] : [];
 
-        $axisResults = [];
+        // 1段階目: 軸ごとに(unknown_sub_element/empty_evidence/evidence_not_found の)
+        // 検証を行うが、stateはまだ計算しない ―― 2段階目の軸をまたいだ重複evidence
+        // 除去でmatched件数が変わりうるため、state計算はその後に行う必要がある
+        // (2026-08-04のユーザー指摘: 同一文が異なる2つの下位要素の根拠として
+        // 二重計上されるケースを、軸をまたいで検出・除去する)。
+        $axisDrafts = [];
         foreach ($axesConfig as $axisKey => $axisDefinition) {
             $validSubElementKeys = array_keys((array) ($axisDefinition['sub_elements'] ?? []));
             $rawAxis = is_array($rawAxes[$axisKey] ?? null) ? $rawAxes[$axisKey] : [];
 
-            $axisResults[] = $this->parseAxis($axisKey, $rawAxis, $validSubElementKeys, $haystack);
+            $axisDrafts[$axisKey] = $this->parseAxisDraft($rawAxis, $validSubElementKeys, $haystack);
+        }
+
+        $axisDrafts = $this->deduplicateEvidenceAcrossAxes($axisDrafts, $axesConfig);
+
+        $axisResults = [];
+        foreach ($axisDrafts as $axisKey => $draft) {
+            $axisResults[] = new BrandWheelAxisResult(
+                axisKey: $axisKey,
+                matchedSubElements: $draft['matched'],
+                discardedSubElements: $draft['discarded'],
+                claimedSubElementCount: $draft['claimed'],
+                state: $this->computeState($axisKey, count($draft['matched'])),
+            );
         }
 
         $axisStateCounts = [
@@ -98,8 +116,9 @@ class BrandWheelAnalysisResponseParser
     /**
      * @param  array<string, mixed>  $rawAxis
      * @param  list<string>  $validSubElementKeys
+     * @return array{matched: list<BrandWheelSubElementMatch>, discarded: list<BrandWheelDiscardedSubElement>, claimed: int}
      */
-    private function parseAxis(string $axisKey, array $rawAxis, array $validSubElementKeys, string $haystack): BrandWheelAxisResult
+    private function parseAxisDraft(array $rawAxis, array $validSubElementKeys, string $haystack): array
     {
         $items = is_array($rawAxis['matched_sub_elements'] ?? null) ? $rawAxis['matched_sub_elements'] : [];
 
@@ -151,13 +170,79 @@ class BrandWheelAnalysisResponseParser
             $matched[] = new BrandWheelSubElementMatch($key, $evidence);
         }
 
-        return new BrandWheelAxisResult(
-            axisKey: $axisKey,
-            matchedSubElements: $matched,
-            discardedSubElements: $discarded,
-            claimedSubElementCount: $claimedCount,
-            state: $this->computeState($axisKey, count($matched)),
-        );
+        return ['matched' => $matched, 'discarded' => $discarded, 'claimed' => $claimedCount];
+    }
+
+    /**
+     * 軸をまたいで同一のevidence文字列(正規化後)が複数の下位要素の根拠として
+     * 使われている場合、1件だけを残し残りをduplicate_evidenceとして破棄する。
+     * 2026-08-04の実測(gpt-5.6-terra)で、「正解のない仕事をやり抜く鍵は、
+     * 互いに認め合い、高め合うこと」という同一の1文がcore_valuesとcolleagues
+     * の両方の根拠として二重計上される事例が確認されたため。
+     *
+     * どちらを残すかは「config('brand_wheel.axes')の並び順→各軸内の
+     * sub_elementsの並び順」で先に来るほうを残す、という決定的なルールに
+     * 固定する(モデル・実行順に依存させない ―― AIが返したJSON内の配列順は
+     * 決定的ではないため、判定基準にしてはならない)。
+     *
+     * @param  array<string, array{matched: list<BrandWheelSubElementMatch>, discarded: list<BrandWheelDiscardedSubElement>, claimed: int}>  $axisDrafts
+     * @param  array<string, mixed>  $axesConfig
+     * @return array<string, array{matched: list<BrandWheelSubElementMatch>, discarded: list<BrandWheelDiscardedSubElement>, claimed: int}>
+     */
+    private function deduplicateEvidenceAcrossAxes(array $axisDrafts, array $axesConfig): array
+    {
+        $axisOrder = array_values(array_keys($axesConfig));
+
+        // 正規化後のevidence文字列ごとに、それを根拠としているmatched項目を
+        // 軸をまたいで集約する。
+        $groupsByEvidence = [];
+        foreach ($axisOrder as $axisRank => $axisKey) {
+            $subElementOrder = array_values(array_keys((array) ($axesConfig[$axisKey]['sub_elements'] ?? [])));
+
+            foreach ($axisDrafts[$axisKey]['matched'] as $match) {
+                $normalized = $this->normalizeForEvidenceMatch($match->evidence);
+                $subRank = array_search($match->key, $subElementOrder, true);
+
+                $groupsByEvidence[$normalized][] = [
+                    'axisKey' => $axisKey,
+                    'match' => $match,
+                    'rank' => [$axisRank, $subRank === false ? PHP_INT_MAX : $subRank],
+                ];
+            }
+        }
+
+        $duplicatesToDiscard = []; // axisKey => list<BrandWheelSubElementMatch>
+        foreach ($groupsByEvidence as $entries) {
+            if (count($entries) <= 1) {
+                continue;
+            }
+
+            usort($entries, fn (array $a, array $b) => $a['rank'] <=> $b['rank']);
+            array_shift($entries); // 先頭(config順で最も早いもの)を残し、残りを破棄対象にする
+
+            foreach ($entries as $entry) {
+                $duplicatesToDiscard[$entry['axisKey']][] = $entry['match'];
+            }
+        }
+
+        if ($duplicatesToDiscard === []) {
+            return $axisDrafts;
+        }
+
+        foreach ($duplicatesToDiscard as $axisKey => $matchesToRemove) {
+            $removedKeys = array_map(fn (BrandWheelSubElementMatch $m) => $m->key, $matchesToRemove);
+
+            $axisDrafts[$axisKey]['matched'] = array_values(array_filter(
+                $axisDrafts[$axisKey]['matched'],
+                fn (BrandWheelSubElementMatch $m) => ! in_array($m->key, $removedKeys, true),
+            ));
+
+            foreach ($matchesToRemove as $m) {
+                $axisDrafts[$axisKey]['discarded'][] = new BrandWheelDiscardedSubElement($m->key, $m->evidence, 'duplicate_evidence');
+            }
+        }
+
+        return $axisDrafts;
     }
 
     private function computeState(string $axisKey, int $survivingCount): string

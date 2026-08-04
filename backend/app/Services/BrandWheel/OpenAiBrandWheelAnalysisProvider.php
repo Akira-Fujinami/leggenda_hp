@@ -28,8 +28,12 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
      * v2(2026-08-03): key_message/impressionの2項目を出力構造へ追加。
      * 出力構造そのものが変わるため、v1で生成された既存結果はinput_hashの
      * 再利用対象から自動的に外れる(input_hashにpromptVersion()が含まれるため)。
+     *
+     * v3(2026-08-04): config/brand_wheel.phpの各下位要素にsub_element_
+     * definitions(何が該当し何が該当しないかの1行定義)を追加し、
+     * frameworkDefinition()がそれをプロンプトへ埋め込むよう変更。
      */
-    public const string PROMPT_VERSION = 'v2';
+    public const string PROMPT_VERSION = 'v3';
 
     public function __construct(
         private readonly BrandWheelAnalysisResponseParser $parser,
@@ -95,31 +99,39 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
 
     private function buildPrompt(BrandWheelAnalysisInput $input): string
     {
+        $promptVariant = (string) config('services.brand_wheel_ai.prompt_variant', 'full');
+        $axesOnly = in_array($promptVariant, ['axes_only', 'axes_only_no_examples'], true);
+        $withoutExamples = $promptVariant === 'axes_only_no_examples';
+
         $facts = json_encode($input->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $framework = json_encode($this->frameworkDefinition(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $examples = json_encode(config('brand_wheel.examples', []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $framework = json_encode($this->frameworkDefinition($axesOnly), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $examples = json_encode($withoutExamples ? [] : config('brand_wheel.examples', []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $teachingPoints = implode("\n", array_map(fn ($p) => '- '.$p, (array) config('brand_wheel.teaching_points', [])));
         $caveat = (string) config('brand_wheel.teacher_data_caveat', '');
         $axisKeys = implode(', ', array_keys((array) config('brand_wheel.axes', [])));
         $forbiddenPhrases = implode('」「', (array) config('brand_wheel.forbidden_phrases', []));
 
-        return <<<PROMPT
-あなたはLeggenda独自の採用ブランディング・フレームワーク「ブランド・ホイール」に基づき、
-採用ページ・トップページの記述内容を評価するアシスタントです。
-
-【最重要】あなたが判定するのは「この会社に魅力があるかどうか」ではなく、
-「サイトの記述からその魅力が読み取れるかどうか」です。この2つを絶対に混同しないでください。
-- 使ってよい表現: 「サイトからは読み取れませんでした」「〜という記述が確認できました」「6軸のうち◯軸を読み取りました」
-- 禁止する表現: 「〜がありません/不足しています」「〜が優れています/劣っています」のような魅力そのものへの評価、
-  「6軸中3軸の評価です」「3点です」のような採点・順位付けを示唆する表現は一切使わないでください。
+        // 2026-08-04: P1(現行)/P2(axes_only)のプロンプト構成比較測定用に
+        // 分岐。P2はkey_message/impression/quality_notes/cautionsの指示と
+        // 出力スキーマを丸ごと外し、24下位要素の判定+根拠引用のみを求める。
+        // フレームワーク定義からもquality_dimensions(5つの質の観点、P2では
+        // 未使用の情報)を外す ―― 使われない文脈をモデルに渡さないため。
+        $forbiddenNote = $axesOnly
+            ? <<<TXT
+- 下位要素のevidence(原文抜粋)を含め、以下の語は一切使わないでください:
+  「{$forbiddenPhrases}」。これらは「魅力が無い/劣っている」という評価を示唆するため、
+  このフレームワークの前提(サイトの記述からの読み取り可否のみを判定する)と矛盾します。
+TXT
+            : <<<TXT
 - 以下の語は、quality_notes・cautions・key_message・impression等の自由記述を含め
   一切使わないでください:
   「{$forbiddenPhrases}」。これらは「魅力が無い/劣っている」という評価を示唆するため、
   このフレームワークの前提(サイトの記述からの読み取り可否のみを判定する)と矛盾します。
   代わりに「〜は伝わるが、〜との距離がある」「〜がもったいない」のような、読み取れた
   ことと読み取れなかったことの両方を事実として述べる言い回しを使ってください。
-- あなたはstate(read/partial/unread)やスコアを出力する必要はありません。出力するのは
-  下位要素ごとの該当有無(matched_sub_elements)のみで、判定(state)はシステム側が別途計算します。
+TXT;
+
+        $keyMessageSection = $axesOnly ? '' : <<<TXT
 
 【key_message・impression(リード向け画面下部に表示する2項目)】
 - key_message: このページ(採用ページ・トップページ)の記述から読み取れるキーメッセージを
@@ -130,13 +142,57 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
 - いずれもサイトに実在する記述の要約・言い換えとして書いてください(evidence抜粋のような
   原文一致検証は行いませんが、原文に無い内容の創作はしないでください)。
 
+TXT;
+
+        $frameworkLabel = $axesOnly ? '6軸・24下位要素' : '6軸・24下位要素・5つの質の観点';
+
+        $schema = $axesOnly
+            ? <<<TXT
+{
+  "axes": {
+    "<axis_key>": {"matched_sub_elements": [{"key": "string", "evidence": "原文からの抜粋"}]}
+  }
+}
+
+axesオブジェクトのキーは必ず次の6つをすべて含めてください({$axisKeys})。
+該当する下位要素が無い軸は matched_sub_elements を空配列にしてください。
+TXT
+            : <<<TXT
+{
+  "axes": {
+    "<axis_key>": {"matched_sub_elements": [{"key": "string", "evidence": "原文からの抜粋"}]}
+  },
+  "core_value": {"readable": true, "evidence": "原文からの抜粋"},
+  "key_message": "string",
+  "impression": "string",
+  "quality_notes": {"consistency": "string", "credibility": "string", "distance": "string", "differentiation": "string", "corporate_alignment": "string"},
+  "cautions": ["string"]
+}
+
+axesオブジェクトのキーは必ず次の6つをすべて含めてください({$axisKeys})。
+該当する下位要素が無い軸は matched_sub_elements を空配列にしてください。
+core_valueが読み取れない場合は readable を false にし、evidence は省略してください。
+TXT;
+
+        return <<<PROMPT
+あなたはLeggenda独自の採用ブランディング・フレームワーク「ブランド・ホイール」に基づき、
+採用ページ・トップページの記述内容を評価するアシスタントです。
+
+【最重要】あなたが判定するのは「この会社に魅力があるかどうか」ではなく、
+「サイトの記述からその魅力が読み取れるかどうか」です。この2つを絶対に混同しないでください。
+- 使ってよい表現: 「サイトからは読み取れませんでした」「〜という記述が確認できました」「6軸のうち◯軸を読み取りました」
+- 禁止する表現: 「〜がありません/不足しています」「〜が優れています/劣っています」のような魅力そのものへの評価、
+  「6軸中3軸の評価です」「3点です」のような採点・順位付けを示唆する表現は一切使わないでください。
+{$forbiddenNote}- あなたはstate(read/partial/unread)やスコアを出力する必要はありません。出力するのは
+  下位要素ごとの該当有無(matched_sub_elements)のみで、判定(state)はシステム側が別途計算します。
+{$keyMessageSection}
 【下位要素ごとの根拠】
 下位要素ごとに、それを裏づける原文抜粋を必ず1つ添えてください。抜粋を示せない下位要素は
 該当扱いにしないでください。抜粋は必ず「データ」内の本文・見出し・ナビゲーションラベルに
 実在する文字列そのものを使ってください(要約・言い換え・創作は厳禁です。実在しない抜粋は
 システム側の検証で自動的に除外されます)。
 
-【フレームワーク定義(6軸・24下位要素・5つの質の観点)】
+【フレームワーク定義({$frameworkLabel})】
 {$framework}
 
 【教師データ(few-shot、あるべきブランドの実例)】
@@ -152,35 +208,41 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
 {$facts}
 
 以下のJSON Schemaに厳密に従うJSONオブジェクトのみを出力してください(説明文や前後のテキストは一切不要):
-{
-  "axes": {
-    "<axis_key>": {"matched_sub_elements": [{"key": "string", "evidence": "原文からの抜粋"}]}
-  },
-  "core_value": {"readable": true, "evidence": "原文からの抜粋"},
-  "key_message": "string",
-  "impression": "string",
-  "quality_notes": {"consistency": "string", "credibility": "string", "distance": "string", "differentiation": "string", "corporate_alignment": "string"},
-  "cautions": ["string"]
-}
-
-axesオブジェクトのキーは必ず次の6つをすべて含めてください({$axisKeys})。
-該当する下位要素が無い軸は matched_sub_elements を空配列にしてください。
-core_valueが読み取れない場合は readable を false にし、evidence は省略してください。
+{$schema}
 PROMPT;
     }
 
     /**
      * @return array<string, mixed>
      */
-    private function frameworkDefinition(): array
+    private function frameworkDefinition(bool $axesOnly = false): array
     {
+        // 2026-08-04: sub_elements(ラベル名のみ、例: "組織構造")に加えて
+        // sub_element_definitions(何が該当し何が該当しないかの1行定義)を
+        // 埋め込む。ラベル名だけではAIの判定基準が曖昧になり、例えば
+        // 「組織構造」の根拠として役職名の列挙が使われる事例が実測で
+        // 確認されたため(config/brand_wheel.php参照)。
         $axes = collect((array) config('brand_wheel.axes', []))
-            ->map(fn ($axis, $key) => [
-                'name_ja' => $axis['name_ja'],
-                'definition' => $axis['definition'],
-                'sub_elements' => $axis['sub_elements'],
-            ])
+            ->map(function ($axis, $key) {
+                $labels = (array) $axis['sub_elements'];
+                $definitions = (array) ($axis['sub_element_definitions'] ?? []);
+
+                return [
+                    'name_ja' => $axis['name_ja'],
+                    'definition' => $axis['definition'],
+                    'sub_elements' => collect($labels)
+                        ->mapWithKeys(fn ($label, $subKey) => [$subKey => [
+                            'label' => $label,
+                            'definition' => $definitions[$subKey] ?? null,
+                        ]])
+                        ->all(),
+                ];
+            })
             ->all();
+
+        if ($axesOnly) {
+            return ['axes' => $axes];
+        }
 
         $qualityDimensions = collect((array) config('brand_wheel.quality_dimensions', []))
             ->map(fn ($dim) => ['name_ja' => $dim['name_ja'], 'question' => $dim['question']])

@@ -338,6 +338,103 @@ class BrandWheelAnalysisResponseParserTest extends TestCase
         $this->assertNull($result->keyMessage);
     }
 
+    /**
+     * 2026-08-04の実測(gpt-5.6-terra)で、同一のevidence文字列が異なる2つの
+     * 下位要素の根拠として二重計上される事例が確認されたための回帰テスト。
+     * will_activity(config順で最初)とemotional_benefit(config順で後)が同じ
+     * 抜粋を主張した場合、config順で先に来るwill_activity側を残す。
+     */
+    public function test_duplicate_evidence_across_axes_keeps_the_one_earlier_in_config_order(): void
+    {
+        $input = $this->makeInput(recruitBody: '互いに認め合い、高め合うことを大切にしています。');
+
+        $raw = [
+            'axes' => [
+                'will_activity' => ['matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => '互いに認め合い、高め合うこと'],
+                ]],
+                'emotional_benefit' => ['matched_sub_elements' => [
+                    ['key' => 'pride', 'evidence' => '互いに認め合い、高め合うこと'],
+                ]],
+            ],
+        ];
+
+        $result = $this->parser->parse($raw, $input, 'openai', 'gpt-4o', false, 'v2');
+
+        $willActivity = collect($result->axes)->firstWhere('axisKey', 'will_activity');
+        $emotionalBenefit = collect($result->axes)->firstWhere('axisKey', 'emotional_benefit');
+
+        $this->assertCount(1, $willActivity->matchedSubElements);
+        $this->assertSame('purpose', $willActivity->matchedSubElements[0]->key);
+
+        $this->assertSame([], $emotionalBenefit->matchedSubElements);
+        $this->assertCount(1, $emotionalBenefit->discardedSubElements);
+        $this->assertSame('pride', $emotionalBenefit->discardedSubElements[0]->key);
+        $this->assertSame('duplicate_evidence', $emotionalBenefit->discardedSubElements[0]->reason);
+        $this->assertSame('互いに認め合い、高め合うこと', $emotionalBenefit->discardedSubElements[0]->evidence);
+
+        // claimedSubElementCountは検証前の申告件数を表すため、重複破棄後も
+        // 1のまま(evidence_not_foundと同じ扱い方針)。
+        $this->assertSame(1, $emotionalBenefit->claimedSubElementCount);
+    }
+
+    /**
+     * 同一軸内の異なる下位要素キーが同じevidenceを主張した場合も、
+     * 軸をまたぐケースと同じ規則(config順で先に来るほうを残す)で除去する。
+     * personalityのsub_elements順はleadership→org_structure→
+     * company_character→core_valuesなので、org_structureがcore_valuesより
+     * 先に残る。
+     */
+    public function test_duplicate_evidence_within_the_same_axis_keeps_the_one_earlier_in_sub_element_order(): void
+    {
+        $input = $this->makeInput(recruitBody: '自らの意思で挑戦する組織です。');
+
+        $raw = [
+            'axes' => [
+                'personality' => ['matched_sub_elements' => [
+                    ['key' => 'core_values', 'evidence' => '自らの意思で挑戦する'],
+                    ['key' => 'org_structure', 'evidence' => '自らの意思で挑戦する'],
+                ]],
+            ],
+        ];
+
+        $result = $this->parser->parse($raw, $input, 'openai', 'gpt-4o', false, 'v2');
+
+        $personality = collect($result->axes)->firstWhere('axisKey', 'personality');
+
+        $this->assertCount(1, $personality->matchedSubElements);
+        $this->assertSame('org_structure', $personality->matchedSubElements[0]->key);
+        $this->assertCount(1, $personality->discardedSubElements);
+        $this->assertSame('core_values', $personality->discardedSubElements[0]->key);
+        $this->assertSame('duplicate_evidence', $personality->discardedSubElements[0]->reason);
+    }
+
+    public function test_evidence_that_only_differs_by_whitespace_or_width_is_still_treated_as_a_duplicate(): void
+    {
+        $input = $this->makeInput(recruitBody: '2023年に成長機会を提供する制度を新設しました。');
+
+        // financial_benefitのsub_elements順はsalary_level→benefits→
+        // growth_opportunity→employment_stabilityなので、benefits(index1)が
+        // growth_opportunity(index2)より先に残る。
+        $raw = [
+            'axes' => [
+                'financial_benefit' => ['matched_sub_elements' => [
+                    ['key' => 'growth_opportunity', 'evidence' => '２０２３年に成長機会を提供する制度を新設'],
+                    ['key' => 'benefits', 'evidence' => "2023年に\n成長機会を提供する制度を新設"],
+                ]],
+            ],
+        ];
+
+        $result = $this->parser->parse($raw, $input, 'openai', 'gpt-4o', false, 'v2');
+
+        $financialBenefit = collect($result->axes)->firstWhere('axisKey', 'financial_benefit');
+
+        $this->assertCount(1, $financialBenefit->matchedSubElements);
+        $this->assertSame('benefits', $financialBenefit->matchedSubElements[0]->key);
+        $this->assertSame('growth_opportunity', $financialBenefit->discardedSubElements[0]->key);
+        $this->assertSame('duplicate_evidence', $financialBenefit->discardedSubElements[0]->reason);
+    }
+
     public function test_blank_key_message_and_impression_are_normalized_to_null(): void
     {
         $input = $this->makeInput(recruitBody: '本文。');

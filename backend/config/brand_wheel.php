@@ -54,6 +54,18 @@ return [
                 'project_initiative' => 'PJ・新たな取組',
                 'social_contribution' => '社会貢献活動',
             ],
+            // 2026-08-04追加: 24下位要素それぞれについて「何が該当し、何が
+            // 該当しないか」を1行で明示する。gpt-5.6-terra/lunaの実測で、
+            // ラベル名(4文字程度)だけでは判定基準が曖昧になり、例えば
+            // 「組織構造」の根拠として役職名の列挙が使われる事例が確認された
+            // ため。OpenAiBrandWheelAnalysisProvider::frameworkDefinition()が
+            // プロンプトへ埋め込む。
+            'sub_element_definitions' => [
+                'purpose' => '会社が何を目指しているか、存在意義や志を述べた記述。取扱商品・サービス内容の説明のみでは該当しない。',
+                'business_expansion' => '具体的な事業領域・商品・サービスの内容についての記述。',
+                'project_initiative' => '新規プロジェクトや新しい取り組みの具体的な紹介。既存事業の説明のみでは該当しない。',
+                'social_contribution' => '地域貢献・CSR等、社会に対する貢献活動についての記述。',
+            ],
         ],
 
         'asset' => [
@@ -67,6 +79,12 @@ return [
                 'competitiveness' => '競争力・独自性',
                 'scale_influence' => '規模・影響力',
                 'office_facility' => 'オフィス・施設',
+            ],
+            'sub_element_definitions' => [
+                'brand_recognition' => '会社や実績が外部からどう評価・認知されているかについての記述。',
+                'competitiveness' => '他社にはない強みや独自の技術・ポジションについての記述。',
+                'scale_influence' => '売上高・拠点数・従業員数など、事業規模や業界内での影響力を示す記述。',
+                'office_facility' => 'オフィス環境や設備についての具体的な記述。',
             ],
         ],
 
@@ -82,6 +100,12 @@ return [
                 'company_character' => '会社の性格',
                 'core_values' => '重視する価値',
             ],
+            'sub_element_definitions' => [
+                'leadership' => '経営者・幹部の考え方や意思決定スタイルについての記述。',
+                'org_structure' => '部門・チームの編成、階層、意思決定の通り方についての記述。部署名や役職名の列挙のみでは該当しない。',
+                'company_character' => '会社全体としての気質・社風を述べた記述。個人の心構えや意気込みの表明のみでは該当しない。',
+                'core_values' => '組織として大切にしている価値観や行動指針についての記述。',
+            ],
         ],
 
         'relationship' => [
@@ -95,6 +119,12 @@ return [
                 'atmosphere' => '職場の雰囲気',
                 'physical_freedom' => '物理的自由度',
                 'mental_freedom' => '精神的自由度',
+            ],
+            'sub_element_definitions' => [
+                'colleagues' => '同僚や先輩がどのような人物かについての具体的な記述。',
+                'atmosphere' => '職場の雰囲気や社内の空気感についての記述。',
+                'physical_freedom' => 'リモートワーク・フレックス等、働く場所や時間の裁量についての記述。',
+                'mental_freedom' => '意見の言いやすさや裁量の大きさなど、心理的な自由度についての記述。',
             ],
         ],
 
@@ -110,6 +140,12 @@ return [
                 'satisfaction' => '満足感',
                 'superiority' => '優越感',
             ],
+            'sub_element_definitions' => [
+                'pride' => 'その仕事に就くことで誇りを持てるという記述。',
+                'talkable' => '他人に話したくなる、自慢したくなるという記述。',
+                'satisfaction' => '仕事を通じて得られる満足感や充実感についての記述。',
+                'superiority' => '他と比べて優れている、選ばれた立場にあるという感覚についての記述。',
+            ],
         ],
 
         'financial_benefit' => [
@@ -123,6 +159,12 @@ return [
                 'benefits' => '福利厚生',
                 'growth_opportunity' => '成長機会',
                 'employment_stability' => '雇用の安定性',
+            ],
+            'sub_element_definitions' => [
+                'salary_level' => '給与の水準についての具体的な記述。',
+                'benefits' => '福利厚生制度についての具体的な記述。',
+                'growth_opportunity' => 'スキルアップやキャリア形成の機会についての記述。',
+                'employment_stability' => '雇用の継続性や経営の安定性についての記述。',
             ],
         ],
     ],

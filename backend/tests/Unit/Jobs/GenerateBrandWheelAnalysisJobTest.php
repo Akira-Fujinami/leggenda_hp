@@ -230,7 +230,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $this->assertSame('success', $record->status);
         $this->assertFalse($record->is_mock);
         $this->assertSame('openai', $record->provider);
-        $this->assertSame('v2', $record->prompt_version);
+        $this->assertSame('v3', $record->prompt_version);
         $this->assertSame(120, $record->usage_input_tokens);
         $this->assertSame(40, $record->usage_output_tokens);
         // 実在しない抜粋は検証で破棄されるため、unreadのまま(AIの自己申告を信用しない)。

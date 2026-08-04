@@ -382,7 +382,7 @@ class ReportViewModelBuilderTest extends TestCase
         $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
 
         $this->assertNull($viewModel->brandWheelCompetitor);
-        $this->assertSame([], $viewModel->brandWheelComparison['competitor_points']);
+        $this->assertArrayNotHasKey('competitor_points', $viewModel->brandWheelComparison);
     }
 
     /**
@@ -467,5 +467,151 @@ class ReportViewModelBuilderTest extends TestCase
             $this->assertIsString($perspective['one_liner']);
             $this->assertArrayHasKey('items', $perspective);
         }
+    }
+
+    /**
+     * 2026-08-04: 「自社ページの分析結果」「24項目の対比」「改善提案」の
+     * 3ページが同じ合計件数を参照するよう、selfTotalMatched等は
+     * brandWheelSelf['axes']のmatched_count合計と必ず一致する
+     * (docs/lead-report-layout/README.md「合計件数Nは3・6・8ページ目で
+     * 必ず同じソースから算出すること」)。
+     */
+    public function test_self_and_competitor_totals_match_the_sum_of_the_axis_cards_matched_counts(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => 'x'], ['key' => 'business_expansion', 'evidence' => 'y'],
+                ]],
+            ],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'asset', 'matched_sub_elements' => [['key' => 'brand_recognition', 'evidence' => 'z']]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $expectedSelfMatched = array_sum(array_column($viewModel->brandWheelSelf['axes'], 'matched_count'));
+        $expectedSelfMax = array_sum(array_column($viewModel->brandWheelSelf['axes'], 'max_count'));
+        $expectedCompetitorMatched = array_sum(array_column($viewModel->brandWheelCompetitor['axes'], 'matched_count'));
+
+        $this->assertSame($expectedSelfMatched, $viewModel->selfTotalMatched);
+        $this->assertSame(2, $viewModel->selfTotalMatched);
+        $this->assertSame($expectedSelfMax, $viewModel->selfTotalMax);
+        $this->assertSame($expectedCompetitorMatched, $viewModel->competitorTotalMatched);
+        $this->assertSame(1, $viewModel->competitorTotalMatched);
+    }
+
+    public function test_sub_element_comparison_lists_all_24_items_with_self_and_competitor_matched_flags(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertCount(24, $viewModel->subElementComparison);
+        $purpose = collect($viewModel->subElementComparison)->firstWhere('sub_key', 'purpose');
+        $this->assertTrue($purpose['self_matched']);
+        $this->assertFalse($purpose['competitor_matched']);
+    }
+
+    /**
+     * 競合が存在しない(自社単独レポート)場合、improvementFocusはnull
+     * (「改善提案」ページのグループ差・3項目は競合との比較が前提のため)。
+     */
+    public function test_improvement_focus_is_null_when_there_is_no_competitor(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNull($viewModel->improvementFocus);
+    }
+
+    /**
+     * 自社・競合ともにstatus==='success'のとき、improvementFocusが
+     * 実際に組み立てられ、選ばれた項目に競合サイトのevidenceが付くこと。
+     */
+    public function test_improvement_focus_is_populated_with_competitor_evidence_when_both_sides_are_readable(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        // 自社はrelationship軸が0件、競合は3件該当 ―― company_distanceグループの
+        // 差が最大になるように仕組む。
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => '自社の抜粋']]]],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'relationship', 'matched_sub_elements' => [
+                ['key' => 'colleagues', 'evidence' => '同僚についての競合サイトの抜粋'],
+                ['key' => 'atmosphere', 'evidence' => '雰囲気についての競合サイトの抜粋'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->improvementFocus);
+        $this->assertSame('company_distance', $viewModel->improvementFocus['selected_group']);
+        $this->assertCount(2, $viewModel->improvementFocus['items']);
+        $evidences = array_column($viewModel->improvementFocus['items'], 'competitor_evidence');
+        $this->assertContains('同僚についての競合サイトの抜粋', $evidences);
+        $this->assertContains('雰囲気についての競合サイトの抜粋', $evidences);
     }
 }

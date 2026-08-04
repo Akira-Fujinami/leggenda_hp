@@ -90,6 +90,66 @@ td { vertical-align:top; }
 .evsub { width:42mm; color:#393636; }
 .evq { color:#393636; }
 .evbar { display:inline-block; width:4px; height:11px; margin-right:5px; vertical-align:-1px; }
+
+.gaplead { font-size:10pt; color:#6B6767; margin:0 0 4mm; line-height:1.6; }
+.gaphead { font-size:11.5pt; font-weight:bold; margin:0 0 2.5mm; }
+.gaphead .cnt { font-size:9.5pt; font-weight:normal; color:#6B6767; margin-left:3mm; }
+.gcard { border:1px solid #E0E0E0; border-left:3px solid #C03A28; padding:2.5mm 3mm; height:19mm; }
+.gcard.own { border-left-color:#1D2088; }
+.gcard .nm { font-size:10.5pt; font-weight:bold; margin:0 0 1.5mm; }
+.gcard .ds { font-size:9pt; color:#6B6767; margin:0; line-height:1.55; }
+.gcell { width:33.3%; padding:0 1.5mm 3mm 0; vertical-align:top; }
+.gnone { border:1px solid #E0E0E0; background:#F5F5F5; padding:2.5mm 3mm; font-size:9.5pt;
+  color:#6B6767; line-height:1.7; margin:0; }
+
+.vslead { font-size:10pt; color:#6B6767; margin:0 0 4mm; line-height:1.6; }
+.vstbl { border-collapse:collapse; width:100%; }
+.vstbl th { font-size:9.5pt; font-weight:bold; padding:2mm 2mm; border-bottom:1px solid #E0E0E0;
+  color:#6B6767; text-align:center; }
+.vstbl th.sub { text-align:left; }
+.vstbl td { font-size:9.5pt; padding:1.9mm 2mm; border-bottom:1px solid #EFEFEF; }
+.vstbl td.sub { text-align:left; }
+.vstbl td.mk { text-align:center; width:13mm; font-size:11pt; }
+.on { color:#1D2088; font-weight:bold; }
+.on.cp { color:#E95446; }
+.off { color:#BFBFBF; }
+.grpbar { color:#fff; font-size:10.5pt; font-weight:bold; text-align:center; padding:1.8mm; }
+.vscell { width:33.3%; padding-right:5mm; vertical-align:top; }
+.vslegend { font-size:9.5pt; color:#6B6767; margin:4mm 0 0; }
+
+.rlead { font-size:10pt; color:#6B6767; margin:0 0 4mm; line-height:1.6; }
+.onepoint { border-left:4px solid #1D2088; background:#F5F5F5; padding:3mm 4mm; margin:0 0 5mm; }
+.onepoint .t { font-size:10.5pt; font-weight:bold; margin:0 0 1.5mm; }
+.onepoint p { font-size:10pt; line-height:1.7; margin:0; }
+.gapbar td { padding:0 0 2mm; font-size:9.5pt; vertical-align:middle; }
+.gapbar .nm { width:34mm; }
+.gapbar .bar { height:6mm; display:block; }
+.gapbar .v { width:26mm; text-align:right; color:#6B6767; padding-right:3mm; }
+.rcard { border:1px solid #E0E0E0; padding:3mm 3.5mm; height:56mm; }
+.rcard .no { font-size:9pt; color:#fff; background:#1D2088; padding:0.6mm 2.2mm; }
+.rcard .nm { font-size:12pt; font-weight:bold; margin:2mm 0 1.5mm; }
+.rcard .q { font-size:9.5pt; color:#6B6767; margin:0 0 3mm; line-height:1.55; }
+.rcard .lb { font-size:8.5pt; color:#8A8A8A; margin:0 0 0.8mm; }
+.rcard .own { font-size:9.5pt; margin:0 0 3mm; }
+.rcard .cmp { font-size:9.5pt; line-height:1.6; margin:0; border-left:3px solid #E95446;
+  padding-left:2.5mm; }
+.rcell { width:33.3%; padding-right:4mm; vertical-align:top; }
+.tech { border-top:1px solid #E0E0E0; margin-top:5mm; padding-top:3.5mm; }
+.tech .h { font-size:10pt; font-weight:bold; margin:0 0 2mm; }
+.tech p { font-size:9.5pt; color:#6B6767; margin:0; line-height:1.7; }
+
+.ctawrap { max-width:250mm; margin:0 auto; }
+.ctalogo { display:block; margin:0 auto 8mm; width:56mm; }
+.ctah { font-size:17pt; font-weight:600; text-align:center; margin:0 0 3mm; letter-spacing:.02em; }
+.ctasub { font-size:10.5pt; color:#6B6767; text-align:center; margin:0 0 8mm; line-height:1.8; }
+.ctabox { border:1px solid #E0E0E0; padding:4mm 5mm; height:58mm; }
+.ctabox .n { font-size:9pt; color:#fff; background:#1D2088; padding:0.6mm 2.2mm; }
+.ctabox .t { font-size:11.5pt; font-weight:bold; margin:2.5mm 0 2mm; }
+.ctabox p { font-size:9.5pt; line-height:1.75; margin:0; color:#393636; }
+.ctacell { width:33.3%; padding-right:4mm; vertical-align:top; }
+.ctafoot { text-align:center; margin-top:8mm; }
+.ctafoot .l1 { font-size:11.5pt; margin:0 0 2mm; }
+.ctafoot .l2 { font-size:10pt; color:#6B6767; margin:0; line-height:1.8; }
 </style></head><body>
 
 <div class="page cover"><div class="stamp">サンプル（ダミーデータ）</div>
@@ -144,7 +204,7 @@ td { vertical-align:top; }
   <p class="lead1">6つの項目それぞれについて、該当する内容がサイトの記述から何件読み取れたかを集計しています（点数ではありません）。<br>解析したURL：https://recruit.example.com/vision/</p>
   <table class="statrow"><tr>
     <td style="width:50mm;"><div class="statbox"><p class="lab"><span class="swatch" style="background:#3A3FC0"></span>自社サイト</p><p class="num">11<small> / 24項目</small></p></div></td>
-    <td style="width:50mm;"><div class="statbox"><p class="lab"><span class="swatch" style="background:#E95446"></span>競合サイト</p><p class="num">15<small> / 24項目</small></p></div></td>
+    <td style="width:50mm;"><div class="statbox"><p class="lab"><span class="swatch" style="background:#E95446"></span>競合サイト</p><p class="num">18<small> / 24項目</small></p></div></td>
     <td style="vertical-align:top; padding-top:1mm;"><p class="sumhead">サマリー</p><ul class="sum"><li>金銭的便益が最も内容として充足しています。</li><li>就業環境に関する記載はなく、「会社との距離」の情報は全体的に少なめです。</li></ul></td>
     <td style="width:78mm;"><img src="radar-sample.png" style="width:76mm;"></td>
   </tr></table>
@@ -158,27 +218,6 @@ td { vertical-align:top; }
   <h2>サイトから読み取れた記述</h2>
   <p class="lead1">前ページで「該当あり」とした項目について、サイトのどの記述を根拠にしたかを記載しています。抜粋はサイト上の文章をそのまま引用したもので、要約や言い換えは含みません。</p>
   <table class="evtbl"><tr><th>項目</th><th>何について</th><th>サイトからの記述</th></tr><tr><td class="evaxis"><span class="evbar" style="background:#1D2088"></span>活動的魅力</td><td class="evsub">パーパス</td><td class="evq">「技術で社会の「あたり前」を支える。それが私たちの存在意義です。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#1D2088"></span>活動的魅力</td><td class="evsub">展開事業・商品</td><td class="evq">「通信インフラ、公共システム、金融基盤の3領域で事業を展開しています。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#1D2088"></span>活動的魅力</td><td class="evsub">PJ・新たな取組</td><td class="evq">「2025年より、次世代交通システムの実証実験に参画しています。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#1D2088"></span>資産的魅力</td><td class="evsub">知名度・評判</td><td class="evq">「国内シェア第2位。導入企業は1,200社を超えます。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#1D2088"></span>資産的魅力</td><td class="evsub">規模・影響力</td><td class="evq">「従業員数3,400名、全国12拠点で事業を運営しています。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#2C7F96"></span>経営スタイル</td><td class="evsub">重視する価値</td><td class="evq">「「まず動く」「相手の立場で考える」を行動指針としています。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#C03A28"></span>情緒的便益</td><td class="evsub">誇りに思える</td><td class="evq">「自分の仕事が社会の土台を支えているという実感があります。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#C03A28"></span>金銭的便益</td><td class="evsub">給与水準</td><td class="evq">「初任給は月額28万円（2026年度実績）。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#C03A28"></span>金銭的便益</td><td class="evsub">福利厚生</td><td class="evq">「住宅補助、社宅制度、確定拠出年金を用意しています。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#C03A28"></span>金銭的便益</td><td class="evsub">成長機会</td><td class="evq">「資格取得支援制度により、受験費用を全額補助します。」</td></tr><tr><td class="evaxis"><span class="evbar" style="background:#C03A28"></span>金銭的便益</td><td class="evsub">雇用の安定性</td><td class="evq">「設立以来60年、無借金経営を継続しています。」</td></tr></table>
-  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
-</div>
-<div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
-  <h2>他社ページ比較とのまとめ</h2>
-  <table><tr>
-    <td class="pane">
-      <h4>【自社ページ】</h4>
-      <ul><li>金銭的便益が最も内容として充足しています。</li><li>就業環境に関する記載はなく、「会社との距離」の情報は全体的に少なめです。</li></ul>
-    </td>
-    <td style="width:4%"></td>
-    <td class="pane">
-      <h4>【他社ページ】</h4>
-      <ul><li>全体的に情報が充足しています。</li><li>キーメッセージがぼやけています。</li></ul>
-    </td>
-  </tr></table>
-  <div class="arrow">▼</div>
-  <div class="one">
-    <h4>【ワンポイント】</h4>
-    <p><b>情報充足が出来ていない</b>：候補者が十分な情報を得られず、エントリーの土俵に上がれない可能性があります。</p>
-  </div>
-  <p class="foot">ブランド・ホイールは本来、サイトだけでなくグループインタビュー・口コミ・内定者/辞退者インタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。キーメッセージと印象の読み取りにはAIを使用しています。</p>
   <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
 </div>
 
@@ -198,19 +237,61 @@ td { vertical-align:top; }
 </div>
 
 <div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
+  <h2>24項目の対比</h2>
+  <p class="vslead">24項目それぞれについて、サイトに該当する記述があったかどうかを並べています。●は記述があったこと、－は記述が見つからなかったことを示します。－は「その魅力が無い」という意味ではなく、そのサイトでは触れられていなかった、という意味です。</p>
+  <table><tr><td class="vscell"><div class="grpbar" style="background:#1D2088">会社の魅力</div><table class="vstbl"><tr><th class="sub"></th><th>自社</th><th>比較</th></tr><tr><td class="sub">パーパス</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">展開事業・商品</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">PJ・新たな取組</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">社会貢献活動</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">知名度・評判</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">競争力・独自性</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">規模・影響力</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">オフィス・施設</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="on cp">●</span></td></tr></table></td><td class="vscell"><div class="grpbar" style="background:#2C7F96">会社との距離</div><table class="vstbl"><tr><th class="sub"></th><th>自社</th><th>比較</th></tr><tr><td class="sub">リーダーシップ</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">組織構造</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">会社の性格</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="off">－</span></td></tr><tr><td class="sub">重視する価値</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">同僚・先輩像</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">職場の雰囲気</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">物理的自由度</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">精神的自由度</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="off">－</span></td></tr></table></td><td class="vscell"><div class="grpbar" style="background:#C03A28">仕事の魅力</div><table class="vstbl"><tr><th class="sub"></th><th>自社</th><th>比較</th></tr><tr><td class="sub">誇りに思える</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">話したくなる</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="off">－</span></td></tr><tr><td class="sub">満足感</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">優越感</td><td class="mk"><span class="off">－</span></td><td class="mk"><span class="off">－</span></td></tr><tr><td class="sub">給与水準</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">福利厚生</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="on cp">●</span></td></tr><tr><td class="sub">成長機会</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="off">－</span></td></tr><tr><td class="sub">雇用の安定性</td><td class="mk"><span class="on">●</span></td><td class="mk"><span class="off">－</span></td></tr></table></td></tr></table>
+  <p class="vslegend">合計　<span class="on">●</span> 自社サイト 11 / 24項目　　<span class="on cp">●</span> 比較サイト 18 / 24項目</p>
+  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
+</div>
+<div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
+  <h2>サイトで触れられていなかった項目</h2>
+  <p class="gaplead">24項目のうち、比較サイトには記述があり、御社のサイトでは触れられていなかった項目です。書かれていないことが弱みという意味ではありません。候補者が2つのサイトを見比べたとき、その情報を比較サイト側でしか得られない、という事実を示しています。</p>
+  <p class="gaphead">比較サイトにあり、御社のサイトでは触れられていなかった項目<span class="cnt">9件</span></p>
+  <table><tr><td class="gcell"><div class="gcard"><p class="nm">社会貢献活動</p><p class="ds">事業の外で何に取り組んでいる会社なのか</p></div></td><td class="gcell"><div class="gcard"><p class="nm">競争力・独自性</p><p class="ds">同業他社と何が違うのか</p></div></td><td class="gcell"><div class="gcard"><p class="nm">オフィス・施設</p><p class="ds">どんな場所で働くことになるのか</p></div></td></tr><tr><td class="gcell"><div class="gcard"><p class="nm">リーダーシップ</p><p class="ds">誰がどんな考えで会社を率いているのか</p></div></td><td class="gcell"><div class="gcard"><p class="nm">組織構造</p><p class="ds">どんな体制の、どこに配属されるのか</p></div></td><td class="gcell"><div class="gcard"><p class="nm">同僚・先輩像</p><p class="ds">どんな人たちと働くことになるのか</p></div></td></tr><tr><td class="gcell"><div class="gcard"><p class="nm">職場の雰囲気</p><p class="ds">日々どんな空気の中で仕事をするのか</p></div></td><td class="gcell"><div class="gcard"><p class="nm">物理的自由度</p><p class="ds">勤務地・時間・リモートの自由度はどれくらいか</p></div></td><td class="gcell"><div class="gcard"><p class="nm">満足感</p><p class="ds">働いていて何が満たされるのか</p></div></td></tr></table>
+  <p class="gaphead" style="margin-top:1mm;">御社のサイトにあり、比較サイトでは触れられていなかった項目<span class="cnt">2件</span></p>
+  <table><tr><td class="gcell"><div class="gcard own"><p class="nm">成長機会</p><p class="ds">どんな力が身につくのか</p></div></td><td class="gcell"><div class="gcard own"><p class="nm">雇用の安定性</p><p class="ds">長く働き続けられるのか</p></div></td><td class="gcell"></td></tr></table>
+  <p class="gaphead" style="margin-top:1mm;">どちらのサイトでも触れられていなかった項目<span class="cnt">4件</span></p>
+  <p class="gnone">会社の性格　/　精神的自由度　/　話したくなる　/　優越感<br>この業界のサイトでは語られにくい領域です。先に触れることで、他社との違いをつくれる余地があります。</p>
+  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
+</div>
+<div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
   <h2>改善提案</h2>
-  <p class="lead">特に改善効果が見込まれる項目を、優先度の高い順に記載しています。</p>
-  <table><tr><td class="reccell"><div class="recbox"><p class="rectitle">画像の説明文(読み上げ対応)</p><p class="recdesc">重要な画像に読み上げソフト向けの説明文を設定すると、より多くの方に内容が伝わります。</p>
-      <p class="recmeta">優先度: 緊急　影響度: 高　対応工数: 中</p></div></td><td class="reccell"><div class="recbox"><p class="rectitle">ページの表示の速さ</p><p class="recdesc">表示速度を改善すると、閲覧中に離脱されにくくなります。</p>
-      <p class="recmeta">優先度: 高　影響度: 高　対応工数: 大</p></div></td><td class="reccell"><div class="recbox"><p class="rectitle">応募・問い合わせの受け口</p><p class="recdesc">フォームを設置すると、候補者が直接連絡しやすくなります。</p>
-      <p class="recmeta">優先度: 中　影響度: 中　対応工数: 中</p></div></td></tr></table>
+  <div class="onepoint"><p class="t">【ワンポイント】情報充足が出来ていない</p><p>候補者が十分な情報を得られず、エントリーの土俵に上がれない可能性があります。24項目のうち、御社のサイトで触れられていたのは11項目、比較サイトは18項目でした。</p></div>
+  <p class="rlead">3つの領域のうち、候補者が比較サイト側でしか情報を得られない差が最も大きかったのは「会社との距離」でした。この領域から3項目を挙げます。</p>
+  <table class="gapbar"><tr><td class="nm">会社の魅力</td><td class="v">自社 5 / 8</td><td style="width:52mm"><span class="bar" style="background:#3A3FC0;width:62.5%"></span></td><td class="v">比較 8 / 8</td><td style="width:52mm"><span class="bar" style="background:#E95446;width:100.0%"></span></td></tr><tr><td class="nm">会社との距離</td><td class="v">自社 1 / 8</td><td style="width:52mm"><span class="bar" style="background:#3A3FC0;width:12.5%"></span></td><td class="v">比較 8 / 8</td><td style="width:52mm"><span class="bar" style="background:#E95446;width:100.0%"></span></td></tr><tr><td class="nm">仕事の魅力</td><td class="v">自社 5 / 8</td><td style="width:52mm"><span class="bar" style="background:#3A3FC0;width:62.5%"></span></td><td class="v">比較 6 / 8</td><td style="width:52mm"><span class="bar" style="background:#E95446;width:75.0%"></span></td></tr></table>
+  <table style="margin-top:3mm;"><tr><td class="rcell"><div class="rcard"><span class="no">1</span><p class="nm">同僚・先輩像</p><p class="q">どんな人たちと働くことになるのかを知ろうとします。</p><p class="lb">御社のサイト</p><p class="own">記述が見つかりませんでした</p><p class="lb">比較サイトの記述</p><p class="cmp">「入社3年目の先輩が、日々どんな判断をしているかを一日の流れとともに紹介しています。」</p></div></td><td class="rcell"><div class="rcard"><span class="no">2</span><p class="nm">職場の雰囲気</p><p class="q">日々どんな空気の中で仕事をするのかを知ろうとします。</p><p class="lb">御社のサイト</p><p class="own">記述が見つかりませんでした</p><p class="lb">比較サイトの記述</p><p class="cmp">「部署をまたいだ相談が日常的に起きる、フラットな環境です。」</p></div></td><td class="rcell"><div class="rcard"><span class="no">3</span><p class="nm">物理的自由度</p><p class="q">勤務地・時間・リモートの自由度を知ろうとします。</p><p class="lb">御社のサイト</p><p class="own">記述が見つかりませんでした</p><p class="lb">比較サイトの記述</p><p class="cmp">「リモートワークとコアタイムなしのフレックスタイム制を導入しています。」</p></div></td></tr></table>
+  <p class="rlead" style="margin:3mm 0 0;">なお、これらを「サイトに書き足す」ことで解決するとは限りません。実態はあるのに伝えられていないのか、まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。</p>
+  <div class="tech"><p class="h">あわせて、サイトの作りについて</p><p>画像の説明文（読み上げ対応）／ページの表示の速さ／応募・問い合わせの受け口 の3点に改善の余地がありました。いずれもサイトの作りに関するもので、上の「何を書くか」とは別の話です。詳細は担当者よりご説明します。</p></div>
+  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
 </div>
 
-<div class="page cta"><div class="stamp">サンプル（ダミーデータ）</div>
-  <img class="logo-cover" src="leggenda-logo.png" alt="LEGGENDA"><h2>より詳しい診断・ご相談はこちら</h2>
-  <p>今回は自社サイト・比較サイト1社の簡易診断結果です。</p>
-  <p>他社比較（3〜5社）や、詳細な改善提案については、担当者までお気軽にご相談ください。</p>
-  <img class="logo-mark" src="leggenda-logo.png" alt="LEGGENDA">
+<div class="page"><div class="stamp">サンプル（ダミーデータ）</div>
+  <div class="ctawrap">
+    <img class="ctalogo" src="leggenda-logo.png" alt="LEGGENDA">
+    <p class="ctah">ここから先は、サイトの外の話です</p>
+    <p class="ctasub">今回お見せしたのは、御社の採用サイトに「何が書かれているか」だけです。<br>
+      これは採用ブランドを形づくる情報源のひとつにすぎません。</p>
+
+    <table><tr>
+      <td class="ctacell"><div class="ctabox"><span class="n">1</span>
+        <p class="t">書かれていない項目には<br>2つの意味があります</p>
+        <p>実態はあるのに伝えられていないのか、まだ言葉になっていないのか。
+           前者はサイトで解決しますが、後者はサイトを直しても変わりません。</p></div></td>
+      <td class="ctacell"><div class="ctabox"><span class="n">2</span>
+        <p class="t">その切り分けは<br>サイトからはできません</p>
+        <p>社員が実際に何を感じているか、辞退した方が何を理由に離れたか、
+           説明会で何を語っているか。サイト以外の情報と突き合わせて初めて判断できます。</p></div></td>
+      <td class="ctacell"><div class="ctabox"><span class="n">3</span>
+        <p class="t">私たちは採用ブランドの<br>設計からご一緒します</p>
+        <p>グループインタビュー、社員・内定者・辞退者へのヒアリング、説明会の設計。
+           何を約束する会社なのかを言葉にするところから支援しています。</p></div></td>
+    </tr></table>
+
+    <div class="ctafoot">
+      <p class="l1">この診断で見えた差が、伝え方の問題なのか、言語化の問題なのか。</p>
+      <p class="l2">一度お話しさせてください。担当者よりご連絡いたします。</p>
+    </div>
+  </div>
 </div>
 
 </body></html>

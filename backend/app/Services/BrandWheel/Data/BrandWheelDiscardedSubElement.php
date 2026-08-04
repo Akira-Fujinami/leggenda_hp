@@ -7,7 +7,10 @@ namespace App\Services\BrandWheel\Data;
  * 「無言での切り捨ては禁止」の要件により、なぜ破棄されたかの理由を残す。
  * reason: 'unknown_sub_element'(その軸に存在しないキー) |
  *         'empty_evidence'(抜粋が空文字/非文字列) |
- *         'evidence_not_found'(抜粋が正規化後の原文に実在しない)
+ *         'evidence_not_found'(抜粋が正規化後の原文に実在しない) |
+ *         'duplicate_evidence'(同一evidenceが他の下位要素の根拠と重複しており、
+ *         config('brand_wheel.axes')の並び順で後にくる側が破棄された。
+ *         2026-08-04追加)
  */
 readonly class BrandWheelDiscardedSubElement
 {
