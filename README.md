@@ -517,6 +517,19 @@ npx playwright test               # docker composeで起動済みのfrontend/bac
 
 ②を実際に再現できるサイト(ナビをJavaScriptで生成しており、かつ採用ページへのリンクがそこにしか無いサイト)が見つかった時点で着手する。
 
+### ブランド・ホイールの判定件数(claimed_sub_element_count)が同一条件でも実行ごとにばらつく(未評価, 2026-08-04時点)
+
+**2026-08-04夜に確認した事実**(推測は含まない):
+
+- `website_analysis_id=355`(SmartHR、入力は毎回同一)に対し、config(`teaching_points`/`teacher_data_caveat`)を変えながら`brand-wheel:run --force`を実行したところ、`claimed_sub_element_count`の合計は次のように推移した: 2, 2, 4, 6→discarded後matched 3, 2, 1(この順で実行、各条件n=1回)。
+- このうち「A: 現状のconfig」と「B: teaching_pointsのみ空」は結果が完全に同一(2件、同じ下位要素)だった。
+- 「C: Bに加えてteacher_data_caveatの末尾一文を削除」で4件に増えたが、その後config をA(teaching_points復元・caveat末尾のみ削除)に戻して再実行したところ、matchedは1件(discarded 1件)となり、Aの2件を下回った。
+- 上記はすべて**各条件1回ずつの実行結果**であり、同一条件を複数回実行して振れ幅を測定していない。
+
+**課題として記録すること**: 判定件数が実行ごとにどの程度ばらつくのか(振れ幅)を、config を一切変更しない状態でまだ測定していない。振れ幅が分からないまま条件間の差を「効果」と解釈することはできない。上記の2→4→1という推移が config変更の効果なのか、単なる実行ごとの振れ幅なのかは、現時点では判別できない。
+
+**次にやること(未着手)**: config を一切変更せず、`website_analysis_id=355`に対して`brand-wheel:run --force`を5回連続で実行し、`claimed_sub_element_count`・`matched_sub_elements`・discarded理由・state内訳を5回分並べて記録する。振れ幅が分かってから、プロンプトの調整に着手する。
+
 ## 現状の制約 (Phase 1時点)
 
 - ユーザー登録・ログイン・Project/Website CRUDは実装済み (Sanctum SPA Cookie認証)。
