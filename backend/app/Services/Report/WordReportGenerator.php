@@ -242,7 +242,11 @@ class WordReportGenerator
             $table->addRow();
             $table->addCell(2500)->addText($axis['name']);
             $table->addCell(1500)->addText("{$axis['matched_count']} / {$axis['max_count']}件");
-            $table->addCell(5000)->addText($matchedNames === [] ? '―' : implode('、', $matchedNames));
+            // 2026-08-04: 「該当する記述は見つかりませんでした」を使う
+            // (README 117行 ―― 内容が無い会社、と読める表現を避けるため)。
+            // PDF版(.none2)と表記を揃える。旧実装の'―'のまま書き換え漏れして
+            // いた食い違いを修正。
+            $table->addCell(5000)->addText($matchedNames === [] ? '該当する記述は見つかりませんでした' : implode('、', $matchedNames));
         }
 
         if ($viewModel->brandWheelSelf['key_message'] || $viewModel->brandWheelSelf['impression']) {
@@ -486,9 +490,13 @@ class WordReportGenerator
         $focus = $viewModel->improvementFocus;
         if ($focus !== null) {
             $selectedLabel = self::GROUP_LABELS[$focus['selected_group']] ?? $focus['selected_group'];
+            // 2026-08-04: 文言修正。PDF版と同じ理由(lead-pdf.blade.phpの
+            // .rleadコメント参照) ―― 旧文言は選定ロジック(競合件数－自社件数が
+            // グループ内で最大)と食い違って見える(自社が競合を上回る
+            // グループが選ばれることがあるため)。
             $section->addText(
-                "3つの領域のうち、候補者が比較サイト側でしか情報を得られない差が最も大きかったのは「{$selectedLabel}」でした。".
-                'この領域から'.count($focus['items']).'項目を挙げます。',
+                "3つの領域のうち、比較サイトとの差(比較サイト件数－自社件数)が最も大きかったのは「{$selectedLabel}」でした。".
+                'この領域から、比較サイトの記述にあり御社のサイトには無い項目を'.count($focus['items']).'件挙げます。',
             );
 
             $section->addTextBreak(1);

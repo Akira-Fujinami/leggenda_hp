@@ -369,7 +369,7 @@ class LeadPdfViewTest extends TestCase
     {
         $html = $this->render($this->viewModel(['brandWheelRadarPng' => null]));
 
-        $this->assertStringNotContainsString('width: 76mm; height: 55mm;', $html);
+        $this->assertStringNotContainsString('width: 66mm; height: 48mm;', $html);
         $this->assertStringContainsString('2<small> / 4件</small>', $html);
     }
 

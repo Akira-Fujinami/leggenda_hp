@@ -233,6 +233,32 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString('AIを使用', $documentXml);
     }
 
+    /**
+     * 2026-08-04: 0件の軸セルは「該当する記述は見つかりませんでした」と
+     * 明示する(README 117行、PDF版の.none2と表記を揃える)。旧実装が
+     * '―'のままだった食い違いの回帰テスト。
+     */
+    public function test_zero_matched_axis_shows_the_no_evidence_message_not_a_dash(): void
+    {
+        $documentXml = $this->generate($this->viewModel([
+            'brandWheelSelf' => [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://example.com/careers',
+                'axes' => [
+                    ['key' => 'asset', 'group' => 'company_appeal', 'name' => '資産的魅力', 'matched_count' => 0, 'max_count' => 4, 'matched_sub_elements' => []],
+                ],
+                'key_message' => null,
+                'impression' => null,
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+        ]));
+
+        // '―'はドキュメント全体では他の見出し・強調(――)で正当に使われるため、
+        // グローバルな不在チェックはしない。0件セルの文言そのものを確認すれば足りる。
+        $this->assertStringContainsString('該当する記述は見つかりませんでした', $documentXml);
+    }
+
     public function test_does_not_render_the_brand_wheel_table_when_status_is_not_success(): void
     {
         $documentXml = $this->generate($this->viewModel([

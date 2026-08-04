@@ -207,7 +207,7 @@
     .mkon { color: #1D2088; font-weight: bold; }
     .mkon.cp { color: #E95446; }
     .mkoff { color: #BFBFBF; }
-    .vslegend { font-size: 9.5pt; color: #6B6767; margin: 4mm 0 0; }
+    .vslegend { width: 265mm; font-size: 9.5pt; color: #6B6767; margin: 4mm 0 0; }
 
     {{--
         「サイトで触れられていなかった項目」ページ。
@@ -226,7 +226,10 @@
     .gcard .nm { font-size: 10.5pt; font-weight: bold; margin: 0 0 1.5mm; }
     .gcard .ds { font-size: 9pt; color: #6B6767; margin: 0; line-height: 1.55; }
     .gapcell { width: 88.3mm; padding: 0 2mm 3mm 0; vertical-align: top; }
-    .gnone { border: 1px solid #E0E0E0; background: #F5F5F5; padding: 2.5mm 3mm; font-size: 9.5pt; color: #6B6767; line-height: 1.7; margin: 0; }
+    {{-- widthを明示する理由は.lead1と同じ(2026-08-04、CSS冒頭のh2コメント
+         参照)。実PDF確認で、C分類(どちらにも無い項目)の一覧テキストが
+         ページ右端をはみ出していることが見つかった。 --}}
+    .gnone { width: 265mm; border: 1px solid #E0E0E0; background: #F5F5F5; padding: 2.5mm 3mm; font-size: 9.5pt; color: #6B6767; line-height: 1.7; margin: 0; }
 
     {{-- 「改善提案」ページ。 --}}
     {{-- widthを明示する理由は.lead1と同じ(2026-08-04、CSS冒頭のh2コメント参照)。 --}}
@@ -247,7 +250,12 @@
     .rcard .cmp { font-size: 9.5pt; line-height: 1.6; margin: 0; border-left: 3px solid #E95446; padding-left: 2.5mm; }
     .rcell { width: 88.3mm; padding: 0 2mm 4mm 0; vertical-align: top; }
     {{-- widthを明示する理由は.lead1と同じ(2026-08-04、CSS冒頭のh2コメント参照)。 --}}
-    .tech { width: 265mm; border-top: 1px solid #E0E0E0; margin-top: 5mm; padding-top: 3.5mm; }
+    {{-- 2026-08-04: margin-top 5mm→3mm、padding-top 3.5mm→2mmに縮小。
+         このブロック単体の高さは十分な余白(37.4mm)に収まるはずなのに次
+         ページへ丸ごと送られる不具合が実PDF確認で見つかった(README
+         「技術的提案は改善提案ページ下部に小さく残す」を満たすため、
+         余白を削って収まりやすくする)。 --}}
+    .tech { width: 265mm; border-top: 1px solid #E0E0E0; margin-top: 3mm; padding-top: 2mm; }
     .tech .h { font-size: 10pt; font-weight: bold; margin: 0 0 2mm; }
     .tech p { font-size: 9.5pt; color: #6B6767; margin: 0; line-height: 1.7; }
 
@@ -275,6 +283,16 @@
         折り返し不具合とは別に、dompdfのposition:absoluteでは`right`指定自体が
         信頼できないことが判明)。leftへ変更して回避する。
         left = ページ幅297mm - 右余白16mm - ロゴ幅30mm = 251mm。
+
+        2026-08-04追記: <img class="logo-mark">はHTML中の記述位置を、各
+        .page内でh2の直後(=先頭寄り)に置くこと。末尾に置いていた旧実装では、
+        実データでそのページの内容が2物理ページへあふれた際にロゴが
+        丸ごと後ろ側(2枚目)へ付いていき、1枚目にロゴが無いページが生まれる
+        不具合が実PDF確認で見つかった(position:absoluteの基準は.page要素
+        自体だが、dompdfは.pageが物理ページをまたいで分割された場合、
+        絶対配置要素をHTML中の出現順に基づいて「その時点で処理している
+        物理ページ」に固定するらしい)。h2直後(あふれが起きる本文より前)に
+        置くことで、常に1枚目の物理ページに固定されることを実PDF確認済み。
     --}}
     .logo-mark { position: absolute; left: 251mm; bottom: 7mm; width: 30mm; opacity: .9; }
 </style>
@@ -339,6 +357,7 @@
 --}}
 <div class="page">
     <h2>採用ブランドの捉え方 ―― ブランド・ホイール</h2>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
     <table style="width: 265mm;"><tr>
         <td style="width: 126mm; padding-right: 8mm;">
             <img src="data:image/png;base64,{{ $brandWheelFrameworkImageBase64 }}" style="width: 124mm;">
@@ -360,12 +379,12 @@
             <p class="introcaution">読み取れなかった項目は、その魅力が『無い』という意味ではありません。サイトにそう書かれていない、というだけです。また、採用ブランドは本来、グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。</p>
         </td>
     </tr></table>
-    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
 {{-- 3. 自社ページの分析結果 --}}
 <div class="page">
     <h2>自社ページの分析結果</h2>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 
     @if (! $selfReadable)
         {{-- 6項目すべて0件の図・表は「魅力のない会社」の意味になるため出さない。
@@ -418,7 +437,19 @@
                     {{-- レーダー図のviewBoxは380x276(縦横比380:276)。dompdfは
                          widthのみ指定だと縦横比を正しく保持しないことがあるため、
                          heightも明示して指定どおりの比率で描画させる。 --}}
-                    <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPng) }}" style="width: 76mm; height: 55mm;">
+                    {{--
+                        2026-08-04: 76x55mm→66x48mm(縦横比380:276を維持)に
+                        縮小。README「合計件数Nは同じソースから」等とは無関係の
+                        純粋なレイアウト都合 ―― このレーダーtdの高さがstatrow行
+                        全体の高さを決めるため、実データ(自社側5件)で
+                        統計ボックス下に約40mmの余白が生まれ、軸カード表が
+                        次ページへあふれる一因になっていた。サマリー箇条書きは
+                        可変長(0〜6件超)のため、この行と同じ行には置けない
+                        (2026-08-04より前の実PDF確認で、そうすると行全体の
+                        高さが不安定になり同じくあふれる不具合が別途見つかって
+                        いる) ―― そのため縮小できるのはレーダー画像のみ。
+                    --}}
+                    <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPng) }}" style="width: 66mm; height: 48mm;">
                     <div class="legend">
                         <span class="sw" style="background: #3A3FC0;"></span>自社サイト
                         @if ($competitorReadable)
@@ -429,7 +460,7 @@
             </td>
         </tr></table>
 
-        <p class="sumhead" style="margin-top: 3mm;">サマリー</p>
+        <p class="sumhead" style="margin-top: 2mm;">サマリー</p>
         <ul class="sum">
             @foreach ($comparison['self_points'] as $point)
                 <li>{{ $point }}</li>
@@ -437,7 +468,7 @@
         </ul>
 
         {{-- widthを明示する理由はh2/.darkbandと同じ(2026-08-04、CSS側コメント参照)。 --}}
-        <table class="bandrow" style="width: 265mm; margin-top: 3mm;"><tr>
+        <table class="bandrow" style="width: 265mm; margin-top: 2mm;"><tr>
             @foreach ($groupBands as $band)
                 <td colspan="2" style="background: {{ $band['color'] }};">{{ $band['label'] }}</td>
             @endforeach
@@ -491,7 +522,6 @@
             <p class="foot" style="margin-top: 2mm;">キーメッセージと印象の読み取りにはAIを使用しています。</p>
         @endif
     @endif
-    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
 {{--
@@ -504,6 +534,7 @@
 @if (count($viewModel->selfBrandWheelEvidenceItems) > 0)
 <div class="page">
     <h2>サイトから読み取れた記述</h2>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
     <p class="lead1">前ページで「該当あり」とした項目について、サイトのどの記述を根拠にしたかを記載しています。抜粋はサイト上の文章をそのまま引用したもので、要約や言い換えは含みません。</p>
     {{--
         2026-08-04: table-layout:fixedのままにする(autoにしない)。
@@ -531,13 +562,13 @@
             </tr>
         @endforeach
     </table>
-    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 @endif
 
 {{-- 5. 採用担当の視点で見た診断結果(4観点。判定と理由1文のみ、個別指標名は出さない) --}}
 <div class="page">
     <h2>採用担当の視点で見た診断結果</h2>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
     <p class="lead1">4つの観点それぞれについて、判定と、その理由を一言で記載しています。</p>
 
     <table style="width: 265mm;">
@@ -561,7 +592,6 @@
     <p class="foot">
         取得できなかった項目は0点として扱わず、算出の対象から外しています(測定カバー率 {{ number_format($viewModel->selfScore['coverage_rate'], 1) }}%／確信度 {{ number_format($viewModel->selfScore['confidence_rate'], 1) }}%)。
     </p>
-    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
 {{--
@@ -575,6 +605,7 @@
 --}}
 <div class="page">
     <h2>24項目の対比</h2>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 
     @if (! $selfReadable)
         <p>{{ $selfWheel['status_message'] ?? '' }}</p>
@@ -636,7 +667,6 @@
             @endif
         </p>
     @endif
-    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
 {{--
@@ -649,6 +679,7 @@
 --}}
 <div class="page">
     <h2>サイトで触れられていなかった項目</h2>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 
     @if (! $selfReadable)
         <p>{{ $selfWheel['status_message'] ?? '' }}</p>
@@ -670,8 +701,11 @@
                 1行定義文、長いもので40字超)がその列の幅を押し広げ、
                 ページ右端をはみ出す不具合が実PDF確認で見つかった
                 (2026-08-04、当初axcellにautoを試して発覚)。
+                widthは265mmを明示する(h2/.darkbandと同じ理由 ―― `.page`
+                直下でwidth未指定だと右に16mmはみ出す不具合が、このテーブル
+                自体にも実PDF確認で見つかった。2026-08-04追加)。
             --}}
-            <table>
+            <table style="width: 265mm;">
                 @foreach (array_chunk($gap['a'], 3) as $row)
                     <tr>
                         @foreach ($row as $item)
@@ -688,8 +722,9 @@
                  docs/lead-report-layout/README.md)。0件でも枠を出す。 --}}
             <p class="gnone">該当する項目はありませんでした</p>
         @else
-            {{-- table-layout:autoにしない理由は上のAのテーブルと同じ。 --}}
-            <table>
+            {{-- table-layout:autoにしない理由・widthを明示する理由は
+                 上のAのテーブルと同じ。 --}}
+            <table style="width: 265mm;">
                 @foreach (array_chunk($gap['b'], 3) as $row)
                     <tr>
                         @foreach ($row as $item)
@@ -707,7 +742,6 @@
             <p class="gnone">{{ implode('　/　', array_column($gap['c'], 'sub_name')) }}</p>
         @endif
     @endif
-    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
 {{--
@@ -720,6 +754,7 @@
 --}}
 <div class="page">
     <h2>改善提案</h2>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 
     @if (! $selfReadable)
         <p>{{ $selfWheel['status_message'] ?? '' }}</p>
@@ -736,7 +771,23 @@
                 $focus = $viewModel->improvementFocus;
                 $selectedLabel = $groupBands[$focus['selected_group']]['label'] ?? $focus['selected_group'];
             @endphp
-            <p class="rlead">3つの領域のうち、候補者が比較サイト側でしか情報を得られない差が最も大きかったのは「{{ $selectedLabel }}」でした。この領域から{{ count($focus['items']) }}項目を挙げます。</p>
+            {{--
+                2026-08-04: 文言修正。旧文言「候補者が比較サイト側でしか情報を
+                得られない差が最も大きかったのは」は、選定ロジック(競合の
+                該当件数－自社の該当件数がグループ内で最大)と食い違って見える
+                ―― 自社が競合を上回るグループが選ばれることがあり(実データで
+                確認: 「会社の魅力」は自社2件・比較1件で自社が多いにも
+                関わらず選ばれた。全グループで自社優位のとき、選ばれるのは
+                「自社の優位が最も小さい(＝競合との差が最も小さい)グループ」
+                であって「競合が上回るグループ」ではないため)、直下の
+                件数バー(自社が多い)と文言(競合の方が情報が多いと読める)が
+                矛盾して見える不具合が実PDF確認で見つかった。
+                「差(比較サイト件数－自社件数)」を明示し、数値で検算できる
+                言い回しに変更する。件数バー自体はREADME「グループごとの
+                自社／競合件数バーを出し、差が最大の領域を特定する」の指定
+                通り残す(バーを別指標に変える案は取らない)。
+            --}}
+            <p class="rlead">3つの領域のうち、比較サイトとの差(比較サイト件数－自社件数)が最も大きかったのは「{{ $selectedLabel }}」でした。この領域から、比較サイトの記述にあり御社のサイトには無い項目を{{ count($focus['items']) }}件挙げます。</p>
 
             {{-- 2026-08-04: table-layout:autoにする理由はページ3のstatrowと
                  同じ(CSS側コメント参照)。この表は5列(nm/v/bar/v/bar)が
@@ -768,7 +819,7 @@
                      実際の抜粋、長文になりうる)が入るため、autoにすると
                      列幅がページ右端を超える危険がある。列幅は全列88.3mmで
                      等しいので、fixedのままで安全に収まることを確認済み。 --}}
-                <table style="margin-top: 3mm;">
+                <table style="width: 265mm; margin-top: 3mm;">
                     <tr>
                         @foreach ($focus['items'] as $i => $item)
                             <td class="rcell">
@@ -803,7 +854,6 @@
             </div>
         @endif
     @endif
-    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 </div>
 
 {{--
