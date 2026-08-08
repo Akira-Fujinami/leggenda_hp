@@ -52,16 +52,42 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [['message' => ['content' => json_encode([
-                    'axes' => [
-                        'will_activity' => ['matched_sub_elements' => [
-                            ['key' => 'purpose', 'evidence' => '会社の紹介文です'],
-                        ]],
-                    ],
-                    'core_value' => ['readable' => false], 'quality_notes' => [], 'cautions' => [],
+                    'sub_elements' => $this->completeSubElements([
+                        'purpose' => ['matched' => true, 'evidence' => '会社の紹介文です'],
+                    ]),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
                 ])]]],
                 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
             ], 200),
         ]);
+    }
+
+    /**
+     * config('brand_wheel.axes')の24キー全部をmatched:falseで埋めたsub_elements。
+     * AIモックの応答は常に24キー全部を含めないとguardAgainstIncompleteSchema()
+     * (欠落7個以上でAI_INCOMPLETE_SCHEMA)に引っかかる。
+     *
+     * @param  array<string, array{matched: bool, evidence?: string|null}>  $overrides
+     * @return array<string, array{matched: bool, evidence: string|null}>
+     */
+    private function completeSubElements(array $overrides = []): array
+    {
+        $keys = [];
+        foreach ((array) config('brand_wheel.axes', []) as $axis) {
+            $keys = array_merge($keys, array_keys((array) $axis['sub_elements']));
+        }
+
+        $base = array_fill_keys($keys, ['matched' => false, 'evidence' => null]);
+
+        foreach ($overrides as $key => $entry) {
+            $base[$key] = array_merge(['matched' => false, 'evidence' => null], $entry);
+        }
+
+        return $base;
     }
 
     public function test_it_refuses_to_run_in_production(): void

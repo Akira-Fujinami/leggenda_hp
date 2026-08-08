@@ -102,8 +102,8 @@ class BrandWheelAnalysisInputFactory
             ->where('page_type', PageType::Homepage)
             ->first();
 
-        [$recruitBodyText, $recruitHeadings, $recruitNavLabels, $recruitPageStatus, $recruitHtmlSource] = $this->extractPageText($recruitPage);
-        [$homepageBodyText, $homepageHeadings, $homepageNavLabels, $homepageStatus, $homepageHtmlSource] = $this->extractPageText($homepage);
+        [$recruitBodyText, $recruitHeadings, $recruitNavLabels, $recruitPageStatus, $recruitHtmlSource, $recruitAllLinkLabels] = $this->extractPageText($recruitPage);
+        [$homepageBodyText, $homepageHeadings, $homepageNavLabels, $homepageStatus, $homepageHtmlSource, $homepageAllLinkLabels] = $this->extractPageText($homepage);
 
         // どちらのHTML(rendered/static)を読んだかは、レース(RenderPageJobが
         // まだ完了していない)が実際に起きているかを事後に判別できるよう
@@ -120,6 +120,12 @@ class BrandWheelAnalysisInputFactory
         // 採用ページ独自のナビ項目(例: 採用サイト側にしかない事業紹介導線)を
         // 後から補う。重複は正規化後の文字列で除去する。
         $businessLinkLabels = $this->mergeNavLabels($homepageNavLabels, $recruitNavLabels);
+
+        // label_only_evidence判定専用(2026-08-05追加)。AIへは渡さないため
+        // トークン予算(applyTokenLimit())の対象外とし、件数上限もbusinessLinkLabels
+        // (MERGED_NAV_LABEL_MAX_COUNT=50)より緩い、extractAllLinkTexts()自体の
+        // 上限(300件/ページ)にそのまま従う。
+        $allLinkLabels = array_values(array_unique([...$homepageAllLinkLabels, ...$recruitAllLinkLabels]));
 
         [$keptRecruitBody, $keptHomepageBody, $keptLabels, $truncated] = $this->applyTokenLimit(
             websiteAnalysisId: $websiteAnalysis->id,
@@ -143,18 +149,19 @@ class BrandWheelAnalysisInputFactory
             businessLinkLabels: $keptLabels,
             inputTruncated: $truncated,
             sourcePages: ['recruit_page' => $recruitPageStatus, 'home_page' => $homepageStatus],
+            allLinkLabels: $allLinkLabels,
         );
     }
 
     /**
-     * @return array{0: string, 1: list<array{level: int, text: string}>, 2: list<string>, 3: string, 4: ?string}
+     * @return array{0: string, 1: list<array{level: int, text: string}>, 2: list<string>, 3: string, 4: ?string, 5: list<string>}
      */
     private function extractPageText(?AnalysisPage $page): array
     {
         if ($page === null) {
             // AnalysisPage行自体が無い(例: 採用ページが検出されなかった)のは
             // 正当な状態であり、想定内の経路として無言で空扱いにする。
-            return ['', [], [], self::PAGE_STATUS_ABSENT, null];
+            return ['', [], [], self::PAGE_STATUS_ABSENT, null, []];
         }
 
         // レンダリング後HTML(JS実行後)が既に利用可能ならそちらを優先する
@@ -179,6 +186,7 @@ class BrandWheelAnalysisInputFactory
                 $this->htmlSeoAnalyzer->extractNavigationLinkLabels($html),
                 self::PAGE_STATUS_READ,
                 $resolved['source'],
+                $this->htmlSeoAnalyzer->extractAllLinkTexts($html),
             ];
         }
 
@@ -186,7 +194,7 @@ class BrandWheelAnalysisInputFactory
             // 生HTMLのパス自体が記録されていない(FetchStaticPageJob/
             // RenderPageJobのいずれもまだ完了していない等)。異常ではないため
             // 無言でABSENT扱いにする(既存挙動を維持)。
-            return ['', [], [], self::PAGE_STATUS_ABSENT, null];
+            return ['', [], [], self::PAGE_STATUS_ABSENT, null, []];
         }
 
         // raw_html_pathは記録されているのにファイル実体が無い/読めない
@@ -204,7 +212,7 @@ class BrandWheelAnalysisInputFactory
             'page_type' => $page->page_type->value,
         ]);
 
-        return ['', [], [], self::PAGE_STATUS_UNREADABLE, null];
+        return ['', [], [], self::PAGE_STATUS_UNREADABLE, null, []];
     }
 
     /**

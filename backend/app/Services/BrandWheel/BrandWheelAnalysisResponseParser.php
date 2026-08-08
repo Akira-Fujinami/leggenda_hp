@@ -8,20 +8,28 @@ use App\Services\BrandWheel\Data\BrandWheelAxisResult;
 use App\Services\BrandWheel\Data\BrandWheelCoreValueResult;
 use App\Services\BrandWheel\Data\BrandWheelDiscardedSubElement;
 use App\Services\BrandWheel\Data\BrandWheelSubElementMatch;
+use Illuminate\Support\Facades\Log;
 
 /**
  * AI Providerが返したJSON(デコード済み連想配列)を検証し、BrandWheelAnalysisResultへ
  * 変換する。AiAnalysisResponseParserの「AIの出力はそのまま信用しない」方針を
  * さらに一段階厳格にしたもの:
  *
- * - matched_sub_elementsの各evidenceは、実際にBrandWheelAnalysisInputへ渡した
- *   原文(採用ページ/トップページの本文・見出し・ナビゲーションラベル)に
- *   正規化後の部分一致で実在するかを検証する。実在しない場合はその下位要素
- *   キーだけを破棄する(軸全体は破棄しない)。
+ * - 各evidenceは、実際にBrandWheelAnalysisInputへ渡した原文(採用ページ/
+ *   トップページの本文・見出し・ナビゲーションラベル)に正規化後の部分一致で
+ *   実在するかを検証する。実在しない場合はその下位要素キーだけを破棄する
+ *   (軸全体は破棄しない)。
  * - state(unread/partial/read)はAIに一切出力させない。検証を生き延びた
  *   matched_sub_elementsの件数から、config('brand_wheel.state_thresholds')に
  *   従ってこのクラスが計算する(overrides[axis] ?? default)。
  * - 破棄した下位要素は無言で捨てず、reason付きでdiscardedSubElementsに残す。
+ * - 2026-08-05: raw['sub_elements']はconfigの24キーをトップレベルに固定した
+ *   フラット形式(prompt_version v4〜)。config側の24キーを1つずつ引き当てる
+ *   方式に変更した(AIが申告したキーを検証する従来方式から、config側から
+ *   引き当てる方式へ ―― Structured Outputs(strict)によりAI側はconfig外の
+ *   キーを構造的に返せなくなったため、unknown_sub_elementは新規には発生しない。
+ *   値の定義自体は本番DBの既存行(v3以前生成分)のため削除しない、
+ *   BrandWheelDiscardedSubElement参照)。
  */
 class BrandWheelAnalysisResponseParser
 {
@@ -34,21 +42,24 @@ class BrandWheelAnalysisResponseParser
         ?string $promptVersion,
     ): BrandWheelAnalysisResult {
         $haystack = $this->normalizeForEvidenceMatch($this->buildSourceText($input));
+        $headingSet = $this->buildHeadingSet($input);
+        $linkLabelSet = $this->buildLinkLabelSet($input);
 
         $axesConfig = (array) config('brand_wheel.axes', []);
-        $rawAxes = is_array($raw['axes'] ?? null) ? $raw['axes'] : [];
+        $rawSubElements = is_array($raw['sub_elements'] ?? null) ? $raw['sub_elements'] : [];
 
-        // 1段階目: 軸ごとに(unknown_sub_element/empty_evidence/evidence_not_found の)
+        $this->guardAgainstIncompleteSchema($rawSubElements, $axesConfig);
+
+        // 1段階目: 軸ごとに(empty_evidence/evidence_not_found/label_only_evidence の)
         // 検証を行うが、stateはまだ計算しない ―― 2段階目の軸をまたいだ重複evidence
         // 除去でmatched件数が変わりうるため、state計算はその後に行う必要がある
         // (2026-08-04のユーザー指摘: 同一文が異なる2つの下位要素の根拠として
         // 二重計上されるケースを、軸をまたいで検出・除去する)。
         $axisDrafts = [];
         foreach ($axesConfig as $axisKey => $axisDefinition) {
-            $validSubElementKeys = array_keys((array) ($axisDefinition['sub_elements'] ?? []));
-            $rawAxis = is_array($rawAxes[$axisKey] ?? null) ? $rawAxes[$axisKey] : [];
+            $subElementKeys = array_keys((array) ($axisDefinition['sub_elements'] ?? []));
 
-            $axisDrafts[$axisKey] = $this->parseAxisDraft($rawAxis, $validSubElementKeys, $haystack);
+            $axisDrafts[$axisKey] = $this->parseAxisDraft($rawSubElements, $subElementKeys, $haystack, $headingSet, $linkLabelSet);
         }
 
         $axisDrafts = $this->deduplicateEvidenceAcrossAxes($axisDrafts, $axesConfig);
@@ -114,43 +125,31 @@ class BrandWheelAnalysisResponseParser
     }
 
     /**
-     * @param  array<string, mixed>  $rawAxis
-     * @param  list<string>  $validSubElementKeys
+     * config('brand_wheel.axes')側から24キーを1つずつ引き当てる方式(2026-08-05〜)。
+     * AIが申告したキーを検証するのではなく、config側の正となるキー集合を
+     * 起点にrawSubElementsを引く ―― Structured Outputs(strict)によりAI側は
+     * config外のキーを構造的に返せないため、この向きで安全に成立する。
+     *
+     * @param  array<string, mixed>  $rawSubElements  raw['sub_elements'](24キーのフラット辞書)
+     * @param  list<string>  $subElementKeys  この軸に属する下位要素キー
+     * @param  array<string, true>  $headingSet  正規化済みの見出し文字列の集合
+     * @param  array<string, true>  $linkLabelSet  正規化済みのリンクラベル文字列の集合
      * @return array{matched: list<BrandWheelSubElementMatch>, discarded: list<BrandWheelDiscardedSubElement>, claimed: int}
      */
-    private function parseAxisDraft(array $rawAxis, array $validSubElementKeys, string $haystack): array
+    private function parseAxisDraft(array $rawSubElements, array $subElementKeys, string $haystack, array $headingSet, array $linkLabelSet): array
     {
-        $items = is_array($rawAxis['matched_sub_elements'] ?? null) ? $rawAxis['matched_sub_elements'] : [];
-
         $matched = [];
         $discarded = [];
         $claimedCount = 0;
-        $seenKeys = [];
 
-        foreach ($items as $item) {
-            if (! is_array($item)) {
+        foreach ($subElementKeys as $key) {
+            $entry = $rawSubElements[$key] ?? null;
+
+            if (! is_array($entry) || ($entry['matched'] ?? null) !== true) {
                 continue;
             }
 
-            $key = $item['key'] ?? null;
-            $evidence = $item['evidence'] ?? null;
-
-            if (! is_string($key) || ! in_array($key, $validSubElementKeys, true)) {
-                $discarded[] = new BrandWheelDiscardedSubElement(
-                    key: is_string($key) ? $key : '(invalid)',
-                    evidence: is_string($evidence) ? $evidence : null,
-                    reason: 'unknown_sub_element',
-                );
-
-                continue;
-            }
-
-            if (isset($seenKeys[$key])) {
-                // AIが同じキーを複数回申告した場合は、最初の1件のみを扱う
-                // (破棄理由付きの記録は「新しい情報の欠落」ではないため作らない)。
-                continue;
-            }
-            $seenKeys[$key] = true;
+            $evidence = $entry['evidence'] ?? null;
 
             if (! is_string($evidence) || trim($evidence) === '') {
                 $discarded[] = new BrandWheelDiscardedSubElement($key, is_string($evidence) ? $evidence : null, 'empty_evidence');
@@ -161,8 +160,37 @@ class BrandWheelAnalysisResponseParser
             $evidence = trim($evidence);
             $claimedCount++;
 
-            if (! str_contains($haystack, $this->normalizeForEvidenceMatch($evidence))) {
+            $normalizedEvidence = $this->normalizeForEvidenceMatch($evidence);
+
+            if (! str_contains($haystack, $normalizedEvidence)) {
                 $discarded[] = new BrandWheelDiscardedSubElement($key, $evidence, 'evidence_not_found');
+
+                continue;
+            }
+
+            // 2026-08-05の指摘: evidenceが原文に実在する(=evidence_not_foundは
+            // 通過する)だけでは不十分 ―― 見出し・リンクラベル文字列そのものを
+            // 一字一句コピーしただけの「その単語がページにある」を「それに
+            // ついて書かれている」証拠にすり替える循環論法が実測で確認された
+            // (味の素の実測でsub_elements形式化後にmatched件数が9件→6件が
+            // 見出しラベル単体という結果になった)。
+            //
+            // リンクラベルと見出しで条件を分ける(2026-08-05の閾値設計修正):
+            // リンクラベルは定義上ナビゲーションであり、長さに関わらず根拠に
+            // ならない ―― 完全一致すれば長さを問わず破棄する(「DE&I
+            // （ダイバーシティ・エクイティ＆インクルージョン）」28文字が
+            // 20文字閾値の抜け道として生き残った実測への対応)。
+            // 見出しは20文字以上の完全一致なら本物の文章であることがあるため
+            // (本文中の正当な短文、例:「互いに認め合い、高め合うこと」14文字を
+            // 誤って弾かないための下限でもある)、20文字未満の場合のみ破棄する。
+            if (isset($linkLabelSet[$normalizedEvidence])) {
+                $discarded[] = new BrandWheelDiscardedSubElement($key, $evidence, 'label_only_evidence');
+
+                continue;
+            }
+
+            if (isset($headingSet[$normalizedEvidence]) && mb_strlen($evidence) < 20) {
+                $discarded[] = new BrandWheelDiscardedSubElement($key, $evidence, 'label_only_evidence');
 
                 continue;
             }
@@ -171,6 +199,45 @@ class BrandWheelAnalysisResponseParser
         }
 
         return ['matched' => $matched, 'discarded' => $discarded, 'claimed' => $claimedCount];
+    }
+
+    /**
+     * 24キーのうち1つ欠けただけで診断が丸ごと失敗する設計にはしない
+     * (3-3の縮退方針)。欠落キーはmatched:false扱いとしてparseAxisDraft()側で
+     * 自然に処理されるため、ここでは欠落キー名をLog::warningへ記録するのみ。
+     * 欠落が24の1/4(6個)を超えたときのみ、AI_INCOMPLETE_SCHEMAとして例外を
+     * 投げる ―― response_formatをjson_schema(strict:true)化したことで、この
+     * 分岐は実際にはほぼ発火しない保険になる。
+     *
+     * @param  array<string, mixed>  $rawSubElements
+     * @param  array<string, mixed>  $axesConfig
+     */
+    private function guardAgainstIncompleteSchema(array $rawSubElements, array $axesConfig): void
+    {
+        $allSubElementKeys = [];
+        foreach ($axesConfig as $axisDefinition) {
+            $allSubElementKeys = array_merge($allSubElementKeys, array_keys((array) ($axisDefinition['sub_elements'] ?? [])));
+        }
+
+        $missingKeys = array_values(array_filter(
+            $allSubElementKeys,
+            fn (string $key) => ! is_array($rawSubElements[$key] ?? null) || ! is_bool($rawSubElements[$key]['matched'] ?? null),
+        ));
+
+        if ($missingKeys === []) {
+            return;
+        }
+
+        Log::warning('Brand wheel analysis: missing or malformed sub_element keys in AI response', [
+            'missing_keys' => $missingKeys,
+        ]);
+
+        if (count($missingKeys) > 6) {
+            throw new BrandWheelAnalysisException(
+                'AI_INCOMPLETE_SCHEMA',
+                sprintf('AIの応答からsub_elementsのキーが%d個欠落しています(24キー中、閾値6個を超過)。', count($missingKeys)),
+            );
+        }
     }
 
     /**
@@ -335,6 +402,69 @@ class BrandWheelAnalysisResponseParser
             $headingTexts($input->homepageHeadings),
             implode("\n", $input->businessLinkLabels),
         ]);
+    }
+
+    /**
+     * label_only_evidence判定用に、見出しの個々の文字列(正規化済み)を集合
+     * として持つ。buildSourceText()は照合対象を1本の文字列に連結するため
+     * 個々の見出し境界が失われる ―― ここでは逆に、見出し「だけ」を個別の
+     * 要素として保持し、evidenceがそのいずれかと完全一致するかを判定できる
+     * ようにする(本文中の部分一致は対象外。本文の中に偶然見出しと同じ短い句が
+     * 含まれる場合まで破棄しない)。
+     *
+     * リンクラベル(buildLinkLabelSet()参照)とは別集合にする(2026-08-05の
+     * 閾値設計修正) ―― 見出しは20文字以上の完全一致なら本物の文章のことが
+     * あるが、リンクラベルは定義上ナビゲーションであり長さに関わらず根拠に
+     * ならない。「種類で分ける」ため、判定側(parseAxisDraft())で別々の
+     * 長さ条件を適用できるよう、集合自体を分けて持つ。
+     *
+     * @return array<string, true>
+     */
+    private function buildHeadingSet(BrandWheelAnalysisInput $input): array
+    {
+        $headings = array_merge(
+            array_map(fn (array $h) => $h['text'], $input->recruitPageHeadings),
+            array_map(fn (array $h) => $h['text'], $input->homepageHeadings),
+        );
+
+        return $this->normalizeToSet($headings);
+    }
+
+    /**
+     * label_only_evidence判定用に、リンクラベルの個々の文字列(正規化済み)を
+     * 集合として持つ(buildHeadingSet()参照、見出しとは別集合)。
+     * businessLinkLabels(header/nav/footerタグ配下限定)に加えallLinkLabels
+     * (ページ内の全リンク、タグの意味に依存しない)も含める ―― 2026-08-05の
+     * 実測(味の素)で、`<div class="gnav_wrap">`のようにセマンティックタグを
+     * 使わずナビゲーションを実装しているサイトのリンクラベルがbusinessLinkLabels
+     * に含まれず、label_only_evidenceが素通りする事例が確認されたため。
+     *
+     * @return array<string, true>
+     */
+    private function buildLinkLabelSet(BrandWheelAnalysisInput $input): array
+    {
+        return $this->normalizeToSet(array_merge(
+            $input->businessLinkLabels,
+            $input->allLinkLabels,
+        ));
+    }
+
+    /**
+     * @param  list<mixed>  $texts
+     * @return array<string, true>
+     */
+    private function normalizeToSet(array $texts): array
+    {
+        $set = [];
+        foreach ($texts as $text) {
+            if (! is_string($text) || trim($text) === '') {
+                continue;
+            }
+
+            $set[$this->normalizeForEvidenceMatch(trim($text))] = true;
+        }
+
+        return $set;
     }
 
     /**

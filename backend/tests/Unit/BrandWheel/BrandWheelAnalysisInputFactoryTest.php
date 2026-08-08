@@ -110,6 +110,38 @@ class BrandWheelAnalysisInputFactoryTest extends TestCase
     }
 
     /**
+     * 2026-08-05追加: allLinkLabels(label_only_evidence判定専用、AIには渡さない)は
+     * header/nav/footerのスコープ制限なしでページ内の全リンクを拾い、
+     * 採用ページ・トップページ両方のぶんを重複除去して統合する。toArray()には
+     * 含まれない(AIへ渡すデータの対象外)ことも併せて確認する。
+     */
+    public function test_all_link_labels_collects_links_regardless_of_semantic_tag_and_is_excluded_from_the_ai_payload(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        $recruitHtml = '<html><body>'
+            .'<div class="gnav_wrap"><a href="/domain">事業紹介</a></div>'
+            .'<main><p>本文です。</p></main>'
+            .'</body></html>';
+        $homepageHtml = '<html><body>'
+            .'<div class="gnav_wrap"><a href="/domain">事業紹介</a><a href="/welfare">制度・福利厚生</a></div>'
+            .'<main><p>会社概要です。</p></main>'
+            .'</body></html>';
+
+        $this->putHtmlPage($websiteAnalysis, PageType::Recruit, $recruitHtml, '採用情報');
+        $this->putHtmlPage($websiteAnalysis, PageType::Homepage, $homepageHtml, 'Example');
+
+        $input = $this->factory->build($websiteAnalysis->fresh());
+
+        $this->assertContains('事業紹介', $input->allLinkLabels);
+        $this->assertContains('制度・福利厚生', $input->allLinkLabels);
+        // 採用ページ・トップページの両方に出現する「事業紹介」は重複除去され1件のみ。
+        $this->assertSame(1, count(array_filter($input->allLinkLabels, fn (string $l) => $l === '事業紹介')));
+
+        $this->assertArrayNotHasKey('all_link_labels', $input->toArray());
+    }
+
+    /**
      * 2026-08-04: 本文抽出からnav/header/footer/asideを除く
      * (HtmlSeoAnalyzer::extractBodyText($excludeNavigation: true))。
      * website_analysis_id=57の実データで、本文の大半がグローバルナビ・

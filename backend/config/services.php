@@ -83,14 +83,6 @@ return [
         // 変えない。入力・プロンプト(teaching_points/examples/caveat)・
         // temperatureはこの測定では一切変更しないこと。
         'model' => env('BRAND_WHEEL_AI_MODEL'),
-        // 2026-08-04: プロンプト構成の測定用(P1/P2/P3グリッド測定)に追加。
-        // 'full'(既定): 現行のプロンプト(key_message/impression/quality_notes/
-        // cautionsも要求する)。'axes_only': 24下位要素の判定と根拠引用のみを
-        // 要求し、出力スキーマもaxesだけにする。'axes_only_no_examples':
-        // 上記に加えてfew-shot examplesもプロンプトから外す(P3)
-        // (OpenAiBrandWheelAnalysisProvider::buildPrompt()参照)。
-        // 未設定時は'full'のため既存の挙動は変えない。
-        'prompt_variant' => env('BRAND_WHEEL_AI_PROMPT_VARIANT', 'full'),
         'timeout' => (int) env('BRAND_WHEEL_AI_TIMEOUT', env('AI_TIMEOUT', 60)),
         'max_retries' => (int) env('BRAND_WHEEL_AI_MAX_RETRIES', env('AI_MAX_RETRIES', 1)),
         'max_output_tokens' => (int) env('BRAND_WHEEL_AI_MAX_OUTPUT_TOKENS', env('AI_MAX_OUTPUT_TOKENS', 2000)),

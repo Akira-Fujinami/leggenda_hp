@@ -27,6 +27,24 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
     }
 
     /**
+     * config('brand_wheel.axes')の24キー全部をmatched:falseで埋めた
+     * sub_elements。guardAgainstIncompleteSchema()(欠落7個以上でAI_
+     * INCOMPLETE_SCHEMA)に引っかからないよう、AIモックの応答には常に
+     * 24キー全部を含める。
+     *
+     * @return array<string, array{matched: bool, evidence: null}>
+     */
+    private function completeSubElements(): array
+    {
+        $keys = [];
+        foreach ((array) config('brand_wheel.axes', []) as $axis) {
+            $keys = array_merge($keys, array_keys((array) $axis['sub_elements']));
+        }
+
+        return array_fill_keys($keys, ['matched' => false, 'evidence' => null]);
+    }
+
+    /**
      * config('brand_wheel.forbidden_phrases')がプロンプトへハードコードでは
      * なくconfig経由で渡され、生成段階から使わせないよう指示されていることを
      * 確認する(2026-07-30の指摘 ―― テストは最後の防波堤、生成段階での
@@ -40,7 +58,12 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [['message' => ['content' => json_encode([
-                    'axes' => [], 'core_value' => ['readable' => false], 'quality_notes' => [], 'cautions' => [],
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
                 ])]]],
                 'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1],
             ], 200),
@@ -103,7 +126,12 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [['message' => ['content' => json_encode([
-                    'axes' => [], 'core_value' => ['readable' => false], 'quality_notes' => [], 'cautions' => [],
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
                 ])]]],
                 'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1],
             ], 200),
@@ -112,5 +140,52 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
         (new OpenAiBrandWheelAnalysisProvider(new BrandWheelAnalysisResponseParser))->analyze($this->makeInput());
 
         Http::assertSent(fn ($request) => ($request->data()['temperature'] ?? null) === 0.0);
+    }
+
+    /**
+     * 2026-08-05: response_formatをjson_object(緩いJSONモード)から
+     * json_schema(strict:true)へ変更した。24個も必須キーがある状態で
+     * json_objectのままだと時々キーが欠けるため、OpenAI側にスキーマ準拠を
+     * 保証させる。sub_elements.requiredに24キー全部が含まれることを確認する。
+     */
+    public function test_response_format_uses_strict_json_schema_with_all_24_sub_element_keys_required(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        Http::fake([
+            'api.openai.com/*' => Http::response([
+                'choices' => [['message' => ['content' => json_encode([
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
+                ])]]],
+                'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1],
+            ], 200),
+        ]);
+
+        (new OpenAiBrandWheelAnalysisProvider(new BrandWheelAnalysisResponseParser))->analyze($this->makeInput());
+
+        $expectedKeys = array_keys($this->completeSubElements());
+
+        Http::assertSent(function ($request) use ($expectedKeys) {
+            $responseFormat = $request->data()['response_format'] ?? [];
+
+            if (($responseFormat['type'] ?? null) !== 'json_schema') {
+                return false;
+            }
+
+            $jsonSchema = $responseFormat['json_schema'] ?? [];
+
+            if (($jsonSchema['strict'] ?? null) !== true) {
+                return false;
+            }
+
+            $subElementsRequired = $jsonSchema['schema']['properties']['sub_elements']['required'] ?? [];
+
+            return count($subElementsRequired) === 24
+                && $expectedKeys === array_values(array_intersect($expectedKeys, $subElementsRequired));
+        });
     }
 }

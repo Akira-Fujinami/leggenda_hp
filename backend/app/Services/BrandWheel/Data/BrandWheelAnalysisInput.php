@@ -16,6 +16,10 @@ readonly class BrandWheelAnalysisInput
      * @param  list<array{level: int, text: string}>  $recruitPageHeadings
      * @param  list<array{level: int, text: string}>  $homepageHeadings
      * @param  list<string>  $businessLinkLabels
+     * @param  list<string>  $allLinkLabels  ページ内の全リンクのラベル(header/nav/footerの
+     *         スコープ制限なし)。BrandWheelAnalysisResponseParserのlabel_only_evidence
+     *         判定専用(2026-08-05追加) ―― AIの判定材料ではなく、AIには渡さないため
+     *         toArray()(=AIへ渡すデータ・input_hashの対象)には含めない。
      * @param  array{recruit_page: string, home_page: string}  $sourcePages  各ページの取得状態
      *         ('read'|'absent'|'unreadable')。#97のメール本文向けの診断情報であり、
      *         AIの判定材料ではないためtoArray()(=AIへ渡すデータ・input_hashの対象)には
@@ -32,6 +36,7 @@ readonly class BrandWheelAnalysisInput
         public array $businessLinkLabels,
         public bool $inputTruncated,
         public array $sourcePages,
+        public array $allLinkLabels = [],
     ) {}
 
     /**

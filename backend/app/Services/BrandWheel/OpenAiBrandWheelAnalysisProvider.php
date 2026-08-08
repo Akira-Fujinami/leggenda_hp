@@ -32,8 +32,47 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
      * v3(2026-08-04): config/brand_wheel.phpの各下位要素にsub_element_
      * definitions(何が該当し何が該当しないかの1行定義)を追加し、
      * frameworkDefinition()がそれをプロンプトへ埋め込むよう変更。
+     *
+     * v4(2026-08-05): 出力形式を「軸→matched_sub_elementsの配列(該当する
+     * ものを挙げる形式)」から「24下位要素をトップレベルに固定したチェック
+     * リスト形式(1件ずつmatched true/falseを判定させる形式)」へ変更。
+     * 本番実測(カヤック新卒採用 usage_input_tokens=18,136/word_count=8,380、
+     * 味の素新卒採用 usage_input_tokens=5,741/word_count=894。情報量が
+     * 9.4倍違うにもかかわらず、どちらもtruncationなしで9/24と同数。カヤックの
+     * 軸別内訳は3/1/1/1/1/2と「軸あたり1件」に強く偏っていた)から、
+     * 「該当するものを挙げてください」という出力形式ではモデルが軸ごとに
+     * 代表例を1件挙げた時点で停止し、24項目を個別に吟味していないと判断した。
+     * あわせてresponse_formatをjson_object(緩いJSONモード)から
+     * json_schema(strict:true、sub_elementsの24キーを全部required)へ
+     * 変更する ―― strictでない場合、24個も必須キーがあると時々キーが
+     * 欠けるため。プロンプト構成比較用のprompt_variant設定
+     * (axes_only/axes_only_no_examples、2026-08-04追加のP1/P2/P3測定用)は
+     * この変更で前提が変わるため削除した(full構成へ一本化)。
+     *
+     * v5(2026-08-05): v4の4サイト実測(カヤック9→12/味の素3→9)で、判別力が
+     * v3の3.0倍(9対3)からv4の1.3倍(12対9)へ低下した。味の素のmatched 9件中
+     * 6件のevidenceを目視確認したところ、見出し・リンクラベル文字列
+     * (「事業紹介」「制度・福利厚生」等)をそのまま転記しただけで、その先の
+     * 具体的な記述内容を伴わないものだった ―― 24項目にtrue/falseを強制した
+     * ことで、判定に迷った項目でモデルが見出しラベルへ逃げる経路が生まれた
+     * ためと判断した(誤検出6件を除いた実質値は12対3で4.0倍、むしろ改善)。
+     * プロンプトに「見出しやリンクのラベルだけを根拠にしないでください」を
+     * 追加し、BrandWheelAnalysisResponseParserにlabel_only_evidence判定
+     * (evidenceが見出し・リンクラベル文字列と完全一致かつ20文字未満の場合に
+     * 破棄)を追加した対応とセットで出力構造の信頼性が変わるため、バージョンを
+     * 上げる。
+     *
+     * v6(2026-08-05): v5実測(4サイト成功、カヤック11/味の素3)で、味の素の
+     * matched 3件中1件(personality/core_values、evidence「DE&I（ダイバーシティ・
+     * エクイティ＆インクルージョン）」28文字)が、実際には
+     * `<div class="gnav_wrap">`内のリンクラベルであるにもかかわらず、
+     * 20文字以上のため見出し向けの例外条件をすり抜けて生き残っていた。
+     * 「20文字以上の見出しは本物の文章のことがある」という理屈は見出しには
+     * 妥当だが、リンクラベルは定義上ナビゲーションであり長さに関わらず根拠に
+     * ならない。BrandWheelAnalysisResponseParserのlabel_only_evidence判定を
+     * 見出し用(20文字未満のみ破棄)とリンクラベル用(長さ不問で破棄)に分離した。
      */
-    public const string PROMPT_VERSION = 'v3';
+    public const string PROMPT_VERSION = 'v6';
 
     public function __construct(
         private readonly BrandWheelAnalysisResponseParser $parser,
@@ -99,39 +138,24 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
 
     private function buildPrompt(BrandWheelAnalysisInput $input): string
     {
-        $promptVariant = (string) config('services.brand_wheel_ai.prompt_variant', 'full');
-        $axesOnly = in_array($promptVariant, ['axes_only', 'axes_only_no_examples'], true);
-        $withoutExamples = $promptVariant === 'axes_only_no_examples';
-
         $facts = json_encode($input->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $framework = json_encode($this->frameworkDefinition($axesOnly), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $examples = json_encode($withoutExamples ? [] : config('brand_wheel.examples', []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $framework = json_encode($this->frameworkDefinition(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $examples = json_encode(config('brand_wheel.examples', []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $teachingPoints = implode("\n", array_map(fn ($p) => '- '.$p, (array) config('brand_wheel.teaching_points', [])));
         $caveat = (string) config('brand_wheel.teacher_data_caveat', '');
-        $axisKeys = implode(', ', array_keys((array) config('brand_wheel.axes', [])));
         $forbiddenPhrases = implode('」「', (array) config('brand_wheel.forbidden_phrases', []));
+        $checklist = $this->buildSubElementChecklist();
 
-        // 2026-08-04: P1(現行)/P2(axes_only)のプロンプト構成比較測定用に
-        // 分岐。P2はkey_message/impression/quality_notes/cautionsの指示と
-        // 出力スキーマを丸ごと外し、24下位要素の判定+根拠引用のみを求める。
-        // フレームワーク定義からもquality_dimensions(5つの質の観点、P2では
-        // 未使用の情報)を外す ―― 使われない文脈をモデルに渡さないため。
-        $forbiddenNote = $axesOnly
-            ? <<<TXT
-- 下位要素のevidence(原文抜粋)を含め、以下の語は一切使わないでください:
-  「{$forbiddenPhrases}」。これらは「魅力が無い/劣っている」という評価を示唆するため、
-  このフレームワークの前提(サイトの記述からの読み取り可否のみを判定する)と矛盾します。
-TXT
-            : <<<TXT
-- 以下の語は、quality_notes・cautions・key_message・impression等の自由記述を含め
-  一切使わないでください:
+        $forbiddenNote = <<<TXT
+- 下位要素のevidence(原文抜粋)・quality_notes・cautions・key_message・impression等、
+  自由記述を含め以下の語は一切使わないでください:
   「{$forbiddenPhrases}」。これらは「魅力が無い/劣っている」という評価を示唆するため、
   このフレームワークの前提(サイトの記述からの読み取り可否のみを判定する)と矛盾します。
   代わりに「〜は伝わるが、〜との距離がある」「〜がもったいない」のような、読み取れた
   ことと読み取れなかったことの両方を事実として述べる言い回しを使ってください。
 TXT;
 
-        $keyMessageSection = $axesOnly ? '' : <<<TXT
+        $keyMessageSection = <<<TXT
 
 【key_message・impression(リード向け画面下部に表示する2項目)】
 - key_message: このページ(採用ページ・トップページ)の記述から読み取れるキーメッセージを
@@ -144,23 +168,10 @@ TXT;
 
 TXT;
 
-        $frameworkLabel = $axesOnly ? '6軸・24下位要素' : '6軸・24下位要素・5つの質の観点';
-
-        $schema = $axesOnly
-            ? <<<TXT
+        $schema = <<<TXT
 {
-  "axes": {
-    "<axis_key>": {"matched_sub_elements": [{"key": "string", "evidence": "原文からの抜粋"}]}
-  }
-}
-
-axesオブジェクトのキーは必ず次の6つをすべて含めてください({$axisKeys})。
-該当する下位要素が無い軸は matched_sub_elements を空配列にしてください。
-TXT
-            : <<<TXT
-{
-  "axes": {
-    "<axis_key>": {"matched_sub_elements": [{"key": "string", "evidence": "原文からの抜粋"}]}
+  "sub_elements": {
+    "<sub_element_key>": {"matched": true, "evidence": "原文からの抜粋"}
   },
   "core_value": {"readable": true, "evidence": "原文からの抜粋"},
   "key_message": "string",
@@ -169,9 +180,10 @@ TXT
   "cautions": ["string"]
 }
 
-axesオブジェクトのキーは必ず次の6つをすべて含めてください({$axisKeys})。
-該当する下位要素が無い軸は matched_sub_elements を空配列にしてください。
-core_valueが読み取れない場合は readable を false にし、evidence は省略してください。
+sub_elementsオブジェクトのキーは、下記【下位要素チェックリスト】に列挙した24個の
+キーをすべて含めてください(過不足なく、それ以外のキーは追加しないでください)。
+該当しない下位要素は matched を false にし、evidence は null にしてください。
+core_valueが読み取れない場合は readable を false にし、evidence は null にしてください。
 TXT;
 
         return <<<PROMPT
@@ -184,15 +196,22 @@ TXT;
 - 禁止する表現: 「〜がありません/不足しています」「〜が優れています/劣っています」のような魅力そのものへの評価、
   「6軸中3軸の評価です」「3点です」のような採点・順位付けを示唆する表現は一切使わないでください。
 {$forbiddenNote}- あなたはstate(read/partial/unread)やスコアを出力する必要はありません。出力するのは
-  下位要素ごとの該当有無(matched_sub_elements)のみで、判定(state)はシステム側が別途計算します。
+  下位要素ごとの該当有無(matched)のみで、判定(state)はシステム側が別途計算します。
 {$keyMessageSection}
-【下位要素ごとの根拠】
-下位要素ごとに、それを裏づける原文抜粋を必ず1つ添えてください。抜粋を示せない下位要素は
-該当扱いにしないでください。抜粋は必ず「データ」内の本文・見出し・ナビゲーションラベルに
-実在する文字列そのものを使ってください(要約・言い換え・創作は厳禁です。実在しない抜粋は
-システム側の検証で自動的に除外されます)。
+【下位要素ごとの判定と根拠(最重要)】
+下記【下位要素チェックリスト】の24項目すべてについて省略せず判定すること。一部だけを
+選んで挙げるのではなく、24項目全部に目を通してmatchedを出力してください。matched=trueの
+場合のみevidenceに、データ内に実在する文字列をそのまま(要約・言い換えなし)引用してください。
+抜粋を示せない項目はmatched=trueにしないでください。抜粋は必ず「データ」内の本文・見出し・
+ナビゲーションラベルに実在する文字列そのものを使ってください(要約・言い換え・創作は厳禁です。
+実在しない抜粋はシステム側の検証で自動的に除外されます)。
+見出しやリンクのラベルだけを根拠にしないでください。その項目の内容を述べている本文を
+引用してください。
 
-【フレームワーク定義({$frameworkLabel})】
+【下位要素チェックリスト(24項目、各行「キー(軸名／項目名): 定義」)】
+{$checklist}
+
+【フレームワーク定義(6軸・5つの質の観点。24下位要素の判定基準は上記チェックリストを参照)】
 {$framework}
 
 【教師データ(few-shot、あるべきブランドの実例)】
@@ -213,36 +232,42 @@ PROMPT;
     }
 
     /**
+     * 24下位要素を1件ずつ列挙したチェックリストの本文を組み立てる。各行に
+     * 必ず軸名を含める ―― 軸名を落とすとAIが各項目の所属軸を見失い、判定が
+     * ぶれるため(2026-08-05の指摘)。
+     */
+    private function buildSubElementChecklist(): string
+    {
+        $lines = [];
+
+        foreach ((array) config('brand_wheel.axes', []) as $axis) {
+            $axisNameJa = $axis['name_ja'];
+            $labels = (array) $axis['sub_elements'];
+            $definitions = (array) ($axis['sub_element_definitions'] ?? []);
+
+            foreach ($labels as $key => $label) {
+                $definition = $definitions[$key] ?? '';
+                $lines[] = "- {$key}({$axisNameJa}／{$label}): {$definition}";
+            }
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
      * @return array<string, mixed>
      */
-    private function frameworkDefinition(bool $axesOnly = false): array
+    private function frameworkDefinition(): array
     {
-        // 2026-08-04: sub_elements(ラベル名のみ、例: "組織構造")に加えて
-        // sub_element_definitions(何が該当し何が該当しないかの1行定義)を
-        // 埋め込む。ラベル名だけではAIの判定基準が曖昧になり、例えば
-        // 「組織構造」の根拠として役職名の列挙が使われる事例が実測で
-        // 確認されたため(config/brand_wheel.php参照)。
+        // 2026-08-05: 下位要素の入れ子(sub_elements/sub_element_definitions)は
+        // buildSubElementChecklist()のチェックリストと内容が重複するため
+        // ここでは持たせない。軸レベルのname_ja/definitionのみ文脈として残す。
         $axes = collect((array) config('brand_wheel.axes', []))
-            ->map(function ($axis, $key) {
-                $labels = (array) $axis['sub_elements'];
-                $definitions = (array) ($axis['sub_element_definitions'] ?? []);
-
-                return [
-                    'name_ja' => $axis['name_ja'],
-                    'definition' => $axis['definition'],
-                    'sub_elements' => collect($labels)
-                        ->mapWithKeys(fn ($label, $subKey) => [$subKey => [
-                            'label' => $label,
-                            'definition' => $definitions[$subKey] ?? null,
-                        ]])
-                        ->all(),
-                ];
-            })
+            ->map(fn ($axis) => [
+                'name_ja' => $axis['name_ja'],
+                'definition' => $axis['definition'],
+            ])
             ->all();
-
-        if ($axesOnly) {
-            return ['axes' => $axes];
-        }
 
         $qualityDimensions = collect((array) config('brand_wheel.quality_dimensions', []))
             ->map(fn ($dim) => ['name_ja' => $dim['name_ja'], 'question' => $dim['question']])
@@ -279,7 +304,14 @@ PROMPT;
                         'messages' => [
                             ['role' => 'user', 'content' => $prompt],
                         ],
-                        'response_format' => ['type' => 'json_object'],
+                        'response_format' => [
+                            'type' => 'json_schema',
+                            'json_schema' => [
+                                'name' => 'brand_wheel_analysis',
+                                'strict' => true,
+                                'schema' => $this->buildResponseSchema(),
+                            ],
+                        ],
                         'max_tokens' => $maxOutputTokens,
                         'temperature' => $temperature,
                     ]);
@@ -322,5 +354,69 @@ PROMPT;
         }
 
         throw new BrandWheelAnalysisException('AI_UNAVAILABLE', 'OpenAI APIに接続できませんでした。', $lastException, isRetryable: true);
+    }
+
+    /**
+     * OpenAI Structured Outputs(response_format=json_schema, strict:true)用の
+     * JSON Schema。strictモードは「条件付き必須」を許さないため、
+     * matched=falseの下位要素もevidenceキー自体は必須のまま残し、値をnullに
+     * させる(2026-08-05: json_objectの緩いJSONモードでは24個も必須キーが
+     * あると時々キーが欠けたための変更)。
+     *
+     * @return array<string, mixed>
+     */
+    private function buildResponseSchema(): array
+    {
+        $subElementKeys = [];
+        foreach ((array) config('brand_wheel.axes', []) as $axis) {
+            $subElementKeys = array_merge($subElementKeys, array_keys((array) $axis['sub_elements']));
+        }
+
+        $subElementSchema = [
+            'type' => 'object',
+            'properties' => [
+                'matched' => ['type' => 'boolean'],
+                'evidence' => ['type' => ['string', 'null']],
+            ],
+            'required' => ['matched', 'evidence'],
+            'additionalProperties' => false,
+        ];
+
+        $qualityDimensionKeys = array_keys((array) config('brand_wheel.quality_dimensions', []));
+
+        return [
+            'type' => 'object',
+            'properties' => [
+                'sub_elements' => [
+                    'type' => 'object',
+                    'properties' => array_fill_keys($subElementKeys, $subElementSchema),
+                    'required' => $subElementKeys,
+                    'additionalProperties' => false,
+                ],
+                'core_value' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'readable' => ['type' => 'boolean'],
+                        'evidence' => ['type' => ['string', 'null']],
+                    ],
+                    'required' => ['readable', 'evidence'],
+                    'additionalProperties' => false,
+                ],
+                'key_message' => ['type' => ['string', 'null']],
+                'impression' => ['type' => ['string', 'null']],
+                'quality_notes' => [
+                    'type' => 'object',
+                    'properties' => array_fill_keys($qualityDimensionKeys, ['type' => ['string', 'null']]),
+                    'required' => $qualityDimensionKeys,
+                    'additionalProperties' => false,
+                ],
+                'cautions' => [
+                    'type' => 'array',
+                    'items' => ['type' => 'string'],
+                ],
+            ],
+            'required' => ['sub_elements', 'core_value', 'key_message', 'impression', 'quality_notes', 'cautions'],
+            'additionalProperties' => false,
+        ];
     }
 }

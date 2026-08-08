@@ -393,6 +393,55 @@ class HtmlSeoAnalyzerTest extends TestCase
         $this->assertNull($result['business_links']['recruit']['url']);
     }
 
+    /**
+     * 2026-08-05の指摘・実データ再現(味の素新卒採用ページ)。診断対象として
+     * 渡されたURL自体が既に採用ページ(パスセグメントが"recruit"と完全一致)
+     * の場合、ページ内に他の採用ページらしいリンク(ここでは障がい者採用の
+     * 別ページを模した/recruit/handicap/)があっても、そちらを「採用ページ」
+     * として誤って掴まない。ページ自身のURLを自己参照する。
+     */
+    public function test_it_does_not_wander_to_a_different_recruit_looking_link_when_the_page_itself_is_already_a_recruit_page(): void
+    {
+        $html = '<html><body>'
+            .'<a href="/recruit/handicap/">障がい者採用</a>'
+            .'</body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://example.com/recruit/fresh');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('https://example.com/recruit/fresh', $result['business_links']['recruit']['url']);
+    }
+
+    /**
+     * 実データ再現(カヤック新卒採用ページ)。ページ自身が採用ページで、かつ
+     * ナビゲーションリンクが自分自身を指している場合も、自己参照として
+     * 扱われることを確認する(従来は自己参照リンクを「別ページの採用リンク」
+     * として拾ってしまい、無駄な二重取得の原因になっていた)。
+     */
+    public function test_it_self_references_when_the_page_itself_is_a_recruit_page_and_a_link_points_back_to_it(): void
+    {
+        $html = '<html><body><a href="/recruit/fresh">採用情報</a></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://www.example.com/recruit/fresh');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('https://www.example.com/recruit/fresh', $result['business_links']['recruit']['url']);
+    }
+
+    /**
+     * careers.のような採用専用サブドメイン自体が診断対象URLの場合も、
+     * パスセグメントではなくホストシグナルで自己参照と判定できることを確認する。
+     */
+    public function test_it_self_references_when_the_page_itself_is_on_a_recruit_subdomain(): void
+    {
+        $html = '<html><body><a href="https://www.example.com/">コーポレートサイト</a></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://careers.example.com/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('https://careers.example.com/', $result['business_links']['recruit']['url']);
+    }
+
     public function test_it_keeps_first_match_wins_behavior_for_non_recruit_categories(): void
     {
         // recruit以外のカテゴリは、後続によりexactな一致があっても、依然として
@@ -1016,6 +1065,42 @@ class HtmlSeoAnalyzerTest extends TestCase
             .'</nav></header></body></html>';
 
         $labels = $this->analyzer->extractNavigationLinkLabels($html);
+
+        $this->assertSame(['エネルギー事業'], $labels);
+    }
+
+    /**
+     * 2026-08-05の実測(味の素)の回帰テスト。`<div class="gnav_wrap">`の
+     * ようにセマンティックタグ(header/nav/footer)を使わないナビゲーションは
+     * extractNavigationLinkLabels()では拾えないが、extractAllLinkTexts()は
+     * タグの意味に関係なくページ内の全`<a>`テキストを対象にするため拾える。
+     */
+    public function test_extract_all_link_texts_includes_links_outside_semantic_navigation_tags(): void
+    {
+        $html = '<html><body>'
+            .'<div class="gnav_wrap"><ul>'
+            .'<li><a href="/philosophy">味の素グループが大切にしていること</a></li>'
+            .'<li><a href="/domain">事業紹介</a></li>'
+            .'</ul></div>'
+            .'<main><a href="/should-also-count">本文中のリンクも対象</a></main>'
+            .'</body></html>';
+
+        $labels = $this->analyzer->extractAllLinkTexts($html);
+
+        $this->assertContains('味の素グループが大切にしていること', $labels);
+        $this->assertContains('事業紹介', $labels);
+        $this->assertContains('本文中のリンクも対象', $labels);
+    }
+
+    public function test_extract_all_link_texts_collapses_duplicates_and_excludes_content_less_labels(): void
+    {
+        $html = '<html><body>'
+            .'<a href="/a">エネルギー事業</a>'
+            .'<a href="/a-2">エネルギー事業</a>'
+            .'<a href="/b">詳しくはこちら</a>'
+            .'</body></html>';
+
+        $labels = $this->analyzer->extractAllLinkTexts($html);
 
         $this->assertSame(['エネルギー事業'], $labels);
     }

@@ -136,6 +136,30 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
             ->delete();
     }
 
+    /**
+     * config('brand_wheel.axes')の24キー全部をmatched:falseで埋めたsub_elements。
+     * AIモックの応答は常に24キー全部を含めないとguardAgainstIncompleteSchema()
+     * (欠落7個以上でAI_INCOMPLETE_SCHEMA)に引っかかる。
+     *
+     * @param  array<string, array{matched: bool, evidence?: string|null}>  $overrides
+     * @return array<string, array{matched: bool, evidence: string|null}>
+     */
+    private function completeSubElements(array $overrides = []): array
+    {
+        $keys = [];
+        foreach ((array) config('brand_wheel.axes', []) as $axis) {
+            $keys = array_merge($keys, array_keys((array) $axis['sub_elements']));
+        }
+
+        $base = array_fill_keys($keys, ['matched' => false, 'evidence' => null]);
+
+        foreach ($overrides as $key => $entry) {
+            $base[$key] = array_merge(['matched' => false, 'evidence' => null], $entry);
+        }
+
+        return $base;
+    }
+
     private function putHomepageHtml(WebsiteAnalysis $websiteAnalysis, string $bodyText): void
     {
         $html = '<html><head><title>Example</title></head><body><p>'.$bodyText.'</p></body></html>';
@@ -201,12 +225,12 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
             'api.openai.com/*' => Http::response([
                 'choices' => [
                     ['message' => ['content' => json_encode([
-                        'axes' => [
-                            'will_activity' => ['matched_sub_elements' => [
-                                ['key' => 'purpose', 'evidence' => '架空の抜粋(実在しないので破棄されるはず)'],
-                            ]],
-                        ],
-                        'core_value' => ['readable' => false],
+                        'sub_elements' => $this->completeSubElements([
+                            'purpose' => ['matched' => true, 'evidence' => '架空の抜粋(実在しないので破棄されるはず)'],
+                        ]),
+                        'core_value' => ['readable' => false, 'evidence' => null],
+                        'key_message' => null,
+                        'impression' => null,
                         'quality_notes' => [],
                         'cautions' => [],
                     ])]],
@@ -230,7 +254,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $this->assertSame('success', $record->status);
         $this->assertFalse($record->is_mock);
         $this->assertSame('openai', $record->provider);
-        $this->assertSame('v3', $record->prompt_version);
+        $this->assertSame('v6', $record->prompt_version);
         $this->assertSame(120, $record->usage_input_tokens);
         $this->assertSame(40, $record->usage_output_tokens);
         // 実在しない抜粋は検証で破棄されるため、unreadのまま(AIの自己申告を信用しない)。
@@ -314,7 +338,12 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [['message' => ['content' => json_encode([
-                    'axes' => [], 'core_value' => ['readable' => false], 'quality_notes' => [], 'cautions' => [],
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
                 ])]]],
                 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
             ], 200),
@@ -349,7 +378,12 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [['message' => ['content' => json_encode([
-                    'axes' => [], 'core_value' => ['readable' => false], 'quality_notes' => [], 'cautions' => [],
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
                 ])]]],
                 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
             ], 200),
@@ -396,7 +430,12 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [['message' => ['content' => json_encode([
-                    'axes' => [], 'core_value' => ['readable' => false], 'quality_notes' => [], 'cautions' => [],
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
                 ])]]],
                 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
             ], 200),
@@ -723,12 +762,14 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [['message' => ['content' => json_encode([
-                    'axes' => [
-                        'will_activity' => ['matched_sub_elements' => [
-                            ['key' => 'purpose', 'evidence' => '会社の紹介文です'],
-                        ]],
-                    ],
-                    'core_value' => ['readable' => false], 'quality_notes' => [], 'cautions' => [],
+                    'sub_elements' => $this->completeSubElements([
+                        'purpose' => ['matched' => true, 'evidence' => '会社の紹介文です'],
+                    ]),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
                 ])]]],
                 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
             ], 200),
@@ -791,12 +832,14 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [['message' => ['content' => json_encode([
-                    'axes' => [
-                        'will_activity' => ['matched_sub_elements' => [
-                            ['key' => 'purpose', 'evidence' => '会社の紹介文です'],
-                        ]],
-                    ],
-                    'core_value' => ['readable' => false], 'quality_notes' => [], 'cautions' => [],
+                    'sub_elements' => $this->completeSubElements([
+                        'purpose' => ['matched' => true, 'evidence' => '会社の紹介文です'],
+                    ]),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
                 ])]]],
                 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
             ], 200),
@@ -828,12 +871,14 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [['message' => ['content' => json_encode([
-                    'axes' => [
-                        'will_activity' => ['matched_sub_elements' => [
-                            ['key' => 'purpose', 'evidence' => '会社の紹介文です'],
-                        ]],
-                    ],
-                    'core_value' => ['readable' => false], 'quality_notes' => [], 'cautions' => [],
+                    'sub_elements' => $this->completeSubElements([
+                        'purpose' => ['matched' => true, 'evidence' => '会社の紹介文です'],
+                    ]),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
                 ])]]],
                 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
             ], 200),
@@ -912,7 +957,12 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [['message' => ['content' => json_encode([
-                    'axes' => [], 'core_value' => ['readable' => false], 'quality_notes' => [], 'cautions' => [],
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
                 ])]]],
                 'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
             ], 200),

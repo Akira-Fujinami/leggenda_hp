@@ -158,6 +158,13 @@ class HtmlSeoAnalyzer
     private const NAV_LINK_LABEL_MAX_COUNT = 50;
 
     /**
+     * extractAllLinkTexts()の全体件数上限。ページ全体を対象にするため
+     * extractNavigationLinkLabels()より広く取る(label_only_evidence判定用の
+     * 集合であり、表示や個別のラベル抽出には使わないため、多めでも実害がない)。
+     */
+    private const ALL_LINK_TEXT_MAX_COUNT = 300;
+
+    /**
      * extractNavigationLinkLabels()で「内容を持たないラベル」として除外する
      * 語(小文字化して比較する)。ページネーション・続きを読む系の定型文言のみを
      * 対象とし、実際の事業・商品名を誤って除外しないよう最小限にとどめる。
@@ -244,7 +251,7 @@ class HtmlSeoAnalyzer
             'images' => $this->analyzeImages($xpath),
             'links' => $this->analyzeLinks($xpath, $pageHost),
             'sns_links' => $this->analyzeSnsLinks($xpath, $pageUrl),
-            'business_links' => $this->analyzeBusinessLinks($xpath, $pageHost),
+            'business_links' => $this->analyzeBusinessLinks($xpath, $pageHost, $pageUrl),
             'chatbot' => $this->analyzeChatbotWidget($xpath, $chatbotScriptMatch),
             'product_price_cards' => $this->analyzeProductPriceCards($xpath),
             'third_party_reservation' => $this->analyzeThirdPartyReservationService($xpath),
@@ -467,6 +474,44 @@ class HtmlSeoAnalyzer
     }
 
     /**
+     * 2026-08-05: ブランド・ホイールのlabel_only_evidence判定専用。
+     * extractNavigationLinkLabels()は`<header>`/`<nav>`/`<footer>`という
+     * セマンティックタグの内側しか見ないため、`<div class="gnav_wrap">`の
+     * ようにクラス名だけでナビゲーションを実装している実サイト(味の素の
+     * 実測で確認)のリンクラベルを取りこぼす。ここではタグの意味に頼らず、
+     * ページ内の全`<a>`タグのテキストをスコープ制限なしで集める ――
+     * 「これはナビゲーションか」を判定するためではなく、「この文字列は
+     * どこかのリンクのラベルと同じか」を判定するための集合であり、
+     * 用途が異なるため既存のextractNavigationLinkLabels()/businessLinkLabels
+     * (グローバルナビの表示・展開事業抽出用、既存の呼び出し元・件数上限は
+     * 変更しない)とは完全に独立した戻り値として返す。
+     *
+     * @return list<string>
+     */
+    public function extractAllLinkTexts(string $html): array
+    {
+        [, $xpath] = $this->loadDomForTextExtraction($html);
+
+        $nodes = $xpath->query('//a');
+
+        $labels = [];
+        foreach ($nodes ?? [] as $node) {
+            if (count($labels) >= self::ALL_LINK_TEXT_MAX_COUNT) {
+                break;
+            }
+
+            $label = $this->normalizeNavLinkLabel($node->textContent);
+            if ($label === null || in_array($label, $labels, true)) {
+                continue;
+            }
+
+            $labels[] = $label;
+        }
+
+        return $labels;
+    }
+
+    /**
      * extractBodyText()/extractHeadingTexts()専用のDOM読み込み。analyze()と
      * 同じ手順(UTF-8強制・XXE対策・script/style等の除去)を独立して行う
      * ―― analyze()自体の実装には一切触れない。
@@ -574,7 +619,7 @@ class HtmlSeoAnalyzer
      *
      * @return array<string, array{present: bool, url: ?string, text: ?string, confidence: ?float, link_type: ?string}>
      */
-    private function analyzeBusinessLinks(\DOMXPath $xpath, string $pageHost): array
+    private function analyzeBusinessLinks(\DOMXPath $xpath, string $pageHost, string $pageUrl): array
     {
         $categories = [
             'pricing' => self::PRICING_KEYWORDS,
@@ -585,6 +630,17 @@ class HtmlSeoAnalyzer
             'privacy_policy' => self::PRIVACY_POLICY_KEYWORDS,
             'recruit' => self::RECRUIT_KEYWORDS,
         ];
+
+        // 2026-08-05: 今スキャンしているページ自身のURLが既に採用ページを
+        // 指している場合(診断対象として渡されたURLが/recruit/や/saiyo_career
+        // のように、それ自体で採用ページである場合)、ページ内のナビゲーション
+        // リンクから「別の採用ページ」を探しに行かない。探しに行くと、
+        // 自分自身への自己参照リンクを拾って無駄な二重取得になる(実データ:
+        // カヤック採用ページで再現)か、同じく採用ページらしい別セクションへの
+        // リンク(例: 障がい者採用ページ)をより優先シグナル数が高いという理由で
+        // 誤って採用ページとして選んでしまう(実データ: 味の素で再現)。
+        $pageIsRecruitPage = $this->segmentsMatchAny($this->pathSegments($pageUrl), self::RECRUIT_EXACT_PATH_SEGMENTS)
+            || $this->startsWithAny($pageHost, self::RECRUIT_SUBDOMAIN_PREFIXES);
 
         $nodes = $xpath->query('//a[@href]');
         $detected = array_fill_keys(array_keys($categories), null);
@@ -628,7 +684,13 @@ class HtmlSeoAnalyzer
                 // recruitだけは「最初の一致」を即採用せず、全候補を集めて
                 // 優先順位付けする(下記signalCountによる選定)。他カテゴリは
                 // 従来どおり最初に見つかったリンクを代表として採用する。
+                // ページ自身が既に採用ページの場合は候補収集自体を行わない
+                // (上記$pageIsRecruitPage参照)。
                 if ($category === 'recruit') {
+                    if ($pageIsRecruitPage) {
+                        continue;
+                    }
+
                     $recruitCandidates[] = [
                         'url' => $href,
                         'text' => $representativeText,
@@ -651,7 +713,15 @@ class HtmlSeoAnalyzer
             }
         }
 
-        $detected['recruit'] = $this->selectRecruitCandidate($recruitCandidates);
+        // ページ自身が既に採用ページの場合、探索結果に関わらず自己参照
+        // (このページ自身のURL)を採用ページとして確定させる。resolveRecruitUrl()
+        // (AnalysisPipeline.php)がこのURLをそのまま解決するため、
+        // FetchRecruitPageJobは同一URLを取得する(内容は正しいが取得は
+        // 冗長になる。無駄な二重取得の解消は別対応とし、ここでは「誤った
+        // 別ページを採用ページとして掴む」ことの防止のみを扱う)。
+        $detected['recruit'] = $pageIsRecruitPage
+            ? ['url' => $pageUrl, 'text' => null, 'confidence' => 1.0, 'link_type' => $this->classifyLinkType($pageUrl, $pageHost)]
+            : $this->selectRecruitCandidate($recruitCandidates);
 
         $result = [];
         foreach (array_keys($categories) as $category) {
