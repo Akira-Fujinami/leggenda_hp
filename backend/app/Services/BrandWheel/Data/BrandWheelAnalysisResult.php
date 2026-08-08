@@ -21,12 +21,21 @@ namespace App\Services\BrandWheel\Data;
  * 追加した2項目で、下位要素のような「原文にこの語句があるか」という個別の
  * 主張ではなく、サイト全体から読み取れる要約・印象のためevidence実在検証の
  * 対象外(BrandWheelAnalysisResponseParser参照)。impressionは社外に出る
- * 文章のため、config('brand_wheel.forbidden_phrases')を含む場合はnullにする。
+ * 文章のため、config('brand_wheel.forbidden_phrases')を含む項目はparserが
+ * 個別に除外する。
+ *
+ * 2026-08-08(prompt_version v7〜): impressionをstringから
+ * list<string>(2〜4件)へ変更した。旧版は「〜という情報は読み取れません
+ * でした」のように診断結果(下位要素の該当有無)と重複した提言調になって
+ * いたため、候補者が受け取る印象だけを評価・提言を含めず列挙する形にする
+ * (レポート「自社/競合サイトの分析結果」ページで箇条書き表示、ユーザー
+ * 指摘)。
  */
 readonly class BrandWheelAnalysisResult
 {
     /**
      * @param  list<BrandWheelAxisResult>  $axes  6軸分、config('brand_wheel.axes')と同じキー順
+     * @param  list<string>  $impression  候補者が受け取る印象の列挙(2〜4件、評価・提言を含まない)。1件も生き残らなかった場合は空配列。
      * @param  array<string, string>  $qualityDimensionNotes  quality_dimensionsキー => AIの所見(自由記述、evidence検証はしない)
      * @param  list<string>  $cautions
      * @param  array{read: int, partial: int, unread: int}  $axisStateCounts  合計は常に6
@@ -35,7 +44,7 @@ readonly class BrandWheelAnalysisResult
         public array $axes,
         public BrandWheelCoreValueResult $coreValue,
         public ?string $keyMessage,
-        public ?string $impression,
+        public array $impression,
         public array $qualityDimensionNotes,
         public array $cautions,
         public array $axisStateCounts,

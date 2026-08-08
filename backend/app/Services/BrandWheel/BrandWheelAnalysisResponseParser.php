@@ -85,7 +85,7 @@ class BrandWheelAnalysisResponseParser
             axes: $axisResults,
             coreValue: $this->parseCoreValue($raw['core_value'] ?? null, $haystack),
             keyMessage: $this->parseForbiddenPhraseSafeText($raw['key_message'] ?? null),
-            impression: $this->parseForbiddenPhraseSafeText($raw['impression'] ?? null),
+            impression: $this->parseImpressionList($raw['impression'] ?? null),
             qualityDimensionNotes: $this->parseQualityDimensionNotes($raw['quality_notes'] ?? []),
             cautions: $this->parseStringList($raw['cautions'] ?? []),
             axisStateCounts: $axisStateCounts,
@@ -122,6 +122,33 @@ class BrandWheelAnalysisResponseParser
         }
 
         return $text;
+    }
+
+    /**
+     * impression用(2026-08-08、prompt_version v7〜のlist<string>化)。
+     * key_message/impression共通のparseForbiddenPhraseSafeText()と同じ
+     * 禁止語チェックを配列の各要素に個別適用する ―― 1件が禁止語を含んでいても
+     * 他の項目まで巻き添えで捨てない(下位要素の破棄が1件ずつ独立している
+     * 既存方針と同じ)。文字列でない要素・空文字はそのまま除外する。
+     *
+     * @return list<string>
+     */
+    private function parseImpressionList(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $items = [];
+        foreach ($raw as $item) {
+            $safe = $this->parseForbiddenPhraseSafeText($item);
+
+            if ($safe !== null) {
+                $items[] = $safe;
+            }
+        }
+
+        return $items;
     }
 
     /**

@@ -2,8 +2,6 @@
 
 namespace App\Services\Report;
 
-use App\Services\Lead\LeadPerspectiveComposer;
-use App\Support\Report\ReportRecommendationRow;
 use App\Support\Report\ReportViewModel;
 use PhpOffice\PhpWord\Element\Section;
 use PhpOffice\PhpWord\IOFactory;
@@ -12,16 +10,17 @@ use PhpOffice\PhpWord\SimpleType\Jc;
 use PhpOffice\PhpWord\Style\Language;
 
 /**
- * レポートWord(.docx)を生成する。文面・カテゴリ判定・スコア計算のロジックは
- * 一切持たず、PdfReportGenerator同様、ReportViewModelBuilderが組み立てた
- * ViewModelをそのままレイアウトへ差し込むだけに徹する(PDF版と表示内容を
- * 一致させるため)。
+ * レポートWord(.docx)を生成する。文面・カテゴリ判定ロジックは一切持たず、
+ * PdfReportGenerator同様、ReportViewModelBuilderが組み立てたViewModelを
+ * そのままレイアウトへ差し込むだけに徹する(PDF版と表示内容を一致させるため)。
  *
- * 2026-08-04: docs/lead-report-layout/README.mdを唯一の定義元に全面書き直し。
- * PDF版(lead-pdf.blade.php)の9ページ構成(表紙/前置き/自社分析結果/読み取れた
- * 記述/4観点/24項目の対比/触れられていなかった項目/改善提案/ご相談)と
- * 同じ構成・同じ配色・同じ文言に揃える。旧「他社ページ比較とのまとめ」は
- * 削除(所見が24項目の対比ページの言い換えになっていたため)。
+ * 2026-08-08: PDF版(lead-pdf.blade.php)の7ページ構成(表紙/前置き/自社サイトの
+ * 分析結果/競合サイトの分析結果/○△－の対比表/改善提案/最終ページ)への
+ * 再編に合わせて全面書き直し。旧「総合結果」(社内向け4観点スコアの
+ * Word版限定セクション、PDF版には無かった)・「サイトから読み取れた記述」・
+ * 「採用担当の視点で見た診断結果」(4観点)・「サイトで触れられていなかった
+ * 項目」は削除し、PDF版と1:1で一致する構成にした(ユーザー指示「Word版も
+ * 同じ構成に合わせること」)。
  *
  * .docxはWordアプリ側のフォントで表示されるため、PDFのようなフォント埋め込みは
  * 不要 ―― 游ゴシック(Windows/Office標準の日本語フォント)を指定し、
@@ -55,12 +54,19 @@ class WordReportGenerator
 
         $this->addCoverSection($phpWord, $viewModel);
         $this->addBrandWheelFrameworkIntroSection($phpWord);
-        $this->addOverallResultsSection($phpWord, $viewModel);
-        $this->addSelfAnalysisResultsSection($phpWord, $viewModel);
-        $this->addBrandWheelEvidenceSection($phpWord, $viewModel);
-        $this->addPerspectivesSection($phpWord, $viewModel);
+        $this->addBrandWheelAnalysisSection(
+            $phpWord, '自社サイトの分析結果', $viewModel->brandWheelSelf,
+            '自社サイト', $viewModel->selfTotalMatched, $viewModel->selfTotalMax,
+            $viewModel->brandWheelComparison['self_points'],
+        );
+        if ($viewModel->competitorWebsiteUrl !== null) {
+            $this->addBrandWheelAnalysisSection(
+                $phpWord, '競合サイトの分析結果', $viewModel->brandWheelCompetitor,
+                '競合サイト', $viewModel->competitorTotalMatched, $viewModel->competitorTotalMax,
+                $viewModel->brandWheelComparison['competitor_points'],
+            );
+        }
         $this->addComparisonSection($phpWord, $viewModel);
-        $this->addGapAnalysisSection($phpWord, $viewModel);
         $this->addImprovementProposalSection($phpWord, $viewModel);
         $this->addCallToActionSection($phpWord, $viewModel);
 
@@ -155,76 +161,49 @@ class WordReportGenerator
         );
     }
 
-    private function addOverallResultsSection(PhpWord $phpWord, ReportViewModel $viewModel): void
-    {
-        $section = $phpWord->addSection();
-
-        $section->addTitle('総合結果', 1);
-        // 社内版(7カテゴリ100点)の点数とは別建てであることを明示する
-        // (2026-07-28のユーザー指摘: 商談時に取り違えないため)。
-        $section->addText('採用サイトとして重要な4観点での評価', ['size' => 9, 'italic' => true]);
-
-        $displayScore = (int) $viewModel->selfScore['display_score'];
-        $coverageRate = (float) $viewModel->selfScore['coverage_rate'];
-        $confidenceRate = (float) $viewModel->selfScore['confidence_rate'];
-        // LeadScoreCalculatorは4観点に表示している指標だけを対象に算出する
-        // ため、満点が常に100点とは限らない ―― 固定値にしないこと。
-        $maxScore = (int) round((float) $viewModel->selfScore['configured_max_score']);
-
-        $scoreLine = "{$displayScore}点 / {$maxScore}点";
-
-        if ($coverageRate < 70) {
-            $scoreLine .= '(参考スコア)';
-        }
-
-        $section->addText($scoreLine, ['bold' => true, 'size' => 18]);
-        $section->addText(sprintf('測定カバー率: %s%%　確信度: %s%%', number_format($coverageRate, 2), number_format($confidenceRate, 2)));
-        $section->addTextBreak(1);
-        $section->addText($viewModel->overallSummaryText);
-
-        if ($viewModel->comparisonSentence !== null) {
-            $section->addTextBreak(1);
-            $section->addText($viewModel->comparisonSentence);
-        }
-    }
-
     /**
-     * PDF版3ページ目「自社ページの分析結果」と同内容。合計件数は
-     * $viewModel->selfTotalMatched等(24項目の対比・改善提案ページと同じ
-     * 集計値)を使う ―― セクションごとに個別集計しない
-     * (docs/lead-report-layout/README.md「合計件数Nは3・6・8ページ目で
-     * 必ず同じソースから算出すること」)。
+     * PDF版3・4ページ目(自社/競合サイトの分析結果、
+     * partials/lead-pdf-brand-wheel-page.blade.php)と同内容。主体
+     * (自社/競合)を引数で切り替えるだけの完全に同じ形式(2026-08-08、
+     * ユーザー指定)。合計件数は呼び出し側($viewModel->selfTotalMatched等、
+     * 対比表・改善提案と同じ集計値)を渡す ―― セクションごとに個別集計しない。
+     *
+     * @param  ?array<string, mixed>  $wheel  brandWheelSelf/brandWheelCompetitor
+     * @param  list<string>  $summaryPoints  BrandWheelComparisonSummaryComposer::points()の戻り値(self_points/competitor_points)
      */
-    private function addSelfAnalysisResultsSection(PhpWord $phpWord, ReportViewModel $viewModel): void
-    {
+    private function addBrandWheelAnalysisSection(
+        PhpWord $phpWord,
+        string $title,
+        ?array $wheel,
+        string $seriesLabel,
+        int $totalMatched,
+        int $totalMax,
+        array $summaryPoints,
+    ): void {
         $section = $phpWord->addSection();
-        $section->addTitle('自社ページの分析結果', 1);
+        $section->addTitle($title, 1);
 
-        if (($viewModel->brandWheelSelf['status'] ?? null) !== 'success' || ($viewModel->brandWheelSelf['axes'] ?? []) === []) {
+        if (($wheel['status'] ?? null) !== 'success' || ($wheel['axes'] ?? []) === []) {
             // 6項目すべて0件の表は「魅力のない会社」の意味になるため出さない。
             // 理由の文言はconfig('brand_wheel.status_messages')が唯一の定義元。
-            $section->addText((string) ($viewModel->brandWheelSelf['status_message'] ?? ''));
+            $section->addText((string) ($wheel['status_message'] ?? ''));
 
             return;
         }
 
         $section->addText(
             '6つの項目それぞれについて、該当する内容がサイトの記述から何件読み取れたかを集計しています(点数ではありません)。'.
-            '解析したURL：'.$viewModel->brandWheelSelf['analyzed_url'],
+            '解析したURL：'.$wheel['analyzed_url'],
             ['size' => 9, 'italic' => true],
         );
 
         $section->addTextBreak(1);
-        $totalsLine = "自社サイト: {$viewModel->selfTotalMatched} / {$viewModel->selfTotalMax}項目";
-        if (($viewModel->brandWheelCompetitor['status'] ?? null) === 'success' && ($viewModel->brandWheelCompetitor['axes'] ?? []) !== []) {
-            $totalsLine .= "　　競合サイト: {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目";
-        }
-        $section->addText($totalsLine, ['bold' => true, 'size' => 14]);
+        $section->addText("{$seriesLabel}: {$totalMatched} / {$totalMax}項目", ['bold' => true, 'size' => 14]);
 
-        if ($viewModel->brandWheelComparison['self_points'] !== []) {
+        if ($summaryPoints !== []) {
             $section->addTextBreak(1);
             $section->addText('サマリー', ['bold' => true]);
-            foreach ($viewModel->brandWheelComparison['self_points'] as $point) {
+            foreach ($summaryPoints as $point) {
                 $section->addText("・{$point}");
             }
         }
@@ -236,28 +215,30 @@ class WordReportGenerator
         $table->addCell(1500)->addText('件数', ['bold' => true]);
         $table->addCell(5000)->addText('読み取れた内容', ['bold' => true]);
 
-        foreach ($viewModel->brandWheelSelf['axes'] as $axis) {
+        foreach ($wheel['axes'] as $axis) {
             $matchedNames = array_column($axis['matched_sub_elements'], 'name');
 
             $table->addRow();
             $table->addCell(2500)->addText($axis['name']);
             $table->addCell(1500)->addText("{$axis['matched_count']} / {$axis['max_count']}件");
-            // 2026-08-04: 「該当する記述は見つかりませんでした」を使う
-            // (README 117行 ―― 内容が無い会社、と読める表現を避けるため)。
-            // PDF版(.none2)と表記を揃える。旧実装の'―'のまま書き換え漏れして
-            // いた食い違いを修正。
+            // 「該当する記述は見つかりませんでした」を使う(内容が無い会社、
+            // と読める表現を避けるため)。PDF版(.none2)と表記を揃える。
             $table->addCell(5000)->addText($matchedNames === [] ? '該当する記述は見つかりませんでした' : implode('、', $matchedNames));
         }
 
-        if ($viewModel->brandWheelSelf['key_message'] || $viewModel->brandWheelSelf['impression']) {
+        $impressionItems = (array) ($wheel['impression_items'] ?? []);
+        if ($wheel['key_message'] || $impressionItems !== []) {
             $section->addTextBreak(1);
 
-            if ($viewModel->brandWheelSelf['key_message']) {
-                $section->addText('キーメッセージ：'.$viewModel->brandWheelSelf['key_message']);
+            if ($wheel['key_message']) {
+                $section->addText('収集した情報から想定されるキーメッセージ：'.$wheel['key_message']);
             }
 
-            if ($viewModel->brandWheelSelf['impression']) {
-                $section->addText('AI解析による印象：'.$viewModel->brandWheelSelf['impression']);
+            if ($impressionItems !== []) {
+                $section->addText('AI解析による候補者に与える印象：');
+                foreach ($impressionItems as $item) {
+                    $section->addText("・{$item}");
+                }
             }
 
             // key_message/impressionがAI生成であることの開示
@@ -267,92 +248,18 @@ class WordReportGenerator
     }
 
     /**
-     * PDF版の「サイトから読み取れた記述」ページと同内容(2026-08-04)。
-     * 該当0件の場合はこのセクション自体を出さない(見出しと空の表だけが
-     * 残る状態を作らない ―― 画面側で同じ失敗を一度している)。evidenceは
-     * 要約・整形・省略記号での短縮を一切しない ―― 原文との部分文字列照合を
-     * 通ったものだけが残っている、というのがこのページの価値
-     * (docs/lead-report-layout/README.md)。競合側のevidenceは含めない
-     * (ReportViewModelBuilderが自社分のみ組み立てている、他社サイトの本文を
-     * レポートに出さないため)。
-     */
-    private function addBrandWheelEvidenceSection(PhpWord $phpWord, ReportViewModel $viewModel): void
-    {
-        if ($viewModel->selfBrandWheelEvidenceItems === []) {
-            return;
-        }
-
-        $section = $phpWord->addSection();
-        $section->addTitle('サイトから読み取れた記述', 1);
-        $section->addText(
-            '前ページで「該当あり」とした項目について、サイトのどの記述を根拠にしたかを記載しています。'.
-            '抜粋はサイト上の文章をそのまま引用したもので、要約や言い換えは含みません。',
-            ['size' => 9, 'italic' => true],
-        );
-
-        $table = $section->addTable(['borderSize' => 6, 'borderColor' => 'cccccc', 'cellMargin' => 80]);
-
-        $table->addRow();
-        $table->addCell(2500)->addText('項目', ['bold' => true]);
-        $table->addCell(2500)->addText('何について', ['bold' => true]);
-        $table->addCell(4500)->addText('サイトからの記述', ['bold' => true]);
-
-        foreach ($viewModel->selfBrandWheelEvidenceItems as $item) {
-            $table->addRow();
-            $table->addCell(2500)->addText($item['axis_name']);
-            $table->addCell(2500)->addText($item['sub_element_name']);
-            $table->addCell(4500)->addText('「'.$item['evidence'].'」');
-        }
-    }
-
-    /**
-     * 採用担当向けの4観点(①書くべきこと・②メッセージ・③導線・④見やすさ)。
-     * 内部の7カテゴリ(technical_seo等)は表示しない ―― 表示のグルーピングを
-     * 変えるだけで、採点ロジック自体は変更していない(LeadPerspectiveComposer参照)。
-     *
-     * 2026-08-04: 個別指標(items[*].label、社内の指標名)は一切出さず、
-     * 見出し・判定バッジ・理由1文(one_liner、ReportViewModelBuilderが
-     * ReportSummaryComposer::composePerspectiveOneLiner()で機械的に付与)
-     * だけに畳む(PDF版と同じ扱いに揃える)。ただし「取得できなかった項目は
-     * 0点として扱わず、算出の対象から外している」旨とカバー率・確信度は
-     * 誠実性の維持に必要な情報のため残す。
-     */
-    private function addPerspectivesSection(PhpWord $phpWord, ReportViewModel $viewModel): void
-    {
-        $section = $phpWord->addSection();
-        $section->addTitle('採用担当の視点で見た診断結果', 1);
-        $section->addText('4つの観点それぞれについて、判定と、その理由を一言で記載しています。', ['size' => 9, 'italic' => true]);
-
-        foreach ($viewModel->perspectives as $perspective) {
-            $section->addTitle($perspective['heading'], 2);
-            $section->addText(LeadPerspectiveComposer::statusLabel($perspective['status']), ['bold' => true]);
-            $section->addText($perspective['one_liner']);
-            $section->addTextBreak(1);
-        }
-
-        $coverageRate = (float) $viewModel->selfScore['coverage_rate'];
-        $confidenceRate = (float) $viewModel->selfScore['confidence_rate'];
-        $section->addText(
-            sprintf(
-                '取得できなかった項目は0点として扱わず、算出の対象から外しています(測定カバー率 %s%%／確信度 %s%%)。',
-                number_format($coverageRate, 1),
-                number_format($confidenceRate, 1),
-            ),
-            ['size' => 9, 'color' => '555555'],
-        );
-    }
-
-    /**
-     * PDF版6ページ目「24項目の対比」と同内容。●(記述あり)／－(記述が
-     * 見つからなかった)で示す。○×は使わない(正解・不正解の記号であり、
-     * ×が並ぶと採点で落ちたように見える。2ページ目の断り書きと矛盾する、
-     * docs/lead-report-layout/README.md)。$viewModel->subElementComparison
-     * (config順、24項目)が唯一の情報源。
+     * PDF版5ページ目「○△－の対比表」と同内容。2026-08-08: ●／－の2値から
+     * ○△－の3値へ変更。○×は使わない(正解・不正解の記号であり、2ページ目の
+     * 断り書きと矛盾する)。判定はBrandWheelSubElementComparisonComposerが
+     * すべて行う(AIには一切判定させない)。$viewModel->subElementComparison
+     * (config順、24項目)が唯一の情報源。self_matched/competitor_matched
+     * (○のみtrue)は改善提案の選定ロジック専用のため、この表示には
+     * self_state/competitor_state('matched'|'label_only'|'none')を使う。
      */
     private function addComparisonSection(PhpWord $phpWord, ReportViewModel $viewModel): void
     {
         $section = $phpWord->addSection();
-        $section->addTitle('24項目の対比', 1);
+        $section->addTitle('○△－の対比表', 1);
 
         if (($viewModel->brandWheelSelf['status'] ?? null) !== 'success' || ($viewModel->brandWheelSelf['axes'] ?? []) === []) {
             $section->addText((string) ($viewModel->brandWheelSelf['status_message'] ?? ''));
@@ -363,11 +270,15 @@ class WordReportGenerator
         $showCompetitorColumn = $viewModel->competitorWebsiteUrl !== null;
 
         $section->addText(
-            '24項目それぞれについて、サイトに該当する記述があったかどうかを並べています。●は記述があったこと、'.
-            '－は記述が見つからなかったことを示します。－は『その魅力が無い』という意味ではなく、そのサイトでは'.
-            '触れられていなかった、という意味です。',
+            '24項目それぞれについて、サイトに該当する記述があったかどうかを3段階で示しています。',
             ['size' => 9, 'italic' => true],
         );
+
+        $section->addTextBreak(1);
+        $section->addText('凡例', ['bold' => true, 'size' => 9.5]);
+        $section->addText('○　本文の記述から確認できた項目', ['size' => 9]);
+        $section->addText('△　見出し・メニュー名などのラベルのみで、本文からは確認できなかった項目', ['size' => 9]);
+        $section->addText('－　該当する記述が見つからなかった項目(『魅力が無い』という意味ではありません)', ['size' => 9]);
 
         $section->addTextBreak(1);
         $table = $section->addTable(['borderSize' => 6, 'borderColor' => 'cccccc', 'cellMargin' => 80]);
@@ -383,92 +294,45 @@ class WordReportGenerator
             $table->addRow();
             $table->addCell(2000)->addText(self::GROUP_LABELS[$item['group']] ?? $item['group']);
             $table->addCell(3500)->addText($item['sub_name']);
-            $table->addCell(1500)->addText($item['self_matched'] ? '●' : '－');
+            $table->addCell(1500)->addText($this->stateMark($item['self_state']));
             if ($showCompetitorColumn) {
-                $table->addCell(1500)->addText($item['competitor_matched'] ? '●' : '－');
+                $table->addCell(1500)->addText($this->stateMark($item['competitor_state']));
             }
         }
 
         $section->addTextBreak(1);
-        $legend = "合計　●自社サイト {$viewModel->selfTotalMatched} / {$viewModel->selfTotalMax}項目";
+        $legend = "合計　○自社サイト {$viewModel->selfTotalMatched} / {$viewModel->selfTotalMax}項目";
         if ($showCompetitorColumn) {
-            $legend .= "　　●比較サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目";
+            $legend .= "　　○比較サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目";
         }
         $section->addText($legend, ['size' => 9.5, 'color' => '6B6767']);
+
+        $refLegend = "(参考)　△自社 {$viewModel->selfTotalLabelOnly}件";
+        if ($showCompetitorColumn) {
+            $refLegend .= "　　△比較 {$viewModel->competitorTotalLabelOnly}件";
+        }
+        $section->addText($refLegend, ['size' => 9, 'color' => '8A8A8A']);
     }
 
-    /**
-     * PDF版7ページ目「サイトで触れられていなかった項目」と同内容。
-     * 自社と競合のmatchedを突き合わせた3分類(A: 比較サイトにあり自社に
-     * 無い/B: 自社にあり比較サイトに無い/C: どちらにも無い)。
-     * $viewModel->gapAnalysisが唯一の情報源。
-     */
-    private function addGapAnalysisSection(PhpWord $phpWord, ReportViewModel $viewModel): void
+    private function stateMark(string $state): string
     {
-        $section = $phpWord->addSection();
-        $section->addTitle('サイトで触れられていなかった項目', 1);
-
-        if (($viewModel->brandWheelSelf['status'] ?? null) !== 'success' || ($viewModel->brandWheelSelf['axes'] ?? []) === []) {
-            $section->addText((string) ($viewModel->brandWheelSelf['status_message'] ?? ''));
-
-            return;
-        }
-
-        if ($viewModel->competitorWebsiteUrl === null || ($viewModel->brandWheelCompetitor['status'] ?? null) !== 'success' || ($viewModel->brandWheelCompetitor['axes'] ?? []) === []) {
-            $section->addText('比較サイトが指定されていないため、この分析はご用意できませんでした。');
-
-            return;
-        }
-
-        $gap = $viewModel->gapAnalysis;
-
-        $section->addText(
-            '書かれていないことが弱みという意味ではありません。候補者が2つのサイトを見比べたとき、'.
-            'その情報を比較サイト側でしか得られない、という事実を示しています。',
-            ['size' => 9, 'italic' => true],
-        );
-
-        $section->addTextBreak(1);
-        $section->addText('比較サイトにあり、御社のサイトでは触れられていなかった項目('.count($gap['a']).'件)', ['bold' => true]);
-        $this->addGapList($section, $gap['a']);
-
-        $section->addTextBreak(1);
-        // Bを省略しない(Aだけ並べると詰問状になる、
-        // docs/lead-report-layout/README.md)。0件でも見出しと本文を出す。
-        $section->addText('御社のサイトにあり、比較サイトでは触れられていなかった項目('.count($gap['b']).'件)', ['bold' => true]);
-        $this->addGapList($section, $gap['b']);
-
-        $section->addTextBreak(1);
-        $section->addText('どちらのサイトでも触れられていなかった項目('.count($gap['c']).'件)', ['bold' => true]);
-        if ($gap['c'] === []) {
-            $section->addText('該当する項目はありませんでした');
-        } else {
-            $section->addText(implode('　/　', array_column($gap['c'], 'sub_name')));
-        }
+        return match ($state) {
+            'matched' => '○',
+            'label_only' => '△',
+            default => '－',
+        };
     }
 
     /**
-     * @param  list<array{sub_name: string, definition: string}>  $items
-     */
-    private function addGapList(Section $section, array $items): void
-    {
-        if ($items === []) {
-            $section->addText('該当する項目はありませんでした');
-
-            return;
-        }
-
-        foreach ($items as $item) {
-            $section->addText("・{$item['sub_name']}：{$item['definition']}");
-        }
-    }
-
-    /**
-     * PDF版8ページ目「改善提案」と同内容。ブランド・ホイール起点であること
+     * PDF版6ページ目「改善提案」と同内容。ブランド・ホイール起点であること
      * (技術的な指標から作らない、docs/lead-report-layout/README.md)。
      * ワンポイントは自社のみで判定可能なため常に自社の状態から出す。
-     * 領域差・3項目は$viewModel->improvementFocus(決定的な規則で選定済み)が
-     * 唯一の情報源。技術的な提案(画像・速度・フォーム等)は下部に小さく残す。
+     * 領域差・3項目は$viewModel->improvementFocus(決定的な規則で選定済み、
+     * △は未該当扱いのまま選定ロジック無改修)が唯一の情報源。
+     *
+     * 2026-08-08: 下部の技術的提案ブロック(「あわせて、サイトの作りに
+     * ついて」)を削除した。4観点(測定結果)ページを削除したのに技術的提案
+     * だけ残すのは整合が取れないため(ユーザー判断)。
      */
     private function addImprovementProposalSection(PhpWord $phpWord, ReportViewModel $viewModel): void
     {
@@ -490,10 +354,6 @@ class WordReportGenerator
         $focus = $viewModel->improvementFocus;
         if ($focus !== null) {
             $selectedLabel = self::GROUP_LABELS[$focus['selected_group']] ?? $focus['selected_group'];
-            // 2026-08-04: 文言修正。PDF版と同じ理由(lead-pdf.blade.phpの
-            // .rleadコメント参照) ―― 旧文言は選定ロジック(競合件数－自社件数が
-            // グループ内で最大)と食い違って見える(自社が競合を上回る
-            // グループが選ばれることがあるため)。
             $section->addText(
                 "3つの領域のうち、比較サイトとの差(比較サイト件数－自社件数)が最も大きかったのは「{$selectedLabel}」でした。".
                 'この領域から、比較サイトの記述にあり御社のサイトには無い項目を'.count($focus['items']).'件挙げます。',
@@ -526,54 +386,35 @@ class WordReportGenerator
         } elseif ($onePoint !== null) {
             $section->addText('比較サイトが無いため、領域ごとの比較はご用意できません。');
         }
-
-        if ($viewModel->topRecommendations !== []) {
-            $section->addTextBreak(1);
-            $section->addText('あわせて、サイトの作りについて', ['bold' => true, 'size' => 10]);
-            $titles = array_map(fn (ReportRecommendationRow $r) => $r->title, $viewModel->topRecommendations);
-            $section->addText(
-                implode('／', $titles).'の'.count($titles).'点に改善の余地がありました。'.
-                'いずれもサイトの作りに関するもので、上の『何を書くか』とは別の話です。詳細は担当者よりご説明します。',
-                ['size' => 9.5, 'color' => '6B6767'],
-            );
-        }
     }
 
     /**
-     * PDF版9ページ目「ここから先は、サイトの外の話です」と同内容。旧CTA
-     * 「他社比較(3〜5社)」は使わない(レジェンダは採用コンサルであり、
-     * サイト制作会社ではないため、docs/lead-report-layout/README.md)。
-     * 3ブロック目の本文はREADMEの注記どおり相談側の推測であり、実際の
-     * サービスメニューとの一致は未確認(2026-08-04、ユーザーへ確認済み:
-     * 確認が取れるまでdraft.htmlの文言のまま実装する暫定対応)。
+     * PDF版7ページ目(最終ページ)と同内容。2026-08-08: 旧「ここから先は、
+     * サイトの外の話です」(3ブロック構成)をユーザー指定の新文言に全面
+     * 差し替え。一見してメッセージが分かるよう、見出し+本文2段落の
+     * シンプルな構成にする(3ブロックのボックス構成は廃止)。
      */
     private function addCallToActionSection(PhpWord $phpWord, ReportViewModel $viewModel): void
     {
         $section = $phpWord->addSection();
 
         $section->addTextBreak(2);
-        $section->addText('ここから先は、サイトの外の話です', ['bold' => true, 'size' => 18], ['alignment' => Jc::CENTER]);
+        $section->addText('サイトの改善をすれば課題が解決するとは限りません', ['bold' => true, 'size' => 18], ['alignment' => Jc::CENTER]);
+        $section->addTextBreak(1);
         $section->addText(
-            '今回お見せしたのは、御社の採用サイトに「何が書かれているか」だけです。これは採用ブランドを形づくる情報源のひとつにすぎません。',
-            ['size' => 10, 'color' => '6B6767'],
+            'サイトの改善が最も効果的な打ち手となるのか、応募から内定までの間での候補者とのタッチポイント全体の設計を改めて行うことで大きな効果を得られるのかを見直す必要があります。',
+            ['size' => 10.5],
             ['alignment' => Jc::CENTER],
         );
         $section->addTextBreak(1);
+        $section->addText(
+            '弊社にてさらに幅を広げ、3〜5社の競合他社のサイトと比較した結果をもとにどこに御社課題があるかをディスカッションしませんか。ご希望いただける場合は、以下よりご連絡ください。',
+            ['size' => 10.5],
+            ['alignment' => Jc::CENTER],
+        );
 
-        $blocks = [
-            ['n' => '1', 't' => '書かれていない項目には2つの意味があります', 'd' => '実態はあるのに伝えられていないのか、まだ言葉になっていないのか。前者はサイトで解決しますが、後者はサイトを直しても変わりません。'],
-            ['n' => '2', 't' => 'その切り分けはサイトからはできません', 'd' => '社員が実際に何を感じているか、辞退した方が何を理由に離れたか、説明会で何を語っているか。サイト以外の情報と突き合わせて初めて判断できます。'],
-            ['n' => '3', 't' => '私たちは採用ブランドの設計からご一緒します', 'd' => 'グループインタビュー、社員・内定者・辞退者へのヒアリング、説明会の設計。何を約束する会社なのかを言葉にするところから支援しています。'],
-        ];
-
-        foreach ($blocks as $block) {
-            $section->addText($block['n'].'. '.$block['t'], ['bold' => true, 'size' => 12]);
-            $section->addText($block['d'], ['size' => 9.5]);
-            $section->addTextBreak(1);
-        }
-
-        $section->addTextBreak(1);
-        $section->addText('この診断で見えた差が、伝え方の問題なのか、言語化の問題なのか。', [], ['alignment' => Jc::CENTER]);
-        $section->addText('一度お話しさせてください。担当者よりご連絡いたします。', ['color' => '6B6767'], ['alignment' => Jc::CENTER]);
+        $section->addTextBreak(2);
+        $section->addText('ご相談・お問い合わせ', [], ['alignment' => Jc::CENTER]);
+        $section->addText('担当営業までご連絡ください。', ['color' => '6B6767'], ['alignment' => Jc::CENTER]);
     }
 }

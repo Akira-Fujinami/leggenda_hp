@@ -5,95 +5,73 @@ namespace Tests\Unit\Services\Report;
 use App\Services\BrandWheel\BrandWheelImprovementFocusComposer;
 use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
 use App\Services\Report\WordReportGenerator;
-use App\Support\Lead\LeadMetricCatalog;
-use App\Support\Report\ReportRecommendationRow;
 use App\Support\Report\ReportViewModel;
 use Tests\TestCase;
 use ZipArchive;
 
 /**
- * 2026-08-04: docs/lead-report-layout/README.mdを唯一の定義元に、PDF版
- * (lead-pdf.blade.php)の9ページ構成へ全面書き直し。このテストファイルも
- * それに合わせて全面書き直し(旧「他社ページ比較とのまとめ」関連のテストは
- * 削除、24項目の対比・触れられていなかった項目・改善提案の新設セクション分を
- * 追加)。
+ * 2026-08-08: レポートを9ページ構成から7ページ構成へ再編したPDF版
+ * (lead-pdf.blade.php)にWord版(WordReportGenerator)も1:1で合わせて全面
+ * 書き直したことに伴い、このテストファイルも全面書き直し。旧「総合結果」
+ * (社内向け4観点スコアのWord版限定セクション)・「サイトから読み取れた
+ * 記述」・「採用担当の視点で見た診断結果」(4観点)・「サイトで触れられて
+ * いなかった項目」関連のテストはすべて削除し、新しい7セクション構成
+ * (表紙/前置き/自社サイトの分析結果/競合サイトの分析結果/○△－の対比表/
+ * 改善提案/新CTA)に沿ったテストへ置き換えた。
  */
 class WordReportGeneratorTest extends TestCase
 {
     /**
-     * @return list<array<string, mixed>>
+     * @return array<string, mixed>
      */
-    private function perspectives(): array
+    private function wheel(array $overrides = []): array
     {
-        return [
-            [
-                'key' => LeadMetricCatalog::PERSPECTIVE_COMPLETENESS,
-                'label' => LeadMetricCatalog::PERSPECTIVE_LABELS[LeadMetricCatalog::PERSPECTIVE_COMPLETENESS],
-                'heading' => LeadMetricCatalog::PERSPECTIVE_HEADINGS[LeadMetricCatalog::PERSPECTIVE_COMPLETENESS],
-                'note' => LeadMetricCatalog::COMPLETENESS_LEGAL_ITEMS_NOTE,
-                'status' => 'not_detected',
-                'summary' => '採用ページを検出できませんでした。トップページに採用に関する案内が見つからなかったため、この観点は今回「計測対象外」です。',
-                'items' => [],
-                'one_liner' => '採用ページを検出できませんでした。トップページに採用に関する案内が見つからなかったため、この観点は今回「計測対象外」です。',
-            ],
-            [
-                'key' => LeadMetricCatalog::PERSPECTIVE_CLARITY,
-                'label' => LeadMetricCatalog::PERSPECTIVE_LABELS[LeadMetricCatalog::PERSPECTIVE_CLARITY],
-                'heading' => LeadMetricCatalog::PERSPECTIVE_HEADINGS[LeadMetricCatalog::PERSPECTIVE_CLARITY],
-                'note' => null,
-                'status' => 'good',
-                'items' => [
-                    ['label' => 'ページタイトルの設定', 'status' => 'good', 'detail' => null],
-                ],
-                'one_liner' => '確認した1項目に大きな問題は見つかりませんでした。',
-            ],
-        ];
+        return array_merge([
+            'status' => 'success',
+            'status_message' => null,
+            'analyzed_url' => 'https://example.com/careers',
+            'axes' => [],
+            'key_message' => null,
+            'impression' => null,
+            'impression_items' => [],
+            'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+        ], $overrides);
     }
 
     private function viewModel(array $overrides = []): ReportViewModel
     {
         $selfAxes = [
-            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 2, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']]],
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 2, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']], 'label_only_sub_elements' => []],
         ];
 
         $defaults = [
             'companyDisplayName' => '株式会社サンプル様',
-            'generatedAtLabel' => '2026年7月27日',
+            'generatedAtLabel' => '2026年8月8日',
             'selfWebsiteUrl' => 'https://example.com',
             'competitorWebsiteUrl' => null,
-            'selfScore' => ['display_score' => 76, 'configured_max_score' => 100, 'coverage_rate' => 92.5, 'confidence_rate' => 88.0],
-            'competitorScore' => null,
-            'overallSummaryText' => '株式会社サンプル様の自社サイトは、総合スコア76点(100点満点)という結果になりました。',
-            'comparisonSentence' => null,
-            'perspectives' => $this->perspectives(),
-            'topRecommendations' => [
-                new ReportRecommendationRow('画像を圧縮してください', '表示速度の改善につながります。', '緊急', '高', '小'),
-            ],
             'isPartial' => false,
-            'brandWheelSelf' => [
-                'status' => 'success',
-                'status_message' => null,
-                'analyzed_url' => 'https://example.com/careers',
+            'brandWheelSelf' => $this->wheel([
                 'axes' => $selfAxes,
                 'key_message' => '技術で社会基盤を支える、という主題が置かれています。',
                 'impression' => '情緒的便益の記述が薄いのがもったいないところです。',
-                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
-            ],
+                'impression_items' => ['情緒的便益の記述が薄いのがもったいないところです。'],
+            ]),
             'brandWheelCompetitor' => null,
             'brandWheelComparison' => [
                 'self_points' => ['活動的魅力が最も内容として充足しています。'],
+                'competitor_points' => [],
                 'one_point' => ['key' => 'well_covered', 'text' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。'],
             ],
-            'brandWheelRadarPng' => null,
-            'selfBrandWheelEvidenceItems' => [
-                ['axis_key' => 'will_activity', 'axis_name' => '活動的魅力', 'group' => 'company_appeal', 'sub_element_name' => 'パーパス', 'evidence' => '技術で社会の「あたり前」を支える。それが私たちの存在意義です。'],
-            ],
+            'brandWheelRadarPngSelf' => null,
+            'brandWheelRadarPngCompetitor' => null,
+            'brandWheelRadarPngComparison' => null,
             'selfTotalMatched' => 2,
             'selfTotalMax' => 4,
             'competitorTotalMatched' => 0,
             'competitorTotalMax' => 0,
+            'selfTotalLabelOnly' => 0,
+            'competitorTotalLabelOnly' => 0,
             'subElementComparison' => app(BrandWheelSubElementComparisonComposer::class)->compose($selfAxes, []),
-            'gapAnalysis' => ['a' => [], 'b' => [], 'c' => []],
             'improvementFocus' => null,
         ];
 
@@ -104,24 +82,23 @@ class WordReportGeneratorTest extends TestCase
 
     /**
      * 自社・競合ともにブランド・ホイールが揃っている状態のfixture
-     * (24項目の対比・触れられていなかった項目・改善提案セクション用)。
+     * (競合サイトの分析結果・○△－の対比表・改善提案セクション用)。
      * LeadPdfViewTest::comparisonViewModel()と同じ組み立て方。
      */
     private function comparisonViewModel(array $overrides = []): ReportViewModel
     {
         $selfAxes = [
-            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 1, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']]],
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 1, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']], 'label_only_sub_elements' => []],
         ];
         $competitorAxes = [
-            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 1, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']]],
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 1, 'max_count' => 4, 'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']], 'label_only_sub_elements' => []],
             ['key' => 'relationship', 'group' => 'company_distance', 'name' => '就業環境', 'matched_count' => 2, 'max_count' => 4, 'matched_sub_elements' => [
                 ['key' => 'colleagues', 'name' => '同僚・先輩像'], ['key' => 'atmosphere', 'name' => '職場の雰囲気'],
-            ]],
+            ], 'label_only_sub_elements' => []],
         ];
 
         $comparisonComposer = app(BrandWheelSubElementComparisonComposer::class);
         $subElementComparison = $comparisonComposer->compose($selfAxes, $competitorAxes);
-        $gapAnalysis = $comparisonComposer->splitByGap($subElementComparison);
         $improvementFocus = app(BrandWheelImprovementFocusComposer::class)->compose($subElementComparison, [
             'relationship' => [
                 'colleagues' => '入社3年目の先輩が、日々どんな判断をしているかを紹介しています。',
@@ -131,30 +108,21 @@ class WordReportGeneratorTest extends TestCase
 
         return $this->viewModel(array_merge([
             'competitorWebsiteUrl' => 'https://competitor.example.com',
-            'brandWheelSelf' => [
-                'status' => 'success',
-                'status_message' => null,
-                'analyzed_url' => 'https://example.com/careers',
-                'axes' => $selfAxes,
-                'key_message' => null,
-                'impression' => null,
-                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
-            ],
-            'brandWheelCompetitor' => [
-                'status' => 'success',
-                'status_message' => null,
+            'brandWheelSelf' => $this->wheel(['axes' => $selfAxes]),
+            'brandWheelCompetitor' => $this->wheel([
                 'analyzed_url' => 'https://competitor.example.com/careers',
                 'axes' => $competitorAxes,
-                'key_message' => null,
-                'impression' => null,
-                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ]),
+            'brandWheelComparison' => [
+                'self_points' => ['活動的魅力が最も内容として充足しています。'],
+                'competitor_points' => ['就業環境が最も内容として充足しています。'],
+                'one_point' => ['key' => 'well_covered', 'text' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。'],
             ],
             'selfTotalMatched' => 1,
             'selfTotalMax' => 4,
             'competitorTotalMatched' => 3,
             'competitorTotalMax' => 8,
             'subElementComparison' => $subElementComparison,
-            'gapAnalysis' => $gapAnalysis,
             'improvementFocus' => $improvementFocus,
         ], $overrides));
     }
@@ -186,44 +154,16 @@ class WordReportGeneratorTest extends TestCase
         $documentXml = $this->generate($this->viewModel());
 
         $this->assertStringContainsString('株式会社サンプル様', $documentXml);
-        $this->assertStringContainsString('総合結果', $documentXml);
-        $this->assertStringContainsString('計測対象外', $documentXml);
-        $this->assertStringContainsString('書くべきことが書けているか', $documentXml);
-        $this->assertStringNotContainsString('メッセージの分かりやすさ', $documentXml);
+        $this->assertStringContainsString('自社サイトの分析結果', $documentXml);
         $this->assertStringNotContainsString('job_type', $documentXml);
         $this->assertStringNotContainsString('error_code', $documentXml);
-    }
-
-    public function test_never_leaks_individual_metric_labels_in_the_perspectives_section(): void
-    {
-        $documentXml = $this->generate($this->viewModel());
-
-        $this->assertStringNotContainsString('ページタイトルの設定', $documentXml);
-    }
-
-    public function test_states_the_not_counted_as_zero_caveat_with_coverage_and_confidence(): void
-    {
-        $documentXml = $this->generate($this->viewModel());
-
-        $this->assertStringContainsString('0点として扱わず', $documentXml);
-        $this->assertStringContainsString('92.5', $documentXml);
-        $this->assertStringContainsString('88.0', $documentXml);
-    }
-
-    public function test_shows_the_reference_score_badge_when_coverage_is_below_70_percent(): void
-    {
-        $documentXml = $this->generate($this->viewModel([
-            'selfScore' => ['display_score' => 40, 'configured_max_score' => 100, 'coverage_rate' => 69.9, 'confidence_rate' => 60.0],
-        ]));
-
-        $this->assertStringContainsString('参考スコア', $documentXml);
     }
 
     public function test_includes_the_self_analysis_results_section_with_counts_and_summary(): void
     {
         $documentXml = $this->generate($this->viewModel());
 
-        $this->assertStringContainsString('自社ページの分析結果', $documentXml);
+        $this->assertStringContainsString('自社サイトの分析結果', $documentXml);
         $this->assertStringContainsString('活動的魅力', $documentXml);
         $this->assertStringContainsString('2 / 4件', $documentXml);
         $this->assertStringContainsString('パーパス', $documentXml);
@@ -234,48 +174,37 @@ class WordReportGeneratorTest extends TestCase
     }
 
     /**
-     * 2026-08-04: 0件の軸セルは「該当する記述は見つかりませんでした」と
-     * 明示する(README 117行、PDF版の.none2と表記を揃える)。旧実装が
-     * '―'のままだった食い違いの回帰テスト。
+     * 0件の軸セルは「該当する記述は見つかりませんでした」と明示する
+     * (PDF版の.none2と表記を揃える)。
      */
     public function test_zero_matched_axis_shows_the_no_evidence_message_not_a_dash(): void
     {
         $documentXml = $this->generate($this->viewModel([
-            'brandWheelSelf' => [
-                'status' => 'success',
-                'status_message' => null,
-                'analyzed_url' => 'https://example.com/careers',
+            'brandWheelSelf' => $this->wheel([
                 'axes' => [
-                    ['key' => 'asset', 'group' => 'company_appeal', 'name' => '資産的魅力', 'matched_count' => 0, 'max_count' => 4, 'matched_sub_elements' => []],
+                    ['key' => 'asset', 'group' => 'company_appeal', 'name' => '資産的魅力', 'matched_count' => 0, 'max_count' => 4, 'matched_sub_elements' => [], 'label_only_sub_elements' => []],
                 ],
-                'key_message' => null,
-                'impression' => null,
-                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
-            ],
+            ]),
+            'subElementComparison' => app(BrandWheelSubElementComparisonComposer::class)->compose([
+                ['key' => 'asset', 'group' => 'company_appeal', 'name' => '資産的魅力', 'matched_sub_elements' => [], 'label_only_sub_elements' => []],
+            ], []),
         ]));
 
-        // '―'はドキュメント全体では他の見出し・強調(――)で正当に使われるため、
-        // グローバルな不在チェックはしない。0件セルの文言そのものを確認すれば足りる。
         $this->assertStringContainsString('該当する記述は見つかりませんでした', $documentXml);
     }
 
     public function test_does_not_render_the_brand_wheel_table_when_status_is_not_success(): void
     {
         $documentXml = $this->generate($this->viewModel([
-            'brandWheelSelf' => [
+            'brandWheelSelf' => $this->wheel([
                 'status' => 'recruit_page_unreadable',
                 'status_message' => '採用ページの内容を取得できなかったため、この項目の分析は行っていません。',
-                'analyzed_url' => 'https://example.com/careers',
-                'axes' => [],
-                'key_message' => null,
-                'impression' => null,
                 'source_pages' => ['recruit_page' => 'unreadable', 'home_page' => 'read'],
-            ],
-            'brandWheelComparison' => ['self_points' => [], 'one_point' => null],
+            ]),
+            'brandWheelComparison' => ['self_points' => [], 'competitor_points' => [], 'one_point' => null],
             'selfTotalMatched' => 0,
             'selfTotalMax' => 0,
             'subElementComparison' => app(BrandWheelSubElementComparisonComposer::class)->compose([], []),
-            'selfBrandWheelEvidenceItems' => [],
         ]));
 
         $this->assertStringContainsString('採用ページの内容を取得できなかったため', $documentXml);
@@ -313,59 +242,83 @@ class WordReportGeneratorTest extends TestCase
     public function test_includes_the_brand_wheel_framework_intro_section_even_when_brand_wheel_is_not_success(): void
     {
         $documentXml = $this->generate($this->viewModel([
-            'brandWheelSelf' => [
+            'brandWheelSelf' => $this->wheel([
                 'status' => 'insufficient_input',
                 'status_message' => 'サイトから十分な文章を読み取れなかったため、この項目の分析は行っていません。',
                 'analyzed_url' => null,
-                'axes' => [],
-                'key_message' => null,
-                'impression' => null,
                 'source_pages' => ['recruit_page' => 'absent', 'home_page' => 'read'],
-            ],
-            'brandWheelComparison' => ['self_points' => [], 'one_point' => null],
+            ]),
+            'brandWheelComparison' => ['self_points' => [], 'competitor_points' => [], 'one_point' => null],
             'selfTotalMatched' => 0,
             'selfTotalMax' => 0,
             'subElementComparison' => app(BrandWheelSubElementComparisonComposer::class)->compose([], []),
-            'selfBrandWheelEvidenceItems' => [],
         ]));
 
         $this->assertStringContainsString('採用ブランドの捉え方', $documentXml);
         $this->assertStringContainsString('読み取れなかった項目は、その魅力が『無い』という意味ではありません。', $documentXml);
     }
 
-    public function test_includes_the_evidence_section_with_verbatim_text_when_there_are_matched_items(): void
+    // ------------------------------------------------------------------
+    // 競合サイトの分析結果(2026-08-08新設)。
+    // ------------------------------------------------------------------
+
+    public function test_competitor_section_is_omitted_when_there_is_no_competitor_website(): void
     {
         $documentXml = $this->generate($this->viewModel());
 
-        $this->assertStringContainsString('サイトから読み取れた記述', $documentXml);
-        $this->assertStringContainsString('活動的魅力', $documentXml);
-        $this->assertStringContainsString('パーパス', $documentXml);
-        $this->assertStringContainsString('技術で社会の「あたり前」を支える。それが私たちの存在意義です。', $documentXml);
+        $this->assertStringNotContainsString('競合サイトの分析結果', $documentXml);
     }
 
-    public function test_omits_the_evidence_section_entirely_when_there_are_no_evidence_items(): void
-    {
-        $documentXml = $this->generate($this->viewModel(['selfBrandWheelEvidenceItems' => []]));
-
-        $this->assertStringNotContainsString('サイトから読み取れた記述', $documentXml);
-    }
-
-    // ------------------------------------------------------------------
-    // 24項目の対比(2026-08-04新設)。
-    // ------------------------------------------------------------------
-
-    public function test_comparison_section_uses_filled_and_dash_marks_not_circle_cross(): void
+    public function test_competitor_section_uses_the_same_format_as_the_self_section_when_a_competitor_exists(): void
     {
         $documentXml = $this->generate($this->comparisonViewModel());
 
-        $start = mb_strpos($documentXml, '24項目の対比');
+        $this->assertStringContainsString('競合サイトの分析結果', $documentXml);
+        $this->assertStringContainsString('就業環境', $documentXml);
+        $this->assertStringContainsString('就業環境が最も内容として充足しています', $documentXml);
+        $this->assertStringContainsString('競合サイト: 3 / 8項目', $documentXml);
+    }
+
+    // ------------------------------------------------------------------
+    // ○△－の対比表(2026-08-08、●／－の2値から3値へ変更)。
+    // ------------------------------------------------------------------
+
+    public function test_comparison_section_uses_circle_triangle_and_dash_marks(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel());
+
+        $start = mb_strpos($documentXml, '○△－の対比表');
         $this->assertNotFalse($start);
-        $end = mb_strpos($documentXml, 'サイトで触れられていなかった項目', $start) ?: mb_strlen($documentXml);
+        $end = mb_strpos($documentXml, '改善提案', $start) ?: mb_strlen($documentXml);
         $sectionXml = mb_substr($documentXml, $start, $end - $start);
 
-        $this->assertStringContainsString('●', $sectionXml);
+        $this->assertStringContainsString('○', $sectionXml);
         $this->assertStringContainsString('－', $sectionXml);
-        $this->assertStringNotContainsString('○', $sectionXml);
+        $this->assertStringNotContainsString('●', $sectionXml);
+    }
+
+    public function test_comparison_section_shows_a_triangle_mark_for_label_only_items(): void
+    {
+        $selfAxes = [
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 1, 'max_count' => 4,
+                'matched_sub_elements' => [['key' => 'purpose', 'name' => 'パーパス']],
+                'label_only_sub_elements' => [['key' => 'business_expansion', 'name' => '事業展開']]],
+        ];
+        $subElementComparison = app(BrandWheelSubElementComparisonComposer::class)->compose($selfAxes, []);
+
+        $documentXml = $this->generate($this->viewModel([
+            'brandWheelSelf' => $this->wheel(['axes' => $selfAxes]),
+            'subElementComparison' => $subElementComparison,
+            'selfTotalMatched' => 1,
+            'selfTotalMax' => 4,
+            'selfTotalLabelOnly' => 1,
+        ]));
+
+        $start = mb_strpos($documentXml, '○△－の対比表');
+        $end = mb_strpos($documentXml, '改善提案', $start) ?: mb_strlen($documentXml);
+        $sectionXml = mb_substr($documentXml, $start, $end - $start);
+
+        $this->assertStringContainsString('△', $sectionXml);
     }
 
     public function test_comparison_section_keeps_the_required_caveat_sentence_verbatim(): void
@@ -373,7 +326,7 @@ class WordReportGeneratorTest extends TestCase
         $documentXml = $this->generate($this->comparisonViewModel());
 
         $this->assertStringContainsString(
-            '－は『その魅力が無い』という意味ではなく、そのサイトでは触れられていなかった、という意味です。',
+            '該当する記述が見つからなかった項目(『魅力が無い』という意味ではありません)',
             $documentXml,
         );
     }
@@ -387,51 +340,28 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString("比較サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目", $documentXml);
     }
 
-    // ------------------------------------------------------------------
-    // サイトで触れられていなかった項目(2026-08-04新設)。
-    // ------------------------------------------------------------------
-
-    public function test_gap_section_keeps_the_required_lead_sentence_verbatim(): void
+    public function test_comparison_section_shows_the_label_only_reference_counts_separately_from_the_total(): void
     {
-        $documentXml = $this->generate($this->comparisonViewModel());
+        $documentXml = $this->generate($this->comparisonViewModel([
+            'selfTotalLabelOnly' => 2,
+            'competitorTotalLabelOnly' => 4,
+        ]));
 
-        $this->assertStringContainsString(
-            '書かれていないことが弱みという意味ではありません。候補者が2つのサイトを見比べたとき、'
-            .'その情報を比較サイト側でしか得られない、という事実を示しています。',
-            $documentXml,
-        );
-    }
-
-    public function test_gap_section_always_shows_section_b_even_when_there_are_zero_self_only_items(): void
-    {
-        $documentXml = $this->generate($this->comparisonViewModel());
-
-        $this->assertStringContainsString('御社のサイトにあり、比較サイトでは触れられていなかった項目', $documentXml);
-        $this->assertStringContainsString('該当する項目はありませんでした', $documentXml);
-    }
-
-    public function test_gap_section_shows_a_fallback_message_when_there_is_no_competitor(): void
-    {
-        $documentXml = $this->generate($this->viewModel());
-
-        $this->assertStringContainsString('比較サイトが指定されていないため', $documentXml);
+        $this->assertStringContainsString('△自社 2件', $documentXml);
+        $this->assertStringContainsString('△比較 4件', $documentXml);
     }
 
     // ------------------------------------------------------------------
-    // 改善提案(2026-08-04新設、ブランド・ホイール起点)。
+    // 改善提案。
     // ------------------------------------------------------------------
 
-    public function test_improvement_section_keeps_both_required_sentences_verbatim(): void
+    public function test_improvement_section_keeps_the_required_sentence_verbatim(): void
     {
         $documentXml = $this->generate($this->comparisonViewModel());
 
         $this->assertStringContainsString(
             'なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、'
             .'まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。',
-            $documentXml,
-        );
-        $this->assertStringContainsString(
-            'いずれもサイトの作りに関するもので、上の『何を書くか』とは別の話です。',
             $documentXml,
         );
     }
@@ -446,12 +376,23 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString('記述が見つかりませんでした', $documentXml);
     }
 
-    public function test_improvement_section_never_offers_comparing_three_to_five_competitor_sites(): void
+    /**
+     * 旧CTA「他社比較(3〜5社)」は改善提案ページの個別項目カードとしては
+     * 出さない ―― 最終ページのCTAとしては意図的に「3〜5社の競合他社」を
+     * 案内するようになった(2026-08-08)ため、このアサーションは改善提案
+     * セクションだけに範囲を絞る。
+     */
+    public function test_improvement_section_never_pitches_the_competitor_comparison_service_inline(): void
     {
         $documentXml = $this->generate($this->comparisonViewModel());
 
-        $this->assertStringNotContainsString('他社比較', $documentXml);
-        $this->assertStringNotContainsString('3〜5社', $documentXml);
+        $start = mb_strpos($documentXml, '改善提案');
+        $this->assertNotFalse($start);
+        $end = mb_strpos($documentXml, 'サイトの改善をすれば', $start) ?: mb_strlen($documentXml);
+        $sectionXml = mb_substr($documentXml, $start, $end - $start);
+
+        $this->assertStringNotContainsString('他社比較', $sectionXml);
+        $this->assertStringNotContainsString('3〜5社', $sectionXml);
     }
 
     public function test_improvement_section_shows_a_fallback_note_when_there_is_no_competitor(): void
@@ -462,23 +403,29 @@ class WordReportGeneratorTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // ここから先は、サイトの外の話です(2026-08-04新設)。
+    // サイトの改善をすれば課題が解決するとは限りません(最終ページ、
+    // 2026-08-08新文言)。
     // ------------------------------------------------------------------
 
-    public function test_final_section_uses_the_new_heading_and_never_offers_the_old_site_comparison_cta(): void
+    public function test_final_section_uses_the_new_heading_and_copy(): void
     {
         $documentXml = $this->generate($this->viewModel());
 
-        $this->assertStringContainsString('ここから先は、サイトの外の話です', $documentXml);
-        $this->assertStringNotContainsString('他社比較', $documentXml);
+        $this->assertStringContainsString('サイトの改善をすれば課題が解決するとは限りません', $documentXml);
+        $this->assertStringContainsString(
+            '弊社にてさらに幅を広げ、3〜5社の競合他社のサイトと比較した結果をもとにどこに御社課題があるかをディスカッションしませんか。',
+            $documentXml,
+        );
+        $this->assertStringContainsString('ご相談・お問い合わせ', $documentXml);
+        $this->assertStringContainsString('担当営業までご連絡ください。', $documentXml);
     }
 
-    public function test_final_section_includes_the_three_block_structure(): void
+    public function test_final_section_never_uses_the_old_heading_or_three_block_structure(): void
     {
         $documentXml = $this->generate($this->viewModel());
 
-        $this->assertStringContainsString('書かれていない項目には2つの意味があります', $documentXml);
-        $this->assertStringContainsString('その切り分けはサイトからはできません', $documentXml);
-        $this->assertStringContainsString('私たちは採用ブランドの設計からご一緒します', $documentXml);
+        $this->assertStringNotContainsString('ここから先は、サイトの外の話です', $documentXml);
+        $this->assertStringNotContainsString('書かれていない項目には2つの意味があります', $documentXml);
+        $this->assertStringNotContainsString('私たちは採用ブランドの設計からご一緒します', $documentXml);
     }
 }

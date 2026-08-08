@@ -16,15 +16,16 @@ class BrandWheelSubElementComparisonComposerTest extends TestCase
     }
 
     /**
-     * @return list<array{key: string, group: string, name: string, matched_sub_elements: list<array{key: string, name: string}>}>
+     * @return list<array{key: string, group: string, name: string, matched_sub_elements: list<array{key: string, name: string}>, label_only_sub_elements: list<array{key: string, name: string}>}>
      */
-    private function axesWithMatches(array $matchedByAxisKey): array
+    private function axesWithMatches(array $matchedByAxisKey, array $labelOnlyByAxisKey = []): array
     {
         $axesConfig = (array) config('brand_wheel.axes', []);
         $axes = [];
 
         foreach ($axesConfig as $axisKey => $definition) {
             $matchedKeys = $matchedByAxisKey[$axisKey] ?? [];
+            $labelOnlyKeys = $labelOnlyByAxisKey[$axisKey] ?? [];
             $subElements = (array) $definition['sub_elements'];
 
             $axes[] = [
@@ -34,6 +35,10 @@ class BrandWheelSubElementComparisonComposerTest extends TestCase
                 'matched_sub_elements' => array_values(array_map(
                     fn (string $k) => ['key' => $k, 'name' => $subElements[$k]],
                     $matchedKeys,
+                )),
+                'label_only_sub_elements' => array_values(array_map(
+                    fn (string $k) => ['key' => $k, 'name' => $subElements[$k]],
+                    $labelOnlyKeys,
                 )),
             ];
         }
@@ -98,29 +103,51 @@ class BrandWheelSubElementComparisonComposerTest extends TestCase
     }
 
     /**
-     * a(競合にあり自社に無い)+b(自社にあり競合に無い)+c(どちらにも無い)+
-     * 共通(両方に該当)=24になることを検算する
-     * (docs/lead-report-layout/README.md「A+B+C+共通=24になることを検算する」)。
+     * 2026-08-08: ○△－の3値化。self_state/competitor_stateは
+     * 'matched'(○)|'label_only'(△)|'none'(－)のいずれかを返す
+     * (self_matched/competitor_matchedは○のみtrueのまま、改善提案の
+     * 選定ロジック用に意味・値とも変更しない)。判定はこのクラス(プログラム側)
+     * のみが行い、AIには一切3段階を判定させない(ユーザー指摘)。
      */
-    public function test_split_by_gap_accounts_for_all_twenty_four_items_including_the_common_remainder(): void
+    public function test_self_state_and_competitor_state_reflect_matched_label_only_and_none_independently(): void
     {
-        $selfAxes = $this->axesWithMatches(['will_activity' => ['purpose', 'business_expansion'], 'asset' => ['brand_recognition']]);
-        $competitorAxes = $this->axesWithMatches(['will_activity' => ['purpose'], 'personality' => ['leadership']]);
+        $selfAxes = $this->axesWithMatches(
+            ['will_activity' => ['purpose']],
+            ['will_activity' => ['business_expansion']],
+        );
+        $competitorAxes = $this->axesWithMatches(
+            [],
+            ['will_activity' => ['purpose']],
+        );
 
         $items = $this->composer->compose($selfAxes, $competitorAxes);
-        $split = $this->composer->splitByGap($items);
+        $byKey = collect($items)->keyBy('sub_key');
 
-        $common = count(array_filter($items, fn (array $i) => $i['self_matched'] && $i['competitor_matched']));
+        // purpose: 自社は○(matched)、競合は△(label_only)。
+        $this->assertSame('matched', $byKey['purpose']['self_state']);
+        $this->assertTrue($byKey['purpose']['self_matched']);
+        $this->assertSame('label_only', $byKey['purpose']['competitor_state']);
+        $this->assertFalse($byKey['purpose']['competitor_matched']);
 
-        $this->assertCount(24, $items);
-        $this->assertSame(24, count($split['a']) + count($split['b']) + count($split['c']) + $common);
+        // business_expansion: 自社は△(label_only)、競合は－(none)。
+        $this->assertSame('label_only', $byKey['business_expansion']['self_state']);
+        $this->assertFalse($byKey['business_expansion']['self_matched']);
+        $this->assertSame('none', $byKey['business_expansion']['competitor_state']);
 
-        // 具体的な内訳も確認する: purposeは両方に該当するので共通(a/b/cいずれにも含まれない)。
-        $this->assertFalse(collect($split['a'])->contains('sub_key', 'purpose'));
-        $this->assertFalse(collect($split['b'])->contains('sub_key', 'purpose'));
-        // leadershipは競合のみ該当 → a。
-        $this->assertTrue(collect($split['a'])->contains('sub_key', 'leadership'));
-        // business_expansionは自社のみ該当 → b。
-        $this->assertTrue(collect($split['b'])->contains('sub_key', 'business_expansion'));
+        // project_initiative: どちらにも該当しないため－(none)。
+        $this->assertSame('none', $byKey['project_initiative']['self_state']);
+        $this->assertSame('none', $byKey['project_initiative']['competitor_state']);
+    }
+
+    public function test_empty_label_only_sub_elements_results_in_all_items_being_matched_or_none(): void
+    {
+        $items = $this->composer->compose(
+            $this->axesWithMatches(['will_activity' => ['purpose']]),
+            $this->axesWithMatches([]),
+        );
+
+        $states = array_unique(array_column($items, 'self_state'));
+        sort($states);
+        $this->assertSame(['matched', 'none'], $states);
     }
 }

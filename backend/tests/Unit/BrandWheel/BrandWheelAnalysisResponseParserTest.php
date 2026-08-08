@@ -476,47 +476,96 @@ class BrandWheelAnalysisResponseParserTest extends TestCase
         }
     }
 
-    public function test_key_message_and_impression_are_parsed_when_present(): void
+    public function test_key_message_is_parsed_when_present(): void
     {
         $input = $this->makeInput(recruitBody: '本文。');
 
         $result = $this->parser->parse([
             'sub_elements' => $this->completeSubElements(),
             'key_message' => 'このページから読み取れるキーメッセージ。',
-            'impression' => 'このページが与える印象は、事実の記載が中心という印象です。',
+            'impression' => ['事実の記載が中心という印象です。'],
         ], $input, 'openai', 'gpt-4o-mini', false, 'v2');
 
         $this->assertSame('このページから読み取れるキーメッセージ。', $result->keyMessage);
-        $this->assertSame('このページが与える印象は、事実の記載が中心という印象です。', $result->impression);
     }
 
-    public function test_key_message_and_impression_are_null_when_absent(): void
+    /**
+     * 2026-08-08: impressionはstring(1〜3文)からlist<string>(2〜4件)へ
+     * 変更された(prompt_version v7〜)。各項目は個別にevidence実在検証の
+     * 対象外(key_messageと同じ、サイト全体の要約・印象のため)だが、
+     * forbidden_phrasesチェックは項目ごとに独立して適用される。
+     */
+    public function test_impression_is_parsed_as_a_list_of_strings_when_present(): void
+    {
+        $input = $this->makeInput(recruitBody: '本文。');
+
+        $result = $this->parser->parse([
+            'sub_elements' => $this->completeSubElements(),
+            'impression' => ['事実の記載が中心という印象です。', '情緒的な訴求は控えめです。'],
+        ], $input, 'openai', 'gpt-4o-mini', false, 'v7');
+
+        $this->assertSame(['事実の記載が中心という印象です。', '情緒的な訴求は控えめです。'], $result->impression);
+    }
+
+    public function test_key_message_is_null_and_impression_is_an_empty_list_when_absent(): void
     {
         $input = $this->makeInput(recruitBody: '本文。');
 
         $result = $this->parser->parse(['sub_elements' => $this->completeSubElements()], $input, 'openai', 'gpt-4o-mini', false, 'v2');
 
         $this->assertNull($result->keyMessage);
-        $this->assertNull($result->impression);
+        $this->assertSame([], $result->impression);
+    }
+
+    /**
+     * impressionが文字列(旧v6以前の形式)やnullなど配列でない場合は、
+     * 例外を投げず空配列として扱う(3-3の縮退方針と同じ、AIの出力形式が
+     * 想定と違っても診断全体を止めない)。
+     */
+    public function test_impression_is_an_empty_list_when_not_an_array(): void
+    {
+        $input = $this->makeInput(recruitBody: '本文。');
+
+        $result = $this->parser->parse([
+            'sub_elements' => $this->completeSubElements(),
+            'impression' => 'これは配列ではない旧形式の文字列です。',
+        ], $input, 'openai', 'gpt-4o-mini', false, 'v6');
+
+        $this->assertSame([], $result->impression);
     }
 
     /**
      * impression/key_messageは社外に出る文章のため、evidence実在検証とは別に
      * forbidden_phrasesを含む場合はnullにする(プロンプト側の指示だけに
      * 頼らない、AIの出力を無条件に信用しないという既存方針の適用、
-     * 2026-08-03のユーザー指摘)。
+     * 2026-08-03のユーザー指摘)。2026-08-08: impressionは配列化されたため、
+     * 禁止語を含む項目だけを個別に落とす ―― 1件が禁止語を含んでいても
+     * 他の項目まで巻き添えで捨てない(下位要素の破棄が1件ずつ独立している
+     * 既存方針と同じ)。
      */
-    public function test_impression_containing_a_forbidden_phrase_is_discarded_to_null(): void
+    public function test_impression_items_containing_a_forbidden_phrase_are_dropped_individually(): void
     {
         $input = $this->makeInput(recruitBody: '本文。');
         $forbiddenPhrase = ((array) config('brand_wheel.forbidden_phrases'))[0];
 
         $result = $this->parser->parse([
             'sub_elements' => $this->completeSubElements(),
-            'impression' => "この記述は{$forbiddenPhrase}という印象です。",
-        ], $input, 'openai', 'gpt-4o-mini', false, 'v2');
+            'impression' => ["この記述は{$forbiddenPhrase}という印象です。", '事実の記載が中心という印象です。'],
+        ], $input, 'openai', 'gpt-4o-mini', false, 'v7');
 
-        $this->assertNull($result->impression);
+        $this->assertSame(['事実の記載が中心という印象です。'], $result->impression);
+    }
+
+    public function test_impression_items_that_are_not_strings_or_are_blank_are_excluded(): void
+    {
+        $input = $this->makeInput(recruitBody: '本文。');
+
+        $result = $this->parser->parse([
+            'sub_elements' => $this->completeSubElements(),
+            'impression' => ['有効な印象です。', '   ', null, 123, ''],
+        ], $input, 'openai', 'gpt-4o-mini', false, 'v7');
+
+        $this->assertSame(['有効な印象です。'], $result->impression);
     }
 
     public function test_key_message_containing_a_forbidden_phrase_is_also_discarded_to_null(): void
@@ -623,18 +672,18 @@ class BrandWheelAnalysisResponseParserTest extends TestCase
         $this->assertSame('duplicate_evidence', $financialBenefit->discardedSubElements[0]->reason);
     }
 
-    public function test_blank_key_message_and_impression_are_normalized_to_null(): void
+    public function test_blank_key_message_is_normalized_to_null_and_empty_impression_list_stays_empty(): void
     {
         $input = $this->makeInput(recruitBody: '本文。');
 
         $result = $this->parser->parse([
             'sub_elements' => $this->completeSubElements(),
             'key_message' => '   ',
-            'impression' => '',
-        ], $input, 'openai', 'gpt-4o-mini', false, 'v2');
+            'impression' => [],
+        ], $input, 'openai', 'gpt-4o-mini', false, 'v7');
 
         $this->assertNull($result->keyMessage);
-        $this->assertNull($result->impression);
+        $this->assertSame([], $result->impression);
     }
 
     /**

@@ -71,8 +71,18 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
      * 妥当だが、リンクラベルは定義上ナビゲーションであり長さに関わらず根拠に
      * ならない。BrandWheelAnalysisResponseParserのlabel_only_evidence判定を
      * 見出し用(20文字未満のみ破棄)とリンクラベル用(長さ不問で破棄)に分離した。
+     *
+     * v7(2026-08-08): impressionをstring(1〜3文)からlist<string>(2〜4件)へ
+     * 変更した。リード向けレポートの再編で、このページから読み取れた根拠
+     * (下位要素の該当有無)と、AIが読んで受け取った印象を分けて見せる方針に
+     * したところ、旧string版は「…具体的な社会貢献活動や競争力についての
+     * 情報は読み取れませんでした」のように診断結果と重複した提言調になって
+     * おり、印象だけを述べる項目として機能していなかった(ユーザー指摘)。
+     * 候補者が受け取る印象を、評価・提言を含めず列挙する形に変更する。
+     * 出力構造が変わるため、v6以前の結果はinput_hashの再利用対象から
+     * 自動的に外れる。
      */
-    public const string PROMPT_VERSION = 'v6';
+    public const string PROMPT_VERSION = 'v7';
 
     public function __construct(
         private readonly BrandWheelAnalysisResponseParser $parser,
@@ -157,13 +167,16 @@ TXT;
 
         $keyMessageSection = <<<TXT
 
-【key_message・impression(リード向け画面下部に表示する2項目)】
+【key_message・impression(リード向けレポートに表示する2項目)】
 - key_message: このページ(採用ページ・トップページ)の記述から読み取れるキーメッセージを
   1〜2文で。「何を伝えようとしているページか」という要約であり、下位要素の該当有無とは
   別の、ページ全体を通した読み取りです。
-- impression: このページが与える印象を1〜3文で。禁止語を使わず、読み取れたことと
-  読み取れなかったことの両方を事実として述べてください(教師データの分析文体に揃える)。
-- いずれもサイトに実在する記述の要約・言い換えとして書いてください(evidence抜粋のような
+- impression: このページを読んだ候補者が受け取るであろう印象を、2〜4件の短いフレーズで
+  列挙してください(1件につき1つの印象、文ではなくフレーズ単位)。下位要素の該当有無や
+  「〜という情報は読み取れませんでした」のような診断結果の言い換えにはしないでください。
+  良い/悪いの評価や改善の提言も含めないでください ―― 候補者がこのページから何を感じ
+  取るか、事実として列挙するだけにとどめてください。
+- いずれもサイトに実在する記述から受け取れる範囲で書いてください(evidence抜粋のような
   原文一致検証は行いませんが、原文に無い内容の創作はしないでください)。
 
 TXT;
@@ -175,10 +188,12 @@ TXT;
   },
   "core_value": {"readable": true, "evidence": "原文からの抜粋"},
   "key_message": "string",
-  "impression": "string",
+  "impression": ["string", "string"],
   "quality_notes": {"consistency": "string", "credibility": "string", "distance": "string", "differentiation": "string", "corporate_alignment": "string"},
   "cautions": ["string"]
 }
+
+impressionは2〜4件の配列にしてください(1件未満・5件以上にはしないでください)。
 
 sub_elementsオブジェクトのキーは、下記【下位要素チェックリスト】に列挙した24個の
 キーをすべて含めてください(過不足なく、それ以外のキーは追加しないでください)。
@@ -403,7 +418,13 @@ PROMPT;
                     'additionalProperties' => false,
                 ],
                 'key_message' => ['type' => ['string', 'null']],
-                'impression' => ['type' => ['string', 'null']],
+                // 2026-08-08(v7): 1〜3文の地の文からlist<string>(2〜4件、
+                // 候補者が受け取る印象のフレーズ列挙)へ変更。件数の強制は
+                // strict schemaのminItems/maxItemsに頼らず(サポート範囲が
+                // 不確実なため)、プロンプト側の指示とBrandWheelAnalysis
+                // ResponseParserでの受け入れ処理に任せる(cautionsと同じ
+                // type:array/items:{type:string}のみの定義に揃える)。
+                'impression' => ['type' => 'array', 'items' => ['type' => 'string']],
                 'quality_notes' => [
                     'type' => 'object',
                     'properties' => array_fill_keys($qualityDimensionKeys, ['type' => ['string', 'null']]),

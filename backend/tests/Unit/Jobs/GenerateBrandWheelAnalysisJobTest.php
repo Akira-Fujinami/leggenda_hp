@@ -230,7 +230,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
                         ]),
                         'core_value' => ['readable' => false, 'evidence' => null],
                         'key_message' => null,
-                        'impression' => null,
+                        'impression' => [],
                         'quality_notes' => [],
                         'cautions' => [],
                     ])]],
@@ -254,7 +254,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $this->assertSame('success', $record->status);
         $this->assertFalse($record->is_mock);
         $this->assertSame('openai', $record->provider);
-        $this->assertSame('v6', $record->prompt_version);
+        $this->assertSame('v7', $record->prompt_version);
         $this->assertSame(120, $record->usage_input_tokens);
         $this->assertSame(40, $record->usage_output_tokens);
         // 実在しない抜粋は検証で破棄されるため、unreadのまま(AIの自己申告を信用しない)。
@@ -341,7 +341,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
                     'sub_elements' => $this->completeSubElements(),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],
@@ -381,7 +381,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
                     'sub_elements' => $this->completeSubElements(),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],
@@ -433,7 +433,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
                     'sub_elements' => $this->completeSubElements(),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],
@@ -767,7 +767,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
                     ]),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],
@@ -837,7 +837,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
                     ]),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],
@@ -876,7 +876,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
                     ]),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],
@@ -960,7 +960,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
                     'sub_elements' => $this->completeSubElements(),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],

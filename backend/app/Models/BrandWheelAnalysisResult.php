@@ -31,6 +31,13 @@ class BrandWheelAnalysisResult extends Model
     {
         return [
             'axes' => 'array',
+            // 2026-08-08(prompt_version v7〜): impressionをstringから
+            // list<string>へ変更。既存DB列はtext型のまま(マイグレーション
+            // 不要 ―― array castが内部でjson_encode/decodeするだけ)。
+            // v6以前に生成された既存行(plain textのため有効なJSONではない)は
+            // json_decode失敗でnullとして読み出される(例外は投げない、
+            // PROMPT_VERSIONの更新で再利用対象から既に外れているため実害なし)。
+            'impression' => 'array',
             'core_value_readable' => 'boolean',
             'quality_dimension_notes' => 'array',
             'cautions' => 'array',

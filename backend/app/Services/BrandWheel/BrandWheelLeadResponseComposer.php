@@ -23,16 +23,31 @@ use Illuminate\Support\Collection;
  * evidence(原文の抜粋)は一切含めない ―― 社員向けメールには必要だが、
  * 画面に出す必要はなく、含めればそれだけ他社サイトの本文が外部に出る
  * (2026-08-03のユーザー指摘)。
+ *
+ * 2026-08-08: レポートの○△－対比表(3値化)対応で、axes各要素に
+ * label_only_sub_elements(見出し・リンクラベルのみを根拠に破棄された
+ * ―― BrandWheelDiscardedSubElement::reason==='label_only_evidence')を
+ * 追加した。evidence文字列自体は従来どおり含めない(key/nameのみ、
+ * matched_sub_elementsと同じ形)ため、画面側の非開示方針は崩していない。
+ * 既存フィールドは一切変更していないため、frontend/src/features/lead/は
+ * 無改修のまま動く(追加フィールドは画面側が単に参照しないだけ)。
+ *
+ * impressionは配列化した(OpenAiBrandWheelAnalysisProvider v7〜、
+ * 候補者が受け取る印象を2〜4件の列挙にする変更)。画面(frontend)は
+ * 依然としてimpressionを1つの文字列として表示する設計のため、既存の
+ * 'impression'キーは配列を読点で連結した文字列のまま返し(画面は無改修)、
+ * レポート専用に配列そのものを'impression_items'として追加する。
  */
 class BrandWheelLeadResponseComposer
 {
     /**
-     * @return array{status: string, status_message: ?string, analyzed_url: string, axes: list<array<string, mixed>>, key_message: ?string, impression: ?string, source_pages: array<string, mixed>}
+     * @return array{status: string, status_message: ?string, analyzed_url: string, axes: list<array<string, mixed>>, key_message: ?string, impression: ?string, impression_items: list<string>, source_pages: array<string, mixed>}
      */
     public function compose(?BrandWheelAnalysisResult $record, Website $website): array
     {
         $status = $this->resolveStatus($record);
         $isSuccess = $status === 'success';
+        $impressionItems = $isSuccess ? array_values((array) ($record?->impression ?? [])) : [];
 
         return [
             'status' => $status,
@@ -40,7 +55,8 @@ class BrandWheelLeadResponseComposer
             'analyzed_url' => (string) $website->normalized_url,
             'axes' => $isSuccess && $record !== null ? $this->buildAxes($record) : [],
             'key_message' => $isSuccess ? $record?->key_message : null,
-            'impression' => $isSuccess ? $record?->impression : null,
+            'impression' => $impressionItems !== [] ? implode('、', $impressionItems) : null,
+            'impression_items' => $impressionItems,
             'source_pages' => (array) ($record?->source_pages ?? ['recruit_page' => null, 'home_page' => null]),
         ];
     }
@@ -85,7 +101,7 @@ class BrandWheelLeadResponseComposer
     }
 
     /**
-     * @return list<array{key: string, group: string, name: string, matched_count: int, max_count: int, matched_sub_elements: list<array{key: string, name: string}>}>
+     * @return list<array{key: string, group: string, name: string, matched_count: int, max_count: int, matched_sub_elements: list<array{key: string, name: string}>, label_only_sub_elements: list<array{key: string, name: string}>}>
      */
     private function buildAxes(BrandWheelAnalysisResult $record): array
     {
@@ -98,6 +114,8 @@ class BrandWheelLeadResponseComposer
             $subElementNames = (array) ($definition['sub_elements'] ?? []);
             $axisResult = $resultsByKey->get($axisKey);
             $matched = is_array($axisResult) ? (array) ($axisResult['matched_sub_elements'] ?? []) : [];
+            $discarded = is_array($axisResult) ? (array) ($axisResult['discarded_sub_elements'] ?? []) : [];
+            $labelOnly = array_values(array_filter($discarded, fn (array $d) => ($d['reason'] ?? null) === 'label_only_evidence'));
 
             $axes[] = [
                 'key' => $axisKey,
@@ -112,6 +130,12 @@ class BrandWheelLeadResponseComposer
                     'key' => $m['key'],
                     'name' => $subElementNames[$m['key']] ?? $m['key'],
                 ], $matched)),
+                // ○△－対比表の△用(2026-08-08)。evidence文字列は含めない
+                // (matched_sub_elementsと同じ非開示方針)。
+                'label_only_sub_elements' => array_values(array_map(fn (array $d) => [
+                    'key' => $d['key'],
+                    'name' => $subElementNames[$d['key']] ?? $d['key'],
+                ], $labelOnly)),
             ];
         }
 

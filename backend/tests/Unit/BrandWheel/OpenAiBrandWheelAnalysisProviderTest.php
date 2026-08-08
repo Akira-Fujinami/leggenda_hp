@@ -61,7 +61,7 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
                     'sub_elements' => $this->completeSubElements(),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],
@@ -129,7 +129,7 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
                     'sub_elements' => $this->completeSubElements(),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],
@@ -157,7 +157,7 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
                     'sub_elements' => $this->completeSubElements(),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],
@@ -186,6 +186,41 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
 
             return count($subElementsRequired) === 24
                 && $expectedKeys === array_values(array_intersect($expectedKeys, $subElementsRequired));
+        });
+    }
+
+    /**
+     * 2026-08-08(v7〜): impressionのJSON Schemaが['type' => ['string','null']]
+     * から['type' => 'array', 'items' => ['type' => 'string']]へ変更された
+     * (1〜3文の地の文から2〜4件の短いフレーズ列挙への変更に伴う)。
+     * impressionはrequiredのまま(nullは許容せず、空配列で表現する)。
+     */
+    public function test_response_format_schema_defines_impression_as_an_array_of_strings(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        Http::fake([
+            'api.openai.com/*' => Http::response([
+                'choices' => [['message' => ['content' => json_encode([
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => [],
+                    'quality_notes' => [],
+                    'cautions' => [],
+                ])]]],
+                'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1],
+            ], 200),
+        ]);
+
+        (new OpenAiBrandWheelAnalysisProvider(new BrandWheelAnalysisResponseParser))->analyze($this->makeInput());
+
+        Http::assertSent(function ($request) {
+            $schema = $request->data()['response_format']['json_schema']['schema'] ?? [];
+            $impressionSchema = $schema['properties']['impression'] ?? [];
+            $required = $schema['required'] ?? [];
+
+            return $impressionSchema === ['type' => 'array', 'items' => ['type' => 'string']]
+                && in_array('impression', $required, true);
         });
     }
 }

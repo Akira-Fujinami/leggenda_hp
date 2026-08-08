@@ -41,6 +41,7 @@ class BrandWheelLeadResponseComposerTest extends TestCase
         $this->assertNotNull($result['status_message']);
         $this->assertNull($result['key_message']);
         $this->assertNull($result['impression']);
+        $this->assertSame([], $result['impression_items']);
     }
 
     public function test_db_status_error_resolves_to_error_regardless_of_other_fields(): void
@@ -130,7 +131,8 @@ class BrandWheelLeadResponseComposerTest extends TestCase
             'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
             'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'テスト文言']]]],
             'key_message' => 'メッセージ',
-            'impression' => '印象',
+            // 2026-08-08: impressionはstringからlist<string>へ変更。
+            'impression' => ['印象その1', '印象その2'],
         ]);
 
         $result = $this->composer()->compose($record, $this->website());
@@ -139,7 +141,58 @@ class BrandWheelLeadResponseComposerTest extends TestCase
         $this->assertNull($result['status_message']);
         $this->assertNotEmpty($result['axes']);
         $this->assertSame('メッセージ', $result['key_message']);
-        $this->assertSame('印象', $result['impression']);
+        // 'impression'は画面(frontend)向けに従来通り読点連結の文字列のまま、
+        // 'impression_items'はレポート向けに配列そのものを新たに公開する
+        // (2026-08-08)。
+        $this->assertSame('印象その1、印象その2', $result['impression']);
+        $this->assertSame(['印象その1', '印象その2'], $result['impression_items']);
+    }
+
+    public function test_impression_items_is_empty_when_the_record_has_no_impression(): void
+    {
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'status' => 'success',
+            'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'テスト文言']]]],
+        ]);
+
+        $result = $this->composer()->compose($record, $this->website());
+
+        $this->assertNull($result['impression']);
+        $this->assertSame([], $result['impression_items']);
+    }
+
+    /**
+     * 2026-08-08: axes各要素に、見出し・リンクラベルのみを根拠に破棄された
+     * (discarded_sub_elements.reason==='label_only_evidence')label_only_sub_elements
+     * を追加した。○△－対比表の△表示用。evidence文字列自体は
+     * matched_sub_elementsと同じく含めない(key/nameのみ)。
+     */
+    public function test_axes_expose_label_only_sub_elements_without_their_evidence_text(): void
+    {
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'status' => 'success',
+            'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            'axes' => [[
+                'axis_key' => 'will_activity',
+                'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']],
+                'discarded_sub_elements' => [
+                    ['key' => 'business_expansion', 'evidence' => '事業紹介', 'reason' => 'label_only_evidence'],
+                    ['key' => 'project_initiative', 'evidence' => '存在しない抜粋', 'reason' => 'evidence_not_found'],
+                ],
+            ]],
+        ]);
+
+        $result = $this->composer()->compose($record, $this->website());
+        $axis = collect($result['axes'])->firstWhere('key', 'will_activity');
+
+        // evidence_not_foundはlabel_only_sub_elementsに含まれない。
+        $this->assertCount(1, $axis['label_only_sub_elements']);
+        $this->assertSame('business_expansion', $axis['label_only_sub_elements'][0]['key']);
+        $this->assertArrayNotHasKey('evidence', $axis['label_only_sub_elements'][0]);
+
+        $raw = json_encode($result, JSON_UNESCAPED_UNICODE);
+        $this->assertStringNotContainsString('事業紹介', $raw);
     }
 
     public function test_max_count_is_derived_from_config_sub_element_count_not_hardcoded(): void

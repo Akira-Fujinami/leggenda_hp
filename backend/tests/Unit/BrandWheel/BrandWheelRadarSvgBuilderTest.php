@@ -159,4 +159,30 @@ class BrandWheelRadarSvgBuilderTest extends TestCase
         $this->assertStringContainsString('<svg', $svg);
         $this->assertStringContainsString('</svg>', $svg);
     }
+
+    /**
+     * 2026-08-08: build()に$primaryColorを追加した ―― 競合単独ページ
+     * (4ページ目)を自社色(青)固定ではなく競合色(オレンジ)で描く必要が
+     * あるため(常に自社色で描かれてしまう不具合の修正)。既定値は
+     * 変えず、明示的に渡した色が使われることを確認する。
+     */
+    public function test_primary_color_can_be_overridden_to_draw_a_single_series_in_the_competitor_color(): void
+    {
+        $axes = [
+            $this->axis('will_activity', '活動的魅力', 3, 4),
+            $this->axis('asset', '資産的魅力', 2, 4),
+            $this->axis('personality', '経営スタイル', 1, 4),
+        ];
+
+        $svg = $this->builder->build($axes, null, BrandWheelRadarSvgBuilder::competitorColor());
+
+        $this->assertStringContainsString('#E95446', $svg);
+        $this->assertStringNotContainsString('#3A3FC0', $svg);
+    }
+
+    public function test_self_color_and_competitor_color_expose_the_fixed_corporate_color_constants(): void
+    {
+        $this->assertSame('#3A3FC0', BrandWheelRadarSvgBuilder::selfColor());
+        $this->assertSame('#E95446', BrandWheelRadarSvgBuilder::competitorColor());
+    }
 }

@@ -52,12 +52,15 @@ class BrandWheelRadarSvgBuilder
     private const string FONT_FAMILY = 'IPAexGothic, sans-serif';
 
     /**
-     * @param  list<array{key: string, name: string, matched_count: int, max_count: int}>  $axes  自社(グリッド・軸の基準)
-     * @param  ?list<array{key: string, name: string, matched_count: int, max_count: int}>  $competitorAxes  競合。status!=='success'ならnullを渡す(ここでは判定しない、呼び出し側の責務)
+     * @param  list<array{key: string, name: string, matched_count: int, max_count: int}>  $axes  グリッド・軸の基準にするデータ系列(自社ページ/競合ページ単独図では、その主体自身のaxes)
+     * @param  ?list<array{key: string, name: string, matched_count: int, max_count: int}>  $secondaryAxes  重ねて描く2系列目。無ければnull(ここでは判定しない、呼び出し側の責務)
+     * @param  string  $primaryColor  $axesの描画色。既定は自社色(#3A3FC0) ―― 競合単独ページで呼ぶ場合はCOMPETITOR_COLORを渡す(2026-08-08、競合単独図でも自社色で描かれてしまう不具合の修正)
+     * @param  ?string  $secondaryColor  $secondaryAxesの描画色。nullなら競合色(#E95446)
      */
-    public function build(array $axes, ?array $competitorAxes): string
+    public function build(array $axes, ?array $secondaryAxes = null, string $primaryColor = self::SELF_COLOR, ?string $secondaryColor = null): string
     {
         $count = count($axes);
+        $secondaryColor ??= self::COMPETITOR_COLOR;
 
         $svg = sprintf(
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d">',
@@ -70,16 +73,26 @@ class BrandWheelRadarSvgBuilder
         }
 
         $svg .= $this->grid($axes, $count);
-        $svg .= $this->series($axes, self::SELF_COLOR);
+        $svg .= $this->series($axes, $primaryColor);
 
-        if ($competitorAxes !== null) {
-            $svg .= $this->series($competitorAxes, self::COMPETITOR_COLOR);
+        if ($secondaryAxes !== null) {
+            $svg .= $this->series($secondaryAxes, $secondaryColor);
         }
 
         $svg .= $this->labels($axes, $count);
         $svg .= '</svg>';
 
         return $svg;
+    }
+
+    public static function selfColor(): string
+    {
+        return self::SELF_COLOR;
+    }
+
+    public static function competitorColor(): string
+    {
+        return self::COMPETITOR_COLOR;
     }
 
     /**

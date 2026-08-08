@@ -57,7 +57,7 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
                     ]),
                     'core_value' => ['readable' => false, 'evidence' => null],
                     'key_message' => null,
-                    'impression' => null,
+                    'impression' => [],
                     'quality_notes' => [],
                     'cautions' => [],
                 ])]]],
