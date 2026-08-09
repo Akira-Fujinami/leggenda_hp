@@ -24,7 +24,14 @@ class BrandWheelImprovementFocusComposer
 {
     private const MAX_ITEMS = 3;
 
-    private const EVIDENCE_MAX_CHARS = 110;
+    // 2026-08-10: 110→60に縮小。カードのheight固定を廃止しauto(内容に追従)に
+    // した後も、3枚とも上限文字数に近い引用が並ぶ実データ(実測)で
+    // ページ下部の余白が190mm上限の残り2.6mmまで縮む不具合が見つかった
+    // (ユーザー指摘の「p6の余裕が8.5mm」よりさらに厳しい真の最悪ケース、
+    // 110字上限では不十分だった)。70字でも8.5mmで不合格、60字で実PDF確認
+    // 14.4mmを確保(50字でも同じ14.4mmだったため、より多く引用を見せられる
+    // 60字を採用)。3枚とも60字ちょうどの引用が並ぶケースを実データ検証済み。
+    private const EVIDENCE_MAX_CHARS = 60;
 
     /**
      * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, self_matched: bool, competitor_matched: bool}>  $comparisonItems  BrandWheelSubElementComparisonComposer::compose()の戻り値
