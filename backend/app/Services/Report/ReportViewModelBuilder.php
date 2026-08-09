@@ -89,9 +89,17 @@ class ReportViewModelBuilder
         // 出すため、同じComposerを競合axesに対しても呼ぶだけで良い ―― AI呼び
         // 出しは増えない)。one_pointは「改善提案」ページ冒頭のワンポイントに
         // 引き続き使う。
+        //
+        // 2026-08-10: self_points/competitor_pointsはpointsForReport()を使う
+        // (points()ではない)。0件の軸が複数ある場合に1行へまとめることで
+        // 情報を1件も落とさずに箇条書きの行数を抑える(ユーザー指摘 ――
+        // 前回入れた件数上限(最大4件、5件目以降を無言で切り捨て)は不要に
+        // なったため廃止した。理由はBrandWheelComparisonSummaryComposer::
+        // pointsForReport()のdocblock参照)。points()自体(JSON API/画面が
+        // 共有)は無改修。
         $brandWheelComparison = [
-            'self_points' => $this->brandWheelSummaryComposer->points($selfAxes),
-            'competitor_points' => $this->brandWheelSummaryComposer->points($competitorAxes),
+            'self_points' => $this->brandWheelSummaryComposer->pointsForReport($selfAxes),
+            'competitor_points' => $this->brandWheelSummaryComposer->pointsForReport($competitorAxes),
             'one_point' => $this->brandWheelSummaryComposer->onePoint($selfAxes),
         ];
 

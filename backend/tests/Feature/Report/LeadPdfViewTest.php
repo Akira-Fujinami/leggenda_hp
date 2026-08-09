@@ -262,8 +262,12 @@ class LeadPdfViewTest extends TestCase
 
     /**
      * 2026-08-08: impression(候補者に与える印象)がstringからlist<string>へ
-     * 変更されたことに伴い、箇条書き(<ul class="impressionlist">)で表示する。
-     * 地の文(pタグの連続文)としては出さない。
+     * 変更されたことに伴い、箇条書きで表示する。地の文(pタグの連続文)としては
+     * 出さない。2026-08-09: 実データ検証で紺帯(darkband)が実際のページに
+     * 収まらずページをまたぐ不具合が見つかったため、縦積み(<ul>)から
+     * 2列(<table class="impressiontbl">)へ変更した(ユーザー承認の
+     * 「上限付き」案)。あわせてBrandWheelLeadResponseComposerが
+     * impression_itemsを最大3件・各45文字に切り詰めるようになった。
      */
     public function test_self_analysis_page_shows_impression_items_as_a_bulleted_list(): void
     {
@@ -280,9 +284,9 @@ class LeadPdfViewTest extends TestCase
             ], []),
         ]));
 
-        $this->assertStringContainsString('<ul class="impressionlist">', $html);
-        $this->assertStringContainsString('<li>事実の記載が中心</li>', $html);
-        $this->assertStringContainsString('<li>情緒的な訴求は薄い</li>', $html);
+        $this->assertStringContainsString('<table class="impressiontbl">', $html);
+        $this->assertStringContainsString('・事実の記載が中心', $html);
+        $this->assertStringContainsString('・情緒的な訴求は薄い', $html);
         $this->assertStringContainsString('AI解析による候補者に与える印象', $html);
     }
 
@@ -644,9 +648,17 @@ class LeadPdfViewTest extends TestCase
     //    2026-08-08新文言)。
     // ------------------------------------------------------------------
 
+    /**
+     * 2026-08-10: 連絡先確定(ユーザー指示)。仮文言「担当営業までご連絡
+     * ください。」を実際の連絡先(公式問い合わせページURL+発行日/貴社名を
+     * 伝える一文)に差し替えた。電話番号・外部フォームツール本体のURLは
+     * 掲載しない(README「既知の限界」参照)。発行日は表紙と同じ
+     * $viewModel->generatedAtLabelを参照し、二重管理しない。
+     */
     public function test_final_page_uses_the_new_heading_and_copy(): void
     {
-        $html = $this->render($this->viewModel());
+        $viewModel = $this->viewModel();
+        $html = $this->render($viewModel);
 
         $this->assertStringContainsString('サイトの改善をすれば', $html);
         $this->assertStringContainsString('課題が解決するとは限りません', $html);
@@ -655,7 +667,10 @@ class LeadPdfViewTest extends TestCase
             $html,
         );
         $this->assertStringContainsString('ご相談・お問い合わせ', $html);
-        $this->assertStringContainsString('担当営業までご連絡ください。', $html);
+        $this->assertStringContainsString('https://www.leggenda.co.jp/contact/', $html);
+        $this->assertStringContainsString("お問い合わせの際は、本レポートの発行日（{$viewModel->generatedAtLabel}）と貴社名をお知らせください。", $html);
+        $this->assertStringNotContainsString('leggenda-co.web-tools.biz', $html);
+        $this->assertStringNotContainsString('お電話', $html);
     }
 
     public function test_final_page_never_uses_the_old_heading_or_three_block_structure(): void

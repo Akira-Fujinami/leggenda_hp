@@ -29,28 +29,44 @@
     @else
         <p class="lead1">6つの項目それぞれについて、該当する内容がサイトの記述から何件読み取れたかを集計しています(点数ではありません)。<br>解析したURL：{{ $wheel['analyzed_url'] }}</p>
 
-        <table class="statrow" style="width: 265mm; table-layout: auto;"><tr>
-            <td style="width: 50mm;">
+        {{--
+            2026-08-10: 「件数ボックス＋サマリー」と「レーダー」を縦に2段
+            (統計行→サマリー行)で並べていたところ、0件の軸が多いサイト
+            (実測: 味の素)でサマリー箇条書きが長くなり、紺帯が190mm上限の
+            残り0.2〜0.6mmしか余白が無い状態になった(ユーザー指摘: 「たまたま
+            入っただけ」で構造的な保証が無い)。件数ボックス+サマリーを左列、
+            レーダーを右列に**横並び**へ変更 ―― サマリーがレーダーと同じ行の
+            横に収まる限り、サマリーの行数がページ全体の高さに追加コストを
+            発生させなくなる(行の高さは両列のうち高い方で決まるため)。
+            これによりレーダーの拡大にも同時に余白を回せる。
+        --}}
+        <table class="statrow" style="width: 265mm; table-layout: fixed;"><tr>
+            <td style="width: 133mm; vertical-align: top;">
                 <div class="statbox">
                     <p class="lab"><span class="swatch" style="background: {{ $seriesColor }};"></span>{{ $seriesLabel }}</p>
                     <p class="num">{{ $totalMatched }}<small> / {{ $totalMax }}項目</small></p>
                 </div>
+                <p class="sumhead" style="margin-top: 2mm;">サマリー</p>
+                <ul class="sum">
+                    @foreach ($summaryPoints as $point)
+                        <li>{{ $point }}</li>
+                    @endforeach
+                </ul>
             </td>
-            <td style="width: 4mm;"></td>
-            <td style="width: 131mm;"></td>
-            <td style="width: 80mm;">
+            <td style="width: 8mm;"></td>
+            <td style="width: 124mm; text-align: center; vertical-align: top;">
                 @if ($radarPng)
                     {{-- レーダー図のviewBoxは380x276(縦横比380:276)。dompdfは
                          widthのみ指定だと縦横比を正しく保持しないことがあるため、
                          heightも明示して指定どおりの比率で描画させる。
-                         2026-08-08: 3・4ページが自社/競合単独になり、旧設計
-                         (自社×競合を1ページに同居)の66x48mmのままでは実データ
-                         (キーメッセージ・印象の帯を含む)でページ下部の余白が
-                         不足し、帯がまるごと次ページへあふれる不具合が実PDF
-                         確認で見つかった。46x33.5mm(縦横比380:276を維持)に
-                         縮小して確保した(対比表ページの重ね図と同じサイズに
-                         揃えた)。 --}}
-                    <img src="data:image/png;base64,{{ base64_encode($radarPng) }}" style="width: 46mm; height: 33.5mm;">
+                         2026-08-10: 上記の横並び化で確保した余白を使い、
+                         62x45mm→72x52.3mm(縦横比380:276を維持)にさらに拡大した
+                         (ユーザー指摘: 軸ラベルの可読性)。92x66.8mmまで試したが、
+                         味の素(0件の軸が多くサマリーが長い)で190mm上限の残り
+                         わずかしか余白が無くなったため、実PDF確認で全サイト
+                         190mm上限に対し10mm以上の余白を確保できる72mmまでに
+                         留めた。 --}}
+                    <img src="data:image/png;base64,{{ base64_encode($radarPng) }}" style="width: 72mm; height: 52.3mm;">
                     <div class="legend">
                         <span class="sw" style="background: {{ $seriesColor }};"></span>{{ $seriesLabel }}
                     </div>
@@ -58,14 +74,7 @@
             </td>
         </tr></table>
 
-        <p class="sumhead" style="margin-top: 1mm;">サマリー</p>
-        <ul class="sum">
-            @foreach ($summaryPoints as $point)
-                <li>{{ $point }}</li>
-            @endforeach
-        </ul>
-
-        <table class="bandrow" style="width: 265mm; margin-top: 1mm;"><tr>
+        <table class="bandrow" style="width: 265mm; margin-top: 2mm;"><tr>
             @foreach ($groupBands as $band)
                 <td colspan="2" style="background: {{ $band['color'] }};">{{ $band['label'] }}</td>
             @endforeach
@@ -111,11 +120,24 @@
                 @endif
                 @if (count($wheel['impression_items']) > 0)
                     <p style="margin-top: 0.5mm; margin-bottom: 0;"><b>AI解析による候補者に与える印象：</b></p>
-                    <ul class="impressionlist">
-                        @foreach ($wheel['impression_items'] as $item)
-                            <li>{{ $item }}</li>
+                    {{--
+                        2026-08-09: 1列(縦積み)から2列レイアウトへ変更(ユーザー
+                        承認の「上限付き」案)。BrandWheelLeadResponseComposerが
+                        既に最大3件・各45文字に切り詰めているため、この表の
+                        最大の高さ(2行分)は事前に見積もれる。
+                    --}}
+                    <table class="impressiontbl">
+                        @foreach (array_chunk($wheel['impression_items'], 2) as $row)
+                            <tr>
+                                @foreach ($row as $item)
+                                    <td>・{{ $item }}</td>
+                                @endforeach
+                                @if (count($row) === 1)
+                                    <td></td>
+                                @endif
+                            </tr>
                         @endforeach
-                    </ul>
+                    </table>
                 @endif
                 {{--
                     2026-08-08: 開示文をdarkbandの外(別の<p class="foot">)に

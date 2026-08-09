@@ -407,9 +407,16 @@ class WordReportGeneratorTest extends TestCase
     // 2026-08-08新文言)。
     // ------------------------------------------------------------------
 
+    /**
+     * 2026-08-10: 連絡先確定(ユーザー指示)に伴い、仮文言「担当営業まで
+     * ご連絡ください。」を実際の連絡先(公式問い合わせページURL+発行日/
+     * 貴社名を伝える一文)に差し替えた。電話番号・外部フォームツール本体の
+     * URLは掲載しない(README「既知の限界」/WordReportGenerator参照)。
+     */
     public function test_final_section_uses_the_new_heading_and_copy(): void
     {
-        $documentXml = $this->generate($this->viewModel());
+        $viewModel = $this->viewModel();
+        $documentXml = $this->generate($viewModel);
 
         $this->assertStringContainsString('サイトの改善をすれば課題が解決するとは限りません', $documentXml);
         $this->assertStringContainsString(
@@ -417,7 +424,10 @@ class WordReportGeneratorTest extends TestCase
             $documentXml,
         );
         $this->assertStringContainsString('ご相談・お問い合わせ', $documentXml);
-        $this->assertStringContainsString('担当営業までご連絡ください。', $documentXml);
+        $this->assertStringContainsString('https://www.leggenda.co.jp/contact/', $documentXml);
+        $this->assertStringContainsString("お問い合わせの際は、本レポートの発行日（{$viewModel->generatedAtLabel}）と貴社名をお知らせください。", $documentXml);
+        $this->assertStringNotContainsString('leggenda-co.web-tools.biz', $documentXml);
+        $this->assertStringNotContainsString('お電話', $documentXml);
     }
 
     public function test_final_section_never_uses_the_old_heading_or_three_block_structure(): void

@@ -24,6 +24,8 @@ class BrandWheelImprovementFocusComposer
 {
     private const MAX_ITEMS = 3;
 
+    private const EVIDENCE_MAX_CHARS = 110;
+
     /**
      * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, self_matched: bool, competitor_matched: bool}>  $comparisonItems  BrandWheelSubElementComparisonComposer::compose()の戻り値
      * @param  array<string, array<string, string>>  $competitorEvidenceByAxisAndSubKey  (axis_key => (sub_key => evidence))。選ばれた項目の分だけ実際に使う ―― 比較サイトの本文をこのページの目的以外に広く露出させないため、呼び出し側もこの用途専用に組み立てたものを渡すこと
@@ -75,7 +77,7 @@ class BrandWheelImprovementFocusComposer
             'axis_name' => $i['axis_name'],
             'sub_name' => $i['sub_name'],
             'definition' => $i['definition'],
-            'competitor_evidence' => $competitorEvidenceByAxisAndSubKey[$i['axis_key']][$i['sub_key']] ?? null,
+            'competitor_evidence' => $this->capEvidence($competitorEvidenceByAxisAndSubKey[$i['axis_key']][$i['sub_key']] ?? null),
         ], array_slice($candidateItems, 0, self::MAX_ITEMS));
 
         return [
@@ -83,5 +85,24 @@ class BrandWheelImprovementFocusComposer
             'groups' => array_values($groups),
             'items' => $items,
         ];
+    }
+
+    /**
+     * 2026-08-09: 引用(比較サイトの実際のevidence)に文字数上限を設ける。
+     * カード側(.rcard)はheight固定をやめてauto(内容に追従)にしたため、
+     * このcapが無くても重なりは起きなくなったが、極端に長い引用1件で
+     * カード3枚が同じ行として大きく伸び、改善提案ページ自体が7ページ枠を
+     * 超える(=対比表等が次ページへ押し出される)ことを防ぐための保険
+     * (ユーザー承認の「上限付き」案と同じ考え方)。
+     */
+    private function capEvidence(?string $evidence): ?string
+    {
+        if ($evidence === null) {
+            return null;
+        }
+
+        return mb_strlen($evidence) > self::EVIDENCE_MAX_CHARS
+            ? mb_substr($evidence, 0, self::EVIDENCE_MAX_CHARS).'…'
+            : $evidence;
     }
 }

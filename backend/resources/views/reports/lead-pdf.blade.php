@@ -64,7 +64,7 @@
          増え、既存の14mmでは複数ページでキーメッセージ帯末尾が1行だけ
          次ページへ孤立する不具合が実PDF確認で見つかったため、まず
          全ページ共通の余白から縮小して確保した。 --}}
-    .page { width: 297mm; padding: 8mm 16mm 20mm; position: relative; page-break-after: always; }
+    .page { width: 297mm; padding: 6mm 16mm 20mm; position: relative; page-break-after: always; }
     .page.cta { page-break-after: auto; }
     h1 { font-size: 24pt; margin: 0 0 6mm; font-weight: normal; }
     {{--
@@ -76,7 +76,7 @@
         `.page`直下の要素はここまで一貫してmm固定幅にしてきた対策と同じ理由で、
         h2にも明示する。
     --}}
-    h2 { width: 265mm; font-size: 15pt; margin: 0 0 5mm; font-weight: normal; border-bottom: 1px solid #E0E0E0; padding-bottom: 2mm; }
+    h2 { width: 265mm; font-size: 15pt; margin: 0 0 3mm; font-weight: normal; border-bottom: 1px solid #E0E0E0; padding-bottom: 1.5mm; }
     .cover { padding-top: 60mm; text-align: center; }
     .cover p { margin: 1.5mm 0; font-size: 11pt; color: #333; }
     {{--
@@ -97,12 +97,12 @@
         (24項目の対比・触れられていなかった項目ページで、説明文の最後の
         数文字が消えていた)。widthを与えることで正しい265mm幅で折り返す。
     --}}
-    .lead1 { width: 265mm; font-size: 10pt; color: #6B6767; margin: 0 0 2mm; line-height: 1.4; }
-    .sumhead { width: 265mm; font-size: 10.5pt; font-weight: bold; margin: 0 0 1.5mm; }
-    .sum { font-size: 9pt; line-height: 1.3; margin: 0; padding-left: 5mm; }
+    .lead1 { width: 265mm; font-size: 9.5pt; color: #6B6767; margin: 0 0 1mm; line-height: 1.25; }
+    .sumhead { width: 265mm; font-size: 10pt; font-weight: bold; margin: 0 0 1mm; }
+    .sum { font-size: 8.5pt; line-height: 1.2; margin: 0; padding-left: 5mm; }
     .legend { text-align: center; font-size: 9pt; color: #5b5b5b; margin-top: 1mm; }
     .sw { display: inline-block; width: 9px; height: 9px; margin: 0 2px 0 10px; }
-    .bandrow td { color: #fff; text-align: center; font-size: 10.5pt; font-weight: bold; padding: 1.5mm; }
+    .bandrow td { color: #fff; text-align: center; font-size: 10pt; font-weight: bold; padding: 1mm; }
     {{--
         2026-08-04: 16.66%のみだと右端の列がページ外へはみ出す不具合が
         あったため(自社ページの分析結果ページ、実PDF確認で発覚)、mm固定に
@@ -112,7 +112,7 @@
         実PDFで目視確認すること)。
     --}}
     .axcell { width: 44.16mm; padding: 0 1mm; }
-    .axhead { border: 1px solid #E0E0E0; background: #F5F5F5; text-align: center; font-size: 10pt; font-weight: bold; padding: 1mm; }
+    .axhead { border: 1px solid #E0E0E0; background: #F5F5F5; text-align: center; font-size: 9.5pt; font-weight: bold; padding: 0.7mm; }
     .axbody { border: 1px solid #E0E0E0; border-top: none; padding: 2mm; height: 38mm; }
     .axcnt { font-size: 14pt; font-weight: bold; margin: 0 0 1mm; line-height: 1; }
     .axcnt small { font-size: 9pt; font-weight: normal; color: #6B6767; }
@@ -122,16 +122,25 @@
     .hits2 { margin: 0; padding-left: 4mm; font-size: 8.5pt; line-height: 1.3; }
     .none2 { font-size: 9.5pt; color: #9A9A9A; margin: 0; }
     {{-- widthを明示する理由はh2と同じ(2026-08-04、上記コメント参照)。 --}}
-    .darkband { width: 265mm; background: #1D2088; color: #fff; padding: 1.8mm 5mm; margin-top: 1mm; }
+    {{--
+        2026-08-09: page-break-inside: avoidを追加(ユーザー承認の「上限付き」
+        案)。実データ検証で、紺帯の残り余白が2mm程度しかないケースがあり、
+        中途半端に1〜2行だけ次ページへ孤立する不具合が実PDF確認で見つかった。
+        上限(件数・文字数)と2列化で紺帯の最大高さ自体を縮めた上で、万一それ
+        でも収まらない場合は「途中で割れる」のではなく「丸ごと次ページへ」
+        という失敗の仕方に倒す(dompdfはpage-break-insideを尊重する)。
+    --}}
+    .darkband { width: 265mm; background: #1D2088; color: #fff; padding: 1.3mm 5mm; margin-top: 1mm; page-break-inside: avoid; }
     .darkband p { margin: 0.4mm 0; font-size: 10pt; line-height: 1.4; }
     {{--
         2026-08-08: 「AI解析による候補者に与える印象」を1文の地の文から
         2〜4件の列挙(impression)へ変更したことに伴うリスト表示。
-        提言・評価を含めず列挙するだけ、という性質を視覚的にも示すため、
-        p要素の連続文ではなく箇条書きにする。
+        2026-08-09: 1列(縦積み)から2列(table)へ変更 ―― BrandWheelLeadResponse
+        Composerが最大3件・各45文字に切り詰めるため、2列にすることで最大でも
+        2行に収まる(縦積みだと最大3行)。
     --}}
-    .impressionlist { margin: 0.3mm 0 0; padding-left: 4.5mm; font-size: 9pt; line-height: 1.3; }
-    .impressionlist li { margin: 0; }
+    .impressiontbl { margin: 0.3mm 0 0; width: 255mm; table-layout: fixed; }
+    .impressiontbl td { font-size: 9pt; line-height: 1.3; padding: 0; width: 127.5mm; vertical-align: top; }
     {{-- AI開示文をdarkbandの内側に置く際の控えめな配色(白地の.footとは別)。 --}}
     .darkfoot { margin: 1mm 0 0; font-size: 8pt; color: #B9BBDA; line-height: 1.3; }
     {{--
@@ -186,7 +195,9 @@
         ―― ○△－は正解/不正解の記号ではない、2ページ目の断り書きと矛盾
         しないこと。ユーザー指定)。
     --}}
-    .cmplegend { width: 265mm; border: 1px solid #E0E0E0; background: #F5F5F5; padding: 1.8mm 4mm; margin: 0 0 2mm; }
+    {{-- 2026-08-10: width:265mm→165mm(レーダーと横並びにしたため、CSS冒頭の
+         h2コメントと同じ理由で明示が必要)。 --}}
+    .cmplegend { width: 165mm; border: 1px solid #E0E0E0; background: #F5F5F5; padding: 1.8mm 4mm; margin: 0; }
     .cmplegend p { font-size: 9pt; color: #393636; line-height: 1.4; margin: 0; }
     .cmplegend .mk { display: inline-block; width: 5mm; font-weight: bold; }
     .vscell { width: 88.3mm; padding: 0 2mm 4mm 0; vertical-align: top; }
@@ -215,7 +226,17 @@
     .gapbar .nm { width: 34mm; }
     .gapbar .bar { height: 6mm; display: block; }
     .gapbar .v { width: 26mm; text-align: right; color: #6B6767; padding-right: 3mm; }
-    .rcard { border: 1px solid #E0E0E0; padding: 3mm 3.5mm; height: 56mm; }
+    {{--
+        2026-08-09: height:56mm固定をやめてauto(padding+内容まかせ)にした。
+        比較サイトの実際の引用(competitor_evidence)が長い場合に、固定高さの
+        箱からテキストがはみ出し、直後の「なお、これらを…」の行と重なる
+        不具合が実PDF確認で見つかった(ユーザー指摘)。3枚は同じ<tr>内の
+        セルのため、いずれか1枚が伸びれば残り2枚も同じ高さに揃う(通常の
+        テーブル行の挙動)。あわせてBrandWheelImprovementFocusComposer側で
+        引用に文字数上限を設け、極端に長い引用で改善提案ページ全体が
+        7ページ枠を超えることも防ぐ。
+    --}}
+    .rcard { border: 1px solid #E0E0E0; padding: 3mm 3.5mm; }
     .rcard .no { font-size: 9pt; color: #fff; background: #1D2088; padding: 0.6mm 2.2mm; }
     .rcard .nm { font-size: 12pt; font-weight: bold; margin: 2mm 0 1.5mm; }
     .rcard .q { font-size: 9.5pt; color: #6B6767; margin: 0 0 3mm; line-height: 1.55; }
@@ -227,14 +248,21 @@
     {{--
         7ページ目(最終ページ)。2026-08-08: 旧3ブロック構成(.ctabox/.ctacell)は
         新文言(見出し+本文2段落のシンプルな構成)への差し替えに伴い削除した。
+        2026-08-10: 連絡先確定に伴い.ctafoot(担当営業までご連絡くださいの
+        仮文言)を.ctacontact(罫線ボックスでURLを大きく提示)に差し替え。
+        あわせて.ctawrapにpadding-topを追加し、下半分が空白でバランスが
+        悪かった問題に対応(ボックスを大きく・全体をやや下寄りにして
+        ページ内の重心を中央付近に近づけた)。
     --}}
-    .ctawrap { max-width: 250mm; margin: 0 auto; }
+    .ctawrap { max-width: 250mm; margin: 0 auto; padding-top: 16mm; }
     .ctalogo { display: block; margin: 0 auto 8mm; width: 56mm; }
     .ctah { font-size: 17pt; font-weight: bold; text-align: center; margin: 0 0 6mm; line-height: 1.5; }
     .ctasub { font-size: 11pt; color: #393636; text-align: center; margin: 0 0 4mm; line-height: 1.9; }
-    .ctafoot { text-align: center; margin-top: 10mm; }
-    .ctafoot .l1 { font-size: 11.5pt; margin: 0 0 2mm; }
-    .ctafoot .l2 { font-size: 10pt; color: #6B6767; margin: 0; line-height: 1.8; }
+    .ctacontact { width: 200mm; margin: 12mm auto 0; border: 1px solid #E0E0E0; border-left: 5px solid #1D2088; background: #F5F5F5; padding: 9mm 12mm; text-align: center; }
+    .ctacontact .t { font-size: 12pt; font-weight: bold; margin: 0 0 3.5mm; color: #393636; }
+    .ctacontact .url { font-size: 16pt; font-weight: bold; margin: 0 0 4.5mm; }
+    .ctacontact .url a { color: #1D2088; text-decoration: none; }
+    .ctacontact .note { font-size: 9.5pt; color: #6B6767; margin: 0; line-height: 1.7; }
 
     {{-- ロゴ(コーポレートサイト、512x94)。 --}}
     .logo-cover { display: block; margin: 0 auto 10mm; width: 72mm; }
@@ -400,31 +428,47 @@
         @endphp
         <p class="vslead">24項目それぞれについて、サイトに該当する記述があったかどうかを3段階で示しています。凡例は下記のとおりです。</p>
 
-        {{-- 自社×競合を重ねたレーダー図。3・4ページを自社単独・競合単独に
-             分けたことで、視覚的な対比はこのページにしか無い(README方針)。
-             競合が読み取れない場合は出さない(3・4ページと同じ方針)。
-             2026-08-08: 3・4ページと同じ66x48mmだとこのページ(凡例+3グループ表を
-             同時に持つ)がA4横1枚に収まらず物理2ページへあふれたため、
-             46x33.5mm(縦横比380:276を維持)に縮小した(実PDF確認)。 --}}
-        @if ($competitorReadable && $viewModel->brandWheelRadarPngComparison)
-            <table style="width: 265mm;"><tr>
-                <td style="width: 97.5mm;"></td>
-                <td style="width: 70mm; text-align: center;">
-                    <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPngComparison) }}" style="width: 46mm; height: 33.5mm;">
+        {{--
+            ○△－凡例と自社×競合を重ねたレーダー図。3・4ページを自社単独・
+            競合単独に分けたことで、視覚的な対比はこのページにしか無い
+            (README方針)。競合が読み取れない場合はレーダーだけ出さない
+            (3・4ページと同じ方針、凡例は競合の有無にかかわらず必要なため
+            常に出す)。
+            2026-08-10: レーダーと○△－凡例を縦2段(レーダー行→凡例行)で
+            並べていたところ、3グループ表(8行×3列、常に固定の高さ)と
+            合わせて190mm上限の残り8.3mmしか余白が無い状態になった
+            (ユーザー指摘: 10mm未満は不合格)。3・4ページと同じ考え方で、
+            横並びに変更 ―― 凡例の高さ(3行)はレーダーの高さ以下のため、
+            この行の高さはレーダーだけで決まり、凡例ぶんの追加コストが
+            無くなる。あわせてレーダーも46x33.5mm→68x49.4mm(縦横比380:276を
+            維持)に拡大した。
+
+            **列の並び順(凡例を左・レーダーを右)を変えないこと。** 逆
+            (レーダーを左・幅の広い凡例のtdを右=表の最終列)にすると、
+            table-layout:fixedで列幅を指定していても最終列がページ右端
+            (297mm)を大きく超えて描画される不具合をdompdfで実PDF確認した
+            (2026-08-10)。原因は特定できていないが、「幅の広い折り返しテキスト
+            を持つtdを固定テーブルの最終列に置かない」という回避策で解消した。
+        --}}
+        <table style="width: 265mm; table-layout: fixed;"><tr>
+            <td style="width: 165mm; vertical-align: top;">
+                <div class="cmplegend">
+                    <p><span class="mk mkon">○</span> 本文の記述から確認できた項目</p>
+                    <p><span class="mk mktri">△</span> 見出し・メニュー名などのラベルのみで、本文からは確認できなかった項目</p>
+                    <p><span class="mk mkoff">－</span> 該当する記述が見つからなかった項目(『魅力が無い』という意味ではありません)</p>
+                </div>
+            </td>
+            <td style="width: 8mm;"></td>
+            <td style="width: 92mm; text-align: center; vertical-align: top;">
+                @if ($competitorReadable && $viewModel->brandWheelRadarPngComparison)
+                    <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPngComparison) }}" style="width: 68mm; height: 49.4mm;">
                     <div class="legend">
                         <span class="sw" style="background: #3A3FC0;"></span>自社サイト
                         <span class="sw" style="background: #E95446;"></span>競合サイト
                     </div>
-                </td>
-                <td style="width: 97.5mm;"></td>
-            </tr></table>
-        @endif
-
-        <div class="cmplegend">
-            <p><span class="mk mkon">○</span> 本文の記述から確認できた項目</p>
-            <p><span class="mk mktri">△</span> 見出し・メニュー名などのラベルのみで、本文からは確認できなかった項目</p>
-            <p><span class="mk mkoff">－</span> 該当する記述が見つからなかった項目(『魅力が無い』という意味ではありません)</p>
-        </div>
+                @endif
+            </td>
+        </tr></table>
 
         {{-- 外側のテーブル(vscell、3列とも88.3mmで等しい)はtable-layout:auto
              にしない(fixedのままで安全、ページ3のaxcellと同じパターン)。
@@ -585,6 +629,17 @@
     README.mdの記述はこの新文言と矛盾しないためREADME側を更新した
     (前段でタッチポイント全体の設計に言及した上で、比較を議論の入口として
     提示しているため)。
+
+    2026-08-10: 連絡先が確定(ユーザー指示)。掲載するのは
+    https://www.leggenda.co.jp/contact/ (公式サイトの問い合わせページ)の
+    みで、外部フォームツール本体のURLは掲載しない ―― 印刷物に自社ドメイン
+    以外のURLが出るとフィッシングを疑われる・フォームツールを乗り換えた
+    際にPDFの刷り直しが必要になるため。電話番号は掲載しない(問い合わせ
+    ページに「現在、お電話の受付を停止しております」と明記されており、
+    受付時間の記載も無いため)。汎用の問い合わせ窓口経由では診断レポート
+    起点の問い合わせだと営業側で判別できないため、発行日・貴社名を伝える
+    よう促す一文を添える。発行日は表紙と同じ$viewModel->generatedAtLabelを
+    参照し、二重管理しない。
 --}}
 <div class="page cta">
     <div class="ctawrap">
@@ -593,9 +648,10 @@
         <p class="ctasub">サイトの改善が最も効果的な打ち手となるのか、応募から内定までの間での候補者とのタッチポイント全体の設計を改めて行うことで大きな効果を得られるのかを見直す必要があります。</p>
         <p class="ctasub">弊社にてさらに幅を広げ、3〜5社の競合他社のサイトと比較した結果をもとにどこに御社課題があるかをディスカッションしませんか。ご希望いただける場合は、以下よりご連絡ください。</p>
 
-        <div class="ctafoot">
-            <p class="l1">ご相談・お問い合わせ</p>
-            <p class="l2">担当営業までご連絡ください。</p>
+        <div class="ctacontact">
+            <p class="t">ご相談・お問い合わせ</p>
+            <p class="url"><a href="https://www.leggenda.co.jp/contact/">https://www.leggenda.co.jp/contact/</a></p>
+            <p class="note">お問い合わせの際は、本レポートの発行日（{{ $viewModel->generatedAtLabel }}）と貴社名をお知らせください。</p>
         </div>
     </div>
 </div>

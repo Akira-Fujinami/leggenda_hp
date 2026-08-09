@@ -35,11 +35,25 @@ use Illuminate\Support\Collection;
  * impressionは配列化した(OpenAiBrandWheelAnalysisProvider v7〜、
  * 候補者が受け取る印象を2〜4件の列挙にする変更)。画面(frontend)は
  * 依然としてimpressionを1つの文字列として表示する設計のため、既存の
- * 'impression'キーは配列を読点で連結した文字列のまま返し(画面は無改修)、
- * レポート専用に配列そのものを'impression_items'として追加する。
+ * 'impression'キーは(件数・文字数を切り詰めない)完全な配列を読点で連結した
+ * 文字列のまま返す(画面は無改修)。
+ *
+ * 2026-08-08追記: レポート専用の'impression_items'は、'impression'とは別に
+ * 最大IMPRESSION_ITEM_MAX_COUNT件・1件あたり最大IMPRESSION_ITEM_MAX_CHARS文字
+ * まで切り詰める。実データ検証(自社ページの分析結果ページ)で、印象を1文の
+ * 地の文から2〜4件の箇条書きへ変更したことで紺帯(darkband)の高さが伸び、
+ * ページ下部の余白(実測で残り約2mm)を超えて紺帯全体が丸ごと次ページへ
+ * あふれる不具合が実PDF確認で見つかった(ユーザー指摘)。件数・文字数の
+ * 上限を設けることで、紺帯の最大高さを事前に見積もれる状態にする
+ * (ユーザー承認: 「上限付き」案)。画面(frontend)向けの'impression'は
+ * この上限の対象外(紙面制約が無いため、AIの出力をそのまま見せる)。
  */
 class BrandWheelLeadResponseComposer
 {
+    private const IMPRESSION_ITEM_MAX_COUNT = 3;
+
+    private const IMPRESSION_ITEM_MAX_CHARS = 45;
+
     /**
      * @return array{status: string, status_message: ?string, analyzed_url: string, axes: list<array<string, mixed>>, key_message: ?string, impression: ?string, impression_items: list<string>, source_pages: array<string, mixed>}
      */
@@ -56,9 +70,23 @@ class BrandWheelLeadResponseComposer
             'axes' => $isSuccess && $record !== null ? $this->buildAxes($record) : [],
             'key_message' => $isSuccess ? $record?->key_message : null,
             'impression' => $impressionItems !== [] ? implode('、', $impressionItems) : null,
-            'impression_items' => $impressionItems,
+            'impression_items' => $this->capImpressionItemsForReport($impressionItems),
             'source_pages' => (array) ($record?->source_pages ?? ['recruit_page' => null, 'home_page' => null]),
         ];
+    }
+
+    /**
+     * @param  list<string>  $items
+     * @return list<string>
+     */
+    private function capImpressionItemsForReport(array $items): array
+    {
+        return array_map(
+            fn (string $item) => mb_strlen($item) > self::IMPRESSION_ITEM_MAX_CHARS
+                ? mb_substr($item, 0, self::IMPRESSION_ITEM_MAX_CHARS).'…'
+                : $item,
+            array_slice($items, 0, self::IMPRESSION_ITEM_MAX_COUNT),
+        );
     }
 
     /**

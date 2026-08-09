@@ -394,6 +394,15 @@ class WordReportGenerator
      * 差し替え。一見してメッセージが分かるよう、見出し+本文2段落の
      * シンプルな構成にする(3ブロックのボックス構成は廃止)。
      */
+    /**
+     * 2026-08-10: 連絡先確定(ユーザー指示)。PDF版(lead-pdf.blade.php
+     * .ctacontact)と同内容。掲載するのはhttps://www.leggenda.co.jp/contact/
+     * (公式サイトの問い合わせページ)のみ ―― 外部フォームツール本体のURLは
+     * 掲載しない(印刷物に自社ドメイン以外のURLが出るとフィッシングを
+     * 疑われる・フォームツールを乗り換えた際に刷り直しが必要になるため)。
+     * 電話番号は掲載しない(問い合わせページで受付停止中のため)。発行日は
+     * 表紙と同じ$viewModel->generatedAtLabelを参照し、二重管理しない。
+     */
     private function addCallToActionSection(PhpWord $phpWord, ReportViewModel $viewModel): void
     {
         $section = $phpWord->addSection();
@@ -414,7 +423,23 @@ class WordReportGenerator
         );
 
         $section->addTextBreak(2);
-        $section->addText('ご相談・お問い合わせ', [], ['alignment' => Jc::CENTER]);
-        $section->addText('担当営業までご連絡ください。', ['color' => '6B6767'], ['alignment' => Jc::CENTER]);
+        $contactTable = $section->addTable([
+            'borderSize' => 6,
+            'borderColor' => 'E0E0E0',
+            'borderLeftSize' => 30,
+            'borderLeftColor' => '1D2088',
+            'cellMargin' => 200,
+            'width' => 9000,
+            'unit' => \PhpOffice\PhpWord\SimpleType\TblWidth::TWIP,
+        ]);
+        $contactTable->addRow();
+        $cell = $contactTable->addCell(9000);
+        $cell->addText('ご相談・お問い合わせ', ['bold' => true, 'size' => 12], ['alignment' => Jc::CENTER, 'spaceAfter' => 100]);
+        $cell->addLink('https://www.leggenda.co.jp/contact/', 'https://www.leggenda.co.jp/contact/', ['bold' => true, 'size' => 14, 'color' => '1D2088', 'underline' => 'none'], ['alignment' => Jc::CENTER, 'spaceAfter' => 100]);
+        $cell->addText(
+            "お問い合わせの際は、本レポートの発行日（{$viewModel->generatedAtLabel}）と貴社名をお知らせください。",
+            ['size' => 9.5, 'color' => '6B6767'],
+            ['alignment' => Jc::CENTER],
+        );
     }
 }
