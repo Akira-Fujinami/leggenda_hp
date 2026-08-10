@@ -36,7 +36,8 @@ readonly class ReportViewModel
      * @param  int  $selfTotalLabelOnly  自社の△(見出し・リンクラベルのみ)件数合計。対比表の「(参考)」表示用、合計には含めない。
      * @param  int  $competitorTotalLabelOnly  競合の△件数合計。
      * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, self_matched: bool, competitor_matched: bool, self_state: string, competitor_state: string}>  $subElementComparison  BrandWheelSubElementComparisonComposer::compose()の戻り値(24項目、config順)。対比表の○△－表示の唯一の情報源。self_matched/competitor_matchedは○のみtrue(△はfalseのまま、改善提案の選定ロジックに使うため変更しない)。self_state/competitor_stateは'matched'|'label_only'|'none'。
-     * @param  ?array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, competitor_evidence: ?string}>}  $improvementFocus  BrandWheelImprovementFocusComposer::compose()の戻り値。「改善提案」ページの領域選択・3項目・比較サイトのevidence。自社・競合のいずれかがstatus!=='success'の場合はnull。
+     * @param  ?array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, competitor_evidence: ?string}>}  $improvementFocus  BrandWheelImprovementFocusComposer::compose()の戻り値。「改善提案」ページの領域選択・3項目・比較サイトのevidence。自社・競合の両方がstatus==='success'の場合のみ非null(競合が無い/読み取れない場合は$improvementFocusSelfOnlyを使う)。
+     * @param  ?array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, self_reason: string}>}  $improvementFocusSelfOnly  BrandWheelImprovementFocusComposer::composeSelfOnly()の戻り値。競合が無い/読み取れない場合の「改善提案」ページ(自社の「－」「△」項目のみで構成、比較サイトのevidenceは含まない)。自社がstatus==='success'でない、または自社24項目すべてが○の場合はnull(2026-08-10追加)。
      */
     public function __construct(
         public string $companyDisplayName,
@@ -58,5 +59,6 @@ readonly class ReportViewModel
         public int $competitorTotalLabelOnly,
         public array $subElementComparison,
         public ?array $improvementFocus,
+        public ?array $improvementFocusSelfOnly,
     ) {}
 }

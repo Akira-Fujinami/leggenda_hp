@@ -327,8 +327,11 @@ class WordReportGenerator
      * PDF版6ページ目「改善提案」と同内容。ブランド・ホイール起点であること
      * (技術的な指標から作らない、docs/lead-report-layout/README.md)。
      * ワンポイントは自社のみで判定可能なため常に自社の状態から出す。
-     * 領域差・3項目は$viewModel->improvementFocus(決定的な規則で選定済み、
-     * △は未該当扱いのまま選定ロジック無改修)が唯一の情報源。
+     * 領域差・3項目は競合ありなら$viewModel->improvementFocus、競合なし
+     * (または読み取れない)なら$viewModel->improvementFocusSelfOnly
+     * (2026-08-10追加、いずれも決定的な規則で選定済み、△は未該当扱いのまま
+     * 選定ロジック無改修)が唯一の情報源。両方nullの場合は何も出さない
+     * (自社24項目すべてが○の場合、実運用ではまず起きない)。
      *
      * 2026-08-08: 下部の技術的提案ブロック(「あわせて、サイトの作りに
      * ついて」)を削除した。4観点(測定結果)ページを削除したのに技術的提案
@@ -336,10 +339,19 @@ class WordReportGenerator
      */
     private function addImprovementProposalSection(PhpWord $phpWord, ReportViewModel $viewModel): void
     {
+        $selfReadable = ($viewModel->brandWheelSelf['status'] ?? null) === 'success' && ($viewModel->brandWheelSelf['axes'] ?? []) !== [];
+
+        // 2026-08-10: PDF版(lead-pdf.blade.php)と同じ省略条件。セクション
+        // 自体をaddSection()する前に判定すること ―― 後から中身が無いと
+        // わかってreturnしても、見出しだけの空セクションが残ってしまう。
+        if ($selfReadable && $viewModel->improvementFocus === null && $viewModel->improvementFocusSelfOnly === null) {
+            return;
+        }
+
         $section = $phpWord->addSection();
         $section->addTitle('改善提案', 1);
 
-        if (($viewModel->brandWheelSelf['status'] ?? null) !== 'success' || ($viewModel->brandWheelSelf['axes'] ?? []) === []) {
+        if (! $selfReadable) {
             $section->addText((string) ($viewModel->brandWheelSelf['status_message'] ?? ''));
 
             return;
@@ -383,9 +395,66 @@ class WordReportGenerator
                     'まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。',
                 );
             }
-        } elseif ($onePoint !== null) {
-            $section->addText('比較サイトが無いため、領域ごとの比較はご用意できません。');
+
+            return;
         }
+
+        $focusSelfOnly = $viewModel->improvementFocusSelfOnly;
+        if ($focusSelfOnly === null) {
+            return;
+        }
+
+        // 2026-08-10: 競合が無い(または読み取れない)診断向け。PDF版
+        // (lead-pdf.blade.php、@elseif ($viewModel->improvementFocusSelfOnly))
+        // と同内容。「比較サイトが無いため、領域ごとの比較はご用意できません。」
+        // の1行だけでページの大半が空白になり、営業資料として成立しないという
+        // 指摘(ユーザー)への対応。競合の実データを使わず、自社の「－」「△」
+        // 項目(BrandWheelImprovementFocusComposer::composeSelfOnly())だけで
+        // 構成する。
+        $selectedLabelSelf = self::GROUP_LABELS[$focusSelfOnly['selected_group']] ?? $focusSelfOnly['selected_group'];
+        $section->addText(
+            "3つの領域のうち、サイトの記述から読み取れた項目が最も少なかったのは「{$selectedLabelSelf}」でした。".
+            'この領域から、候補者が知りたがる項目を'.count($focusSelfOnly['items']).'件挙げます。',
+        );
+
+        $section->addTextBreak(1);
+        foreach ($focusSelfOnly['groups'] as $group) {
+            $label = self::GROUP_LABELS[$group['group']] ?? $group['group'];
+            $section->addText("{$label}：自社 {$group['self_count']} / {$group['max_count']}");
+        }
+
+        if ($focusSelfOnly['items'] === []) {
+            $section->addTextBreak(1);
+            $section->addText('該当する項目はありませんでした');
+
+            return;
+        }
+
+        foreach ($focusSelfOnly['items'] as $i => $item) {
+            $section->addTextBreak(1);
+            $section->addText(($i + 1).'. '.$item['sub_name'], ['bold' => true]);
+            $section->addText($item['definition'], ['size' => 9, 'color' => '6B6767']);
+            $section->addText('御社のサイト：'.$this->selfOnlyReasonLabel($item['self_reason']));
+        }
+
+        $section->addTextBreak(1);
+        $section->addText(
+            'なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、'.
+            'まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。',
+        );
+    }
+
+    /**
+     * 2026-08-10: PDF版(lead-pdf.blade.php)の$selfOnlyReasonLabelクロージャと
+     * 同内容。－(該当なし)と△(見出し・リンクラベルのみ)で文言を分ける
+     * (ユーザー承認: 対比表ページの△の定義と一貫させるため、一律
+     * 「記述が見つかりませんでした」にはしない)。
+     */
+    private function selfOnlyReasonLabel(string $reason): string
+    {
+        return $reason === 'label_only'
+            ? '見出し・リンクラベルのみで、具体的な記述は見つかりませんでした'
+            : '記述が見つかりませんでした';
     }
 
     /**

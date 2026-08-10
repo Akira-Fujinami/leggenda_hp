@@ -134,6 +134,14 @@ class ReportViewModelBuilder
             )
             : null;
 
+        // 2026-08-10: 競合が無い(または読み取れない)診断向けの改善提案
+        // (ユーザー指示 ―― 「比較サイトが無いため、領域ごとの比較はご用意
+        // できません。」の1行だけでページの大半が空白になる問題への対応)。
+        // $improvementFocusが立つケース(自社・競合とも読み取れた)とは排他。
+        $improvementFocusSelfOnly = $selfReadable && ! $competitorReadable
+            ? $this->improvementFocusComposer->composeSelfOnly($subElementComparison)
+            : null;
+
         return new ReportViewModel(
             companyDisplayName: $this->nameFormatter->format($leadSession->company_name),
             generatedAtLabel: sprintf('%d年%d月%d日', now()->year, now()->month, now()->day),
@@ -154,6 +162,7 @@ class ReportViewModelBuilder
             competitorTotalLabelOnly: $competitorTotalLabelOnly,
             subElementComparison: $subElementComparison,
             improvementFocus: $improvementFocus,
+            improvementFocusSelfOnly: $improvementFocusSelfOnly,
         );
     }
 

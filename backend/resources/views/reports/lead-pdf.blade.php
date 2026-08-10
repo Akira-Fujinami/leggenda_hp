@@ -520,14 +520,25 @@
 {{--
     6. 改善提案。ブランド・ホイール起点(README「技術的な指標から作らない
     こと」)。ワンポイントは自社のみで判定可能なため常に自社の状態から出す。
-    領域差・3項目は$viewModel->improvementFocus(BrandWheelImprovementFocusComposer、
-    決定的な規則で選定)が唯一の情報源。△は未該当扱いのまま(選定ロジックは
-    無改修 ―― 自社△かつ競合○の項目も引き続き候補に含まれる、ユーザー指定)。
+    領域差・3項目は競合ありなら$viewModel->improvementFocus、競合なし
+    (または読み取れない)なら$viewModel->improvementFocusSelfOnly
+    (2026-08-10追加、いずれも決定的な規則で選定)が唯一の情報源。△は
+    未該当扱いのまま(選定ロジックは無改修 ―― 自社△かつ競合○の項目も
+    引き続き候補に含まれる、ユーザー指定)。
 
     2026-08-08: 下部の技術的提案ブロック(「あわせて、サイトの作りに
     ついて」)を削除した。4観点(測定結果)ページを削除したのに技術的提案
     だけ残すのは整合が取れないため(ユーザー判断)。
+
+    2026-08-10: このページ自体を出さない条件を追加(ユーザー指定)。
+    自社が読み取れない場合(status_messageを出すため)は常に出す。自社が
+    読み取れる場合は、競合あり(improvementFocus)か、競合なしでも自社の
+    「－」「△」項目が1件でもある(improvementFocusSelfOnly)場合にのみ出す
+    ―― 自社24項目すべてが○(=composeSelfOnly()がnullを返す)場合だけ、
+    このページを丸ごと省略する(白紙ページを作らないための保険。
+    実運用ではまず起きない)。
 --}}
+@if (! $selfReadable || $viewModel->improvementFocus !== null || $viewModel->improvementFocusSelfOnly !== null)
 <div class="page">
     <h2>改善提案</h2>
     <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
@@ -614,11 +625,67 @@
 
                 <p class="rlead" style="margin: 3mm 0 0;">なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。</p>
             @endif
-        @elseif ($comparison['one_point'])
-            <p class="rlead">比較サイトが無いため、領域ごとの比較はご用意できません。</p>
+        @elseif ($viewModel->improvementFocusSelfOnly)
+            {{--
+                2026-08-10: 競合が無い(または読み取れない)診断向け。
+                「比較サイトが無いため、領域ごとの比較はご用意できません。」の
+                1行だけでページの大半が空白になり、営業資料として成立しない
+                という指摘(ユーザー)への対応。競合の実データを使わず、自社の
+                「－」「△」項目(BrandWheelImprovementFocusComposer::
+                composeSelfOnly()、決定的な規則で選定)だけで構成する。
+                最終ページの「3〜5社と比較しませんか」への導線として機能させる。
+            --}}
+            @php
+                $focusSelf = $viewModel->improvementFocusSelfOnly;
+                $selectedLabelSelf = $groupBands[$focusSelf['selected_group']]['label'] ?? $focusSelf['selected_group'];
+                $selfOnlyReasonLabel = fn (string $reason) => $reason === 'label_only'
+                    ? '見出し・リンクラベルのみで、具体的な記述は見つかりませんでした'
+                    : '記述が見つかりませんでした';
+            @endphp
+            <p class="rlead">3つの領域のうち、サイトの記述から読み取れた項目が最も少なかったのは「{{ $selectedLabelSelf }}」でした。この領域から、候補者が知りたがる項目を{{ count($focusSelf['items']) }}件挙げます。</p>
+
+            {{-- 自社のみの3列版(nm/v/bar)。競合が無いため.gapbarの5列版
+                 (nm/v/bar/v/bar)は使わず、赤い比較バーは出さない
+                 (ユーザー指定)。 --}}
+            <table class="gapbar" style="width: 265mm; table-layout: auto;">
+                @foreach ($focusSelf['groups'] as $group)
+                    @php
+                        $labelSelf = $groupBands[$group['group']]['label'] ?? $group['group'];
+                        $selfRatioSelf = $group['max_count'] > 0 ? $group['self_count'] / $group['max_count'] * 100 : 0;
+                    @endphp
+                    <tr>
+                        <td class="nm">{{ $labelSelf }}</td>
+                        <td class="v">自社 {{ $group['self_count'] }} / {{ $group['max_count'] }}</td>
+                        <td style="width: 108mm;"><span class="bar" style="background: #3A3FC0; width: {{ number_format($selfRatioSelf, 1) }}%;"></span></td>
+                    </tr>
+                @endforeach
+            </table>
+
+            @if (count($focusSelf['items']) === 0)
+                <p class="gnone" style="margin-top: 3mm;">該当する項目はありませんでした</p>
+            @else
+                <table style="width: 265mm; margin-top: 3mm;">
+                    <tr>
+                        @foreach ($focusSelf['items'] as $i => $item)
+                            <td class="rcell">
+                                <div class="rcard">
+                                    <span class="no">{{ $i + 1 }}</span>
+                                    <p class="nm">{{ $item['sub_name'] }}</p>
+                                    <p class="q">{{ $item['definition'] }}</p>
+                                    <p class="lb">御社のサイト</p>
+                                    <p class="own">{{ $selfOnlyReasonLabel($item['self_reason']) }}</p>
+                                </div>
+                            </td>
+                        @endforeach
+                    </tr>
+                </table>
+
+                <p class="rlead" style="margin: 3mm 0 0;">なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。</p>
+            @endif
         @endif
     @endif
 </div>
+@endif
 
 {{--
     7. サイトの改善をすれば課題が解決するとは限りません(最終ページ)。

@@ -2,6 +2,8 @@
 
 namespace App\Services\BrandWheel;
 
+use Illuminate\Support\Facades\Log;
+
 /**
  * 「改善提案」ページ(ブランド・ホイール起点)の「グループ差の特定+3項目+
  * 比較サイトの実際のevidence」を、決定的な規則で機械的に導出する。AIには
@@ -85,6 +87,111 @@ class BrandWheelImprovementFocusComposer
             'sub_name' => $i['sub_name'],
             'definition' => $i['definition'],
             'competitor_evidence' => $this->capEvidence($competitorEvidenceByAxisAndSubKey[$i['axis_key']][$i['sub_key']] ?? null),
+        ], array_slice($candidateItems, 0, self::MAX_ITEMS));
+
+        return [
+            'selected_group' => (string) $selectedGroupKey,
+            'groups' => array_values($groups),
+            'items' => $items,
+        ];
+    }
+
+    /**
+     * 2026-08-10: 競合が無い(または競合を読み取れなかった)診断向けの改善提案。
+     * ユーザー指示: 「比較サイトが無いため、領域ごとの比較はご用意できません。」
+     * の1行だけでページの大半が空白になり、営業資料として成立しないため、
+     * 「御社のサイトで触れられていなかった項目」を示す構成に置き換える
+     * (最終ページの「3〜5社と比較しませんか」への導線として機能させる)。
+     *
+     * 【グループ選定規則】3グループそれぞれについて自社の「－」
+     * (self_state==='none')の件数を数え、最も多いグループを選ぶ
+     * (同点はconfig順)。ただし選んだグループに「－」も「△」
+     * (self_state==='label_only')も0件(=そのグループが8/8で○のみ)の場合は、
+     * 「－」が次に多いグループへ移る ―― 実装上は「－の件数降順・同点は
+     * config順」で並べたグループ一覧を先頭から見て、(－件数+△件数)>0の
+     * 最初のグループを採用する形にしている(3グループしか無いため同じ結果)。
+     *
+     * 【3項目選定規則】選ばれたグループ内の「－」項目をconfig順に並べ、
+     * 3件に満たない場合は同グループの「△」項目(config順)で埋める(－が
+     * 優先、△は「見出し・リンクラベルのみで具体性が無い」ため次点)。
+     *
+     * 【ページを出さない条件】どのグループも(－件数+△件数)が0、つまり
+     * 自社の24項目すべてが○の場合のみnullを返す(24/24は実運用ではまず
+     * 起きないが、白紙ページを作らないための保険としてログに記録する)。
+     *
+     * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, self_matched: bool, competitor_matched: bool, self_state: string, competitor_state: string}>  $comparisonItems  BrandWheelSubElementComparisonComposer::compose()の戻り値
+     * @return array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, self_reason: string}>}|null nullは自社24項目すべてが○の場合(呼び出し側でこのページ自体を出さない判断に使う)
+     */
+    public function composeSelfOnly(array $comparisonItems): ?array
+    {
+        if ($comparisonItems === []) {
+            return null;
+        }
+
+        $groupOrder = array_keys((array) config('brand_wheel.group_labels', []));
+        $groupLabels = (array) config('brand_wheel.group_labels', []);
+
+        $groups = [];
+        $noneCounts = [];
+        $labelOnlyCounts = [];
+        foreach ($groupOrder as $groupKey) {
+            $itemsInGroup = array_values(array_filter($comparisonItems, fn (array $i) => $i['group'] === $groupKey));
+            $noneCounts[$groupKey] = count(array_filter($itemsInGroup, fn (array $i) => $i['self_state'] === 'none'));
+            $labelOnlyCounts[$groupKey] = count(array_filter($itemsInGroup, fn (array $i) => $i['self_state'] === 'label_only'));
+
+            $groups[$groupKey] = [
+                'group' => $groupKey,
+                'label' => (string) ($groupLabels[$groupKey] ?? $groupKey),
+                'self_count' => count(array_filter($itemsInGroup, fn (array $i) => $i['self_matched'])),
+                'max_count' => count($itemsInGroup),
+            ];
+        }
+
+        // 「－」件数降順でグループを並べ、(－+△)>0の最初のグループを採用する。
+        // 同点はconfig順を保持する必要があるため、PHPのusort/sortが安定
+        // ソート(同値要素の相対順序を保持、PHP 8.0+で保証)であることに
+        // 依拠せず、Collection::sortByDesc()(同じく安定ソート)を使い、
+        // 入力自体がconfig順の$groupOrderであることでconfig順維持を保証する。
+        $rankedGroupKeys = collect($groupOrder)
+            ->sortByDesc(fn (string $g) => $noneCounts[$g])
+            ->values()
+            ->all();
+
+        $selectedGroupKey = null;
+        foreach ($rankedGroupKeys as $groupKey) {
+            if ($noneCounts[$groupKey] + $labelOnlyCounts[$groupKey] > 0) {
+                $selectedGroupKey = $groupKey;
+                break;
+            }
+        }
+
+        if ($selectedGroupKey === null) {
+            // 自社24項目すべてが○(実運用ではまず起きない)。
+            Log::info('Brand wheel improvement focus (self-only): all 24 items are ○, page omitted', [
+                'group_none_counts' => $noneCounts,
+                'group_label_only_counts' => $labelOnlyCounts,
+            ]);
+
+            return null;
+        }
+
+        $noneItems = array_values(array_filter(
+            $comparisonItems,
+            fn (array $i) => $i['group'] === $selectedGroupKey && $i['self_state'] === 'none',
+        ));
+        $labelOnlyItems = array_values(array_filter(
+            $comparisonItems,
+            fn (array $i) => $i['group'] === $selectedGroupKey && $i['self_state'] === 'label_only',
+        ));
+
+        $candidateItems = array_map(fn (array $i) => $i + ['self_reason' => 'none'], $noneItems);
+        $candidateItems = array_merge($candidateItems, array_map(fn (array $i) => $i + ['self_reason' => 'label_only'], $labelOnlyItems));
+
+        $items = array_map(fn (array $i) => [
+            'axis_name' => $i['axis_name'],
+            'sub_name' => $i['sub_name'],
+            'definition' => $i['definition'],
+            'self_reason' => $i['self_reason'],
         ], array_slice($candidateItems, 0, self::MAX_ITEMS));
 
         return [
