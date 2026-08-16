@@ -6,6 +6,7 @@ use App\Enums\AnalysisStatus;
 use App\Enums\MetricResultStatus;
 use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
+use App\Models\BrandWheelImprovementSuggestion;
 use App\Models\LeadSession;
 use App\Models\MetricDefinition;
 use App\Models\MetricResult;
@@ -461,6 +462,43 @@ class ReportViewModelBuilderTest extends TestCase
     }
 
     /**
+     * 2026-08-10: 競合が存在しない場合、improvementFocusはnullのままだが、
+     * 代わりにimprovementFocusSelfOnly(自社の「－」「△」項目のみで構成)が
+     * 組み立てられる ―― 「比較サイトが無いため、領域ごとの比較はご用意
+     * できません。」の1行だけでページの大半が空白になる問題への対応
+     * (ユーザー指摘)。
+     */
+    public function test_improvement_focus_self_only_is_populated_when_there_is_no_competitor(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        // will_activity軸のpurposeだけ該当あり、残り23項目は「－」。
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNull($viewModel->improvementFocus);
+        $this->assertNotNull($viewModel->improvementFocusSelfOnly);
+        $this->assertCount(3, $viewModel->improvementFocusSelfOnly['items']);
+        foreach ($viewModel->improvementFocusSelfOnly['items'] as $item) {
+            $this->assertArrayNotHasKey('competitor_evidence', $item);
+            $this->assertContains($item['self_reason'], ['none', 'label_only']);
+        }
+    }
+
+    /**
      * 自社・競合ともにstatus==='success'のとき、improvementFocusが
      * 実際に組み立てられ、選ばれた項目に競合サイトのevidenceが付くこと。
      */
@@ -502,5 +540,189 @@ class ReportViewModelBuilderTest extends TestCase
         $evidences = array_column($viewModel->improvementFocus['items'], 'competitor_evidence');
         $this->assertContains('同僚についての競合サイトの抜粋', $evidences);
         $this->assertContains('雰囲気についての競合サイトの抜粋', $evidences);
+    }
+
+    // ------------------------------------------------------------------
+    // 2026-08-17改修分: ポジティブ/ネガティブ印象・比較サマリー・改善提案AI。
+    // ------------------------------------------------------------------
+
+    public function test_positive_and_negative_impression_are_exposed_on_the_view_model(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+            'positive_impression' => '事業内容への取り組み姿勢が伝わり、良い印象を与える可能性があります。',
+            'negative_impression' => '働く環境の具体像がイメージしづらい可能性があります。',
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame('事業内容への取り組み姿勢が伝わり、良い印象を与える可能性があります。', $viewModel->brandWheelSelf['positive_impression']);
+        $this->assertSame('働く環境の具体像がイメージしづらい可能性があります。', $viewModel->brandWheelSelf['negative_impression']);
+    }
+
+    public function test_group_totals_and_comparison_overview_are_populated_when_both_sides_are_readable(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'relationship', 'matched_sub_elements' => [
+                ['key' => 'colleagues', 'evidence' => 'y'], ['key' => 'atmosphere', 'evidence' => 'z'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertCount(3, $viewModel->groupTotals);
+        $companyDistance = collect($viewModel->groupTotals)->firstWhere('group', 'company_distance');
+        $this->assertSame('competitor_advantage', $companyDistance['verdict']);
+        $this->assertNotEmpty($viewModel->comparisonOverview);
+    }
+
+    public function test_group_totals_and_comparison_overview_are_empty_when_there_is_no_competitor(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame([], $viewModel->groupTotals);
+        $this->assertSame([], $viewModel->comparisonOverview);
+    }
+
+    /**
+     * 改善提案AI(BrandWheelImprovementSuggestion)がまだ生成されていない/
+     * 失敗している場合、improvementOnePointは既存の決定的ロジック
+     * ($brandWheelComparison['one_point']['text'])へ自動フォールバックする
+     * (AI障害・遅延がレポート生成全体を止めない設計、2026-08-17)。
+     */
+    public function test_improvement_one_point_falls_back_to_the_deterministic_text_when_no_ai_suggestion_exists(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame($viewModel->brandWheelComparison['one_point']['text'], $viewModel->improvementOnePoint);
+        $this->assertNull($viewModel->improvementRecommendation);
+    }
+
+    public function test_improvement_one_point_and_recommendation_use_the_ai_suggestion_when_available(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'one_point' => 'まずは既存情報だけで追加できる仕事内容・キャリア情報から充実させましょう。',
+            'recommendation' => 'まずは仕事の魅力に関する情報を拡充することを推奨します。',
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame('まずは既存情報だけで追加できる仕事内容・キャリア情報から充実させましょう。', $viewModel->improvementOnePoint);
+        $this->assertSame('まずは仕事の魅力に関する情報を拡充することを推奨します。', $viewModel->improvementRecommendation);
+    }
+
+    /**
+     * status='error'/'pending'の提案は未生成扱いとし、決定的ロジックへ
+     * フォールバックする(status='success'の行のみを採用する、
+     * ReportViewModelBuilder参照)。
+     */
+    public function test_improvement_one_point_ignores_a_non_success_suggestion_row(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'error',
+            'one_point' => null,
+            'recommendation' => null,
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame($viewModel->brandWheelComparison['one_point']['text'], $viewModel->improvementOnePoint);
+        $this->assertNull($viewModel->improvementRecommendation);
     }
 }

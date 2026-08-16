@@ -43,6 +43,8 @@ class PdfReportGeneratorTest extends TestCase
                 'key_message' => '技術で社会基盤を支える、という主題が置かれています。',
                 'impression' => '情緒的便益の記述が薄いのがもったいないところです。',
                 'impression_items' => ['情緒的便益の記述が薄いのがもったいないところです。'],
+                'positive_impression' => '事業内容への取り組み姿勢が伝わり、良い印象を与える可能性があります。',
+                'negative_impression' => '働く環境の具体像がイメージしづらい可能性があります。',
                 'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
             ],
             brandWheelCompetitor: [
@@ -53,6 +55,8 @@ class PdfReportGeneratorTest extends TestCase
                 'key_message' => null,
                 'impression' => null,
                 'impression_items' => [],
+                'positive_impression' => null,
+                'negative_impression' => null,
                 'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
             ],
             brandWheelComparison: [
@@ -70,9 +74,14 @@ class PdfReportGeneratorTest extends TestCase
             selfTotalLabelOnly: 0,
             competitorTotalLabelOnly: 0,
             subElementComparison: $subElementComparison,
+            groupTotals: $comparisonComposer->groupTotals($subElementComparison),
+            comparisonOverview: [],
             improvementFocus: app(BrandWheelImprovementFocusComposer::class)->compose($subElementComparison, [
                 'relationship' => ['colleagues' => '入社3年目の先輩が、日々どんな判断をしているかを紹介しています。'],
             ]),
+            improvementFocusSelfOnly: null,
+            improvementOnePoint: '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。',
+            improvementRecommendation: null,
         );
     }
 

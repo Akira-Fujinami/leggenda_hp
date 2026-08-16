@@ -81,8 +81,17 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
      * 候補者が受け取る印象を、評価・提言を含めず列挙する形に変更する。
      * 出力構造が変わるため、v6以前の結果はinput_hashの再利用対象から
      * 自動的に外れる。
+     *
+     * v8(2026-08-17): positive_impression/negative_impression(各1〜2文)を
+     * 追加した。レポートを「単なる情報羅列」から「候補者にどう見えるか」の
+     * 分析に寄せる改修の一環(依頼者指定)。impression(短いフレーズ列挙)は
+     * 画面/JSON APIの後方互換のため出力自体は維持するが、レポート表示は
+     * このポジティブ/ネガティブの2文へ切り替える。断定を避け、「〜という
+     * 印象を与える可能性があります」のような条件付き表現を明示的に指示する。
+     * 出力構造が変わるため、v7以前の結果はinput_hashの再利用対象から
+     * 自動的に外れる。
      */
-    public const string PROMPT_VERSION = 'v7';
+    public const string PROMPT_VERSION = 'v8';
 
     public function __construct(
         private readonly BrandWheelAnalysisResponseParser $parser,
@@ -176,6 +185,16 @@ TXT;
   「〜という情報は読み取れませんでした」のような診断結果の言い換えにはしないでください。
   良い/悪いの評価や改善の提言も含めないでください ―― 候補者がこのページから何を感じ
   取るか、事実として列挙するだけにとどめてください。
+- positive_impression: このページの記述が候補者に与える好意的な印象を1〜2文で。
+  「〜という印象を与える可能性があります」のように、断定を避けた表現にしてください。
+  サイトに実在する記述のみを根拠にし、それ以外の推測(社風・待遇等、サイトに書かれて
+  いないこと)を書かないでください。
+- negative_impression: このページの記述だけでは候補者が不安に感じたり、情報が
+  足りないと感じたりする可能性がある点を1〜2文で。「〜が伝わりにくい可能性が
+  あります」のように、断定を避けた表現にしてください。「〜がありません」
+  「〜が不足しています」のような直接的な欠落の指摘ではなく、候補者視点で
+  「〜を具体的にイメージしづらい可能性があります」のように書いてください。
+  該当する具体的な不安要素が無ければnullにしてください(無理に作らないでください)。
 - いずれもサイトに実在する記述から受け取れる範囲で書いてください(evidence抜粋のような
   原文一致検証は行いませんが、原文に無い内容の創作はしないでください)。
 
@@ -189,11 +208,14 @@ TXT;
   "core_value": {"readable": true, "evidence": "原文からの抜粋"},
   "key_message": "string",
   "impression": ["string", "string"],
+  "positive_impression": "string",
+  "negative_impression": "string",
   "quality_notes": {"consistency": "string", "credibility": "string", "distance": "string", "differentiation": "string", "corporate_alignment": "string"},
   "cautions": ["string"]
 }
 
 impressionは2〜4件の配列にしてください(1件未満・5件以上にはしないでください)。
+negative_impressionに該当する内容が無い場合はnullにしてください。
 
 sub_elementsオブジェクトのキーは、下記【下位要素チェックリスト】に列挙した24個の
 キーをすべて含めてください(過不足なく、それ以外のキーは追加しないでください)。
@@ -425,6 +447,13 @@ PROMPT;
                 // ResponseParserでの受け入れ処理に任せる(cautionsと同じ
                 // type:array/items:{type:string}のみの定義に揃える)。
                 'impression' => ['type' => 'array', 'items' => ['type' => 'string']],
+                // 2026-08-17(v8): positive_impression/negative_impression。
+                // impressionと同じ理由(サポート範囲が不確実なため文字数上限は
+                // strict schemaに頼らずプロンプト指示に任せる)でtype: ['string',
+                // 'null']のみの定義にする(negative_impressionは該当が無ければ
+                // null)。
+                'positive_impression' => ['type' => ['string', 'null']],
+                'negative_impression' => ['type' => ['string', 'null']],
                 'quality_notes' => [
                     'type' => 'object',
                     'properties' => array_fill_keys($qualityDimensionKeys, ['type' => ['string', 'null']]),
@@ -436,7 +465,7 @@ PROMPT;
                     'items' => ['type' => 'string'],
                 ],
             ],
-            'required' => ['sub_elements', 'core_value', 'key_message', 'impression', 'quality_notes', 'cautions'],
+            'required' => ['sub_elements', 'core_value', 'key_message', 'impression', 'positive_impression', 'negative_impression', 'quality_notes', 'cautions'],
             'additionalProperties' => false,
         ];
     }

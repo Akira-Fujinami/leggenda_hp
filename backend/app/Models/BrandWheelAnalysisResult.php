@@ -17,6 +17,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 #[Fillable([
     'analysis_id', 'website_analysis_id', 'provider', 'model', 'status', 'prompt_version',
     'axes', 'core_value_readable', 'core_value_evidence', 'key_message', 'impression',
+    'positive_impression', 'negative_impression',
     'quality_dimension_notes', 'cautions',
     'axis_state_counts', 'is_mock', 'input_hash', 'input_truncated', 'source_pages',
     'usage_input_tokens', 'usage_output_tokens', 'duration_ms', 'error_code', 'error_message', 'generated_at',

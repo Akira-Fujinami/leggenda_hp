@@ -150,4 +150,50 @@ class BrandWheelSubElementComparisonComposerTest extends TestCase
         sort($states);
         $this->assertSame(['matched', 'none'], $states);
     }
+
+    // ------------------------------------------------------------------
+    // 2026-08-17追加: groupTotals()(「○△－の対比表」ページの比較サマリー・
+    // グループ優劣バッジ用)。
+    // ------------------------------------------------------------------
+
+    public function test_group_totals_returns_all_three_groups_with_self_and_competitor_counts(): void
+    {
+        $items = $this->composer->compose($this->axesWithMatches([]), $this->axesWithMatches([]));
+
+        $totals = $this->composer->groupTotals($items);
+
+        $this->assertCount(3, $totals);
+        $this->assertSame(['company_appeal', 'company_distance', 'job_appeal'], array_column($totals, 'group'));
+    }
+
+    /**
+     * config('brand_wheel.group_advantage_diff_min')(既定2)以上の差が
+     * あれば優位/劣位、未満なら'even'と判定する。
+     */
+    public function test_group_totals_verdict_reflects_the_configured_advantage_threshold(): void
+    {
+        $selfAxes = $this->axesWithMatches(['relationship' => ['colleagues', 'atmosphere']]);
+        $competitorAxes = $this->axesWithMatches([]);
+        $items = $this->composer->compose($selfAxes, $competitorAxes);
+
+        $totals = $this->composer->groupTotals($items);
+        $companyDistance = collect($totals)->firstWhere('group', 'company_distance');
+
+        $this->assertSame(2, $companyDistance['self_count']);
+        $this->assertSame(0, $companyDistance['competitor_count']);
+        $this->assertSame('self_advantage', $companyDistance['verdict']);
+    }
+
+    public function test_group_totals_verdict_is_even_when_the_difference_is_below_the_threshold(): void
+    {
+        $selfAxes = $this->axesWithMatches(['will_activity' => ['purpose']]);
+        $competitorAxes = $this->axesWithMatches([]);
+        $items = $this->composer->compose($selfAxes, $competitorAxes);
+
+        $totals = $this->composer->groupTotals($items);
+        $companyAppeal = collect($totals)->firstWhere('group', 'company_appeal');
+
+        // 差は1件のみ(既定閾値2未満)のため'even'。
+        $this->assertSame('even', $companyAppeal['verdict']);
+    }
 }

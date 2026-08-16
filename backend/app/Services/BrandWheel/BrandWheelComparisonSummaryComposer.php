@@ -54,7 +54,14 @@ class BrandWheelComparisonSummaryComposer
      * (capSummaryPoints、最大4件で5件目以降を無言で切り捨てていた)は
      * この変更に伴い廃止した。
      *
-     * @param  list<array{key: string, group: string, name: string, matched_count: int, max_count: int}>  $axes
+     * 2026-08-17: 最充足軸の行を「判断結果」だけでなく「判断結果＋根拠」に
+     * する(依頼者指定 ―― 「活動的魅力が最も充足しています」だけでは分析
+     * として弱い)。根拠は実際にmatched_sub_elementsとして確認できた下位
+     * 要素名をそのまま列挙する(AIには書かせない、$axesが既に持っている
+     * BrandWheelLeadResponseComposer::buildAxes()の検証済みデータのみを使う
+     * ため、捏造のリスクが無い)。
+     *
+     * @param  list<array{key: string, group: string, name: string, matched_count: int, max_count: int, matched_sub_elements?: list<array{key: string, name: string}>}>  $axes
      * @return list<string>
      */
     public function pointsForReport(array $axes): array
@@ -67,7 +74,15 @@ class BrandWheelComparisonSummaryComposer
 
         $mostFilled = collect($axes)->sortByDesc('matched_count')->first();
         if ($mostFilled !== null && $mostFilled['matched_count'] > 0) {
-            $points[] = sprintf((string) config('brand_wheel.comparison_summary_templates.most_filled_axis'), $mostFilled['name']);
+            $subElementNames = array_column((array) ($mostFilled['matched_sub_elements'] ?? []), 'name');
+
+            $points[] = $subElementNames !== []
+                ? sprintf(
+                    (string) config('brand_wheel.comparison_summary_templates.most_filled_axis_with_evidence'),
+                    $mostFilled['name'],
+                    implode('・', $subElementNames),
+                )
+                : sprintf((string) config('brand_wheel.comparison_summary_templates.most_filled_axis'), $mostFilled['name']);
         }
 
         $zeroAxisNames = array_values(array_map(
@@ -80,6 +95,38 @@ class BrandWheelComparisonSummaryComposer
         }
 
         return array_merge($points, $this->sparseGroupPoints($axes));
+    }
+
+    /**
+     * 「○△－の対比表」ページ冒頭の比較サマリー(2026-08-17追加)。総合計件数と
+     * グループ優劣(BrandWheelSubElementComparisonComposer::groupTotals())から
+     * 機械的に導出する(AIには書かせない ―― 依頼者指定「単純な総合勝敗ではなく、
+     * どの領域に情報差があるかを示す」)。競合が無い/読み取れない場合は
+     * $groupTotalsを渡さない(呼び出し側が判断済みのものとして扱う)。
+     *
+     * @param  list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int, verdict: string}>  $groupTotals  BrandWheelSubElementComparisonComposer::groupTotals()の戻り値
+     * @return list<string>
+     */
+    public function comparisonOverview(int $selfTotalMatched, int $selfTotalMax, int $competitorTotalMatched, int $competitorTotalMax, array $groupTotals): array
+    {
+        $lines = [
+            sprintf(
+                (string) config('brand_wheel.comparison_overview_templates.totals'),
+                $selfTotalMatched, $selfTotalMax, $competitorTotalMatched, $competitorTotalMax,
+            ),
+        ];
+
+        foreach ($groupTotals as $group) {
+            $templateKey = match ($group['verdict']) {
+                'self_advantage' => 'advantage_group',
+                'competitor_advantage' => 'disadvantage_group',
+                default => 'even_group',
+            };
+
+            $lines[] = sprintf((string) config("brand_wheel.comparison_overview_templates.{$templateKey}"), $group['label']);
+        }
+
+        return $lines;
     }
 
     /**

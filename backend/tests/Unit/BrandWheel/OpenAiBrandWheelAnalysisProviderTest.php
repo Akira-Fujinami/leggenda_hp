@@ -223,4 +223,97 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
                 && in_array('impression', $required, true);
         });
     }
+
+    /**
+     * 2026-08-17(v8〜): positive_impression/negative_impressionを追加した。
+     * 候補者に与える印象をポジティブ/ネガティブに分けて示すレポート改修
+     * (依頼者指定)への対応。negative_impressionは該当が無い場合nullを
+     * 許容するため、['string', 'null']型で定義する。
+     */
+    public function test_response_format_schema_defines_positive_and_negative_impression(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        Http::fake([
+            'api.openai.com/*' => Http::response([
+                'choices' => [['message' => ['content' => json_encode([
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => [],
+                    'positive_impression' => null,
+                    'negative_impression' => null,
+                    'quality_notes' => [],
+                    'cautions' => [],
+                ])]]],
+                'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1],
+            ], 200),
+        ]);
+
+        (new OpenAiBrandWheelAnalysisProvider(new BrandWheelAnalysisResponseParser))->analyze($this->makeInput());
+
+        Http::assertSent(function ($request) {
+            $schema = $request->data()['response_format']['json_schema']['schema'] ?? [];
+            $required = $schema['required'] ?? [];
+
+            return ($schema['properties']['positive_impression'] ?? null) === ['type' => ['string', 'null']]
+                && ($schema['properties']['negative_impression'] ?? null) === ['type' => ['string', 'null']]
+                && in_array('positive_impression', $required, true)
+                && in_array('negative_impression', $required, true);
+        });
+    }
+
+    public function test_positive_and_negative_impression_are_parsed_from_the_ai_response(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        Http::fake([
+            'api.openai.com/*' => Http::response([
+                'choices' => [['message' => ['content' => json_encode([
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => [],
+                    'positive_impression' => '社会貢献への姿勢が伝わり、良い印象を与える可能性があります。',
+                    'negative_impression' => '働く環境の具体像がイメージしづらい可能性があります。',
+                    'quality_notes' => [],
+                    'cautions' => [],
+                ])]]],
+                'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1],
+            ], 200),
+        ]);
+
+        $outcome = (new OpenAiBrandWheelAnalysisProvider(new BrandWheelAnalysisResponseParser))->analyze($this->makeInput());
+
+        $this->assertSame('社会貢献への姿勢が伝わり、良い印象を与える可能性があります。', $outcome->result->positiveImpression);
+        $this->assertSame('働く環境の具体像がイメージしづらい可能性があります。', $outcome->result->negativeImpression);
+    }
+
+    /**
+     * forbidden_phrasesを含む場合はnullにする(key_message/impressionと同じ
+     * 安全側の検証、2026-07-30の指摘を新2フィールドにも適用)。
+     */
+    public function test_positive_and_negative_impression_are_nulled_when_they_contain_forbidden_phrases(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        config(['brand_wheel.forbidden_phrases' => ['不足']]);
+        Http::fake([
+            'api.openai.com/*' => Http::response([
+                'choices' => [['message' => ['content' => json_encode([
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => [],
+                    'positive_impression' => '良い印象があります。',
+                    'negative_impression' => '情報が不足している可能性があります。',
+                    'quality_notes' => [],
+                    'cautions' => [],
+                ])]]],
+                'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1],
+            ], 200),
+        ]);
+
+        $outcome = (new OpenAiBrandWheelAnalysisProvider(new BrandWheelAnalysisResponseParser))->analyze($this->makeInput());
+
+        $this->assertSame('良い印象があります。', $outcome->result->positiveImpression);
+        $this->assertNull($outcome->result->negativeImpression);
+    }
 }

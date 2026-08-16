@@ -142,14 +142,32 @@ class WordReportGenerator
             $table->addCell(6500)->addText($group['desc']);
         }
 
+        // 2026-08-17: 軸単位の説明(config('brand_wheel.axes.*.definition')、
+        // 既存)を1段落にまとめて追加する(依頼者指定#6)。PDF版で表(セル内
+        // ネスト)に入れたところ実PDF確認で深刻なページ分割不具合が見つかった
+        // ため、Word版も最初から表の外の通常の段落として追加する(PDF版との
+        // 構造整合)。
+        $section->addTextBreak(1);
+        $axisDefsText = collect((array) config('brand_wheel.axes', []))
+            ->map(fn ($axis) => $axis['name_ja'].'：'.$axis['definition'])
+            ->implode('　');
+        $section->addText($axisDefsText, ['size' => 9, 'color' => '4A4A4A']);
+
         $section->addTextBreak(1);
         $section->addText(
             '6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。中心のCore Value(約束する価値)は、'.
             'その24項目を貫く「この会社が候補者に約束するもの」にあたります。',
         );
+        // 2026-08-17: 件数集計フレーミングを弱め、レポートの目的を主文にする
+        // (依頼者指定#3)。URL分析対象範囲の明記(依頼者指定#5)も追加。
         $section->addText(
-            'このレポートでは、この24項目のうち何件が、サイトの記述から読み取れたかを数えています。'.
-            '点数付けではなく、件数の集計です。',
+            '本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています'.
+            '(この24項目のうち何件が、サイトの記述から読み取れたかもあわせて示しています)。',
+        );
+        $section->addText(
+            '本分析は、ご提供いただいた採用ページ・トップページの記述を対象としており、サイト全体や他の関連ページを'.
+            '自動的に巡回して分析するものではありません。',
+            ['size' => 9.5, 'color' => '6B6767'],
         );
 
         $section->addTextBreak(1);
@@ -192,13 +210,14 @@ class WordReportGenerator
         }
 
         $section->addText(
-            '6つの項目それぞれについて、該当する内容がサイトの記述から何件読み取れたかを集計しています(点数ではありません)。'.
+            '本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています。'.
             '解析したURL：'.$wheel['analyzed_url'],
             ['size' => 9, 'italic' => true],
         );
 
         $section->addTextBreak(1);
-        $section->addText("{$seriesLabel}: {$totalMatched} / {$totalMax}項目", ['bold' => true, 'size' => 14]);
+        $section->addText("{$seriesLabel}　確認できた情報：{$totalMatched} / {$totalMax}項目", ['bold' => true, 'size' => 14]);
+        $section->addText('ブランドホイール24項目のうち、サイト上で情報を確認できた項目数', ['size' => 8, 'color' => '9A9A9A']);
 
         if ($summaryPoints !== []) {
             $section->addTextBreak(1);
@@ -226,18 +245,25 @@ class WordReportGenerator
             $table->addCell(5000)->addText($matchedNames === [] ? '該当する記述は見つかりませんでした' : implode('、', $matchedNames));
         }
 
-        $impressionItems = (array) ($wheel['impression_items'] ?? []);
-        if ($wheel['key_message'] || $impressionItems !== []) {
+        // 2026-08-17: 「AI解析による候補者に与える印象」(短いフレーズの箇条書き)
+        // から、ポジティブ/ネガティブの2文構成へ変更(依頼者指定、PDF版と同内容)。
+        // 「収集した情報から」→「サイト上の情報から」に文言変更。
+        $positiveImpression = $wheel['positive_impression'] ?? null;
+        $negativeImpression = $wheel['negative_impression'] ?? null;
+        if ($wheel['key_message'] || $positiveImpression || $negativeImpression) {
             $section->addTextBreak(1);
 
             if ($wheel['key_message']) {
-                $section->addText('収集した情報から想定されるキーメッセージ：'.$wheel['key_message']);
+                $section->addText('サイト上の情報から想定されるキーメッセージ：'.$wheel['key_message']);
             }
 
-            if ($impressionItems !== []) {
-                $section->addText('AI解析による候補者に与える印象：');
-                foreach ($impressionItems as $item) {
-                    $section->addText("・{$item}");
+            if ($positiveImpression || $negativeImpression) {
+                $section->addText('候補者に与える印象：');
+                if ($positiveImpression) {
+                    $section->addText("・{$positiveImpression}");
+                }
+                if ($negativeImpression) {
+                    $section->addText("・{$negativeImpression}");
                 }
             }
 
@@ -273,6 +299,15 @@ class WordReportGenerator
             '24項目それぞれについて、サイトに該当する記述があったかどうかを3段階で示しています。',
             ['size' => 9, 'italic' => true],
         );
+
+        // 2026-08-17追加: 比較結果サマリー(PDF版と同内容、依頼者指定#11)。
+        if ($viewModel->comparisonOverview !== []) {
+            $section->addTextBreak(1);
+            $section->addText('比較結果サマリー', ['bold' => true, 'size' => 9.5]);
+            foreach ($viewModel->comparisonOverview as $line) {
+                $section->addText($line, ['size' => 9]);
+            }
+        }
 
         $section->addTextBreak(1);
         $section->addText('凡例', ['bold' => true, 'size' => 9.5]);
@@ -357,9 +392,11 @@ class WordReportGenerator
             return;
         }
 
-        $onePoint = $viewModel->brandWheelComparison['one_point'];
-        if ($onePoint !== null) {
-            $section->addText('【ワンポイント】'.$onePoint['text'], ['bold' => true]);
+        // 2026-08-17: ワンポイントの文言を改善提案AIの生成結果へ切り替える
+        // (PDF版と同内容)。$viewModel->improvementOnePointは未生成/失敗時に
+        // 既存の決定的ロジックへ自動フォールバック済み(ReportViewModelBuilder参照)。
+        if ($viewModel->improvementOnePoint !== null) {
+            $section->addText('【ワンポイント】'.$viewModel->improvementOnePoint, ['bold' => true]);
             $section->addTextBreak(1);
         }
 
@@ -387,6 +424,13 @@ class WordReportGenerator
                     $section->addText($item['definition'], ['size' => 9, 'color' => '6B6767']);
                     $section->addText('御社のサイト：記述が見つかりませんでした');
                     $section->addText('比較サイトの記述：「'.$item['competitor_evidence'].'」');
+                }
+
+                // 2026-08-17追加: 改善提案AIの詳細提言(PDF版と同内容)。
+                if ($viewModel->improvementRecommendation !== null) {
+                    $section->addTextBreak(1);
+                    $section->addText('改善のご提案', ['bold' => true, 'size' => 10]);
+                    $section->addText($viewModel->improvementRecommendation, ['size' => 9.5]);
                 }
 
                 $section->addTextBreak(1);
@@ -437,6 +481,12 @@ class WordReportGenerator
             $section->addText('御社のサイト：'.$this->selfOnlyReasonLabel($item['self_reason']));
         }
 
+        if ($viewModel->improvementRecommendation !== null) {
+            $section->addTextBreak(1);
+            $section->addText('改善のご提案', ['bold' => true, 'size' => 10]);
+            $section->addText($viewModel->improvementRecommendation, ['size' => 9.5]);
+        }
+
         $section->addTextBreak(1);
         $section->addText(
             'なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、'.
@@ -458,56 +508,53 @@ class WordReportGenerator
     }
 
     /**
-     * PDF版7ページ目(最終ページ)と同内容。2026-08-08: 旧「ここから先は、
-     * サイトの外の話です」(3ブロック構成)をユーザー指定の新文言に全面
-     * 差し替え。一見してメッセージが分かるよう、見出し+本文2段落の
-     * シンプルな構成にする(3ブロックのボックス構成は廃止)。
-     */
-    /**
-     * 2026-08-10: 連絡先確定(ユーザー指示)。PDF版(lead-pdf.blade.php
-     * .ctacontact)と同内容。掲載するのはhttps://www.leggenda.co.jp/contact/
-     * (公式サイトの問い合わせページ)のみ ―― 外部フォームツール本体のURLは
-     * 掲載しない(印刷物に自社ドメイン以外のURLが出るとフィッシングを
-     * 疑われる・フォームツールを乗り換えた際に刷り直しが必要になるため)。
-     * 電話番号は掲載しない(問い合わせページで受付停止中のため)。発行日は
-     * 表紙と同じ$viewModel->generatedAtLabelを参照し、二重管理しない。
+     * PDF版7ページ目(最終ページ)と同内容。2026-08-17: 長い説明文を削除し、
+     * 営業CTAに集中させる(依頼者指定)。この新文言は2026-08-08時点の
+     * 「旧CTA『他社比較(3〜5社)』は使わない」という制約と直接矛盾するが、
+     * 今回の依頼文がこの文言を明示的に指定しているため優先する(PDF版の
+     * コメント・実装報告に方針転換である旨を明記)。
+     *
+     * 連絡先は2026-08-10時点の方針を維持: https://www.leggenda.co.jp/contact/
+     * のみを掲載し、外部フォームツール本体のURL・電話番号は掲載しない。
+     * URLをそのまま長文表示せず、ボタン風のラベル付きリンクにする
+     * (依頼者指定)。発行日は表紙と同じ$viewModel->generatedAtLabelを参照する。
      */
     private function addCallToActionSection(PhpWord $phpWord, ReportViewModel $viewModel): void
     {
         $section = $phpWord->addSection();
 
-        $section->addTextBreak(2);
-        $section->addText('サイトの改善をすれば課題が解決するとは限りません', ['bold' => true, 'size' => 18], ['alignment' => Jc::CENTER]);
-        $section->addTextBreak(1);
+        $section->addTextBreak(4);
         $section->addText(
-            'サイトの改善が最も効果的な打ち手となるのか、応募から内定までの間での候補者とのタッチポイント全体の設計を改めて行うことで大きな効果を得られるのかを見直す必要があります。',
-            ['size' => 10.5],
+            'さらに3〜5社の競合採用サイトと比較し、御社が優先して改善すべき課題を整理しませんか？',
+            ['bold' => true, 'size' => 18],
             ['alignment' => Jc::CENTER],
         );
         $section->addTextBreak(1);
         $section->addText(
-            '弊社にてさらに幅を広げ、3〜5社の競合他社のサイトと比較した結果をもとにどこに御社課題があるかをディスカッションしませんか。ご希望いただける場合は、以下よりご連絡ください。',
-            ['size' => 10.5],
+            '詳細な比較結果をもとに、採用課題についてディスカッションします。',
+            ['size' => 10.5, 'color' => '6B6767'],
             ['alignment' => Jc::CENTER],
         );
 
-        $section->addTextBreak(2);
-        $contactTable = $section->addTable([
-            'borderSize' => 6,
-            'borderColor' => 'E0E0E0',
-            'borderLeftSize' => 30,
-            'borderLeftColor' => '1D2088',
-            'cellMargin' => 200,
-            'width' => 9000,
-            'unit' => \PhpOffice\PhpWord\SimpleType\TblWidth::TWIP,
-        ]);
-        $contactTable->addRow();
-        $cell = $contactTable->addCell(9000);
-        $cell->addText('ご相談・お問い合わせ', ['bold' => true, 'size' => 12], ['alignment' => Jc::CENTER, 'spaceAfter' => 100]);
-        $cell->addLink('https://www.leggenda.co.jp/contact/', 'https://www.leggenda.co.jp/contact/', ['bold' => true, 'size' => 14, 'color' => '1D2088', 'underline' => 'none'], ['alignment' => Jc::CENTER, 'spaceAfter' => 100]);
-        $cell->addText(
+        $section->addTextBreak(3);
+        // ボタン風のラベル付きリンク(URL文字列をそのまま表示しない、依頼者指定)。
+        // PhpWordのTableスタイルにセンタリング用のalignmentは持たせず
+        // (Word版はPDF版ほど厳密な中央寄せ検証を必要としない)、セル内の
+        // テキストはJc::CENTERで中央寄せする。
+        $btnTable = $section->addTable();
+        $btnTable->addRow();
+        $btnCell = $btnTable->addCell(4500, ['bgColor' => '1D2088', 'valign' => 'center']);
+        $btnCell->addLink(
+            'https://www.leggenda.co.jp/contact/',
+            '競合比較について相談する',
+            ['bold' => true, 'size' => 13, 'color' => 'FFFFFF', 'underline' => 'none'],
+            ['alignment' => Jc::CENTER, 'spaceBefore' => 150, 'spaceAfter' => 150],
+        );
+
+        $section->addTextBreak(1);
+        $section->addText(
             "お問い合わせの際は、本レポートの発行日（{$viewModel->generatedAtLabel}）と貴社名をお知らせください。",
-            ['size' => 9.5, 'color' => '6B6767'],
+            ['size' => 9.5, 'color' => '9A9A9A'],
             ['alignment' => Jc::CENTER],
         );
     }

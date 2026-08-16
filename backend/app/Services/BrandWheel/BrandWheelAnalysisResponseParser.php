@@ -86,6 +86,8 @@ class BrandWheelAnalysisResponseParser
             coreValue: $this->parseCoreValue($raw['core_value'] ?? null, $haystack),
             keyMessage: $this->parseForbiddenPhraseSafeText($raw['key_message'] ?? null),
             impression: $this->parseImpressionList($raw['impression'] ?? null),
+            positiveImpression: $this->parseForbiddenPhraseSafeText($raw['positive_impression'] ?? null),
+            negativeImpression: $this->parseForbiddenPhraseSafeText($raw['negative_impression'] ?? null),
             qualityDimensionNotes: $this->parseQualityDimensionNotes($raw['quality_notes'] ?? []),
             cautions: $this->parseStringList($raw['cautions'] ?? []),
             axisStateCounts: $axisStateCounts,

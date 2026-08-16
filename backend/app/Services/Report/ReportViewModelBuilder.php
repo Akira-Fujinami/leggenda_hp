@@ -4,9 +4,11 @@ namespace App\Services\Report;
 
 use App\Enums\AnalysisStatus;
 use App\Models\Analysis;
+use App\Models\BrandWheelImprovementSuggestion;
 use App\Models\LeadSession;
 use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelComparisonSummaryComposer;
+use App\Services\BrandWheel\BrandWheelEvidenceLookupBuilder;
 use App\Services\BrandWheel\BrandWheelHexagonRenderer;
 use App\Services\BrandWheel\BrandWheelImprovementFocusComposer;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
@@ -52,6 +54,7 @@ class ReportViewModelBuilder
         private readonly BrandWheelSubElementComparisonComposer $subElementComparisonComposer,
         // 「改善提案」ページの領域選択・3項目選定(決定的な規則)。
         private readonly BrandWheelImprovementFocusComposer $improvementFocusComposer,
+        private readonly BrandWheelEvidenceLookupBuilder $evidenceLookupBuilder,
     ) {}
 
     public function build(Analysis $analysis, LeadSession $leadSession): ReportViewModel
@@ -121,16 +124,36 @@ class ReportViewModelBuilder
         // 「○△－対比表」「改善提案」の唯一の情報源(2026-08-04)。
         $subElementComparison = $this->subElementComparisonComposer->compose($selfAxes, $competitorAxes);
 
+        // 2026-08-17追加: 比較ページ冒頭の比較サマリー・グループ優劣バッジ。
+        // 競合が読み取れない場合は意味を持たないため空配列にする(呼び出し側は
+        // 空配列かどうかで表示可否を判断する)。
+        $groupTotals = $competitorReadable ? $this->subElementComparisonComposer->groupTotals($subElementComparison) : [];
+        $comparisonOverview = $selfReadable && $competitorReadable
+            ? $this->brandWheelSummaryComposer->comparisonOverview($selfTotalMatched, $selfTotalMax, $competitorTotalMatched, $competitorTotalMax, $groupTotals)
+            : [];
+
         // 改善提案ページの3項目分だけ、比較サイトの実際のevidenceを渡す
         // (2026-08-04、README「その領域から3項目を、比較サイトの実際の
         // evidenceつきで提示する」への対応 ―― これまでの「競合サイトの本文を
         // レポートに出さない」方針からの意図的な例外。ViewModelへは
         // improvementFocusが選んだ最大3件分のevidenceしか渡らないため、
         // 競合サイトの本文を広く露出させるものではない)。
+        // 2026-08-17追加: 改善提案AI(GenerateBrandWheelImprovementSuggestionJob)の
+        // 生成結果。まだ生成中/失敗している場合は$improvementSuggestionがnullの
+        // ままとなり、ワンポイントは既存の決定的ロジック($comparison['one_point'])
+        // にフォールバックする ―― AI呼び出しの失敗・遅延がレポート生成全体を
+        // 止めてはいけない(既存のレーダーPNG生成失敗時と同じ方針)。
+        $improvementSuggestion = BrandWheelImprovementSuggestion::query()
+            ->where('analysis_id', $analysis->id)
+            ->where('status', 'success')
+            ->first();
+        $improvementOnePoint = $improvementSuggestion?->one_point ?? ($brandWheelComparison['one_point']['text'] ?? null);
+        $improvementRecommendation = $improvementSuggestion?->recommendation;
+
         $improvementFocus = $selfReadable && $competitorReadable
             ? $this->improvementFocusComposer->compose(
                 $subElementComparison,
-                $this->buildEvidenceByAxisAndSubKey($competitorBrandWheelRecord),
+                $this->evidenceLookupBuilder->build($competitorBrandWheelRecord),
             )
             : null;
 
@@ -161,33 +184,13 @@ class ReportViewModelBuilder
             selfTotalLabelOnly: $selfTotalLabelOnly,
             competitorTotalLabelOnly: $competitorTotalLabelOnly,
             subElementComparison: $subElementComparison,
+            groupTotals: $groupTotals,
+            comparisonOverview: $comparisonOverview,
             improvementFocus: $improvementFocus,
             improvementFocusSelfOnly: $improvementFocusSelfOnly,
+            improvementOnePoint: $improvementOnePoint,
+            improvementRecommendation: $improvementRecommendation,
         );
-    }
-
-    /**
-     * 生のBrandWheelAnalysisResult.axesから(axis_key => (sub_element_key =>
-     * evidence))のルックアップを組み立てる。改善提案ページ(競合側の選ばれた
-     * 最大3件分のみ)専用 ―― 競合サイトの本文を広く露出させない既存方針を
-     * 保つため、この用途以外には使わない。
-     *
-     * @return array<string, array<string, string>>
-     */
-    private function buildEvidenceByAxisAndSubKey(?\App\Models\BrandWheelAnalysisResult $record): array
-    {
-        if ($record === null) {
-            return [];
-        }
-
-        $evidenceByAxisAndSubKey = [];
-        foreach ((array) ($record->axes ?? []) as $axis) {
-            foreach ((array) ($axis['matched_sub_elements'] ?? []) as $sub) {
-                $evidenceByAxisAndSubKey[$axis['axis_key']][$sub['key']] = (string) ($sub['evidence'] ?? '');
-            }
-        }
-
-        return $evidenceByAxisAndSubKey;
     }
 
     /**

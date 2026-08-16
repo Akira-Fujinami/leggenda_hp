@@ -54,8 +54,16 @@ class BrandWheelLeadResponseComposer
 
     private const IMPRESSION_ITEM_MAX_CHARS = 45;
 
+    // 2026-08-17追加: positive_impression/negative_impression(各1〜2文)の
+    // レポート向け文字数上限。impression_itemsと同じ理由(紙面の高さ予算を
+    // 事前に見積もれるようにするため)。実PDF確認(worst-case: 自社/競合とも
+    // 24項目中複数該当・長い企業名の実データ)で90字は紺帯(darkband)が
+    // ページに収まりきらず丸ごと次ページへあふれることが判明したため、
+    // EVIDENCE_MAX_CHARSと同じ経緯(110→70→60)で65字まで縮小した。
+    private const IMPRESSION_TEXT_MAX_CHARS = 65;
+
     /**
-     * @return array{status: string, status_message: ?string, analyzed_url: string, axes: list<array<string, mixed>>, key_message: ?string, impression: ?string, impression_items: list<string>, source_pages: array<string, mixed>}
+     * @return array{status: string, status_message: ?string, analyzed_url: string, axes: list<array<string, mixed>>, key_message: ?string, impression: ?string, impression_items: list<string>, positive_impression: ?string, negative_impression: ?string, source_pages: array<string, mixed>}
      */
     public function compose(?BrandWheelAnalysisResult $record, Website $website): array
     {
@@ -71,8 +79,24 @@ class BrandWheelLeadResponseComposer
             'key_message' => $isSuccess ? $record?->key_message : null,
             'impression' => $impressionItems !== [] ? implode('、', $impressionItems) : null,
             'impression_items' => $this->capImpressionItemsForReport($impressionItems),
+            // 2026-08-17追加: レポート「候補者に与える印象」の表示はこちらへ
+            // 切り替える(依頼者指定 ―― ポジティブ/ネガティブを分けて示す)。
+            // 画面/JSON APIの後方互換のためimpression/impression_itemsは維持する。
+            'positive_impression' => $isSuccess ? $this->capImpressionTextForReport($record?->positive_impression) : null,
+            'negative_impression' => $isSuccess ? $this->capImpressionTextForReport($record?->negative_impression) : null,
             'source_pages' => (array) ($record?->source_pages ?? ['recruit_page' => null, 'home_page' => null]),
         ];
+    }
+
+    private function capImpressionTextForReport(?string $text): ?string
+    {
+        if ($text === null || trim($text) === '') {
+            return null;
+        }
+
+        return mb_strlen($text) > self::IMPRESSION_TEXT_MAX_CHARS
+            ? mb_substr($text, 0, self::IMPRESSION_TEXT_MAX_CHARS).'…'
+            : $text;
     }
 
     /**

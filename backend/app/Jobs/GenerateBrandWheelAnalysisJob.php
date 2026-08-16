@@ -13,6 +13,7 @@ use App\Services\BrandWheel\BrandWheelAnalysisInputFactory;
 use App\Services\BrandWheel\BrandWheelAnalysisProvider;
 use App\Services\BrandWheel\BrandWheelAnalysisProviderFactory;
 use App\Services\BrandWheel\BrandWheelCompletionNotifier;
+use App\Services\BrandWheel\BrandWheelImprovementSuggestionDispatcher;
 use App\Services\BrandWheel\Data\BrandWheelAnalysisInput;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -139,6 +140,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'core_value_evidence' => null,
                 'key_message' => null,
                 'impression' => null,
+                'positive_impression' => null,
+                'negative_impression' => null,
                 'quality_dimension_notes' => null,
                 'cautions' => null,
                 'axis_state_counts' => null,
@@ -202,6 +205,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'core_value_evidence' => $reusable->core_value_evidence,
                 'key_message' => $reusable->key_message,
                 'impression' => $reusable->impression,
+                'positive_impression' => $reusable->positive_impression,
+                'negative_impression' => $reusable->negative_impression,
                 'quality_dimension_notes' => $reusable->quality_dimension_notes,
                 'cautions' => $reusable->cautions,
                 'axis_state_counts' => $reusable->axis_state_counts,
@@ -257,6 +262,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             'core_value_evidence' => $result->coreValue->evidence,
             'key_message' => $result->keyMessage,
             'impression' => $result->impression,
+            'positive_impression' => $result->positiveImpression,
+            'negative_impression' => $result->negativeImpression,
             'quality_dimension_notes' => $result->qualityDimensionNotes,
             'cautions' => $result->cautions,
             'axis_state_counts' => $result->axisStateCounts,
@@ -315,6 +322,12 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             $pipeline->maybeFinalizeWebsiteAnalysis($websiteAnalysisId);
         }
         $pipeline->updateAnalysisProgress($analysisId);
+
+        // 2026-08-17追加: このAnalysisの全BrandWheelAnalysisResult(自社・競合)が
+        // 終端状態に達したら、改善提案(page6)AIの生成を1回だけdispatchする
+        // (BrandWheelImprovementSuggestionDispatcher参照)。診断本体の進捗・
+        // 完了判定には影響させない(判定後の副作用として呼ぶだけ)。
+        app(BrandWheelImprovementSuggestionDispatcher::class)->dispatchIfReady($analysisId);
     }
 
     /**

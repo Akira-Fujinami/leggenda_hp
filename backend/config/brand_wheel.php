@@ -66,6 +66,18 @@ return [
                 'project_initiative' => '新規プロジェクトや新しい取り組みの具体的な紹介。既存事業の説明のみでは該当しない。',
                 'social_contribution' => '地域貢献・CSR等、社会に対する貢献活動についての記述。',
             ],
+            // 2026-08-17追加: 改善提案AIへ渡す「実行難易度」タグ。この軸の
+            // 4項目はいずれも既存の社内資料(事業内容・IR・広報資料等)から
+            // 整理できる可能性が高いため'low'。値はexecution_difficulty_labels
+            // のキーと対応する(このタグ自体はAIに判定させず、項目の性質として
+            // 固定する ―― 依頼者指定の考え方、config/brand_wheel.php冒頭コメント
+            // 参照)。
+            'sub_element_execution_difficulty' => [
+                'purpose' => 'low',
+                'business_expansion' => 'low',
+                'project_initiative' => 'low',
+                'social_contribution' => 'low',
+            ],
         ],
 
         'asset' => [
@@ -85,6 +97,14 @@ return [
                 'competitiveness' => '他社にはない強みや独自の技術・ポジションについての記述。',
                 'scale_influence' => '売上高・拠点数・従業員数など、事業規模や業界内での影響力を示す記述。',
                 'office_facility' => 'オフィス環境や設備についての具体的な記述。',
+            ],
+            'sub_element_execution_difficulty' => [
+                'brand_recognition' => 'low',
+                'competitiveness' => 'low',
+                'scale_influence' => 'low',
+                // オフィス・施設は写真撮影や紹介文の新規作成が必要になる場合が
+                // あるため'medium'。
+                'office_facility' => 'medium',
             ],
         ],
 
@@ -106,6 +126,13 @@ return [
                 'company_character' => '会社全体としての気質・社風を述べた記述。個人の心構えや意気込みの表明のみでは該当しない。',
                 'core_values' => '組織として大切にしている価値観や行動指針についての記述。',
             ],
+            'sub_element_execution_difficulty' => [
+                // 経営者・幹部本人の言葉の取材が必要になる場合があるため'medium'。
+                'leadership' => 'medium',
+                'org_structure' => 'low',
+                'company_character' => 'low',
+                'core_values' => 'low',
+            ],
         ],
 
         'relationship' => [
@@ -125,6 +152,15 @@ return [
                 'atmosphere' => '職場の雰囲気や社内の空気感についての記述。',
                 'physical_freedom' => 'リモートワーク・フレックス等、働く場所や時間の裁量についての記述。',
                 'mental_freedom' => '意見の言いやすさや裁量の大きさなど、心理的な自由度についての記述。',
+            ],
+            // この軸の4項目は、社員インタビュー・座談会・職場撮影等、社内の
+            // 協力を要することが多いため、いずれも'high'とする(依頼者の
+            // 例示: 「会社との距離」は実行負荷が高い項目の代表例)。
+            'sub_element_execution_difficulty' => [
+                'colleagues' => 'high',
+                'atmosphere' => 'high',
+                'physical_freedom' => 'high',
+                'mental_freedom' => 'high',
             ],
         ],
 
@@ -146,6 +182,14 @@ return [
                 'satisfaction' => '仕事を通じて得られる満足感や充実感についての記述。',
                 'superiority' => '他と比べて優れている、選ばれた立場にあるという感覚についての記述。',
             ],
+            // 感情の言葉は制度説明の言い換えでは書けず、社員自身の実感の取材が
+            // 必要になることが多いため、いずれも'high'とする。
+            'sub_element_execution_difficulty' => [
+                'pride' => 'high',
+                'talkable' => 'high',
+                'satisfaction' => 'high',
+                'superiority' => 'high',
+            ],
         ],
 
         'financial_benefit' => [
@@ -166,7 +210,31 @@ return [
                 'growth_opportunity' => 'スキルアップやキャリア形成の機会についての記述。',
                 'employment_stability' => '雇用の継続性や経営の安定性についての記述。',
             ],
+            // 給与・福利厚生・成長機会・雇用安定性はいずれも既存の人事制度
+            // データから記述できる可能性が高いため'low'とする。
+            'sub_element_execution_difficulty' => [
+                'salary_level' => 'low',
+                'benefits' => 'low',
+                'growth_opportunity' => 'low',
+                'employment_stability' => 'low',
+            ],
         ],
+    ],
+
+    /*
+    |----------------------------------------------------------------
+    | 改善提案AI向け「実行難易度」タグの説明文言(2026-08-17追加)
+    |----------------------------------------------------------------
+    | axes.*.sub_element_execution_difficultyの値(low/medium/high)に対応する
+    | 説明文。項目の性質(社内資料で足りるか、社員・他部署の協力が要るか)から
+    | 一律に決まる事実であり、企業ごとにAIへ判定させない(捏造防止)。
+    | 断定を避け、条件付きの表現にすること(依頼者指定 ―― 「人事部だけで
+    | 実施できます」のような断定はしない)。
+    */
+    'execution_difficulty_labels' => [
+        'low' => '既存の社内資料を整理することで対応できる場合、人事部内で比較的着手しやすい施策です。',
+        'medium' => '経営層や関連部署が持つ情報を確認できる場合、比較的着手しやすい施策です。',
+        'high' => '社員の実態を詳しく伝える場合は、社員インタビューや職場の撮影など、社内の協力が必要になる可能性があります。',
     ],
 
     /*
@@ -321,12 +389,46 @@ return [
     */
     'comparison_summary_templates' => [
         'most_filled_axis' => '%sが最も内容として充足しています。',
-        'zero_axis' => '%sに関する記載は読み取れませんでした。',
+        // 2026-08-17: 「読み取れませんでした」(こちら側が読み取れなかった、
+        // とも読める)から「サイト上では確認できませんでした」(分析対象の
+        // サイトに限定した事実)へ変更(依頼者指定 ―― 断定を避け、分析対象
+        // URLに限定した表現にする)。
+        'zero_axis' => '%sに関する記述はサイト上では確認できませんでした。',
         'sparse_group' => '全体的に%sの情報は少なめです。',
+        // 2026-08-17追加: レポート専用の「判断結果＋根拠」文言
+        // (BrandWheelComparisonSummaryComposer::pointsForReport()参照)。
+        // 最充足軸のmatched_sub_elements名を根拠として組み込む。
+        'most_filled_axis_with_evidence' => '%1$sについて、%2$sに関する記述が確認でき、情報は比較的充実しています。',
     ],
 
     'comparison_summary_thresholds' => [
         'group_gap_ratio_max' => 0.5,
+    ],
+
+    /*
+    |----------------------------------------------------------------
+    | 「○△－の対比表」ページのグループ優劣判定閾値(2026-08-17追加)
+    |----------------------------------------------------------------
+    | 3グループ(company_appeal/company_distance/job_appeal)それぞれについて
+    | (自社matched件数 － 競合matched件数)の絶対値がこの値以上であれば
+    | 自社優位/競合優位、未満であれば同程度と判定する(BrandWheelSubElement
+    | ComparisonComposer::groupTotals()、完全にPHPの決定的ロジック)。
+    */
+    'group_advantage_diff_min' => 2,
+
+    /*
+    |----------------------------------------------------------------
+    | 「○△－の対比表」ページ冒頭の比較サマリー文言テンプレート(2026-08-17追加)
+    |----------------------------------------------------------------
+    | BrandWheelComparisonSummaryComposer::comparisonOverview()が組み立てる。
+    | 総合計件数と、グループ優劣(group_advantage_diff_min)から機械的に
+    | 導出する(AIには書かせない)。
+    */
+    'comparison_overview_templates' => [
+        'totals' => '自社は%1$d / %2$d項目、競合は%3$d / %4$d項目の情報が確認できました。',
+        'advantage_group' => '特に「%s」で自社の情報量が競合を上回りました。',
+        'disadvantage_group' => '特に「%s」で競合の情報量が自社を上回りました。',
+        'even_group' => '「%s」は自社・競合とも同程度の情報量でした。',
     ],
 
     /*

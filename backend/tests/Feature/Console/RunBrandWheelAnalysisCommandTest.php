@@ -130,7 +130,13 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
         $this->artisan('brand-wheel:run', ['website_analysis_id' => $websiteAnalysis->id])->assertSuccessful();
         $this->artisan('brand-wheel:run', ['website_analysis_id' => $websiteAnalysis->id])->assertSuccessful();
 
-        Http::assertSentCount(1);
+        // 2026-08-17: 1回目の実行で自社(単独)がsuccessに達した時点で、
+        // BrandWheelImprovementSuggestionDispatcherが改善提案AIを1回だけ
+        // 追加でdispatchする(QUEUE_CONNECTION=syncのためこのテスト内で同期
+        // 実行される)。brand_wheel_improvement_suggestions.analysis_idの
+        // unique制約により2回目の実行では追加dispatchされないため、合計は
+        // 「ブランド・ホイール分析1回+改善提案1回」の2回で固定される。
+        Http::assertSentCount(2);
     }
 
     /**
@@ -149,7 +155,9 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
         $this->artisan('brand-wheel:run', ['website_analysis_id' => $websiteAnalysis->id, '--force' => true])->assertSuccessful();
         $this->artisan('brand-wheel:run', ['website_analysis_id' => $websiteAnalysis->id, '--force' => true])->assertSuccessful();
 
-        Http::assertSentCount(3);
+        // 2026-08-17: 上のテストと同じ理由で+1(改善提案AIは1回だけ追加dispatch
+        // される、analysis_idのunique制約により2回目以降は追加されない)。
+        Http::assertSentCount(4);
     }
 
     /**
@@ -232,7 +240,9 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
             app()->detectEnvironment(fn () => 'testing');
         }
 
-        Http::assertSentCount(1);
+        // 2026-08-17: 上のテストと同じ理由で+1(1回目実行時に改善提案AIが
+        // 1回だけ追加でdispatchされる)。
+        Http::assertSentCount(2);
         $second->refresh();
         $this->assertSame('success', $second->status);
     }

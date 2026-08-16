@@ -48,8 +48,8 @@ class BrandWheelComparisonSummaryComposerTest extends TestCase
 
         $points = $this->composer()->points($axes);
 
-        $this->assertContains('資産的魅力に関する記載は読み取れませんでした。', $points);
-        $this->assertContains('人間的魅力に関する記載は読み取れませんでした。', $points);
+        $this->assertContains('資産的魅力に関する記述はサイト上では確認できませんでした。', $points);
+        $this->assertContains('人間的魅力に関する記述はサイト上では確認できませんでした。', $points);
     }
 
     public function test_points_flags_a_sparse_group_relative_to_the_max_group(): void
@@ -147,5 +147,67 @@ class BrandWheelComparisonSummaryComposerTest extends TestCase
                 $this->assertStringNotContainsString($phrase, $text, "text '{$text}' contains forbidden phrase '{$phrase}'");
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 2026-08-17改修分: pointsForReport()の根拠付き文言・comparisonOverview()。
+    // ------------------------------------------------------------------
+
+    /**
+     * @return array{key: string, group: string, name: string, matched_count: int, max_count: int, matched_sub_elements: list<array{key: string, name: string}>}
+     */
+    private function axisWithEvidence(string $key, string $group, string $name, array $matchedSubElements, int $maxCount = 4): array
+    {
+        return [
+            'key' => $key, 'group' => $group, 'name' => $name,
+            'matched_count' => count($matchedSubElements), 'max_count' => $maxCount,
+            'matched_sub_elements' => $matchedSubElements,
+        ];
+    }
+
+    public function test_points_for_report_names_the_most_filled_axis_with_its_matched_sub_element_evidence(): void
+    {
+        $axes = [
+            $this->axisWithEvidence('will_activity', 'company_appeal', '活動的魅力', [
+                ['key' => 'business_expansion', 'name' => '展開事業・商品'],
+                ['key' => 'project_initiative', 'name' => 'PJ・新たな取組'],
+            ]),
+            $this->axisWithEvidence('asset', 'company_appeal', '資産的魅力', []),
+        ];
+
+        $points = $this->composer()->pointsForReport($axes);
+
+        $this->assertContains(
+            '活動的魅力について、展開事業・商品・PJ・新たな取組に関する記述が確認でき、情報は比較的充実しています。',
+            $points,
+        );
+    }
+
+    public function test_points_for_report_falls_back_to_the_plain_template_when_matched_sub_elements_is_absent(): void
+    {
+        // matched_sub_elementsキー自体を持たないaxes配列(古いデータ形状)でも
+        // 落ちない ―― 根拠(下位要素名)が無ければ従来のmost_filled_axis
+        // テンプレートにフォールバックする。
+        $axes = [$this->axis('will_activity', 'company_appeal', '活動的魅力', 2)];
+
+        $points = $this->composer()->pointsForReport($axes);
+
+        $this->assertContains('活動的魅力が最も内容として充足しています。', $points);
+    }
+
+    public function test_comparison_overview_states_the_totals_and_each_group_verdict(): void
+    {
+        $groupTotals = [
+            ['group' => 'company_appeal', 'label' => '会社の魅力', 'self_count' => 2, 'competitor_count' => 2, 'max_count' => 8, 'verdict' => 'even'],
+            ['group' => 'company_distance', 'label' => '会社との距離', 'self_count' => 0, 'competitor_count' => 3, 'max_count' => 8, 'verdict' => 'competitor_advantage'],
+            ['group' => 'job_appeal', 'label' => '仕事の魅力', 'self_count' => 4, 'competitor_count' => 1, 'max_count' => 8, 'verdict' => 'self_advantage'],
+        ];
+
+        $overview = $this->composer()->comparisonOverview(6, 24, 6, 24, $groupTotals);
+
+        $this->assertContains('自社は6 / 24項目、競合は6 / 24項目の情報が確認できました。', $overview);
+        $this->assertContains('「会社の魅力」は自社・競合とも同程度の情報量でした。', $overview);
+        $this->assertContains('特に「会社との距離」で競合の情報量が自社を上回りました。', $overview);
+        $this->assertContains('特に「仕事の魅力」で自社の情報量が競合を上回りました。', $overview);
     }
 }

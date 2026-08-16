@@ -77,7 +77,16 @@
         h2にも明示する。
     --}}
     h2 { width: 265mm; font-size: 15pt; margin: 0 0 3mm; font-weight: normal; border-bottom: 1px solid #E0E0E0; padding-bottom: 1.5mm; }
-    .cover { padding-top: 60mm; text-align: center; }
+    {{--
+        2026-08-17: widthを明示する理由はh2/.darkbandと同じ(CSS冒頭のh2
+        コメント参照)。`.cover`はこれまでwidth未指定だったため、dompdfが
+        `.page`のborder-box(265mm)を差し引かずに宣言幅297mmをそのまま
+        `.cover`自身の幅として使ってしまい、text-align:centerの基準となる
+        ボックス自体が右へ16mm分広がっていた(実PDF確認で表紙の内容が
+        全体的に右へ約16mmずれて見える不具合として発覚 ―― 依頼者指摘の
+        「1ページ目がセンタリングされていない問題」の原因)。
+    --}}
+    .cover { width: 265mm; padding-top: 60mm; text-align: center; }
     .cover p { margin: 1.5mm 0; font-size: 11pt; color: #333; }
     {{--
         table-layout:fixedを既定にする ―― dompdfのtable-layout:auto(既定)は
@@ -131,16 +140,14 @@
         という失敗の仕方に倒す(dompdfはpage-break-insideを尊重する)。
     --}}
     .darkband { width: 265mm; background: #1D2088; color: #fff; padding: 1.3mm 5mm; margin-top: 1mm; page-break-inside: avoid; }
-    .darkband p { margin: 0.4mm 0; font-size: 10pt; line-height: 1.4; }
+    .darkband p { margin: 0.4mm 0; font-size: 9.5pt; line-height: 1.3; }
     {{--
-        2026-08-08: 「AI解析による候補者に与える印象」を1文の地の文から
-        2〜4件の列挙(impression)へ変更したことに伴うリスト表示。
-        2026-08-09: 1列(縦積み)から2列(table)へ変更 ―― BrandWheelLeadResponse
-        Composerが最大3件・各45文字に切り詰めるため、2列にすることで最大でも
-        2行に収まる(縦積みだと最大3行)。
+        2026-08-17: 「AI解析による候補者に与える印象」(短いフレーズの箇条書き、
+        .impressiontbl)から、ポジティブ/ネガティブの2文構成(.impgood/.impbad)へ
+        変更(依頼者指定)。文字数はBrandWheelLeadResponseComposerが最大90字に
+        切り詰めるため、各1〜2行に収まる想定(実PDF確認で最終調整)。
     --}}
-    .impressiontbl { margin: 0.3mm 0 0; width: 255mm; table-layout: fixed; }
-    .impressiontbl td { font-size: 9pt; line-height: 1.3; padding: 0; width: 127.5mm; vertical-align: top; }
+    .impgood, .impbad { margin: 0.3mm 0 0; font-size: 9pt; line-height: 1.35; }
     {{-- AI開示文をdarkbandの内側に置く際の控えめな配色(白地の.footとは別)。 --}}
     .darkfoot { margin: 1mm 0 0; font-size: 8pt; color: #B9BBDA; line-height: 1.3; }
     {{--
@@ -164,13 +171,25 @@
     --}}
 
     {{-- 「採用ブランドの捉え方」前置きページ(固定の説明図)。 --}}
-    .introlead { font-size: 11.5pt; margin: 0 0 4mm; }
-    .grouptbl { margin-bottom: 5mm; }
-    .grouptbl td { padding: 2mm 0; vertical-align: middle; }
-    .gcell { width: 34mm; text-align: center; font-size: 10pt; font-weight: bold; padding: 2.5mm 1mm; }
-    .gdesc { width: 105mm; font-size: 10pt; line-height: 1.7; padding-left: 4mm; }
-    .introbody { font-size: 10.5pt; line-height: 1.9; margin: 0 0 3.5mm; }
-    .introcaution { font-size: 9.5pt; line-height: 1.8; color: #5b5b5b; border-top: 1px solid #E0E0E0; padding-top: 3mm; margin: 0; }
+    .introlead { font-size: 11.5pt; margin: 0 0 2.5mm; }
+    .grouptbl { margin-bottom: 2mm; }
+    .grouptbl td { padding: 1.3mm 0; vertical-align: middle; }
+    .gcell { width: 34mm; text-align: center; font-size: 10pt; font-weight: bold; padding: 2mm 1mm; }
+    .gdesc { width: 105mm; font-size: 10pt; line-height: 1.5; padding-left: 4mm; }
+    {{--
+        2026-08-17: .introbody/.introcautionは元々139mm幅の列(画像の右隣)の
+        内側にあったが、軸単位の説明を全幅パラグラフとして追加した際に
+        `.page`直下の通常フローへ移した。h2/.darkbandと同じ理由
+        (CSS冒頭のh2コメント参照)でwidth: 265mmを明示する。
+        実PDF確認で、軸定義パラグラフ(.axisdefs)追加後は元の行間・余白のままだと
+        introbody×2+introcautionが2ページ目に収まりきらず、ほぼ空白の3ページ目へ
+        あふれる不具合が見つかったため、行間・余白を全体的に詰めて1ページに
+        収める(この前置きページは分析結果に依存しない固定ページのため、
+        一度収まる値を決めれば実データによって再びあふれることはない)。
+    --}}
+    .introbody { width: 265mm; font-size: 9.5pt; line-height: 1.4; margin: 0 0 1.5mm; }
+    .axisdefs { width: 139mm; font-size: 8pt; line-height: 1.3; color: #4a4a4a; margin: 1.5mm 0 0; }
+    .introcaution { width: 265mm; font-size: 8.5pt; line-height: 1.45; color: #5b5b5b; border-top: 1px solid #E0E0E0; padding-top: 1.5mm; margin: 0; }
 
     {{-- 自社ページの分析結果ページの合計件数ボックス。 --}}
     {{--
@@ -181,15 +200,29 @@
         (画像を含む行にのみ適用。テキストのみの行はpadding方式で問題ない)。
     --}}
     .statrow td { vertical-align: top; }
-    .statbox { border: 1px solid #E0E0E0; padding: 3.5mm 5mm; }
+    .statbox { border: 1px solid #E0E0E0; padding: 2.5mm 4mm; }
     .statbox .lab { font-size: 9.5pt; color: #6B6767; margin: 0 0 1.5mm; }
     .statbox .num { font-size: 26pt; font-weight: bold; line-height: 1; margin: 0; }
     .statbox .num small { font-size: 11pt; font-weight: normal; color: #6B6767; }
+    {{-- 2026-08-17: 件数集計であることの技術的な注記を、メインコピーではなく
+         小さな注釈として添える(依頼者指定 ―― 取得件数そのものの説明は
+         メインコピーにしない)。 --}}
+    .statbox .statnote { font-size: 7.5pt; color: #9A9A9A; margin: 1.5mm 0 0; line-height: 1.3; }
     .swatch { display: inline-block; width: 9px; height: 9px; margin-right: 4px; }
 
     {{-- 「○△－の対比表」ページ。2026-08-08: ●／－の2値から○△－の3値へ変更。 --}}
     {{-- widthを明示する理由は.lead1と同じ(2026-08-04、CSS冒頭のh2コメント参照)。 --}}
-    .vslead { width: 265mm; font-size: 9.5pt; color: #6B6767; margin: 0 0 1.5mm; line-height: 1.3; }
+    .vslead { width: 265mm; font-size: 9pt; color: #6B6767; margin: 0 0 1mm; line-height: 1.25; }
+    {{-- 2026-08-17追加: 比較結果サマリー(page5冒頭)。他の注記ボックス
+         (.onepoint等)と同じ配色トーン(藍のleft-border+淡グレー背景)に揃える。 --}}
+    {{-- 2026-08-17: 実PDF確認で、このボックスを追加した分だけ○△－の対比表
+         (24項目表)がページ5に収まらず、丸ごとページ6へあふれる不具合が
+         見つかったため、フォント・行間・余白を最小限に切り詰める。 --}}
+    .cmpoverview { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 1.5mm 3mm; margin: 0 0 1.5mm; }
+    .cmpoverview .t { font-size: 8.5pt; font-weight: bold; margin: 0 0 0.5mm; }
+    .cmpoverview p { font-size: 8pt; line-height: 1.25; margin: 0; }
+    {{-- グループ優劣バッジ(grpbar内の右寄せ小ラベル)。 --}}
+    .grpverdict { font-size: 7.5pt; font-weight: normal; opacity: .85; }
     {{--
         凡例は表の近くに必ず置く(対比表ページの意味を誤読させないため
         ―― ○△－は正解/不正解の記号ではない、2ページ目の断り書きと矛盾
@@ -197,34 +230,46 @@
     --}}
     {{-- 2026-08-10: width:265mm→165mm(レーダーと横並びにしたため、CSS冒頭の
          h2コメントと同じ理由で明示が必要)。 --}}
-    .cmplegend { width: 165mm; border: 1px solid #E0E0E0; background: #F5F5F5; padding: 1.8mm 4mm; margin: 0; }
-    .cmplegend p { font-size: 9pt; color: #393636; line-height: 1.4; margin: 0; }
+    {{-- 2026-08-17: .cmpoverview追加に伴い、表全体(グループ帯+8行×3列+
+         合計/参考の2行)がページに収まりきらない不具合が見つかったため、
+         padding/marginを全体的に切り詰めて数mm分の余白を確保する。 --}}
+    .cmplegend { width: 165mm; border: 1px solid #E0E0E0; background: #F5F5F5; padding: 1.3mm 4mm; margin: 0; }
+    .cmplegend p { font-size: 8.5pt; color: #393636; line-height: 1.3; margin: 0; }
     .cmplegend .mk { display: inline-block; width: 5mm; font-weight: bold; }
-    .vscell { width: 88.3mm; padding: 0 2mm 4mm 0; vertical-align: top; }
-    .grpbar { color: #fff; font-size: 10pt; font-weight: bold; text-align: center; padding: 1.2mm; }
-    .vstbl th { font-size: 9pt; font-weight: bold; padding: 1.2mm 1mm; border-bottom: 1px solid #E0E0E0; color: #6B6767; text-align: center; }
+    .vscell { width: 88.3mm; padding: 0 2mm 0 0; vertical-align: top; }
+    .grpbar { color: #fff; font-size: 9.5pt; font-weight: bold; text-align: center; padding: 1mm; }
+    .vstbl th { font-size: 8.5pt; font-weight: bold; padding: 1mm; border-bottom: 1px solid #E0E0E0; color: #6B6767; text-align: center; }
     .vstbl th.sub { text-align: left; }
-    .vstbl td { font-size: 9pt; padding: 1.3mm 1mm; border-bottom: 1px solid #EFEFEF; }
+    .vstbl td { font-size: 8.5pt; padding: 1mm; border-bottom: 1px solid #EFEFEF; }
     .vstbl td.sub { text-align: left; }
-    .vstbl td.mk { text-align: center; width: 13mm; font-size: 11pt; }
+    .vstbl td.mk { text-align: center; width: 13mm; font-size: 10.5pt; }
     .mkon { color: #1D2088; font-weight: bold; }
     .mkon.cp { color: #E95446; }
     {{-- △(見出し・リンクラベルのみ)。○(mkon、自社紺/競合朱)・－(mkoff、
          淡灰)のどちらとも視覚的に紛れない中間色(アンバー)にする。 --}}
     .mktri { color: #B8860B; font-weight: bold; }
     .mkoff { color: #BFBFBF; }
-    .vslegend { width: 265mm; font-size: 9.5pt; color: #6B6767; margin: 1.5mm 0 0; }
-    .vsreflegend { width: 265mm; font-size: 9pt; color: #8A8A8A; margin: 0.5mm 0 0; }
+    .vslegend { width: 265mm; font-size: 9pt; color: #6B6767; margin: 1mm 0 0; }
+    .vsreflegend { width: 265mm; font-size: 8.5pt; color: #8A8A8A; margin: 0.5mm 0 0; }
 
     {{-- 「改善提案」ページ。 --}}
     {{-- widthを明示する理由は.lead1と同じ(2026-08-04、CSS冒頭のh2コメント参照)。 --}}
-    .rlead { width: 265mm; font-size: 10pt; color: #6B6767; margin: 0 0 4mm; line-height: 1.6; }
-    .onepoint { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 3mm 4mm; margin: 0 0 5mm; }
-    .onepoint .t { font-size: 10.5pt; font-weight: bold; margin: 0 0 1.5mm; }
-    .onepoint p { font-size: 10pt; line-height: 1.7; margin: 0; }
-    .gapbar td { padding: 0 0 2mm; font-size: 9.5pt; vertical-align: middle; }
+    .rlead { width: 265mm; font-size: 9.5pt; color: #6B6767; margin: 0 0 2.5mm; line-height: 1.45; }
+    {{-- 2026-08-17: 改善提案AI(ワンポイント/詳細提言)追加に伴い、実PDF確認
+         (worst-caseの長文AI出力)でページ下部の余白が10mm未満になる不具合が
+         見つかったため、余白・行間を切り詰める。 --}}
+    .onepoint { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 2mm 4mm; margin: 0 0 3mm; }
+    .onepoint .t { font-size: 10pt; font-weight: bold; margin: 0 0 1mm; }
+    .onepoint p { font-size: 9.5pt; line-height: 1.5; margin: 0; }
+    {{-- 2026-08-17追加: 改善提案AIの詳細提言パラグラフ。.onepointと同じ
+         トーン(藍のleft-border+淡グレー背景)だが、証拠カードの直後に置く
+         ため上マージンで区切る。 --}}
+    .recobox { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 2mm 4mm; margin: 2mm 0 0; }
+    .recobox .t { font-size: 9.5pt; font-weight: bold; margin: 0 0 1mm; }
+    .recobox p { font-size: 9pt; line-height: 1.45; margin: 0; }
+    .gapbar td { padding: 0 0 1.3mm; font-size: 9pt; vertical-align: middle; }
     .gapbar .nm { width: 34mm; }
-    .gapbar .bar { height: 6mm; display: block; }
+    .gapbar .bar { height: 5mm; display: block; }
     .gapbar .v { width: 26mm; text-align: right; color: #6B6767; padding-right: 3mm; }
     {{--
         2026-08-09: height:56mm固定をやめてauto(padding+内容まかせ)にした。
@@ -236,13 +281,13 @@
         引用に文字数上限を設け、極端に長い引用で改善提案ページ全体が
         7ページ枠を超えることも防ぐ。
     --}}
-    .rcard { border: 1px solid #E0E0E0; padding: 3mm 3.5mm; }
+    .rcard { border: 1px solid #E0E0E0; padding: 2.5mm 3mm; }
     .rcard .no { font-size: 9pt; color: #fff; background: #1D2088; padding: 0.6mm 2.2mm; }
-    .rcard .nm { font-size: 12pt; font-weight: bold; margin: 2mm 0 1.5mm; }
-    .rcard .q { font-size: 9.5pt; color: #6B6767; margin: 0 0 3mm; line-height: 1.55; }
-    .rcard .lb { font-size: 8.5pt; color: #8A8A8A; margin: 0 0 0.8mm; }
-    .rcard .own { font-size: 9.5pt; margin: 0 0 3mm; }
-    .rcard .cmp { font-size: 9.5pt; line-height: 1.6; margin: 0; border-left: 3px solid #E95446; padding-left: 2.5mm; }
+    .rcard .nm { font-size: 11.5pt; font-weight: bold; margin: 1.5mm 0 1mm; }
+    .rcard .q { font-size: 9pt; color: #6B6767; margin: 0 0 2mm; line-height: 1.4; }
+    .rcard .lb { font-size: 8.5pt; color: #8A8A8A; margin: 0 0 0.6mm; }
+    .rcard .own { font-size: 9pt; margin: 0 0 2mm; }
+    .rcard .cmp { font-size: 9pt; line-height: 1.45; margin: 0; border-left: 3px solid #E95446; padding-left: 2.5mm; }
     .rcell { width: 88.3mm; padding: 0 2mm 4mm 0; vertical-align: top; }
 
     {{--
@@ -254,15 +299,36 @@
         悪かった問題に対応(ボックスを大きく・全体をやや下寄りにして
         ページ内の重心を中央付近に近づけた)。
     --}}
-    .ctawrap { max-width: 250mm; margin: 0 auto; padding-top: 16mm; }
-    .ctalogo { display: block; margin: 0 auto 8mm; width: 56mm; }
-    .ctah { font-size: 17pt; font-weight: bold; text-align: center; margin: 0 0 6mm; line-height: 1.5; }
-    .ctasub { font-size: 11pt; color: #393636; text-align: center; margin: 0 0 4mm; line-height: 1.9; }
-    .ctacontact { width: 200mm; margin: 12mm auto 0; border: 1px solid #E0E0E0; border-left: 5px solid #1D2088; background: #F5F5F5; padding: 9mm 12mm; text-align: center; }
-    .ctacontact .t { font-size: 12pt; font-weight: bold; margin: 0 0 3.5mm; color: #393636; }
-    .ctacontact .url { font-size: 16pt; font-weight: bold; margin: 0 0 4.5mm; }
-    .ctacontact .url a { color: #1D2088; text-decoration: none; }
-    .ctacontact .note { font-size: 9.5pt; color: #6B6767; margin: 0; line-height: 1.7; }
+    {{-- 2026-08-17: 最終ページを大きなメインコピー＋短い補足＋CTAボタン中心の
+         構成へ簡潔化(依頼者指定)。padding-topを拡大し、要素を絞った分
+         全体の重心を中央に寄せる。 --}}
+    {{--
+        2026-08-17: dompdfは margin: 0 auto によるブロック中央寄せを
+        信頼できる形で解決しない(width指定の組み合わせを変えても実PDF確認で
+        改善しなかった)。`.cover`で実績のある「width明示 + text-align:center」
+        パターンに寄せ、`.ctawrap`自体は265mm(ページの内容幅いっぱい)にして
+        marginでの中央寄せをやめ、text-align:centerで子要素を中央寄せする
+        (子側の中央寄せ方法は各クラスのコメント参照)。
+    --}}
+    .ctawrap { width: 265mm; text-align: center; padding-top: 34mm; }
+    {{--
+        2026-08-17: dompdfのmargin:0 autoによるブロック中央寄せが信頼できない
+        (実PDF確認、.ctawrap/.ctacontactと同じ理由)ため、display:blockを
+        やめてinline(imgの既定)のままにし、親`.ctawrap`のtext-align:center
+        (子側のtext-align:centerはinline要素にのみ効く)に中央寄せを委ねる。
+        横方向のmarginは持たせず、縦方向の余白だけ残す。
+    --}}
+    .ctalogo { width: 56mm; margin-bottom: 12mm; }
+    .ctah { width: 265mm; font-size: 19pt; font-weight: bold; text-align: center; margin: 0 0 7mm; line-height: 1.6; }
+    .ctasub { width: 265mm; font-size: 11.5pt; color: #6B6767; text-align: center; margin: 0 0 4mm; line-height: 1.9; }
+    {{-- 2026-08-17: 同上の理由でmargin:autoをやめ、display:inline-blockに
+         して親のtext-align:centerに中央寄せを委ねる。 --}}
+    .ctacontact { display: inline-block; width: 200mm; margin-top: 16mm; text-align: center; }
+    {{-- URL文字列をそのまま表示せず、ボタン風のラベル付きリンクにする
+         (依頼者指定)。dompdfはbox-shadow/border-radiusの表現力が乏しいため、
+         塗りの矩形+白文字の単純なボタンで表現する。 --}}
+    .ctabtn { display: inline-block; background: #1D2088; color: #fff; text-decoration: none; font-size: 13pt; font-weight: bold; padding: 5mm 14mm; }
+    .ctacontact .note { font-size: 9.5pt; color: #9A9A9A; margin: 5mm 0 0; line-height: 1.7; }
 
     {{-- ロゴ(コーポレートサイト、512x94)。 --}}
     .logo-cover { display: block; margin: 0 auto 10mm; width: 72mm; }
@@ -294,6 +360,16 @@
     $selfReadable = ($selfWheel['status'] ?? null) === 'success' && ! empty($selfWheel['axes']);
     $competitorReadable = ($competitorWheel['status'] ?? null) === 'success' && ! empty($competitorWheel['axes']);
     $comparison = $viewModel->brandWheelComparison;
+
+    // 2026-08-17追加: 前置きページ(2ページ目)で軸単位の説明を出すための
+    // ルックアップ。config('brand_wheel.axes.*.definition')(既存、
+    // OpenAiBrandWheelAnalysisProviderのプロンプトにも使われている定義文)を
+    // そのまま流用する ―― 新しい文言を作らず既存定義の使い回しに留めることで、
+    // 実際のAI判定基準とページ上の説明が食い違わないようにする(依頼者指定:
+    // 「勝手に定義を変えず、既存定義をもとに説明してください」)。
+    $axisDefinitionsByGroup = collect((array) config('brand_wheel.axes', []))
+        ->groupBy('group')
+        ->map(fn ($axes) => $axes->map(fn ($axis) => ['name_ja' => $axis['name_ja'], 'definition' => $axis['definition']])->values());
 
     // 2026-08-04: グループ名から色名(青/緑/赤)を外している ――
     // 配色をレジェンダに合わせた結果、緑が青緑に変わり色名と実際の色が
@@ -341,7 +417,7 @@
         <td style="width: 126mm; padding-right: 8mm;">
             <img src="data:image/png;base64,{{ $brandWheelFrameworkImageBase64 }}" style="width: 124mm;">
         </td>
-        <td style="width: 139mm; vertical-align: top; padding-top: 4mm;">
+        <td style="width: 139mm; vertical-align: top; padding-top: 2mm;">
             <p class="introlead">採用ブランドは、大きく3つの領域に分けて捉えます。</p>
             <table class="grouptbl"><tr>
                 <td class="gcell" style="background: {{ $groupBands['company_appeal']['tint'] }};">会社の魅力</td>
@@ -353,11 +429,35 @@
                 <td class="gcell" style="background: {{ $groupBands['job_appeal']['tint'] }};">仕事の魅力</td>
                 <td class="gdesc">その仕事に就くと、何が得られるか。<br><b>情緒的便益</b>・<b>金銭的便益</b></td>
             </tr></table>
-            <p class="introbody">6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。中心の<b>Core Value(約束する価値)</b>は、その24項目を貫く「この会社が候補者に約束するもの」にあたります。</p>
-            <p class="introbody">本レポートでは、<b>この24項目のうち何件が、サイトの記述から読み取れたか</b>を数えています。点数付けではなく、件数の集計です。</p>
-            <p class="introcaution">読み取れなかった項目は、その魅力が『無い』という意味ではありません。サイトにそう書かれていない、というだけです。また、採用ブランドは本来、グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。</p>
+            {{--
+                2026-08-17: 軸単位の説明(config('brand_wheel.axes.*.definition')、
+                既存)を追加する(依頼者指定 ―― 「6カテゴリの意味を分かりやすく
+                する」)。grouptbl(3行のtable)のtd内にネストして各行へ入れたところ、
+                実PDF確認でdompdfのテーブル改ページ処理が破綻し、後続2ページが
+                白紙化・3ページ目相当の内容が267mm(A4横210mmを大きく超過)まで
+                あふれる重大な不具合が見つかった。table-in-table(grouptbl自体が
+                外側tableのtd内)の入れ子構造が原因と見て、単純な1階層(外側table
+                のtd直下の<p>)に置き換えて解消した。この位置(画像の右列、
+                grouptblの直後)なら、画像の高さ(124mm)がすでに行の高さを
+                決めているため、この段落の追加ぶんは新たな行の高さを生まない
+                (画像の下に元々余っていた余白を使うだけ)。
+            --}}
+            <p class="axisdefs">
+                @foreach ((array) config('brand_wheel.axes', []) as $axis)
+                    <b>{{ $axis['name_ja'] }}</b>：{{ $axis['definition'] }}
+                @endforeach
+            </p>
         </td>
     </tr></table>
+    <p class="introbody">6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。中心の<b>Core Value(約束する価値)</b>は、その24項目を貫く「この会社が候補者に約束するもの」にあたります。</p>
+    {{-- 2026-08-17: 「点数付けではなく、件数の集計です」という件数集計
+         フレーミングを弱め、レポートの目的(候補者への伝わり方の分析)を
+         主文にする(依頼者指定#3)。URL分析対象範囲の明記(依頼者指定#5、
+         実装調査で確認: 採用ページ・トップページの記述のみを対象とし、
+         サイト全体の自動巡回は行っていない)もここに追加する。 --}}
+    <p class="introbody">本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています(<b>この24項目のうち何件が、サイトの記述から読み取れたか</b>もあわせて示しています)。</p>
+    <p class="introbody" style="font-size: 9.5pt; color: #6B6767;">本分析は、ご提供いただいた採用ページ・トップページの記述を対象としており、サイト全体や他の関連ページを自動的に巡回して分析するものではありません。</p>
+    <p class="introcaution">読み取れなかった項目は、その魅力が『無い』という意味ではありません。サイトにそう書かれていない、というだけです。また、採用ブランドは本来、グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。</p>
 </div>
 
 {{--
@@ -425,8 +525,29 @@
         @php
             $comparisonByGroup = collect($viewModel->subElementComparison)->groupBy('group');
             $showCompetitorColumn = $viewModel->competitorWebsiteUrl !== null;
+            $groupVerdictByKey = collect($viewModel->groupTotals)->keyBy('group');
+            $verdictBadge = fn (string $verdict) => match ($verdict) {
+                'self_advantage' => '自社優位',
+                'competitor_advantage' => '競合優位',
+                default => '同程度',
+            };
         @endphp
         <p class="vslead">24項目それぞれについて、サイトに該当する記述があったかどうかを3段階で示しています。凡例は下記のとおりです。</p>
+        {{--
+            2026-08-17追加: 比較サマリー(依頼者指定#11 ―― 単純な総合勝敗では
+            なく「どの領域に情報差があるか」を示す)。BrandWheelComparisonSummary
+            Composer::comparisonOverview()が総合計件数とグループ優劣
+            (BrandWheelSubElementComparisonComposer::groupTotals())から機械的に
+            導出する(AIには書かせない)。競合が読み取れない場合は出さない。
+        --}}
+        @if ($viewModel->comparisonOverview !== [])
+            <div class="cmpoverview">
+                <p class="t">比較結果サマリー</p>
+                @foreach ($viewModel->comparisonOverview as $line)
+                    <p>{{ $line }}</p>
+                @endforeach
+            </div>
+        @endif
 
         {{--
             ○△－凡例と自社×競合を重ねたレーダー図。3・4ページを自社単独・
@@ -480,7 +601,11 @@
         <table style="width: 265mm;"><tr>
             @foreach ($groupBands as $groupKey => $band)
                 <td class="vscell">
-                    <div class="grpbar" style="background: {{ $band['color'] }};">{{ $band['label'] }}</div>
+                    <div class="grpbar" style="background: {{ $band['color'] }};">{{ $band['label'] }}
+                        @if ($showCompetitorColumn && $groupVerdictByKey->has($groupKey))
+                            <span class="grpverdict">（{{ $verdictBadge($groupVerdictByKey[$groupKey]['verdict']) }}）</span>
+                        @endif
+                    </div>
                     <table class="vstbl" style="table-layout: auto;"><tr>
                         <th class="sub"></th>
                         <th>自社</th>
@@ -546,10 +671,18 @@
     @if (! $selfReadable)
         <p>{{ $selfWheel['status_message'] ?? '' }}</p>
     @else
-        @if ($comparison['one_point'])
+        {{--
+            2026-08-17: ワンポイントの文言を、改善提案AI
+            (GenerateBrandWheelImprovementSuggestionJob)の生成結果へ切り替える
+            (依頼者指定 ―― 一言で最優先アクションを示す)。AI未生成/失敗時は
+            $viewModel->improvementOnePointが既存の決定的ロジック
+            ($comparison['one_point'])へ自動フォールバックする
+            (ReportViewModelBuilder参照、AI障害でレポート生成を止めない)。
+        --}}
+        @if ($viewModel->improvementOnePoint)
             <div class="onepoint">
                 <p class="t">【ワンポイント】</p>
-                <p>{{ $comparison['one_point']['text'] }}</p>
+                <p>{{ $viewModel->improvementOnePoint }}</p>
             </div>
         @endif
 
@@ -623,6 +756,20 @@
                     </tr>
                 </table>
 
+                {{--
+                    2026-08-17追加: 改善提案AIが生成した詳細提言(結論→なぜ→
+                    具体的にの3〜5文)。既存のグループ差バー＋証拠カード
+                    (無改修、決定的ロジック)の上に追加する構成(依頼者指定
+                    ―― 一般論ではなく企業固有の判断根拠を示す)。未生成/失敗時は
+                    非表示(既存のバー＋カードのみで成立する)。
+                --}}
+                @if ($viewModel->improvementRecommendation)
+                    <div class="recobox">
+                        <p class="t">改善のご提案</p>
+                        <p>{{ $viewModel->improvementRecommendation }}</p>
+                    </div>
+                @endif
+
                 <p class="rlead" style="margin: 3mm 0 0;">なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。</p>
             @endif
         @elseif ($viewModel->improvementFocusSelfOnly)
@@ -680,6 +827,13 @@
                     </tr>
                 </table>
 
+                @if ($viewModel->improvementRecommendation)
+                    <div class="recobox">
+                        <p class="t">改善のご提案</p>
+                        <p>{{ $viewModel->improvementRecommendation }}</p>
+                    </div>
+                @endif
+
                 <p class="rlead" style="margin: 3mm 0 0;">なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。</p>
             @endif
         @endif
@@ -688,36 +842,35 @@
 @endif
 
 {{--
-    7. サイトの改善をすれば課題が解決するとは限りません(最終ページ)。
-    2026-08-08: 旧「ここから先は、サイトの外の話です」(3ブロック構成)を
-    ユーザー指定の新文言に全面差し替え。一見してメッセージが分かるよう、
-    見出し+本文2段落のシンプルな構成にする(3ブロックのボックス構成は廃止)。
-    旧CTA「他社比較(3〜5社)」は使わない、というdocs/lead-report-layout/
-    README.mdの記述はこの新文言と矛盾しないためREADME側を更新した
-    (前段でタッチポイント全体の設計に言及した上で、比較を議論の入口として
-    提示しているため)。
+    7. 最終CTAページ。2026-08-17: 長い説明文(「サイトの改善をすれば課題が
+    解決するとは限りません」+本文2段落)を削除し、営業CTAに集中させる
+    (依頼者指定 ―― 「レポートをここまで読んだユーザーに長文を読ませない
+    ことを優先する」)。
 
-    2026-08-10: 連絡先が確定(ユーザー指示)。掲載するのは
-    https://www.leggenda.co.jp/contact/ (公式サイトの問い合わせページ)の
-    みで、外部フォームツール本体のURLは掲載しない ―― 印刷物に自社ドメイン
-    以外のURLが出るとフィッシングを疑われる・フォームツールを乗り換えた
-    際にPDFの刷り直しが必要になるため。電話番号は掲載しない(問い合わせ
-    ページに「現在、お電話の受付を停止しております」と明記されており、
-    受付時間の記載も無いため)。汎用の問い合わせ窓口経由では診断レポート
-    起点の問い合わせだと営業側で判別できないため、発行日・貴社名を伝える
-    よう促す一文を添える。発行日は表紙と同じ$viewModel->generatedAtLabelを
-    参照し、二重管理しない。
+    【重要】この新文言は、2026-08-08にdocs/lead-report-layout/README.mdへ
+    記録した「旧CTA『他社比較(3〜5社)』は使わない」という制約と直接矛盾する
+    (当時: 「もっとサイトを比較しましょう」とだけ持ちかける文面は避ける、と
+    明記していた)。今回の依頼文が「さらに3〜5社の競合採用サイトと比較し…」
+    という文言を明示的にメインコピー例として指定しているため、今回はその
+    指示を優先する。方針転換であることを実装報告で明記する。
+
+    連絡先は2026-08-10時点の方針を維持: https://www.leggenda.co.jp/contact/
+    (公式サイトの問い合わせページ)のみ掲載し、外部フォームツール本体の
+    URLは掲載しない(印刷物に自社ドメイン以外のURLが出るとフィッシングを
+    疑われる・フォームツールを乗り換えた際にPDFの刷り直しが必要になるため)。
+    電話番号は掲載しない(問い合わせページに「現在、お電話の受付を停止して
+    おります」と明記されているため)。URLをそのまま長文表示するのではなく、
+    ボタン風のラベル付きリンクにする(依頼者指定)。発行日は表紙と同じ
+    $viewModel->generatedAtLabelを参照し、二重管理しない。
 --}}
 <div class="page cta">
     <div class="ctawrap">
         <img class="ctalogo" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
-        <p class="ctah">サイトの改善をすれば<br>課題が解決するとは限りません</p>
-        <p class="ctasub">サイトの改善が最も効果的な打ち手となるのか、応募から内定までの間での候補者とのタッチポイント全体の設計を改めて行うことで大きな効果を得られるのかを見直す必要があります。</p>
-        <p class="ctasub">弊社にてさらに幅を広げ、3〜5社の競合他社のサイトと比較した結果をもとにどこに御社課題があるかをディスカッションしませんか。ご希望いただける場合は、以下よりご連絡ください。</p>
+        <p class="ctah">さらに3〜5社の競合採用サイトと比較し、<br>御社が優先して改善すべき課題を整理しませんか？</p>
+        <p class="ctasub">詳細な比較結果をもとに、採用課題についてディスカッションします。</p>
 
         <div class="ctacontact">
-            <p class="t">ご相談・お問い合わせ</p>
-            <p class="url"><a href="https://www.leggenda.co.jp/contact/">https://www.leggenda.co.jp/contact/</a></p>
+            <p class="url"><a href="https://www.leggenda.co.jp/contact/" class="ctabtn">競合比較について相談する</a></p>
             <p class="note">お問い合わせの際は、本レポートの発行日（{{ $viewModel->generatedAtLabel }}）と貴社名をお知らせください。</p>
         </div>
     </div>

@@ -69,6 +69,47 @@ class BrandWheelSubElementComparisonComposer
         return $items;
     }
 
+    /**
+     * 「○△－の対比表」ページ冒頭の比較サマリー用に、3グループ
+     * (company_appeal/company_distance/job_appeal)ごとのself/competitor
+     * matched件数と優劣判定をまとめる(2026-08-17追加)。判定は
+     * config('brand_wheel.group_advantage_diff_min')(既定2)以上の差が
+     * あれば優位/劣位、未満なら'even'とする ―― 完全にPHPの決定的ロジックで、
+     * AIには一切判定させない(既存の○△－判定と同じ設計方針)。
+     *
+     * @param  list<array{group: string, self_matched: bool, competitor_matched: bool}>  $comparisonItems  compose()の戻り値
+     * @return list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int, verdict: string}>
+     */
+    public function groupTotals(array $comparisonItems): array
+    {
+        $groupOrder = array_keys((array) config('brand_wheel.group_labels', []));
+        $groupLabels = (array) config('brand_wheel.group_labels', []);
+        $diffMin = (int) config('brand_wheel.group_advantage_diff_min', 2);
+
+        $totals = [];
+        foreach ($groupOrder as $groupKey) {
+            $itemsInGroup = array_values(array_filter($comparisonItems, fn (array $i) => $i['group'] === $groupKey));
+            $selfCount = count(array_filter($itemsInGroup, fn (array $i) => $i['self_matched']));
+            $competitorCount = count(array_filter($itemsInGroup, fn (array $i) => $i['competitor_matched']));
+            $diff = $selfCount - $competitorCount;
+
+            $totals[] = [
+                'group' => $groupKey,
+                'label' => (string) ($groupLabels[$groupKey] ?? $groupKey),
+                'self_count' => $selfCount,
+                'competitor_count' => $competitorCount,
+                'max_count' => count($itemsInGroup),
+                'verdict' => match (true) {
+                    $diff >= $diffMin => 'self_advantage',
+                    $diff <= -$diffMin => 'competitor_advantage',
+                    default => 'even',
+                },
+            ];
+        }
+
+        return $totals;
+    }
+
     private function state(bool $matched, bool $labelOnly): string
     {
         return match (true) {

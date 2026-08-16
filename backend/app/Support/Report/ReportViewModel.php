@@ -36,8 +36,12 @@ readonly class ReportViewModel
      * @param  int  $selfTotalLabelOnly  自社の△(見出し・リンクラベルのみ)件数合計。対比表の「(参考)」表示用、合計には含めない。
      * @param  int  $competitorTotalLabelOnly  競合の△件数合計。
      * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, self_matched: bool, competitor_matched: bool, self_state: string, competitor_state: string}>  $subElementComparison  BrandWheelSubElementComparisonComposer::compose()の戻り値(24項目、config順)。対比表の○△－表示の唯一の情報源。self_matched/competitor_matchedは○のみtrue(△はfalseのまま、改善提案の選定ロジックに使うため変更しない)。self_state/competitor_stateは'matched'|'label_only'|'none'。
+     * @param  list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int, verdict: string}>  $groupTotals  BrandWheelSubElementComparisonComposer::groupTotals()の戻り値(2026-08-17追加)。競合が読み取れない場合は空配列。
+     * @param  list<string>  $comparisonOverview  BrandWheelComparisonSummaryComposer::comparisonOverview()の戻り値(2026-08-17追加)。「○△－の対比表」ページ冒頭の比較サマリー。競合が読み取れない場合は空配列。
      * @param  ?array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, competitor_evidence: ?string}>}  $improvementFocus  BrandWheelImprovementFocusComposer::compose()の戻り値。「改善提案」ページの領域選択・3項目・比較サイトのevidence。自社・競合の両方がstatus==='success'の場合のみ非null(競合が無い/読み取れない場合は$improvementFocusSelfOnlyを使う)。
      * @param  ?array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, self_reason: string}>}  $improvementFocusSelfOnly  BrandWheelImprovementFocusComposer::composeSelfOnly()の戻り値。競合が無い/読み取れない場合の「改善提案」ページ(自社の「－」「△」項目のみで構成、比較サイトのevidenceは含まない)。自社がstatus==='success'でない、または自社24項目すべてが○の場合はnull(2026-08-10追加)。
+     * @param  ?string  $improvementOnePoint  「改善提案」ページ冒頭のワンポイント(2026-08-17追加)。改善提案AI(BrandWheelImprovementSuggestion)の生成結果があればそれを使い、無ければ既存の決定的ロジック($brandWheelComparison['one_point']['text'])にフォールバックする。
+     * @param  ?string  $improvementRecommendation  改善提案AIが生成した詳細提言パラグラフ(2026-08-17追加、結論→なぜ→具体的にの3〜5文)。未生成/失敗時はnull(その場合、既存のグループ差バー＋証拠カードのみで成立する)。
      */
     public function __construct(
         public string $companyDisplayName,
@@ -58,7 +62,11 @@ readonly class ReportViewModel
         public int $selfTotalLabelOnly,
         public int $competitorTotalLabelOnly,
         public array $subElementComparison,
+        public array $groupTotals,
+        public array $comparisonOverview,
         public ?array $improvementFocus,
         public ?array $improvementFocusSelfOnly,
+        public ?string $improvementOnePoint,
+        public ?string $improvementRecommendation,
     ) {}
 }

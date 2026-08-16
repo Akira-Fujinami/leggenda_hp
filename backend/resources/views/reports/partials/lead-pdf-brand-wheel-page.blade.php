@@ -27,7 +27,7 @@
              理由の文言はconfig('brand_wheel.status_messages')が唯一の定義元。 --}}
         <p>{{ $wheel['status_message'] ?? '' }}</p>
     @else
-        <p class="lead1">6つの項目それぞれについて、該当する内容がサイトの記述から何件読み取れたかを集計しています(点数ではありません)。<br>解析したURL：{{ $wheel['analyzed_url'] }}</p>
+        <p class="lead1">本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています。<br>解析したURL：{{ $wheel['analyzed_url'] }}</p>
 
         {{--
             2026-08-10: 「件数ボックス＋サマリー」と「レーダー」を縦に2段
@@ -43,8 +43,9 @@
         <table class="statrow" style="width: 265mm; table-layout: fixed;"><tr>
             <td style="width: 133mm; vertical-align: top;">
                 <div class="statbox">
-                    <p class="lab"><span class="swatch" style="background: {{ $seriesColor }};"></span>{{ $seriesLabel }}</p>
+                    <p class="lab"><span class="swatch" style="background: {{ $seriesColor }};"></span>{{ $seriesLabel }}　確認できた情報</p>
                     <p class="num">{{ $totalMatched }}<small> / {{ $totalMax }}項目</small></p>
+                    <p class="statnote">ブランドホイール24項目のうち、サイト上で情報を確認できた項目数</p>
                 </div>
                 <p class="sumhead" style="margin-top: 2mm;">サマリー</p>
                 <ul class="sum">
@@ -113,31 +114,29 @@
             @endforeach
         </tr></table>
 
-        @if ($wheel['key_message'] || count($wheel['impression_items']) > 0)
+        @if ($wheel['key_message'] || $wheel['positive_impression'] || $wheel['negative_impression'])
             <div class="darkband">
+                {{-- 2026-08-17: 「収集した情報から」→「サイト上の情報から」に
+                     変更(依頼者指定 ―― サイト上の情報からの推定であることを
+                     より明確にする)。 --}}
                 @if ($wheel['key_message'])
-                    <p><b>収集した情報から想定されるキーメッセージ：</b>{{ $wheel['key_message'] }}</p>
+                    <p><b>サイト上の情報から想定されるキーメッセージ：</b>{{ $wheel['key_message'] }}</p>
                 @endif
-                @if (count($wheel['impression_items']) > 0)
-                    <p style="margin-top: 0.5mm; margin-bottom: 0;"><b>AI解析による候補者に与える印象：</b></p>
-                    {{--
-                        2026-08-09: 1列(縦積み)から2列レイアウトへ変更(ユーザー
-                        承認の「上限付き」案)。BrandWheelLeadResponseComposerが
-                        既に最大3件・各45文字に切り詰めているため、この表の
-                        最大の高さ(2行分)は事前に見積もれる。
-                    --}}
-                    <table class="impressiontbl">
-                        @foreach (array_chunk($wheel['impression_items'], 2) as $row)
-                            <tr>
-                                @foreach ($row as $item)
-                                    <td>・{{ $item }}</td>
-                                @endforeach
-                                @if (count($row) === 1)
-                                    <td></td>
-                                @endif
-                            </tr>
-                        @endforeach
-                    </table>
+                {{--
+                    2026-08-17: 「AI解析による候補者に与える印象」(短いフレーズの
+                    箇条書き)から、ポジティブ/ネガティブの2文構成へ変更
+                    (依頼者指定 ―― 単なる印象の列挙ではなく、良い点・気になる点を
+                    分けて示す)。見出しからも「AI解析による」を外す(AI利用を
+                    前面に出さない、依頼者指定)。
+                --}}
+                @if ($wheel['positive_impression'] || $wheel['negative_impression'])
+                    <p style="margin-top: 0.5mm; margin-bottom: 0;"><b>候補者に与える印象：</b></p>
+                    @if ($wheel['positive_impression'])
+                        <p class="impgood">・{{ $wheel['positive_impression'] }}</p>
+                    @endif
+                    @if ($wheel['negative_impression'])
+                        <p class="impbad">・{{ $wheel['negative_impression'] }}</p>
+                    @endif
                 @endif
                 {{--
                     2026-08-08: 開示文をdarkbandの外(別の<p class="foot">)に
