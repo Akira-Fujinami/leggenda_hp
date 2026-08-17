@@ -383,6 +383,114 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('<img src="data:image/png;base64,'.base64_encode($png).'"', $html);
     }
 
+    /**
+     * 自社/競合とも実運用と同じ「6軸すべてが常に存在する」形(matched_count/
+     * matched_sub_elementsだけが軸ごとに異なる)のwheelを組み立てる。
+     * comparisonViewModel()の手組みfixture(他テスト用に一部の軸だけを
+     * 持たせている)とは異なり、BrandWheelLeadResponseComposer::buildAxes()が
+     * 実際に返す形(config('brand_wheel.axes')の6軸すべてが常に1件ずつ入る)を
+     * 再現する ―― レイアウト整列テストは軸カードの個数が自社/競合で一致する
+     * という前提に依存するため。
+     */
+    private function fullWheelAxes(array $matchedCountsByAxis): array
+    {
+        $axes = [];
+        foreach (config('brand_wheel.axes') as $axisKey => $definition) {
+            $matchedCount = $matchedCountsByAxis[$axisKey] ?? 0;
+            $subKeys = array_slice(array_keys($definition['sub_elements']), 0, $matchedCount);
+            $axes[] = [
+                'key' => $axisKey,
+                'group' => $definition['group'],
+                'name' => $definition['name_ja'],
+                'matched_count' => $matchedCount,
+                'max_count' => count($definition['sub_elements']),
+                'matched_sub_elements' => array_map(
+                    fn (string $k) => ['key' => $k, 'name' => $definition['sub_elements'][$k]],
+                    $subKeys,
+                ),
+                'label_only_sub_elements' => [],
+            ];
+        }
+
+        return $axes;
+    }
+
+    /**
+     * 2026-08-21追加: 自社/競合ページのレイアウト整列改修。件数ボックス＋
+     * サマリー(左列)とレーダー(右列)の高さが内容量(サマリーの行数・
+     * レーダー画像の有無)によって変わり、自社/競合ページを重ねて比較すると
+     * 6カテゴリ帯以下が数mmずれる不具合が実PDF確認(PyMuPDFでの座標実測)で
+     * 見つかった。両列に同じmin-heightのdivを入れて行の高さを固定した
+     * ことを、レンダリング結果に両方のdivが存在することで確認する
+     * (実際のY座標の一致自体はPHPUnitでは検証できないため、実PDF実測は
+     * 別途tinker+PyMuPDFで実施し、7ページ構成・余白を確認済み)。
+     */
+    public function test_self_and_competitor_analysis_pages_reserve_the_same_min_height_for_the_score_card_and_radar_columns(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        $this->assertSame(4, substr_count($html, '<div style="min-height: 68mm;">'));
+    }
+
+    /**
+     * 自社/競合ページは同じpartial(lead-pdf-brand-wheel-page.blade.php)を
+     * 2回includeするだけで、主体(自社/競合)以外のマークアップ構造・CSSは
+     * 完全に同一であることを確認する(依頼者指定「同じテンプレートに別データを
+     * 流し込んだように見える状態」の構造的な裏付け)。具体的な該当有無・
+     * 件数・軸名等はデータに応じて正当に変わるため文字列完全一致では検証
+     * できない ―― 代わりに、レイアウトを決める主要な構造要素(min-height
+     * ラッパー・件数ボックス・軸カード6件・ドット合計24個・大分類帯3本)の
+     * 出現回数が自社/競合セクションで完全に一致することを確認する。
+     * サマリー行数(自社4行/競合1行)・軸ごとのmatched_count・URLはあえて
+     * 大きく変えており、それでも構造は一致することを検証する。
+     */
+    public function test_self_and_competitor_analysis_pages_share_identical_structural_markup_counts(): void
+    {
+        $selfAxes = $this->fullWheelAxes([
+            'will_activity' => 3, 'asset' => 0, 'personality' => 0,
+            'relationship' => 0, 'emotional_benefit' => 0, 'financial_benefit' => 0,
+        ]);
+        $competitorAxes = $this->fullWheelAxes([
+            'will_activity' => 3, 'asset' => 3, 'personality' => 3,
+            'relationship' => 3, 'emotional_benefit' => 3, 'financial_benefit' => 3,
+        ]);
+
+        $html = $this->render($this->viewModel([
+            'competitorWebsiteUrl' => 'https://competitor.example.com/careers/newgraduate/2027entry/veryverylongpath',
+            'brandWheelSelf' => $this->wheel(['axes' => $selfAxes]),
+            'brandWheelCompetitor' => $this->wheel([
+                'analyzed_url' => 'https://competitor.example.com/',
+                'axes' => $competitorAxes,
+            ]),
+            'subElementComparison' => app(BrandWheelSubElementComparisonComposer::class)->compose($selfAxes, $competitorAxes),
+        ]));
+
+        $start = mb_strpos($html, '<h2>自社サイトの分析結果</h2>');
+        $midpoint = mb_strpos($html, '<h2>競合サイトの分析結果</h2>');
+        $end = mb_strpos($html, '<h2>', $midpoint + 1);
+
+        $selfSection = mb_substr($html, $start, $midpoint - $start);
+        $competitorSection = mb_substr($html, $midpoint, $end - $midpoint);
+
+        $countAll = fn (string $section, string $needle): int => substr_count($section, $needle);
+
+        foreach ([
+            '<div style="min-height: 68mm;">',
+            '<div class="statbox">',
+            'class="axcell"',
+            'class="axhead"',
+            'class="axbody"',
+            '<span class="dot',
+            'colspan="2"',
+        ] as $needle) {
+            $this->assertSame(
+                $countAll($selfSection, $needle),
+                $countAll($competitorSection, $needle),
+                "「{$needle}」の出現回数が自社/競合ページで一致していません。",
+            );
+        }
+    }
+
     public function test_axis_card_table_uses_explicit_mm_widths_not_percentages(): void
     {
         $html = $this->render($this->viewModel());

@@ -40,38 +40,57 @@
             発生させなくなる(行の高さは両列のうち高い方で決まるため)。
             これによりレーダーの拡大にも同時に余白を回せる。
         --}}
+        {{--
+            2026-08-21: 左列(件数ボックス＋サマリー)と右列(レーダー)の高さが
+            内容量(サマリーの行数・レーダー画像の有無)によって変わり、自社/
+            競合ページを重ねて比較すると6カテゴリ帯以下がページごとに数mm
+            ずれて見える不具合が実PDF確認で見つかった(依頼者指摘 ――
+            「同じテンプレートに別データを流し込んだように見える」状態にする
+            ため)。dompdfはCSS gridのalign-items:stretch相当を持たないため、
+            両列の内側に同じmin-heightのdivを入れ、内容量に関わらず行の高さを
+            常に一定に固定する。サマリー行数の実質的な最大値は
+            BrandWheelComparisonSummaryComposer::pointsForReport()の構成上
+            4行(最充足軸1行＋0件軸まとめ1行＋グループ差最大2行 ―― 3グループ
+            構成では自グループ自身は「差が大きい」側になり得ないため、
+            sparse_groupは残り2グループが上限)。実PDF確認で、この4行構成でも
+            190mm上限に対し7mm以上の余白を保てる68mmを両列共通の下限とした。
+        --}}
         <table class="statrow" style="width: 265mm; table-layout: fixed;"><tr>
             <td style="width: 133mm; vertical-align: top;">
-                <div class="statbox">
-                    <p class="lab"><span class="swatch" style="background: {{ $seriesColor }};"></span>{{ $seriesLabel }}　確認できた情報</p>
-                    <p class="num">{{ $totalMatched }}<small> / {{ $totalMax }}項目</small></p>
-                    <p class="statnote">ブランドホイール24項目のうち、サイト上で情報を確認できた項目数</p>
+                <div style="min-height: 68mm;">
+                    <div class="statbox">
+                        <p class="lab"><span class="swatch" style="background: {{ $seriesColor }};"></span>{{ $seriesLabel }}　確認できた情報</p>
+                        <p class="num">{{ $totalMatched }}<small> / {{ $totalMax }}項目</small></p>
+                        <p class="statnote">ブランドホイール24項目のうち、サイト上で情報を確認できた項目数</p>
+                    </div>
+                    <p class="sumhead" style="margin-top: 2mm;">サマリー</p>
+                    <ul class="sum">
+                        @foreach ($summaryPoints as $point)
+                            <li>{{ $point }}</li>
+                        @endforeach
+                    </ul>
                 </div>
-                <p class="sumhead" style="margin-top: 2mm;">サマリー</p>
-                <ul class="sum">
-                    @foreach ($summaryPoints as $point)
-                        <li>{{ $point }}</li>
-                    @endforeach
-                </ul>
             </td>
             <td style="width: 8mm;"></td>
             <td style="width: 124mm; text-align: center; vertical-align: top;">
-                @if ($radarPng)
-                    {{-- レーダー図のviewBoxは380x276(縦横比380:276)。dompdfは
-                         widthのみ指定だと縦横比を正しく保持しないことがあるため、
-                         heightも明示して指定どおりの比率で描画させる。
-                         2026-08-10: 上記の横並び化で確保した余白を使い、
-                         62x45mm→72x52.3mm(縦横比380:276を維持)にさらに拡大した
-                         (ユーザー指摘: 軸ラベルの可読性)。92x66.8mmまで試したが、
-                         味の素(0件の軸が多くサマリーが長い)で190mm上限の残り
-                         わずかしか余白が無くなったため、実PDF確認で全サイト
-                         190mm上限に対し10mm以上の余白を確保できる72mmまでに
-                         留めた。 --}}
-                    <img src="data:image/png;base64,{{ base64_encode($radarPng) }}" style="width: 72mm; height: 52.3mm;">
-                    <div class="legend">
-                        <span class="sw" style="background: {{ $seriesColor }};"></span>{{ $seriesLabel }}
-                    </div>
-                @endif
+                <div style="min-height: 68mm;">
+                    @if ($radarPng)
+                        {{-- レーダー図のviewBoxは380x276(縦横比380:276)。dompdfは
+                             widthのみ指定だと縦横比を正しく保持しないことがあるため、
+                             heightも明示して指定どおりの比率で描画させる。
+                             2026-08-10: 上記の横並び化で確保した余白を使い、
+                             62x45mm→72x52.3mm(縦横比380:276を維持)にさらに拡大した
+                             (ユーザー指摘: 軸ラベルの可読性)。92x66.8mmまで試したが、
+                             味の素(0件の軸が多くサマリーが長い)で190mm上限の残り
+                             わずかしか余白が無くなったため、実PDF確認で全サイト
+                             190mm上限に対し10mm以上の余白を確保できる72mmまでに
+                             留めた。 --}}
+                        <img src="data:image/png;base64,{{ base64_encode($radarPng) }}" style="width: 72mm; height: 52.3mm;">
+                        <div class="legend">
+                            <span class="sw" style="background: {{ $seriesColor }};"></span>{{ $seriesLabel }}
+                        </div>
+                    @endif
+                </div>
             </td>
         </tr></table>
 
