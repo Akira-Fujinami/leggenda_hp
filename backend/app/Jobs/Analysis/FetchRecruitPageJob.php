@@ -11,6 +11,8 @@ use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\SafeHttpFetcher;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * トップページのbusiness_links.recruit(HtmlSeoAnalyzer::analyzeBusinessLinks()が
@@ -88,6 +90,18 @@ class FetchRecruitPageJob extends BaseWebsiteAnalysisJob
                 'fetched_at' => now(),
             ],
         );
+
+        // 2026-08-19追加: analysis_id=45/website_analysis_id=93の障害調査用の
+        // 一時的な診断ログ。書き込み直後にこのプロセスから見えているhostname・
+        // 保存パス・exists()結果を記録し、後段(GenerateBrandWheelAnalysisJob)の
+        // 診断ログと突き合わせられるようにする。
+        Log::info('Fetch recruit page: html saved', [
+            'analysis_id' => $this->analysisId,
+            'website_analysis_id' => $this->websiteAnalysisId,
+            'hostname' => gethostname(),
+            'saved_path' => $htmlPath,
+            'exists_immediately_after_write' => Storage::disk('analysis')->exists($htmlPath),
+        ]);
     }
 
     protected function onWebsiteJobTerminal(AnalysisPipeline $pipeline): void

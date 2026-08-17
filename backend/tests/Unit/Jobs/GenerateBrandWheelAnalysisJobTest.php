@@ -590,6 +590,69 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
             ->once();
     }
 
+    /**
+     * 2026-08-19追加: analysis_id=45/website_analysis_id=93の障害調査用。
+     * fetch_recruit_page/render_pageが完了扱いなのにsource_pagesが
+     * unreadableになるケースを本番ログから検知できるよう、Job開始時の
+     * ストレージ診断ログ(hostname・disk root・各パスのexists()結果)と、
+     * source_pagesにunreadableが含まれる場合の警告ログが、両方とも
+     * このJobのcompleted扱い(insufficient_input)とは独立して必ず出る
+     * ことを確認する。
+     */
+    public function test_logs_storage_diagnostics_and_a_warning_when_a_source_page_is_unreadable(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        Http::fake(['api.openai.com/*' => Http::response(['choices' => []], 200)]);
+
+        $project = Project::factory()->create();
+        $website = Website::factory()->for($project)->create(['is_primary' => true]);
+        $analysis = Analysis::factory()->for($project)->completed()->create();
+        $websiteAnalysis = WebsiteAnalysis::factory()->completed()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id]);
+
+        $missingPath = app(AnalysisStoragePaths::class)->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'homepage.html');
+        AnalysisPage::query()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'url' => 'https://example.com',
+            'page_type' => PageType::Homepage,
+            'http_status' => 200,
+            'raw_html_path' => $missingPath,
+            'fetched_at' => now(),
+        ]);
+        // Storageへは意図的に何も書き込まない(analysis_id=45/website_analysis_id=93と
+        // 同じ「DB上はパスがあるのに実ファイルが読めない」状態を再現する)。
+
+        Log::spy();
+
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'pending',
+        ]);
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message, array $context) use ($websiteAnalysis, $missingPath) {
+                return $message === 'Brand wheel analysis: storage diagnostics at job start'
+                    && $context['website_analysis_id'] === $websiteAnalysis->id
+                    && $context['analysis_id'] === $websiteAnalysis->analysis_id
+                    && $context['homepage_raw_path'] === $missingPath
+                    && $context['homepage_raw_exists'] === false
+                    && array_key_exists('hostname', $context)
+                    && array_key_exists('analysis_disk_root', $context);
+            })
+            ->once();
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context) use ($websiteAnalysis) {
+                return $message === 'Brand wheel analysis: a source page is unreadable despite the fetch/render jobs having completed'
+                    && $context['website_analysis_id'] === $websiteAnalysis->id
+                    && $context['source_pages']['home_page'] === 'unreadable'
+                    && array_key_exists('hostname', $context);
+            })
+            ->once();
+    }
+
     public function test_sufficient_input_above_threshold_proceeds_to_call_the_provider(): void
     {
         // makeWebsiteAnalysis()の既定の本文(閾値を明確に上回る)で、

@@ -15,6 +15,7 @@ use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\AnalyzerClient;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * analyzer(Playwright)によるレンダリング後HTMLの取得。
@@ -85,6 +86,17 @@ class RenderPageJob extends BaseWebsiteAnalysisJob
             ['website_analysis_id' => $this->websiteAnalysisId, 'page_type' => PageType::Homepage],
             ['rendered_html_path' => $htmlPath],
         );
+
+        // 2026-08-19追加: analysis_id=45/website_analysis_id=93の障害調査用の
+        // 一時的な診断ログ。FetchRecruitPageJobと同じ理由(書き込み時の
+        // hostname・exists()結果を後段の診断ログと突き合わせるため)。
+        Log::info('Render page: rendered html saved', [
+            'analysis_id' => $this->analysisId,
+            'website_analysis_id' => $this->websiteAnalysisId,
+            'hostname' => gethostname(),
+            'rendered_html_path' => $htmlPath,
+            'exists_immediately_after_write' => Storage::disk('analysis')->exists($htmlPath),
+        ]);
 
         // analyzerがpage.gotoのtimeout後もDOM取得済みとして部分成功
         // (navigation_status=partial)を返すことがある。Job自体は失敗

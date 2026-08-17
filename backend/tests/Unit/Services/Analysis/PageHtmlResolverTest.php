@@ -7,6 +7,7 @@ use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\PageHtmlResolver;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -102,5 +103,43 @@ class PageHtmlResolverTest extends TestCase
     public function test_returns_null_for_a_null_page(): void
     {
         $this->assertNull($this->resolver()->resolve(null));
+    }
+
+    /**
+     * 2026-08-19追加: analysis_id=45/website_analysis_id=93の障害調査用。
+     * パスがDBに記録されているのに実ファイルが見つからない(=呼び出し元が
+     * unreadable相当として扱う)ケースだけを対象にwarningログを残すことを
+     * 確認する。「パス自体が未記録」(採用ページが元々無い等の正常系、上の
+     * test_returns_null_when_neither_html_is_readable)ではログを出さない
+     * ことも合わせて確認済み。
+     */
+    public function test_logs_a_warning_when_recorded_paths_exist_but_no_file_is_readable_on_disk(): void
+    {
+        Log::shouldReceive('warning')
+            ->once()
+            ->with('PageHtmlResolver: recorded HTML path(s) exist in DB but no file is readable on disk', \Mockery::on(function (array $context) {
+                return $context['raw_html_path'] === 'raw-missing.html'
+                    && $context['rendered_html_path'] === 'rendered-missing.html'
+                    && $context['raw_exists'] === false
+                    && $context['rendered_exists'] === false
+                    && array_key_exists('hostname', $context)
+                    && array_key_exists('analysis_disk_root', $context)
+                    && array_key_exists('website_analysis_id', $context)
+                    && array_key_exists('page_type', $context);
+            }));
+
+        $page = $this->makePage(null, null);
+        $page->update(['raw_html_path' => 'raw-missing.html', 'rendered_html_path' => 'rendered-missing.html']);
+
+        $this->assertNull($this->resolver()->resolve($page->fresh()));
+    }
+
+    public function test_does_not_log_a_warning_when_neither_path_was_ever_recorded(): void
+    {
+        Log::shouldReceive('warning')->never();
+
+        $page = $this->makePage(null, null);
+
+        $this->resolver()->resolve($page);
     }
 }

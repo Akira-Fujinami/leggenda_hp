@@ -4,7 +4,9 @@ namespace App\Jobs;
 
 use App\Enums\AnalysisErrorCode;
 use App\Enums\JobType;
+use App\Enums\PageType;
 use App\Models\AnalysisJob as AnalysisJobRecord;
+use App\Models\AnalysisPage;
 use App\Models\BrandWheelAnalysisResult as BrandWheelAnalysisResultRecord;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
@@ -22,6 +24,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * WebsiteAnalysis単位でブランド・ホイール(6軸)分析を生成する。
@@ -113,6 +116,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             return;
         }
 
+        $this->logStorageDiagnostics($analysisId, $websiteAnalysisId);
+
         $record->update(['status' => 'running']);
 
         try {
@@ -122,6 +127,19 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
+        }
+
+        // 2026-08-19追加: analysis_id=45/website_analysis_id=93で観測された、
+        // fetch_recruit_page/render_pageがいずれもcompletedなのに
+        // source_pagesが両方ともunreadableになる不具合の原因切り分け用
+        // (Job自体はcompleted扱いのため、この警告が唯一の監視シグナルになる)。
+        if (in_array('unreadable', $input->sourcePages, true)) {
+            Log::warning('Brand wheel analysis: a source page is unreadable despite the fetch/render jobs having completed', [
+                'analysis_id' => $analysisId,
+                'website_analysis_id' => $websiteAnalysisId,
+                'hostname' => gethostname(),
+                'source_pages' => $input->sourcePages,
+            ]);
         }
 
         if ($this->isInputInsufficient($input)) {
@@ -328,6 +346,44 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         // (BrandWheelImprovementSuggestionDispatcher参照)。診断本体の進捗・
         // 完了判定には影響させない(判定後の副作用として呼ぶだけ)。
         app(BrandWheelImprovementSuggestionDispatcher::class)->dispatchIfReady($analysisId);
+    }
+
+    /**
+     * 2026-08-19追加: analysis_id=45/website_analysis_id=93の障害調査用の
+     * 一時的な診断ログ。fetch_recruit_page/render_pageは完了しており、本番
+     * tinkerからは3ファイルとも存在確認できているにも関わらず、この
+     * Job実行時にはsource_pagesが両方ともunreadableになる不具合が観測された
+     * ため、「書き込み時のhostname」と「このJob実行時のhostname」が一致するか
+     * を本番ログから直接突き合わせられるようにする(Renderが複数インスタンス
+     * でローカルディスクを共有できていない疑いの検証)。原因確定後に削除・
+     * 縮小を検討する(恒久的な監視ログとして残すかは別途判断)。
+     */
+    private function logStorageDiagnostics(int $analysisId, int $websiteAnalysisId): void
+    {
+        $disk = Storage::disk('analysis');
+        $diskRoot = (string) config('filesystems.disks.analysis.root');
+
+        $homepage = AnalysisPage::query()
+            ->where('website_analysis_id', $websiteAnalysisId)
+            ->where('page_type', PageType::Homepage)
+            ->first();
+        $recruit = AnalysisPage::query()
+            ->where('website_analysis_id', $websiteAnalysisId)
+            ->where('page_type', PageType::Recruit)
+            ->first();
+
+        Log::info('Brand wheel analysis: storage diagnostics at job start', [
+            'analysis_id' => $analysisId,
+            'website_analysis_id' => $websiteAnalysisId,
+            'hostname' => gethostname(),
+            'analysis_disk_root' => $diskRoot,
+            'homepage_raw_path' => $homepage?->raw_html_path,
+            'homepage_raw_exists' => $homepage?->raw_html_path !== null ? $disk->exists($homepage->raw_html_path) : null,
+            'homepage_rendered_path' => $homepage?->rendered_html_path,
+            'homepage_rendered_exists' => $homepage?->rendered_html_path !== null ? $disk->exists($homepage->rendered_html_path) : null,
+            'recruit_raw_path' => $recruit?->raw_html_path,
+            'recruit_raw_exists' => $recruit?->raw_html_path !== null ? $disk->exists($recruit->raw_html_path) : null,
+        ]);
     }
 
     /**
