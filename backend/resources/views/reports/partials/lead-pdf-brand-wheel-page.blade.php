@@ -94,52 +94,83 @@
             </td>
         </tr></table>
 
-        <table class="bandrow" style="width: 265mm; margin-top: 2mm;"><tr>
-            @foreach ($groupBands as $band)
-                <td colspan="2" style="background: {{ $band['color'] }};">{{ $band['label'] }}</td>
-            @endforeach
-        </tr></table>
-
-        <table style="width: 265mm; margin-top: 1mm;"><tr>
-            @foreach ($wheel['axes'] as $axis)
-                <td class="axcell">
-                    <div class="axhead">{{ $axis['name'] }}</div>
-                    <div class="axbody">
-                        <p class="axcnt">{{ $axis['matched_count'] }}<small> / {{ $axis['max_count'] }}件</small></p>
-                        {{--
-                            この四角は「壊れて出ていない」のか「調べた結果0件」
-                            なのかを区別するための表示。matched_count===0でも
-                            省略しない(docs/lead-report-layout/README.md)。
-                            四角の数はmax_countから生成する(固定値で書かない)。
-                        --}}
-                        <p class="dots">
-                            @for ($i = 1; $i <= $axis['max_count']; $i++)
-                                <span class="dot {{ $i <= $axis['matched_count'] ? 'on' : '' }}" @if ($i <= $axis['matched_count']) style="background: {{ $seriesColor }};" @endif></span>
-                            @endfor
-                        </p>
-                        @if (count($axis['matched_sub_elements']) > 0)
-                            <ul class="hits2">
-                                @foreach ($axis['matched_sub_elements'] as $sub)
-                                    <li>{{ $sub['name'] }}</li>
-                                @endforeach
-                            </ul>
-                        @else
-                            {{-- 「読み取れた内容はありません」は使わない
-                                 (内容が無い会社、と読めるため)。 --}}
-                            <p class="none2">該当する記述は見つかりませんでした</p>
-                        @endif
-                    </div>
-                </td>
-            @endforeach
-        </tr></table>
+        {{--
+            2026-08-22: 大分類帯(3本、colspan=2)と6カテゴリカードを1つの
+            tableへ統合した(依頼者指定 ―― 別tableだと縦線が理論上一致して
+            いてもdompdfの列幅計算がtableごとに独立するため、丸め方次第で
+            サブpx単位のズレが起こりうる。同じ<colgroup>を共有させることで
+            構造的にズレを無くす)。列幅は<colgroup>の6本の<col>で一元管理
+            (44.16mm×6=264.96mm、2026-08-04の実測値を踏襲)。
+        --}}
+        <table class="brandwheeltbl">
+            <colgroup>
+                @for ($col = 0; $col < 6; $col++)
+                    <col style="width: 44.16mm;">
+                @endfor
+            </colgroup>
+            <tr class="bandrow">
+                @foreach ($groupBands as $band)
+                    <td colspan="2" style="background: {{ $band['color'] }};">{{ $band['label'] }}</td>
+                @endforeach
+            </tr>
+            <tr>
+                @foreach ($wheel['axes'] as $axis)
+                    <td class="axcell">
+                        <div class="axhead">{{ $axis['name'] }}</div>
+                        <div class="axbody">
+                            <div class="axscore">
+                                <p class="axcnt">{{ $axis['matched_count'] }}<small> / {{ $axis['max_count'] }}件</small></p>
+                            </div>
+                            {{--
+                                この四角は「壊れて出ていない」のか「調べた結果0件」
+                                なのかを区別するための表示。matched_count===0でも
+                                省略しない(docs/lead-report-layout/README.md)。
+                                四角の数はmax_countから生成する(固定値で書かない)。
+                            --}}
+                            <div class="axind">
+                                <p class="dots">
+                                    @for ($dot = 1; $dot <= $axis['max_count']; $dot++)
+                                        <span class="dot {{ $dot <= $axis['matched_count'] ? 'on' : '' }}" @if ($dot <= $axis['matched_count']) style="background: {{ $seriesColor }};" @endif></span>
+                                    @endfor
+                                </p>
+                            </div>
+                            <div class="axcontent">
+                                @if (count($axis['matched_sub_elements']) > 0)
+                                    <ul class="hits2">
+                                        @foreach ($axis['matched_sub_elements'] as $sub)
+                                            <li>{{ $sub['name'] }}</li>
+                                        @endforeach
+                                    </ul>
+                                @else
+                                    {{-- 「読み取れた内容はありません」は使わない
+                                         (内容が無い会社、と読めるため)。 --}}
+                                    <p class="none2">該当する記述は見つかりませんでした</p>
+                                @endif
+                            </div>
+                        </div>
+                    </td>
+                @endforeach
+            </tr>
+        </table>
 
         @if ($wheel['key_message'] || $wheel['positive_impression'] || $wheel['negative_impression'])
             <div class="darkband">
+                {{--
+                    2026-08-22: 内部を3領域(.msgkey/.msgpos/.msgneg)に分け、
+                    それぞれmin-heightを持たせた(依頼者指定 ―― 自社/競合で
+                    文章量が違っても各項目の開始位置が一致するようにする)。
+                    3項目とも任意表示(該当データが無ければブロックごと
+                    非表示)のため、heightでの完全固定ではなくmin-heightに
+                    している ―― 例えば自社にはネガティブな印象が無く競合には
+                    ある場合、無理に自社側へ空白ブロックを作らない。
+                --}}
                 {{-- 2026-08-17: 「収集した情報から」→「サイト上の情報から」に
                      変更(依頼者指定 ―― サイト上の情報からの推定であることを
                      より明確にする)。 --}}
                 @if ($wheel['key_message'])
-                    <p><b>サイト上の情報から想定されるキーメッセージ：</b>{{ $wheel['key_message'] }}</p>
+                    <div class="msgkey">
+                        <p><b>サイト上の情報から想定されるキーメッセージ：</b>{{ $wheel['key_message'] }}</p>
+                    </div>
                 @endif
                 {{--
                     2026-08-18: 「候補者に与える印象」という単一見出し配下に
@@ -148,12 +179,16 @@
                     明確に分離した(読み手が一瞬で区別できるようにするため)。
                 --}}
                 @if ($wheel['positive_impression'])
-                    <p style="margin-top: 0.5mm; margin-bottom: 0;"><b>ポジティブな印象：</b></p>
-                    <p class="impgood">{{ $wheel['positive_impression'] }}</p>
+                    <div class="msgpos">
+                        <p style="margin-top: 0.5mm; margin-bottom: 0;"><b>ポジティブな印象：</b></p>
+                        <p class="impgood">{{ $wheel['positive_impression'] }}</p>
+                    </div>
                 @endif
                 @if ($wheel['negative_impression'])
-                    <p style="margin-top: 0.8mm; margin-bottom: 0;"><b>ネガティブな印象：</b></p>
-                    <p class="impbad">{{ $wheel['negative_impression'] }}</p>
+                    <div class="msgneg">
+                        <p style="margin-top: 0.8mm; margin-bottom: 0;"><b>ネガティブな印象：</b></p>
+                        <p class="impbad">{{ $wheel['negative_impression'] }}</p>
+                    </div>
                 @endif
             </div>
         @endif

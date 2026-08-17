@@ -111,26 +111,42 @@
     .sum { font-size: 8.5pt; line-height: 1.2; margin: 0; padding-left: 5mm; }
     .legend { text-align: center; font-size: 9pt; color: #5b5b5b; margin-top: 1mm; }
     .sw { display: inline-block; width: 9px; height: 9px; margin: 0 2px 0 10px; }
-    .bandrow td { color: #fff; text-align: center; font-size: 10pt; font-weight: bold; padding: 1mm; }
     {{--
-        2026-08-04: 16.66%のみだと右端の列がページ外へはみ出す不具合が
-        あったため(自社ページの分析結果ページ、実PDF確認で発覚)、mm固定に
-        している。6列×44.16mm=264.96mm(テーブル本体のwidth: 265mmと一致)。
-        軸セルの高さは38mmを確保する(docs/lead-report-layout/README.md ――
-        4項目すべて該当したケースで下の帯へめり込んだ実績があるため、必ず
-        実PDFで目視確認すること)。
+        2026-08-22: 大分類帯(旧.bandrow独立table)と6カテゴリカードを
+        1つのtableへ統合した(依頼者指定 ―― 別々のtableだと、それぞれが
+        独立に列幅を計算するため、縦線が理論上は同じ265mm/6でもdompdfの
+        丸め方次第でサブpx単位のズレが起こりうる。1つのtable+<colgroup>に
+        することで、帯とカードが物理的に同じ列定義を共有し、縦線のズレを
+        構造的に無くす)。列幅は<colgroup>の6本の<col>で一元管理する
+        (旧.axcell{width:44.16mm}と同じ値、6列×44.16mm=264.96mm≈265mm、
+        2026-08-04の実測に基づく値を踏襲)。
     --}}
-    .axcell { width: 44.16mm; padding: 0 1mm; }
-    .axhead { border: 1px solid #E0E0E0; background: #F5F5F5; text-align: center; font-size: 9.5pt; font-weight: bold; padding: 0.7mm; }
-    .axbody { border: 1px solid #E0E0E0; border-top: none; padding: 2mm; height: 38mm; }
-    .axcnt { font-size: 14pt; font-weight: bold; margin: 0 0 1mm; line-height: 1; }
+    .brandwheeltbl { width: 265mm; margin-top: 2mm; table-layout: fixed; border-collapse: collapse; }
+    .bandrow td { color: #fff; text-align: center; font-size: 10pt; font-weight: bold; padding: 1mm; }
+    .axcell { padding: 0 1mm; }
+    {{--
+        2026-08-04: 軸セルの高さは38mmを確保する(docs/lead-report-layout/
+        README.md ―― 4項目すべて該当したケースで下の帯へめり込んだ実績が
+        あるため、必ず実PDFで目視確認すること)。
+        2026-08-22: カード内部を「見出し/スコア/インジケータ/内容」の
+        4領域に分け、見出し・スコア・インジケータの3領域を明示的な高さで
+        固定した(依頼者指定 ―― 内容量によってカード内の縦位置がずれない
+        ことを保証するため)。スコア("N / M件")・インジケータ(■□の並び)は
+        いずれも既に1行で収まる固定フォーマットのため実質的にズレる要素
+        ではなかったが、明示することで将来の文言変更でも保証が崩れない
+        ようにする。
+    --}}
+    .axhead { border: 1px solid #E0E0E0; background: #F5F5F5; text-align: center; font-size: 9.5pt; font-weight: bold; padding: 0.6mm; height: 5mm; line-height: 1.1; }
+    .axbody { border: 1px solid #E0E0E0; border-top: none; padding: 1.6mm 2mm; height: 30mm; }
+    .axscore { height: 5mm; }
+    .axcnt { font-size: 14pt; font-weight: bold; margin: 0; line-height: 1; }
     .axcnt small { font-size: 9pt; font-weight: normal; color: #6B6767; }
-    .dots { margin: 0 0 1.5mm; }
+    .axind { height: 4.3mm; }
+    .dots { margin: 0; }
     .dot { display: inline-block; width: 10px; height: 10px; margin-right: 3px; background: #DCDCDC; }
     .dot.on { background: #3A3FC0; }
-    .hits2 { margin: 0; padding-left: 4mm; font-size: 8.5pt; line-height: 1.3; }
+    .hits2 { margin: 0; padding-left: 4mm; font-size: 8.5pt; line-height: 1.25; }
     .none2 { font-size: 9.5pt; color: #9A9A9A; margin: 0; }
-    {{-- widthを明示する理由はh2と同じ(2026-08-04、上記コメント参照)。 --}}
     {{--
         2026-08-09: page-break-inside: avoidを追加(ユーザー承認の「上限付き」
         案)。実データ検証で、紺帯の残り余白が2mm程度しかないケースがあり、
@@ -138,9 +154,20 @@
         上限(件数・文字数)と2列化で紺帯の最大高さ自体を縮めた上で、万一それ
         でも収まらない場合は「途中で割れる」のではなく「丸ごと次ページへ」
         という失敗の仕方に倒す(dompdfはpage-break-insideを尊重する)。
+        2026-08-22: 高さをmin-heightではなくheight固定にした(依頼者指定 ――
+        自社/競合で内容量が違っても紺帯の高さ自体を完全に揃えるため)。
+        キーメッセージ・ポジティブ・ネガティブの3項目すべてに文字数上限が
+        付いたことで(BrandWheelLeadResponseComposer参照)、最大ケースの
+        高さが予測可能になったため固定できる。内部も3領域(.msgkey/
+        .msgpos/.msgneg)に分け、min-heightで開始位置を揃える(3項目とも
+        任意表示のため、いずれかが無い場合に後続がめり込まないようmin-height
+        のみ、heightで完全固定はしない ―― 表示件数自体が変わるケースまで
+        固定すると空白行ができてしまうため)。
     --}}
-    .darkband { width: 265mm; background: #1D2088; color: #fff; padding: 1.3mm 5mm; margin-top: 1mm; page-break-inside: avoid; }
-    .darkband p { margin: 0.4mm 0; font-size: 9.5pt; line-height: 1.3; }
+    .darkband { width: 265mm; background: #1D2088; color: #fff; padding: 1mm 5mm; margin-top: 1mm; page-break-inside: avoid; }
+    .darkband p { margin: 0.25mm 0; font-size: 9.5pt; line-height: 1.2; }
+    .msgkey { min-height: 8.5mm; }
+    .msgpos, .msgneg { min-height: 7.5mm; }
     {{--
         2026-08-18: 「候補者に与える印象」の単一見出し配下にポジ/ネガを
         箇条書きで並べる形から、「ポジティブな印象」「ネガティブな印象」を
@@ -149,7 +176,7 @@
         削除した(依頼者指定 ―― UI/PDF上でAI利用を前面に出さない。バックエンド
         内部でAIを利用すること自体は変更しない)。
     --}}
-    .impgood, .impbad { margin: 0.3mm 0 0; font-size: 9pt; line-height: 1.35; }
+    .impgood, .impbad { margin: 0.2mm 0 0; font-size: 9pt; line-height: 1.25; }
     {{--
         position:absoluteは文章には使わない ―― 実PDF確認で、2行に折り返す
         境界の文字がまれに欠落する不具合が見つかった(2026-08-04)。通常

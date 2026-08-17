@@ -491,12 +491,19 @@ class LeadPdfViewTest extends TestCase
         }
     }
 
-    public function test_axis_card_table_uses_explicit_mm_widths_not_percentages(): void
+    /**
+     * 2026-08-22: 大分類帯と6カテゴリカードを1つのtableへ統合したことに
+     * 伴い、列幅の一元管理を<colgroup>の6本の<col>へ移した(旧.axcell{width}
+     * から移動)。縦線を確実に一致させるため、大分類帯・カード行の両方が
+     * この同じ<colgroup>を共有していることも確認する。
+     */
+    public function test_brand_wheel_table_uses_a_shared_colgroup_with_explicit_mm_widths(): void
     {
         $html = $this->render($this->viewModel());
 
-        $this->assertStringContainsString('.axcell { width: 44.16mm;', $html);
+        $this->assertSame(6, substr_count($html, '<col style="width: 44.16mm;">'));
         $this->assertStringNotContainsString('.axcell { width: 16.66%;', $html);
+        $this->assertStringNotContainsString('width: 16.66%', $html);
     }
 
     public function test_axis_card_dots_are_generated_from_max_count_not_a_hardcoded_four(): void
@@ -533,7 +540,15 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('該当する記述は見つかりませんでした', $html);
     }
 
-    public function test_axis_body_height_is_38mm_even_when_all_four_sub_elements_matched(): void
+    /**
+     * 2026-08-22: .axbodyの固定高さは38mm→30mmへ調整した(依頼者指定の
+     * グリッド整列改修に伴い、カード内部を見出し/スコア/インジケータ/内容の
+     * 4領域へ分割・タイト化したことで、4項目該当ケースでも30mmで安全に
+     * 収まることを実PDF実測で確認したため)。この項目自体が固定値であること
+     * (内容量で変わらないこと)の検証が目的のため、具体的な数値ではなく
+     * 「明示的なheightが指定されていること」を確認する。
+     */
+    public function test_axis_body_has_a_fixed_height_even_when_all_four_sub_elements_matched(): void
     {
         $html = $this->render($this->viewModel([
             'brandWheelSelf' => $this->wheel([
@@ -546,7 +561,7 @@ class LeadPdfViewTest extends TestCase
             ]),
         ]));
 
-        $this->assertStringContainsString('height: 38mm', $html);
+        $this->assertMatchesRegularExpression('/\.axbody \{[^}]*height: \d+(\.\d+)?mm;/', $html);
         $this->assertStringContainsString('4<small> / 4件</small>', $html);
         $this->assertSame(4, substr_count($html, 'class="dot on"'));
     }

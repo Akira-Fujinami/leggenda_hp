@@ -62,6 +62,15 @@ class BrandWheelLeadResponseComposer
     // EVIDENCE_MAX_CHARSと同じ経緯(110→70→60)で65字まで縮小した。
     private const IMPRESSION_TEXT_MAX_CHARS = 65;
 
+    // 2026-08-22追加: key_messageはこれまでレポート向けの文字数上限を
+    // 持たず、AIの出力をそのまま表示していた。今回の改修で紺帯
+    // (darkband)を高さ固定(height指定)にするにあたり、内部の3ブロック
+    // (キーメッセージ/ポジティブ/ネガティブ)すべてに上限が無いと
+    // 固定高さを超えて溢れうるため、他の2項目と同じ設計(上限を超えたら
+    // 「…」で切り詰める)に揃える。key_messageは紺帯内で最も目立つ1行目の
+    // ため、ポジティブ/ネガティブ(65字)よりやや余裕を持たせる。
+    private const KEY_MESSAGE_TEXT_MAX_CHARS = 90;
+
     /**
      * @return array{status: string, status_message: ?string, analyzed_url: string, axes: list<array<string, mixed>>, key_message: ?string, impression: ?string, impression_items: list<string>, positive_impression: ?string, negative_impression: ?string, source_pages: array<string, mixed>}
      */
@@ -76,7 +85,7 @@ class BrandWheelLeadResponseComposer
             'status_message' => $isSuccess ? null : (string) config("brand_wheel.status_messages.{$status}"),
             'analyzed_url' => (string) $website->normalized_url,
             'axes' => $isSuccess && $record !== null ? $this->buildAxes($record) : [],
-            'key_message' => $isSuccess ? $record?->key_message : null,
+            'key_message' => $isSuccess ? $this->capTextForReport($record?->key_message, self::KEY_MESSAGE_TEXT_MAX_CHARS) : null,
             'impression' => $impressionItems !== [] ? implode('、', $impressionItems) : null,
             'impression_items' => $this->capImpressionItemsForReport($impressionItems),
             // 2026-08-17追加: レポート「候補者に与える印象」の表示はこちらへ
@@ -90,12 +99,17 @@ class BrandWheelLeadResponseComposer
 
     private function capImpressionTextForReport(?string $text): ?string
     {
+        return $this->capTextForReport($text, self::IMPRESSION_TEXT_MAX_CHARS);
+    }
+
+    private function capTextForReport(?string $text, int $maxChars): ?string
+    {
         if ($text === null || trim($text) === '') {
             return null;
         }
 
-        return mb_strlen($text) > self::IMPRESSION_TEXT_MAX_CHARS
-            ? mb_substr($text, 0, self::IMPRESSION_TEXT_MAX_CHARS).'…'
+        return mb_strlen($text) > $maxChars
+            ? mb_substr($text, 0, $maxChars).'…'
             : $text;
     }
 
