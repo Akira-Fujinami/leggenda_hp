@@ -142,14 +142,14 @@
     .darkband { width: 265mm; background: #1D2088; color: #fff; padding: 1.3mm 5mm; margin-top: 1mm; page-break-inside: avoid; }
     .darkband p { margin: 0.4mm 0; font-size: 9.5pt; line-height: 1.3; }
     {{--
-        2026-08-17: 「AI解析による候補者に与える印象」(短いフレーズの箇条書き、
-        .impressiontbl)から、ポジティブ/ネガティブの2文構成(.impgood/.impbad)へ
-        変更(依頼者指定)。文字数はBrandWheelLeadResponseComposerが最大90字に
-        切り詰めるため、各1〜2行に収まる想定(実PDF確認で最終調整)。
+        2026-08-18: 「候補者に与える印象」の単一見出し配下にポジ/ネガを
+        箇条書きで並べる形から、「ポジティブな印象」「ネガティブな印象」を
+        別見出しとして明確に分離した(依頼者指定)。あわせて「キーメッセージと
+        印象の読み取りにはAIを使用しています。」というAI利用の開示文言も
+        削除した(依頼者指定 ―― UI/PDF上でAI利用を前面に出さない。バックエンド
+        内部でAIを利用すること自体は変更しない)。
     --}}
     .impgood, .impbad { margin: 0.3mm 0 0; font-size: 9pt; line-height: 1.35; }
-    {{-- AI開示文をdarkbandの内側に置く際の控えめな配色(白地の.footとは別)。 --}}
-    .darkfoot { margin: 1mm 0 0; font-size: 8pt; color: #B9BBDA; line-height: 1.3; }
     {{--
         position:absoluteは文章には使わない ―― 実PDF確認で、2行に折り返す
         境界の文字がまれに欠落する不具合が見つかった(2026-08-04)。通常
@@ -267,6 +267,11 @@
     .recobox { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 2mm 4mm; margin: 2mm 0 0; }
     .recobox .t { font-size: 9.5pt; font-weight: bold; margin: 0 0 1mm; }
     .recobox p { font-size: 9pt; line-height: 1.45; margin: 0; }
+    {{-- 2026-08-18追加: 「理由」(ワンポイント直下の地の文)・「具体的に
+         追加すべき情報」(箇条書き)・「中長期施策」(小さな1行)。 --}}
+    .reasontext { width: 265mm; font-size: 9.5pt; color: #393636; line-height: 1.55; margin: 1.5mm 0 3mm; }
+    .recobox .recolist { margin: 0; padding-left: 4mm; font-size: 9pt; line-height: 1.6; }
+    .midterm { width: 265mm; font-size: 8.5pt; color: #6B6767; line-height: 1.5; margin: 2mm 0 0; }
     .gapbar td { padding: 0 0 1.3mm; font-size: 9pt; vertical-align: middle; }
     .gapbar .nm { width: 34mm; }
     .gapbar .bar { height: 5mm; display: block; }
@@ -455,7 +460,10 @@
          主文にする(依頼者指定#3)。URL分析対象範囲の明記(依頼者指定#5、
          実装調査で確認: 採用ページ・トップページの記述のみを対象とし、
          サイト全体の自動巡回は行っていない)もここに追加する。 --}}
-    <p class="introbody">本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています(<b>この24項目のうち何件が、サイトの記述から読み取れたか</b>もあわせて示しています)。</p>
+    {{-- 2026-08-18: 「この24項目のうち何件が...もあわせて示しています」という
+         件数集計の補足説明を削除(依頼者指定 ―― 件数集計資料の印象を強めるため)。
+         N/24等の数値表示自体は3・4ページの統計ボックス等に引き続き残す。 --}}
+    <p class="introbody">本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています。</p>
     <p class="introbody" style="font-size: 9.5pt; color: #6B6767;">本分析は、ご提供いただいた採用ページ・トップページの記述を対象としており、サイト全体や他の関連ページを自動的に巡回して分析するものではありません。</p>
     <p class="introcaution">読み取れなかった項目は、その魅力が『無い』という意味ではありません。サイトにそう書かれていない、というだけです。また、採用ブランドは本来、グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。</p>
 </div>
@@ -686,6 +694,16 @@
             </div>
         @endif
 
+        {{--
+            2026-08-18追加: ワンポイントの理由(依頼者指定の構成 ―― ワンポイント
+            →理由→自社と競合の差(既存)→具体的に追加すべき情報→中長期施策)。
+            改善提案AI未生成/失敗時はnullのため非表示(既存のバー＋カードのみで
+            成立する)。
+        --}}
+        @if ($viewModel->improvementReason)
+            <p class="reasontext"><b>理由：</b>{{ $viewModel->improvementReason }}</p>
+        @endif
+
         @if ($viewModel->improvementFocus)
             @php
                 $focus = $viewModel->improvementFocus;
@@ -757,17 +775,26 @@
                 </table>
 
                 {{--
-                    2026-08-17追加: 改善提案AIが生成した詳細提言(結論→なぜ→
-                    具体的にの3〜5文)。既存のグループ差バー＋証拠カード
-                    (無改修、決定的ロジック)の上に追加する構成(依頼者指定
-                    ―― 一般論ではなく企業固有の判断根拠を示す)。未生成/失敗時は
-                    非表示(既存のバー＋カードのみで成立する)。
+                    2026-08-18: 単一段落の「改善のご提案」(旧recommendation)を、
+                    依頼者指定の構成に合わせて「具体的に追加すべき情報」(箇条書き、
+                    最大3項目)＋「中長期施策」(該当する場合のみ)に分割した。
+                    既存のグループ差バー＋証拠カード(無改修、決定的ロジック)は
+                    「自社と競合の差」の根拠として残し、その下に結論(具体的に
+                    追加すべき情報)を続ける構成にする。未生成/失敗時は非表示
+                    (既存のバー＋カードのみで成立する)。
                 --}}
-                @if ($viewModel->improvementRecommendation)
+                @if (count($viewModel->improvementRecommendedContents) > 0)
                     <div class="recobox">
-                        <p class="t">改善のご提案</p>
-                        <p>{{ $viewModel->improvementRecommendation }}</p>
+                        <p class="t">具体的に追加すべき情報</p>
+                        <ul class="recolist">
+                            @foreach ($viewModel->improvementRecommendedContents as $content)
+                                <li>{{ $content }}</li>
+                            @endforeach
+                        </ul>
                     </div>
+                @endif
+                @if ($viewModel->improvementMidTermAction)
+                    <p class="midterm"><b>中長期的には：</b>{{ $viewModel->improvementMidTermAction }}</p>
                 @endif
 
                 <p class="rlead" style="margin: 3mm 0 0;">なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。</p>
@@ -827,11 +854,18 @@
                     </tr>
                 </table>
 
-                @if ($viewModel->improvementRecommendation)
+                @if (count($viewModel->improvementRecommendedContents) > 0)
                     <div class="recobox">
-                        <p class="t">改善のご提案</p>
-                        <p>{{ $viewModel->improvementRecommendation }}</p>
+                        <p class="t">具体的に追加すべき情報</p>
+                        <ul class="recolist">
+                            @foreach ($viewModel->improvementRecommendedContents as $content)
+                                <li>{{ $content }}</li>
+                            @endforeach
+                        </ul>
                     </div>
+                @endif
+                @if ($viewModel->improvementMidTermAction)
+                    <p class="midterm"><b>中長期的には：</b>{{ $viewModel->improvementMidTermAction }}</p>
                 @endif
 
                 <p class="rlead" style="margin: 3mm 0 0;">なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。</p>

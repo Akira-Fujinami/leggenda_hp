@@ -161,8 +161,7 @@ class WordReportGenerator
         // 2026-08-17: 件数集計フレーミングを弱め、レポートの目的を主文にする
         // (依頼者指定#3)。URL分析対象範囲の明記(依頼者指定#5)も追加。
         $section->addText(
-            '本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています'.
-            '(この24項目のうち何件が、サイトの記述から読み取れたかもあわせて示しています)。',
+            '本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています。',
         );
         $section->addText(
             '本分析は、ご提供いただいた採用ページ・トップページの記述を対象としており、サイト全体や他の関連ページを'.
@@ -245,9 +244,11 @@ class WordReportGenerator
             $table->addCell(5000)->addText($matchedNames === [] ? '該当する記述は見つかりませんでした' : implode('、', $matchedNames));
         }
 
-        // 2026-08-17: 「AI解析による候補者に与える印象」(短いフレーズの箇条書き)
-        // から、ポジティブ/ネガティブの2文構成へ変更(依頼者指定、PDF版と同内容)。
-        // 「収集した情報から」→「サイト上の情報から」に文言変更。
+        // 2026-08-18: 「候補者に与える印象」の単一見出し配下にポジ/ネガを
+        // 箇条書きで並べる形から、「ポジティブな印象」「ネガティブな印象」を
+        // 別見出しとして明確に分離した(依頼者指定、PDF版と同内容)。あわせて
+        // AI利用の開示文言も削除した(依頼者指定 ―― UI/PDF上でAI利用を前面に
+        // 出さない)。
         $positiveImpression = $wheel['positive_impression'] ?? null;
         $negativeImpression = $wheel['negative_impression'] ?? null;
         if ($wheel['key_message'] || $positiveImpression || $negativeImpression) {
@@ -257,19 +258,14 @@ class WordReportGenerator
                 $section->addText('サイト上の情報から想定されるキーメッセージ：'.$wheel['key_message']);
             }
 
-            if ($positiveImpression || $negativeImpression) {
-                $section->addText('候補者に与える印象：');
-                if ($positiveImpression) {
-                    $section->addText("・{$positiveImpression}");
-                }
-                if ($negativeImpression) {
-                    $section->addText("・{$negativeImpression}");
-                }
+            if ($positiveImpression) {
+                $section->addText('ポジティブな印象：');
+                $section->addText($positiveImpression);
             }
-
-            // key_message/impressionがAI生成であることの開示
-            // (誠実性の維持に必要、2026-08-04)。
-            $section->addText('キーメッセージと印象の読み取りにはAIを使用しています。', ['size' => 8.5, 'color' => '7a7a7a']);
+            if ($negativeImpression) {
+                $section->addText('ネガティブな印象：');
+                $section->addText($negativeImpression);
+            }
         }
     }
 
@@ -400,6 +396,12 @@ class WordReportGenerator
             $section->addTextBreak(1);
         }
 
+        // 2026-08-18追加: ワンポイントの理由(依頼者指定の構成、PDF版と同内容)。
+        if ($viewModel->improvementReason !== null) {
+            $section->addText('理由：'.$viewModel->improvementReason, ['size' => 9.5]);
+            $section->addTextBreak(1);
+        }
+
         $focus = $viewModel->improvementFocus;
         if ($focus !== null) {
             $selectedLabel = self::GROUP_LABELS[$focus['selected_group']] ?? $focus['selected_group'];
@@ -426,11 +428,19 @@ class WordReportGenerator
                     $section->addText('比較サイトの記述：「'.$item['competitor_evidence'].'」');
                 }
 
-                // 2026-08-17追加: 改善提案AIの詳細提言(PDF版と同内容)。
-                if ($viewModel->improvementRecommendation !== null) {
+                // 2026-08-18追加: 具体的に追加すべき情報/中長期施策(PDF版と同内容、
+                // 旧「改善のご提案」単一パラグラフを置き換え)。
+                if (count($viewModel->improvementRecommendedContents) > 0) {
                     $section->addTextBreak(1);
-                    $section->addText('改善のご提案', ['bold' => true, 'size' => 10]);
-                    $section->addText($viewModel->improvementRecommendation, ['size' => 9.5]);
+                    $section->addText('具体的に追加すべき情報', ['bold' => true, 'size' => 10]);
+                    foreach ($viewModel->improvementRecommendedContents as $content) {
+                        $section->addText('・'.$content, ['size' => 9.5]);
+                    }
+                }
+
+                if ($viewModel->improvementMidTermAction !== null) {
+                    $section->addTextBreak(1);
+                    $section->addText('中長期的には：'.$viewModel->improvementMidTermAction, ['size' => 9, 'color' => '6B6767']);
                 }
 
                 $section->addTextBreak(1);
@@ -481,10 +491,17 @@ class WordReportGenerator
             $section->addText('御社のサイト：'.$this->selfOnlyReasonLabel($item['self_reason']));
         }
 
-        if ($viewModel->improvementRecommendation !== null) {
+        if (count($viewModel->improvementRecommendedContents) > 0) {
             $section->addTextBreak(1);
-            $section->addText('改善のご提案', ['bold' => true, 'size' => 10]);
-            $section->addText($viewModel->improvementRecommendation, ['size' => 9.5]);
+            $section->addText('具体的に追加すべき情報', ['bold' => true, 'size' => 10]);
+            foreach ($viewModel->improvementRecommendedContents as $content) {
+                $section->addText('・'.$content, ['size' => 9.5]);
+            }
+        }
+
+        if ($viewModel->improvementMidTermAction !== null) {
+            $section->addTextBreak(1);
+            $section->addText('中長期的には：'.$viewModel->improvementMidTermAction, ['size' => 9, 'color' => '6B6767']);
         }
 
         $section->addTextBreak(1);

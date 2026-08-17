@@ -79,6 +79,9 @@ class WordReportGeneratorTest extends TestCase
             'improvementFocus' => null,
             'improvementOnePoint' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。',
             'improvementRecommendation' => null,
+            'improvementReason' => null,
+            'improvementRecommendedContents' => [],
+            'improvementMidTermAction' => null,
         ];
         $defaults['improvementFocusSelfOnly'] = app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($defaults['subElementComparison']);
 
@@ -138,6 +141,9 @@ class WordReportGeneratorTest extends TestCase
             'improvementFocusSelfOnly' => null,
             'improvementOnePoint' => '6つの項目それぞれについて、内容が読み取れています。伝えたいキーメッセージがバランス良く読み取れる状態です。',
             'improvementRecommendation' => 'まずは会社との距離に関する情報を拡充することを推奨します。競合との差別化余地が大きい一方、社員インタビュー等が必要となる可能性があります。',
+            'improvementReason' => '就業環境は競合が2件読み取れているのに対し自社は0件で、候補者が働くイメージを持ちにくい状態です。',
+            'improvementRecommendedContents' => ['入社数年目の社員の1日の過ごし方', '部署間の関わり方が分かるエピソード'],
+            'improvementMidTermAction' => '中長期的には、部署横断プロジェクトの事例をシリーズ化することも検討できます。',
         ], $overrides));
     }
 
@@ -207,7 +213,9 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString('パーパス', $documentXml);
         $this->assertStringContainsString('技術で社会基盤を支える', $documentXml);
         $this->assertStringContainsString('活動的魅力が最も内容として充足しています', $documentXml);
-        $this->assertStringContainsString('AIを使用', $documentXml);
+        // 2026-08-18: 読み手向けUIにはAI利用の開示テキストを一切出さない(依頼者指定)。
+        $this->assertStringNotContainsString('AIを使用', $documentXml);
+        $this->assertStringNotContainsString('AI解析', $documentXml);
     }
 
     /**
@@ -532,7 +540,9 @@ class WordReportGeneratorTest extends TestCase
             ], []),
         ]));
 
-        $this->assertStringContainsString('候補者に与える印象', $documentXml);
+        $this->assertStringContainsString('ポジティブな印象', $documentXml);
+        $this->assertStringContainsString('ネガティブな印象', $documentXml);
+        $this->assertStringNotContainsString('候補者に与える印象', $documentXml);
         $this->assertStringNotContainsString('AI解析による候補者に与える印象', $documentXml);
         $this->assertStringContainsString('事業内容への取り組み姿勢が伝わり、良い印象を与える可能性があります。', $documentXml);
         $this->assertStringContainsString('働く環境の具体像がイメージしづらい可能性があります。', $documentXml);
@@ -546,11 +556,20 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString('自社は1 / 4項目、競合は3 / 8項目の情報が確認できました。', $documentXml);
     }
 
-    public function test_improvement_section_shows_the_ai_recommendation_when_available(): void
+    /**
+     * 2026-08-18: 旧「改善のご提案」単一パラグラフから、理由/具体的に追加す
+     * べき情報/中長期施策の3ブロック構成へ変更(依頼者指定、PDF版と同内容)。
+     */
+    public function test_improvement_section_shows_reason_recommended_contents_and_mid_term_action_when_available(): void
     {
         $documentXml = $this->generate($this->comparisonViewModel());
 
-        $this->assertStringContainsString('改善のご提案', $documentXml);
-        $this->assertStringContainsString('まずは会社との距離に関する情報を拡充することを推奨します。', $documentXml);
+        $this->assertStringContainsString('理由：', $documentXml);
+        $this->assertStringContainsString('就業環境は競合が2件読み取れているのに対し自社は0件で、候補者が働くイメージを持ちにくい状態です。', $documentXml);
+        $this->assertStringContainsString('具体的に追加すべき情報', $documentXml);
+        $this->assertStringContainsString('入社数年目の社員の1日の過ごし方', $documentXml);
+        $this->assertStringContainsString('部署間の関わり方が分かるエピソード', $documentXml);
+        $this->assertStringContainsString('中長期的には：', $documentXml);
+        $this->assertStringContainsString('部署横断プロジェクトの事例をシリーズ化することも検討できます。', $documentXml);
     }
 }

@@ -659,6 +659,9 @@ class ReportViewModelBuilderTest extends TestCase
 
         $this->assertSame($viewModel->brandWheelComparison['one_point']['text'], $viewModel->improvementOnePoint);
         $this->assertNull($viewModel->improvementRecommendation);
+        $this->assertNull($viewModel->improvementReason);
+        $this->assertSame([], $viewModel->improvementRecommendedContents);
+        $this->assertNull($viewModel->improvementMidTermAction);
     }
 
     public function test_improvement_one_point_and_recommendation_use_the_ai_suggestion_when_available(): void
@@ -683,12 +686,18 @@ class ReportViewModelBuilderTest extends TestCase
             'status' => 'success',
             'one_point' => 'まずは既存情報だけで追加できる仕事内容・キャリア情報から充実させましょう。',
             'recommendation' => 'まずは仕事の魅力に関する情報を拡充することを推奨します。',
+            'reason' => '仕事の魅力は競合が複数件読み取れているのに対し自社は0件で、候補者が働くイメージを持ちにくい状態です。',
+            'recommended_contents' => ['携わっているプロジェクトの具体例', 'キャリアパスのモデルケース'],
+            'mid_term_action' => '中長期的には、社員インタビューの連載化も検討できます。',
         ]);
 
         $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
 
         $this->assertSame('まずは既存情報だけで追加できる仕事内容・キャリア情報から充実させましょう。', $viewModel->improvementOnePoint);
         $this->assertSame('まずは仕事の魅力に関する情報を拡充することを推奨します。', $viewModel->improvementRecommendation);
+        $this->assertSame('仕事の魅力は競合が複数件読み取れているのに対し自社は0件で、候補者が働くイメージを持ちにくい状態です。', $viewModel->improvementReason);
+        $this->assertSame(['携わっているプロジェクトの具体例', 'キャリアパスのモデルケース'], $viewModel->improvementRecommendedContents);
+        $this->assertSame('中長期的には、社員インタビューの連載化も検討できます。', $viewModel->improvementMidTermAction);
     }
 
     /**

@@ -149,6 +149,15 @@ class ReportViewModelBuilder
             ->first();
         $improvementOnePoint = $improvementSuggestion?->one_point ?? ($brandWheelComparison['one_point']['text'] ?? null);
         $improvementRecommendation = $improvementSuggestion?->recommendation;
+        // 2026-08-18追加: 「情報が不足しているので追加してください」という
+        // 一般論から脱却させるための構造化フィールド(依頼者指定の表示構成
+        // ワンポイント→理由→自社と競合の差(既存)→具体的に追加すべき情報→
+        // 中長期施策に対応)。AI未生成/失敗時はすべてnull/空配列のままとなり、
+        // Blade/WordReportGenerator側は該当ブロックを出さないだけで、既存の
+        // グループ差バー・証拠カードは無条件に表示され続ける。
+        $improvementReason = $improvementSuggestion?->reason;
+        $improvementRecommendedContents = $improvementSuggestion?->recommended_contents ?? [];
+        $improvementMidTermAction = $improvementSuggestion?->mid_term_action;
 
         $improvementFocus = $selfReadable && $competitorReadable
             ? $this->improvementFocusComposer->compose(
@@ -190,6 +199,9 @@ class ReportViewModelBuilder
             improvementFocusSelfOnly: $improvementFocusSelfOnly,
             improvementOnePoint: $improvementOnePoint,
             improvementRecommendation: $improvementRecommendation,
+            improvementReason: $improvementReason,
+            improvementRecommendedContents: $improvementRecommendedContents,
+            improvementMidTermAction: $improvementMidTermAction,
         );
     }
 

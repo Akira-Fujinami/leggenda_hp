@@ -123,31 +123,19 @@
                     <p><b>サイト上の情報から想定されるキーメッセージ：</b>{{ $wheel['key_message'] }}</p>
                 @endif
                 {{--
-                    2026-08-17: 「AI解析による候補者に与える印象」(短いフレーズの
-                    箇条書き)から、ポジティブ/ネガティブの2文構成へ変更
-                    (依頼者指定 ―― 単なる印象の列挙ではなく、良い点・気になる点を
-                    分けて示す)。見出しからも「AI解析による」を外す(AI利用を
-                    前面に出さない、依頼者指定)。
+                    2026-08-18: 「候補者に与える印象」という単一見出し配下に
+                    ポジ/ネガを箇条書きで並べていたところ、依頼者指定により
+                    「ポジティブな印象」「ネガティブな印象」を別見出しとして
+                    明確に分離した(読み手が一瞬で区別できるようにするため)。
                 --}}
-                @if ($wheel['positive_impression'] || $wheel['negative_impression'])
-                    <p style="margin-top: 0.5mm; margin-bottom: 0;"><b>候補者に与える印象：</b></p>
-                    @if ($wheel['positive_impression'])
-                        <p class="impgood">・{{ $wheel['positive_impression'] }}</p>
-                    @endif
-                    @if ($wheel['negative_impression'])
-                        <p class="impbad">・{{ $wheel['negative_impression'] }}</p>
-                    @endif
+                @if ($wheel['positive_impression'])
+                    <p style="margin-top: 0.5mm; margin-bottom: 0;"><b>ポジティブな印象：</b></p>
+                    <p class="impgood">{{ $wheel['positive_impression'] }}</p>
                 @endif
-                {{--
-                    2026-08-08: 開示文をdarkbandの外(別の<p class="foot">)に
-                    置いていたところ、この1行だけが実データ(自社側で本文が
-                    2行に折り返すケース)で単独であふれて次ページへ孤立する
-                    不具合が実PDF確認で見つかった。darkband自体は収まって
-                    いるのに、直後のわずか1行のためだけに新しい物理ページが
-                    生成されるのを避けるため、開示文をdarkbandの内側(同じ
-                    原子的ブロック)に移し、白文字ではなく控えめな配色にする。
-                --}}
-                <p class="darkfoot">キーメッセージと印象の読み取りにはAIを使用しています。</p>
+                @if ($wheel['negative_impression'])
+                    <p style="margin-top: 0.8mm; margin-bottom: 0;"><b>ネガティブな印象：</b></p>
+                    <p class="impbad">{{ $wheel['negative_impression'] }}</p>
+                @endif
             </div>
         @endif
     @endif

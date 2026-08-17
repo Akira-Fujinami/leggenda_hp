@@ -28,8 +28,20 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
 {
     /**
      * v1(2026-08-17): 初版。
+     *
+     * v2(2026-08-18): クライアントレビュー対応。出力を単一段落(recommendation)
+     * から構造化フィールド(reason/recommended_contents/mid_term_action/
+     * quick_win/implementation_difficulty/candidate_impact/gap_closing/
+     * differentiation_opportunities)へ拡張し、「情報が不足しているので
+     * 追加してください」という一般論の禁止・Gap Closing(競合にあり自社に
+     * 無い情報を補う)とDifferentiation(自社・競合とも手薄な領域で自社が
+     * 先に充実させる)を明示的に区別して内部判断させる指示を追加した。
+     * 出力構造が変わるため、v1の結果は再利用しない(このJobはanalysis_idの
+     * unique制約により1回しか生成しない設計のため、再利用ロジック自体が
+     * 存在しない ―― 既存のGenerateBrandWheelAnalysisJobのようなinput_hash
+     * 再利用キャッシュはこの改善提案には無い)。
      */
-    public const string PROMPT_VERSION = 'v1';
+    public const string PROMPT_VERSION = 'v2';
 
     public function __construct(
         private readonly BrandWheelImprovementSuggestionResponseParser $parser,
@@ -110,7 +122,22 @@ TXT;
 以下のような一般論・誰でも言えるレベルの提言は禁止します:
 - 「情報が不足しているため追加しましょう。」
 - 「競合より少ないので増やしましょう。」
+- 「掲載する情報を増やすことをおすすめします。」
 これらは、データの中の具体的な項目名・実行難易度を踏まえた、企業固有の提言に置き換えてください。
+「不足の指摘」ではなく「優先順位の判断」を示すことが目的です ―― 何を・なぜ・どの順番で改善すべきかを
+判断してください。
+TXT;
+
+        $gapDifferentiationNote = <<<TXT
+改善候補は必ず内部的に以下の2種類に分けて検討してください(UIラベルとしては出しませんが、
+判断の軸として明確に区別すること):
+- Gap Closing: 競合には該当があり(competitor_matched_items)、自社には無い(self_unmatched_items)
+  情報を補う施策。競合との差を埋める効果がある。
+- Differentiation: 自社・競合のどちらにも十分に伝えられていない領域
+  (self_unmatched_itemsかつcompetitor_unmatched_items、またはcompetitor_matched_itemsが
+  少ない領域)のうち、自社が先に情報を充実させることで差別化になりうる施策。
+単純にGap Closing(競合に追いつく)だけを提案するのではなく、Differentiationの可能性も
+必ず検討したうえで、両方を比較して最終提言を選んでください。
 TXT;
 
         $reasoningSteps = <<<TXT
@@ -118,38 +145,65 @@ TXT;
 渡されたデータ(下位要素ごとの該当有無・実行難易度タグ・グループ別優劣)をもとに、以下の順番で
 内部的に検討したうえで、最終的な提言のみを出力してください(検討過程そのものは出力しないでください):
 
-1. 自社の強み(self_matched_items)を整理する
-2. 自社の不足(self_unmatched_items)を整理する
-3. 競合の強み(competitor_matched_items、あれば)を整理する
-4. 競合の不足(competitor_unmatched_items、あれば)を整理する
+1. 自社で不足している項目(self_unmatched_items)を整理する
+2. 自社で既に充実している項目(self_matched_items)を整理する
+3. 競合で充実している項目(competitor_matched_items、あれば)を整理する
+4. 競合でも不足している項目(competitor_unmatched_items、あれば)を整理する
 5. 自社と競合の差(group_totals、あれば)を特定する
-6. それぞれの不足が候補者への情報伝達にどう影響するかを判断する
-7. 改善候補を複数(3件程度)作る
-8. 各候補の改善効果(候補者への影響の大きさ)を評価する
-9. 各候補の実行難易度(self_unmatched_itemsのexecution_difficulty/execution_note)を評価する
-10. 実行しやすく効果も見込める候補(Quick Win)を特定する
-11. 実行難易度が高いが差別化効果の大きい候補(中長期施策)を特定する
-12. 10と11を踏まえ、最初に着手すべき1つを選び、最終提言を生成する
+6. それぞれの不足・差が候補者への情報伝達にどう影響するか(候補者への影響度)を判断する
+7. 改善候補を複数(3件程度)作り、Gap ClosingとDifferentiationの両方の観点で分類する
+8. 各候補の改善効果(候補者への影響度)を評価する(low/medium/high)
+9. 各候補の実行難易度を評価する(self_unmatched_itemsのexecution_difficulty/execution_noteを
+   根拠にする。他部署・社員を巻き込む必要があるか、人事部内で完結できるか、既存情報から
+   作れるか、社員インタビューや撮影が必要かを考慮する)
+10. 実行しやすく効果も見込める候補(Quick Win)を特定する ―― 最も改善効果が大きい施策が
+    必ずしも最初にやるべき施策とは限らない。実行難易度が高い施策より、既存情報から短期間で
+    整理できる施策を優先することがある
+11. 実行難易度が高いが差別化効果の大きい候補があれば、中長期施策として特定する
+12. 差分の大きさ×候補者への影響×実行難易度×Quick Win性を総合し、最初に着手すべき1つを選ぶ
 
 {$competitorNote}
 
+{$gapDifferentiationNote}
 TXT;
 
         $schema = <<<TXT
 {
   "one_point": "string",
+  "reason": "string",
+  "recommended_contents": ["string"],
+  "mid_term_action": "string または null",
+  "quick_win": true または false,
+  "implementation_difficulty": "low" または "medium" または "high",
+  "candidate_impact": "low" または "medium" または "high",
+  "gap_closing": ["string"],
+  "differentiation_opportunities": ["string"],
   "recommendation": "string",
   "focus_sub_element_keys": ["string"]
 }
 
-one_pointは1文で、最優先で着手すべきアクションを一言で述べてください。
-recommendationは3〜5文で、必ず「結論(何をすべきか)→なぜそう考えるか(効果・実行難易度・競合差の
-根拠)→具体的に何をすべきか」の順で書いてください。「なぜ」の部分では、効果が大きい施策が必ずしも
-最初にやるべき施策とは限らないこと(実行難易度が高い場合は後回しにできること)を、実際のデータに
-基づいて説明してください。
-focus_sub_element_keysには、recommendationで言及した下位要素のキー(データ内のsub_nameに対応する
-実際のキー名。例: "purpose", "colleagues" 等、self_unmatched_items/competitor_matched_items等の
-要素に対応する元のキー)を1〜3件、配列で挙げてください。キー名が分からない場合は空配列にしてください。
+- one_point: 1文で、最優先で着手すべきアクションを一言で言い切ってください(例:「まずは
+  『新しい取り組み』と『競争力・独自性』を、具体的な事例として追加することを推奨します。」)。
+  「掲載する情報を増やすことをおすすめします。」のような曖昧な言い回しは禁止です。
+- reason: 2〜3文で、なぜその施策を最優先にすべきかを説明してください。競合との比較・
+  候補者への影響・実行難易度の観点を、実際のデータに基づいて具体的に書いてください。
+- recommended_contents: 具体的に追加すべき情報を2〜3項目、箇条書きの短いフレーズ(項目名や
+  内容の要点、1件20〜30字程度)で挙げてください。data内の実在する下位要素名・具体的な
+  内容に基づくものにしてください。
+- mid_term_action: 実行難易度が高いが差別化効果の大きい中長期施策があれば1〜2文で。
+  無ければnullにしてください(無理に埋めないこと)。
+- quick_win: one_pointで挙げた最優先施策が、既存の社内情報から比較的着手しやすいと
+  判断できる場合はtrue、社員インタビューや他部署の協力等が必要で時間がかかると
+  判断できる場合はfalseにしてください。
+- implementation_difficulty / candidate_impact: one_pointで挙げた施策についての
+  実行難易度・候補者への影響度を、低/中/高のいずれかで判断してください。
+- gap_closing: 競合には該当があり自社には無い項目のうち、今回の提言で言及したものの
+  下位要素キー(例: "project_initiative")を配列で。無ければ空配列。
+- differentiation_opportunities: 自社・競合とも手薄で、自社が先に充実させれば差別化に
+  なりうる項目の下位要素キーを配列で。無ければ空配列。
+- recommendation: 後方互換用に、結論→なぜ→具体的にの3〜5文でも記述してください
+  (reason/recommended_contentsと重複しても構いません)。
+- focus_sub_element_keys: 提言全体で言及した下位要素のキーを1〜3件、配列で。
 TXT;
 
         return <<<PROMPT
@@ -253,10 +307,22 @@ PROMPT;
             'type' => 'object',
             'properties' => [
                 'one_point' => ['type' => ['string', 'null']],
+                'reason' => ['type' => ['string', 'null']],
+                'recommended_contents' => ['type' => 'array', 'items' => ['type' => 'string']],
+                'mid_term_action' => ['type' => ['string', 'null']],
+                'quick_win' => ['type' => ['boolean', 'null']],
+                'implementation_difficulty' => ['type' => ['string', 'null'], 'enum' => ['low', 'medium', 'high', null]],
+                'candidate_impact' => ['type' => ['string', 'null'], 'enum' => ['low', 'medium', 'high', null]],
+                'gap_closing' => ['type' => 'array', 'items' => ['type' => 'string']],
+                'differentiation_opportunities' => ['type' => 'array', 'items' => ['type' => 'string']],
                 'recommendation' => ['type' => ['string', 'null']],
                 'focus_sub_element_keys' => ['type' => 'array', 'items' => ['type' => 'string']],
             ],
-            'required' => ['one_point', 'recommendation', 'focus_sub_element_keys'],
+            'required' => [
+                'one_point', 'reason', 'recommended_contents', 'mid_term_action', 'quick_win',
+                'implementation_difficulty', 'candidate_impact', 'gap_closing', 'differentiation_opportunities',
+                'recommendation', 'focus_sub_element_keys',
+            ],
             'additionalProperties' => false,
         ];
     }

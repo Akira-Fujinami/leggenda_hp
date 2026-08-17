@@ -85,6 +85,15 @@ class BrandWheelImprovementSuggestionDispatcher
             return;
         }
 
-        GenerateBrandWheelImprovementSuggestionJob::dispatch($suggestion->id);
+        // 2026-08-18: 明示的なonQueue()指定が無く、デフォルトキュー('database'
+        // 接続の既定 'default')へdispatchされていた。本番(Render)の埋め込み
+        // queue workerは QUEUE_WORKER_QUEUES(既定
+        // analysis,external-api,analysis-heavy,ai,reports,notifications)に
+        // 列挙されたキューしか処理せず、'default'は含まれていない ―― この
+        // ためJobが本番で一切実行されず、改善提案が常に決定的フォールバック
+        // 文言のまま表示され続けるという実害のある不具合だった(実PDF確認と
+        // Render Worker設定の突き合わせで判明)。兄弟Job(GenerateBrandWheel
+        // AnalysisJob、OpenAI呼び出し)と同じ'ai'キューに揃える。
+        GenerateBrandWheelImprovementSuggestionJob::dispatch($suggestion->id)->onQueue('ai');
     }
 }

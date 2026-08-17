@@ -41,7 +41,10 @@ readonly class ReportViewModel
      * @param  ?array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, competitor_evidence: ?string}>}  $improvementFocus  BrandWheelImprovementFocusComposer::compose()の戻り値。「改善提案」ページの領域選択・3項目・比較サイトのevidence。自社・競合の両方がstatus==='success'の場合のみ非null(競合が無い/読み取れない場合は$improvementFocusSelfOnlyを使う)。
      * @param  ?array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, self_reason: string}>}  $improvementFocusSelfOnly  BrandWheelImprovementFocusComposer::composeSelfOnly()の戻り値。競合が無い/読み取れない場合の「改善提案」ページ(自社の「－」「△」項目のみで構成、比較サイトのevidenceは含まない)。自社がstatus==='success'でない、または自社24項目すべてが○の場合はnull(2026-08-10追加)。
      * @param  ?string  $improvementOnePoint  「改善提案」ページ冒頭のワンポイント(2026-08-17追加)。改善提案AI(BrandWheelImprovementSuggestion)の生成結果があればそれを使い、無ければ既存の決定的ロジック($brandWheelComparison['one_point']['text'])にフォールバックする。
-     * @param  ?string  $improvementRecommendation  改善提案AIが生成した詳細提言パラグラフ(2026-08-17追加、結論→なぜ→具体的にの3〜5文)。未生成/失敗時はnull(その場合、既存のグループ差バー＋証拠カードのみで成立する)。
+     * @param  ?string  $improvementRecommendation  改善提案AIが生成した旧形式の詳細提言パラグラフ(結論→なぜ→具体的にの3〜5文、後方互換用に保持)。2026-08-18以降の新レポートUIでは表示しない(reason/recommendedContents/midTermActionを個別に表示する)。
+     * @param  ?string  $improvementReason  ワンポイントの理由(2026-08-18追加、2〜3文)。未生成/失敗時はnull。
+     * @param  list<string>  $improvementRecommendedContents  具体的に追加すべき情報(2026-08-18追加、最大3項目)。未生成/失敗時は空配列。
+     * @param  ?string  $improvementMidTermAction  中長期施策(2026-08-18追加、該当する場合のみ1〜2文)。未生成/失敗/該当なしの場合はnull。
      */
     public function __construct(
         public string $companyDisplayName,
@@ -68,5 +71,8 @@ readonly class ReportViewModel
         public ?array $improvementFocusSelfOnly,
         public ?string $improvementOnePoint,
         public ?string $improvementRecommendation,
+        public ?string $improvementReason,
+        public array $improvementRecommendedContents,
+        public ?string $improvementMidTermAction,
     ) {}
 }
