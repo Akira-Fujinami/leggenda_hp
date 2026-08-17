@@ -135,9 +135,19 @@
         いずれも既に1行で収まる固定フォーマットのため実質的にズレる要素
         ではなかったが、明示することで将来の文言変更でも保証が崩れない
         ようにする。
+        2026-08-24: 38mm→30mm(前回改修)からさらに30mm→29mmへ縮小した
+        (依頼者指摘 ―― 「カードの縦長感」「下部に大きな空白が残っている」)。
+        1軸が4/4(4項目該当、下位要素名を4行の箇条書きで表示)になる
+        worst-caseを実PDF実測したところ、axbody(border-top:none)の
+        自然な必要高さは28.66mm(axcontent4行分含む)だったため、29mmは
+        この実測値に0.34mmのバッファのみを持つ最小限の値。これ未満に
+        縮めると4項目該当ケースでaxcontentの最終行がaxbodyの下端からはみ出す
+        (table cell内のためクリップはされないが、自社/競合で1軸だけ
+        4/4・他方は0/4という非対称worst-caseの場合に、はみ出した分だけ
+        カード行の高さが自社/競合で食い違い、下の紺帯の開始Y座標がずれる)。
     --}}
     .axhead { border: 1px solid #E0E0E0; background: #F5F5F5; text-align: center; font-size: 9.5pt; font-weight: bold; padding: 0.6mm; height: 5mm; line-height: 1.1; }
-    .axbody { border: 1px solid #E0E0E0; border-top: none; padding: 1.6mm 2mm; height: 30mm; }
+    .axbody { border: 1px solid #E0E0E0; border-top: none; padding: 1.6mm 2mm; height: 29mm; }
     .axscore { height: 5mm; }
     .axcnt { font-size: 14pt; font-weight: bold; margin: 0; line-height: 1; }
     .axcnt small { font-size: 9pt; font-weight: normal; color: #6B6767; }
@@ -154,20 +164,36 @@
         上限(件数・文字数)と2列化で紺帯の最大高さ自体を縮めた上で、万一それ
         でも収まらない場合は「途中で割れる」のではなく「丸ごと次ページへ」
         という失敗の仕方に倒す(dompdfはpage-break-insideを尊重する)。
-        2026-08-22: 高さをmin-heightではなくheight固定にした(依頼者指定 ――
-        自社/競合で内容量が違っても紺帯の高さ自体を完全に揃えるため)。
-        キーメッセージ・ポジティブ・ネガティブの3項目すべてに文字数上限が
-        付いたことで(BrandWheelLeadResponseComposer参照)、最大ケースの
-        高さが予測可能になったため固定できる。内部も3領域(.msgkey/
-        .msgpos/.msgneg)に分け、min-heightで開始位置を揃える(3項目とも
-        任意表示のため、いずれかが無い場合に後続がめり込まないようmin-height
-        のみ、heightで完全固定はしない ―― 表示件数自体が変わるケースまで
-        固定すると空白行ができてしまうため)。
+        2026-08-22: 内部を3領域(.msgkey/.msgpos/.msgneg)に分け、
+        min-heightで開始位置を揃えることを試みた。ただしheightでの完全
+        固定は、90字+65字+65字の最大ケースで紺帯全体が次ページへ丸ごと
+        押し出される不具合(page-break-inside:avoid)を実PDF確認で誘発した
+        ため見送った(3項目とも任意表示で、いずれかが無い場合に後続が
+        めり込まないようmin-heightのみ採用)。
+        2026-08-24: 表からの余白(margin-top)を1mm→3mmに広げ(依頼者指摘
+        ―― 表と紺帯がほぼ接していた)、padding・line-height・各領域の
+        min-heightを実測に基づき見直した(依頼者指摘 ―― 「青ボックスが
+        やや大きすぎる」「行間が広い」の両方に対応するため、内容が短い
+        場合に残る空白を減らしつつ、90字などの最大ケースでも1〜2行の
+        折り返しに収まる範囲でmin-heightを設定)。
+        2026-08-24: 実測(PyMuPDFのget_drawings()で塗りつぶし矩形そのものを
+        測定 ―― テキスト位置ではなく罫線/背景の実際の座標)で、
+        width:265mm+padding:5mm(左右)の組み合わせが実際には275mm
+        (=265+左右padding10mm)で描画されており、box-sizing:border-box
+        (43行目)が効いていないことが判明した(依頼者指摘の「borderや
+        padding込みで実測」で発覚 ―― 従来はテキスト位置だけで検証しており
+        この10mmの右はみ出しに気付けていなかった)。dompdfのこの挙動に
+        対する既知の直接対策が無いため、宣言幅から左右padding分を
+        差し引いた255mmを指定することで実際の描画幅を265mmに合わせる
+        (実PDF実測で281.00mm(表の右端と同じX)になることを確認済み)。
+        同じパターン(width指定+水平padding)を使う改善提案ページの
+        .onepoint/.recobox/.cmpoverviewにも同じ描画超過が見つかったが、
+        今回の修正対象外(自社/競合分析ページのみ)のため触れていない。
     --}}
-    .darkband { width: 265mm; background: #1D2088; color: #fff; padding: 1mm 5mm; margin-top: 1mm; page-break-inside: avoid; }
-    .darkband p { margin: 0.25mm 0; font-size: 9.5pt; line-height: 1.2; }
-    .msgkey { min-height: 8.5mm; }
-    .msgpos, .msgneg { min-height: 7.5mm; }
+    .darkband { width: 255mm; background: #1D2088; color: #fff; padding: 0.8mm 5mm; margin-top: 3mm; page-break-inside: avoid; }
+    .darkband p { margin: 0.3mm 0; font-size: 9.5pt; line-height: 1.3; }
+    .msgkey { min-height: 7.5mm; }
+    .msgpos, .msgneg { min-height: 7mm; }
     {{--
         2026-08-18: 「候補者に与える印象」の単一見出し配下にポジ/ネガを
         箇条書きで並べる形から、「ポジティブな印象」「ネガティブな印象」を

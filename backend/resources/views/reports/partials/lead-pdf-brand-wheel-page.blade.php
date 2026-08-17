@@ -54,10 +54,20 @@
             構成では自グループ自身は「差が大きい」側になり得ないため、
             sparse_groupは残り2グループが上限)。実PDF確認で、この4行構成でも
             190mm上限に対し7mm以上の余白を保てる68mmを両列共通の下限とした。
+            2026-08-24: 上記68mmは「サマリー最大4行」のケースを基準にしていたが、
+            実データの大半はサマリー1〜2行で収まり、68mm固定だと本文終了後に
+            大きな空白が残る不具合が依頼者指摘で見つかった(「サマリー下の
+            大きな空白」)。pointsForReport()が実際に返しうる最大構成
+            (最充足軸の根拠1行+0件軸まとめ1行+sparse_group最大2行、133mm幅の
+            列で折り返すため合計6〜7行相当になる)を実PDF実測したところ
+            自社/競合とも65.4mm前後を要したため、66mmまでの縮小に留めた
+            (52〜58mmまでは縮められない ―― それ以下だと自社が最大構成・
+            競合が短いサマリーのような非対称ケースで、下の6カテゴリ表・
+            青ボックスの開始Y座標が自社/競合でずれてしまう)。
         --}}
         <table class="statrow" style="width: 265mm; table-layout: fixed;"><tr>
             <td style="width: 133mm; vertical-align: top;">
-                <div style="min-height: 68mm;">
+                <div style="min-height: 66mm;">
                     <div class="statbox">
                         <p class="lab"><span class="swatch" style="background: {{ $seriesColor }};"></span>{{ $seriesLabel }}　確認できた情報</p>
                         <p class="num">{{ $totalMatched }}<small> / {{ $totalMax }}項目</small></p>
@@ -72,8 +82,18 @@
                 </div>
             </td>
             <td style="width: 8mm;"></td>
-            <td style="width: 124mm; text-align: center; vertical-align: top;">
-                <div style="min-height: 68mm;">
+            <td style="width: 124mm; text-align: center; vertical-align: middle;">
+                {{--
+                    2026-08-24: レーダー列だけvertical-align:middleにする
+                    (依頼者指摘 ―― レーダーが列の上側に寄って見える)。この列の
+                    内側divにはmin-heightを持たせない(自然な高さのまま)。
+                    左列側のdiv(min-height:66mm)が行全体の高さを決めるため、
+                    このtdのvertical-align:middleが「66mmの行の中で、
+                    レーダー画像+凡例(自然な高さ約56mm)を上下中央に配置する」
+                    という効果になる ―― 左列はサマリー本文から始まるため
+                    従来通りtopのまま。
+                --}}
+                <div>
                     @if ($radarPng)
                         {{-- レーダー図のviewBoxは380x276(縦横比380:276)。dompdfは
                              widthのみ指定だと縦横比を正しく保持しないことがあるため、
@@ -180,13 +200,13 @@
                 --}}
                 @if ($wheel['positive_impression'])
                     <div class="msgpos">
-                        <p style="margin-top: 0.5mm; margin-bottom: 0;"><b>ポジティブな印象：</b></p>
+                        <p style="margin-top: 1.2mm; margin-bottom: 0;"><b>ポジティブな印象：</b></p>
                         <p class="impgood">{{ $wheel['positive_impression'] }}</p>
                     </div>
                 @endif
                 @if ($wheel['negative_impression'])
                     <div class="msgneg">
-                        <p style="margin-top: 0.8mm; margin-bottom: 0;"><b>ネガティブな印象：</b></p>
+                        <p style="margin-top: 1.2mm; margin-bottom: 0;"><b>ネガティブな印象：</b></p>
                         <p class="impbad">{{ $wheel['negative_impression'] }}</p>
                     </div>
                 @endif
