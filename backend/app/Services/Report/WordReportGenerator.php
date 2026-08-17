@@ -530,7 +530,7 @@ class WordReportGenerator
      * 今回の依頼文がこの文言を明示的に指定しているため優先する(PDF版の
      * コメント・実装報告に方針転換である旨を明記)。
      *
-     * 連絡先は2026-08-10時点の方針を維持: https://www.leggenda.co.jp/inquiry/
+     * 連絡先は2026-08-10時点の方針を維持: https://leggenda-co.web-tools.biz/inquiry
      * のみを掲載し、外部フォームツール本体のURL・電話番号は掲載しない。
      * URLをそのまま長文表示せず、ボタン風のラベル付きリンクにする
      * (依頼者指定)。発行日は表紙と同じ$viewModel->generatedAtLabelを参照する。
@@ -561,7 +561,7 @@ class WordReportGenerator
         $btnTable->addRow();
         $btnCell = $btnTable->addCell(4500, ['bgColor' => '1D2088', 'valign' => 'center']);
         $btnCell->addLink(
-            'https://www.leggenda.co.jp/inquiry/',
+            'https://leggenda-co.web-tools.biz/inquiry',
             '競合比較について相談する',
             ['bold' => true, 'size' => 13, 'color' => 'FFFFFF', 'underline' => 'none'],
             ['alignment' => Jc::CENTER, 'spaceBefore' => 150, 'spaceAfter' => 150],

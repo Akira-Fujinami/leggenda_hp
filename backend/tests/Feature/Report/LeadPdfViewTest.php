@@ -905,7 +905,7 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('御社が優先して改善すべき課題を整理しませんか', $html);
         $this->assertStringContainsString('詳細な比較結果をもとに、採用課題についてディスカッションします。', $html);
         $this->assertStringContainsString('競合比較について相談する', $html);
-        $this->assertStringContainsString('href="https://www.leggenda.co.jp/inquiry/"', $html);
+        $this->assertStringContainsString('href="https://leggenda-co.web-tools.biz/inquiry"', $html);
         $this->assertStringContainsString("お問い合わせの際は、本レポートの発行日（{$viewModel->generatedAtLabel}）と貴社名をお知らせください。", $html);
         $this->assertStringNotContainsString('leggenda-co.web-tools.biz', $html);
         $this->assertStringNotContainsString('お電話', $html);

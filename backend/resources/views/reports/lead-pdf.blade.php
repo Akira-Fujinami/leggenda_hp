@@ -944,7 +944,7 @@
     という文言を明示的にメインコピー例として指定しているため、今回はその
     指示を優先する。方針転換であることを実装報告で明記する。
 
-    連絡先は2026-08-10時点の方針を維持: https://www.leggenda.co.jp/inquiry/
+    連絡先は2026-08-10時点の方針を維持: https://leggenda-co.web-tools.biz/inquiry
     (公式サイトの問い合わせページ)のみ掲載し、外部フォームツール本体の
     URLは掲載しない(印刷物に自社ドメイン以外のURLが出るとフィッシングを
     疑われる・フォームツールを乗り換えた際にPDFの刷り直しが必要になるため)。
@@ -960,7 +960,7 @@
         <p class="ctasub">詳細な比較結果をもとに、採用課題についてディスカッションします。</p>
 
         <div class="ctacontact">
-            <p class="url"><a href="https://www.leggenda.co.jp/inquiry/" class="ctabtn">競合比較について相談する</a></p>
+            <p class="url"><a href="https://leggenda-co.web-tools.biz/inquiry" class="ctabtn">競合比較について相談する</a></p>
             <p class="note">お問い合わせの際は、本レポートの発行日（{{ $viewModel->generatedAtLabel }}）と貴社名をお知らせください。</p>
         </div>
     </div>
