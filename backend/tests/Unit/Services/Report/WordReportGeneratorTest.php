@@ -508,8 +508,8 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringNotContainsString('お電話', $documentXml);
         // URL文字列自体はdocument.xmlには現れず、hrefとして.relsに格納される
         // (依頼者指定: URLをそのまま長く表示しない)。
-        $this->assertStringNotContainsString('https://www.leggenda.co.jp/contact/', $documentXml);
-        $this->assertStringContainsString('https://www.leggenda.co.jp/contact/', $this->generateRelsXml($viewModel));
+        $this->assertStringNotContainsString('https://www.leggenda.co.jp/inquiry/', $documentXml);
+        $this->assertStringContainsString('https://www.leggenda.co.jp/inquiry/', $this->generateRelsXml($viewModel));
     }
 
     public function test_final_section_never_uses_old_copy_variants(): void
