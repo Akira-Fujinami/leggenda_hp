@@ -52,8 +52,24 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
      * 未充足の項目)から選ばせるよう変更し、「1テーマ(関連項目は最大2件)に
      * まとめる」「候補が無ければ無理に埋めない」ことを明示した
      * (BrandWheelImprovementSuggestionInputFactory参照)。
+     *
+     * v4(2026-08-20): 差別化テーマ選定ロジックの改善。従来はmutually_
+     * unmatched_items(自社・競合とも未充足の項目)の中から選ぶだけだったが、
+     * これだけでは「両社とも書いていない」という消極的な理由でしかテーマを
+     * 選べず、実例(社会貢献活動・知名度・評判)で自社らしさとの接続が薄い
+     * テーマが選ばれることがあった(依頼者指摘)。自社が既に確認できている
+     * 強み(self_confirmed_items)・軸別スコア(self_category_scores)・
+     * キーメッセージ(self_key_message)・ポジティブな印象
+     * (self_positive_impression)・Core Value根拠(self_core_value_evidence、
+     * あれば)を新たに入力へ追加し、「Brand Fit(自社の既存パーパス・価値観・
+     * 事業内容との関連性)」「Candidate Relevance(候補者の判断材料としての
+     * 意味)」「Evidence Expandability(既存情報を起点に広げられる可能性)」の
+     * 3軸で候補を評価したうえで1テーマに絞るよう指示した。関連性が低い
+     * 候補しかない場合は無理に選ばずmid_term_action=nullにすることも明示。
+     * 出力スキーマ自体は変更しない(mid_term_actionは引き続き単一テキスト、
+     * テーマ→理由→広げ方を2〜3文に収める)。
      */
-    public const string PROMPT_VERSION = 'v3';
+    public const string PROMPT_VERSION = 'v4';
 
     public function __construct(
         private readonly BrandWheelImprovementSuggestionResponseParser $parser,
@@ -153,6 +169,13 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
   → 「社員や職場の実態を具体的に伝える場合は、社員紹介やインタビューなどのコンテンツも選択肢になります。」
 - 「これを実施すれば採用競争力が上がります。」
   → 「候補者が自社で働くイメージを持ちやすくなり、他社との違いを伝えやすくなる可能性があります。」
+- 「社会貢献活動を強化することでブランド価値を高めることが可能です。」(「強化する」の実態が
+  不明なまま断定している)
+  → 「自社・比較サイトとも十分に情報が確認できなかった項目の中では、『社会貢献活動』は御社の
+  既存のパーパスとの接続性が高いテーマです。実際に該当する取り組みや成果がある場合、それを
+  具体的に紹介することで、既存のパーパスをより具体化できる可能性があります。」
+- 「知名度・評判を強化しましょう。」(サイトに書き足すだけで直接改善できるものではない)
+- 「両社とも書いていないので差別化できます。」(未掲載であること自体は差別化価値の根拠にならない)
 TXT;
 
         $genericBanNote = <<<TXT
@@ -166,18 +189,43 @@ TXT;
 TXT;
 
         $gapDifferentiationNote = <<<TXT
-提言は必ず以下の2種類を両方とも検討し、両方とも出力してください(片方だけの提言は不可):
+提言は必ず以下の2種類を両方とも検討し、両方とも出力してください(片方だけの提言は不可)。
+この2つは役割が異なるため混同しないこと:
 - 今すぐ優先して改善すること(Gap Closing、one_point/reason/recommended_contentsに反映):
   競合には該当があり(competitor_matched_items)、自社には無い(self_unmatched_items)情報を
-  補う施策。競合との差を埋めながら、比較的着手しやすいものを優先してください。
-- 中長期の差別化ポイント(Differentiation、mid_term_actionに反映): 自社・競合の両方が
-  未充足の項目(mutually_unmatched_items)の中から選んでください。self_unmatched_itemsと
-  competitor_unmatched_itemsを自分で突き合わせる必要はなく、mutually_unmatched_itemsが
-  その候補プールです。選ぶ際は「競合の真似」にならないよう、次を基準にしてください:
-  候補者への影響が比較的大きいか、採用サイト上で表現する意味があるか、自社のブランド形成に
-  つながりやすいか。関連する項目であれば最大2件までまとめて1つのテーマにしてください
-  (複数の独立したテーマを同時に提案しないこと)。mutually_unmatched_itemsが空の場合は、
-  無理に差別化ポイントを作らず、mid_term_actionはnullにしてください。
+  補う短期改善。競合との差を埋めながら、比較的着手しやすいものを優先してください。
+- 中長期の差別化ポイント(Differentiation、mid_term_actionに反映): 「競合が書いていない
+  ことを単に書くこと」ではありません。自社がすでに持っている価値・強み・パーパスと自然に
+  つながるテーマの中で、競合も十分に伝えられていない領域を深掘りすることです。
+  mutually_unmatched_items(自社・競合とも未充足の項目)だけを見て機械的に選ばず、
+  self_confirmed_items(自社で確認済みの項目名)・self_category_scores(自社の軸別件数)・
+  self_key_message(自社のキーメッセージ)・self_positive_impression(自社のポジティブな印象)・
+  self_core_value_evidence(あれば、自社のCore Value根拠)との接続性を必ず考慮してください。
+
+【差別化テーマの選定手順】
+STEP1: self_confirmed_items/self_category_scores/self_key_message/self_positive_impression/
+  self_core_value_evidenceから、自社が現在確認できている強み・価値観・キーメッセージを整理する。
+STEP2: mutually_unmatched_itemsの各項目が、STEP1で整理した自社の既存ブランド文脈と
+  どれだけ自然につながるかを評価する。
+STEP3: 以下の3軸で各候補の優先度を考える(いずれも断定ではなく評価であることに注意):
+  - Brand Fit: 自社の既存のパーパス・価値観・事業内容との関連性
+  - Candidate Relevance: 候補者が企業を選ぶ際の判断材料として意味があるか
+  - Evidence Expandability: 現在確認できている情報を起点に、追加情報へ自然に広げられる
+    可能性があるか(ただし実際に社内情報が存在すると断定しないこと)
+STEP4: 3軸を総合し、自社らしさと最も接続するテーマを1つだけ選ぶ。関連する項目であれば
+  最大2件までまとめて1つのテーマにしてよいが、複数の独立したテーマを同時に提案しないこと。
+
+【差別化を選ばない/nullにする条件】次のいずれかに該当する場合は、無理にテーマを作らず
+mid_term_actionをnullにしてください(「とにかく何か1つ出す」仕様にしないこと):
+- mutually_unmatched_itemsが空である
+- 自社の既存強み(self_confirmed_items/self_key_message等)との関連性が低い候補しかない
+- Brand Fitがどの候補も低いと判断される
+- 根拠が弱すぎる
+
+mid_term_actionの文章は、以下の3要素を2〜3文で自然につなげてください(依頼者指定の構成):
+1. テーマ(1つだけ、下位要素名で明示する)
+2. なぜこのテーマなのか(自社の既存の強み・キーメッセージとの接続を説明する)
+3. どう広げるか(実際に該当する実態がある場合の可能性として、条件付きで述べる)
 TXT;
 
         $reasoningSteps = <<<TXT
@@ -198,8 +246,12 @@ TXT;
 10. 実行しやすく効果も見込める候補(Quick Win)を特定する ―― 最も改善効果が大きい施策が
     必ずしも最初にやるべき施策とは限らない。実行難易度が高い施策より、既存情報から短期間で
     整理できる可能性が高い施策を優先することがある
-11. mutually_unmatched_items(自社・競合とも未充足の項目)の中から、中長期の差別化ポイントを
-    1テーマ(関連項目は最大2件)選ぶ。候補が無ければ無理に選ばない
+11. 下記【差別化テーマの選定手順】に従い、mutually_unmatched_itemsと自社の既存ブランド
+    文脈(self_confirmed_items/self_category_scores/self_key_message/
+    self_positive_impression/self_core_value_evidence)を突き合わせ、Brand Fit/
+    Candidate Relevance/Evidence Expandabilityの3軸で評価したうえで、中長期の
+    差別化ポイントを1テーマ(関連項目は最大2件)選ぶ。関連性が低い候補しかなければ
+    無理に選ばない
 12. 差分の大きさ×候補者への影響×実行難易度×Quick Win性を総合し、最初に着手すべき1つを選ぶ
 
 {$competitorNote}
@@ -232,11 +284,15 @@ TXT;
 - recommended_contents: 具体的に追加すべき情報を最大3項目、箇条書きの短いフレーズ(項目名や
   内容の要点、1件20〜30字程度)で挙げてください。data内の実在する下位要素名・具体的な
   内容に基づくものにしてください。
-- mid_term_action: 「中長期の差別化ポイント」です。mutually_unmatched_items(自社・競合とも
-  未充足の項目)の中から選んだ1テーマ(関連項目は最大2件)について、最大2文で述べてください。
-  候補が無い場合や、自社が既に競合より優位で差別化ポイントを挙げる必要が無い場合はnullに
-  してください(無理に埋めないこと)。「〜を実施すれば差別化できます」のような断定は禁止、
-  「〜を伝える場合は、〜も選択肢になります」のような条件付き表現にしてください。
+- mid_term_action: 「中長期の差別化ポイント」です。【差別化テーマの選定手順】に従って選んだ
+  1テーマ(関連項目は最大2件)について、2〜3文で「1.テーマ→2.なぜこのテーマなのか(自社の
+  既存の強み・キーメッセージとの接続)→3.どう広げるか(条件付きの可能性)」の順に述べて
+  ください。mutually_unmatched_itemsが空、自社の既存強みとの関連性が低い候補しかない、
+  Brand Fitがどれも低い、根拠が弱すぎる ―― のいずれかに該当する場合はnullにしてください
+  (無理に埋めないこと)。「〜を強化することでブランド価値を高めることが可能です」「両社とも
+  書いていないので差別化できます」のような断定・消極的な理由付けは禁止、「〜との接続性が
+  高いテーマです」「実際に該当する取り組みがある場合、〜できる可能性があります」のような
+  条件付き表現にしてください。
 - quick_win: one_pointで挙げた最優先施策が、既存の社内情報から比較的着手しやすい
   可能性があると判断できる場合はtrue、社員インタビューや他部署の協力等が必要になる
   可能性があり時間がかかると考えられる場合はfalseにしてください(断定ではなく推定)。

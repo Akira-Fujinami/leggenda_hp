@@ -116,6 +116,14 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
             $competitorReadable ? $evidenceLookupBuilder->build($competitorRecord) : [],
             $groupTotals,
             $competitorReadable,
+            // 2026-08-20追加: 差別化テーマ選定に自社の既存ブランド文脈を
+            // 考慮させるための自社強みデータ(依頼者指摘)。key_message/
+            // positive_impressionはBrandWheelLeadResponseComposer::compose()が
+            // 既に検証済みの値、core_value_evidenceはcore_value_readable=true
+            // のときのみ渡す(未検証のCore Valueを新たに作らない)。
+            $selfWheel['key_message'] ?? null,
+            $selfWheel['positive_impression'] ?? null,
+            $selfRecord?->core_value_readable === true ? $selfRecord->core_value_evidence : null,
         );
 
         try {
