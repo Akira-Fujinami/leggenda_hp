@@ -400,15 +400,16 @@ class WordReportGeneratorTest extends TestCase
     // 改善提案。
     // ------------------------------------------------------------------
 
-    public function test_improvement_section_keeps_the_required_sentence_verbatim(): void
+    /**
+     * 2026-08-19: 旧文言はPDF版の改善提案ページで末尾1文だけが次ページへ
+     * あふれる不具合の原因だったため短縮した(依頼者承認、PDF版と同内容)。
+     */
+    public function test_improvement_section_keeps_the_shortened_closing_note_verbatim(): void
     {
         $documentXml = $this->generate($this->comparisonViewModel());
 
-        $this->assertStringContainsString(
-            'なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、'
-            .'まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。',
-            $documentXml,
-        );
+        $this->assertStringContainsString('サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。', $documentXml);
+        $this->assertStringNotContainsString('なお、これらを『サイトに書き足す』ことで解決するとは限りません', $documentXml);
     }
 
     public function test_improvement_section_shows_the_selected_group_and_competitor_evidence(): void
@@ -558,9 +559,13 @@ class WordReportGeneratorTest extends TestCase
 
     /**
      * 2026-08-18: 旧「改善のご提案」単一パラグラフから、理由/具体的に追加す
-     * べき情報/中長期施策の3ブロック構成へ変更(依頼者指定、PDF版と同内容)。
+     * べき情報/中長期の差別化ポイントの3ブロック構成へ変更(依頼者指定、
+     * PDF版と同内容)。
+     * 2026-08-19: 「中長期的には：」の1行を、「中長期の差別化ポイント」と
+     * いう独立した見出し付きブロックへ格上げ(依頼者指定、PDF版の.diffboxと
+     * 同内容)。
      */
-    public function test_improvement_section_shows_reason_recommended_contents_and_mid_term_action_when_available(): void
+    public function test_improvement_section_shows_reason_recommended_contents_and_differentiation_point_when_available(): void
     {
         $documentXml = $this->generate($this->comparisonViewModel());
 
@@ -569,7 +574,8 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString('具体的に追加すべき情報', $documentXml);
         $this->assertStringContainsString('入社数年目の社員の1日の過ごし方', $documentXml);
         $this->assertStringContainsString('部署間の関わり方が分かるエピソード', $documentXml);
-        $this->assertStringContainsString('中長期的には：', $documentXml);
+        $this->assertStringContainsString('中長期の差別化ポイント', $documentXml);
+        $this->assertStringNotContainsString('中長期的には：', $documentXml);
         $this->assertStringContainsString('部署横断プロジェクトの事例をシリーズ化することも検討できます。', $documentXml);
     }
 }

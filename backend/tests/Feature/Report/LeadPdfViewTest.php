@@ -626,15 +626,18 @@ class LeadPdfViewTest extends TestCase
     // 6. 改善提案。
     // ------------------------------------------------------------------
 
-    public function test_improvement_page_keeps_the_required_sentence_verbatim(): void
+    /**
+     * 2026-08-19: 旧文言(「なお、これらを『サイトに書き足す』ことで解決する
+     * とは限りません…」)は、改善提案ページ末尾でこの1文だけが次ページへ
+     * あふれてしまう不具合(実PDF確認で発見)の原因だったため短縮した
+     * (依頼者承認)。
+     */
+    public function test_improvement_page_keeps_the_shortened_closing_note_verbatim(): void
     {
         $html = $this->render($this->comparisonViewModel());
 
-        $this->assertStringContainsString(
-            'なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、'
-            .'まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。',
-            $html,
-        );
+        $this->assertStringContainsString('サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。', $html);
+        $this->assertStringNotContainsString('なお、これらを『サイトに書き足す』ことで解決するとは限りません', $html);
     }
 
     public function test_improvement_page_shows_the_selected_group_and_competitor_evidence_for_its_items(): void
@@ -850,10 +853,14 @@ class LeadPdfViewTest extends TestCase
 
     /**
      * 2026-08-18: 旧「改善のご提案」単一パラグラフ(improvementRecommendation)を
-     * 廃止し、理由/具体的に追加すべき情報/中長期施策の3ブロックへ分解した
-     * (依頼者指定 ―― 結論だけでなく、なぜ・何を・いつまでにが追える構成にする)。
+     * 廃止し、理由/具体的に追加すべき情報/中長期の差別化ポイントの3ブロックへ
+     * 分解した(依頼者指定 ―― 結論だけでなく、なぜ・何を・いつまでにが追える
+     * 構成にする)。
+     * 2026-08-19: 「中長期的には：」の1行を、「中長期の差別化ポイント」という
+     * 独立した見出し付きボックス(.diffbox)へ格上げした(依頼者指定 ――
+     * 「差を埋める提案」と「差別化提案」を役割として明確に分けるため)。
      */
-    public function test_improvement_page_shows_reason_recommended_contents_and_mid_term_action_when_available(): void
+    public function test_improvement_page_shows_reason_recommended_contents_and_differentiation_point_when_available(): void
     {
         $html = $this->render($this->comparisonViewModel());
 
@@ -862,7 +869,8 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('具体的に追加すべき情報', $html);
         $this->assertStringContainsString('入社数年目の社員の1日の過ごし方', $html);
         $this->assertStringContainsString('部署間の関わり方が分かるエピソード', $html);
-        $this->assertStringContainsString('中長期的には：', $html);
+        $this->assertStringContainsString('中長期の差別化ポイント', $html);
+        $this->assertStringNotContainsString('中長期的には：', $html);
         $this->assertStringContainsString('部署横断プロジェクトの事例をシリーズ化することも検討できます。', $html);
     }
 
@@ -876,6 +884,6 @@ class LeadPdfViewTest extends TestCase
 
         $this->assertStringNotContainsString('理由：', $html);
         $this->assertStringNotContainsString('具体的に追加すべき情報', $html);
-        $this->assertStringNotContainsString('中長期的には：', $html);
+        $this->assertStringNotContainsString('中長期の差別化ポイント', $html);
     }
 }

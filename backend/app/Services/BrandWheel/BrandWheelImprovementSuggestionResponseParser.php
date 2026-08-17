@@ -70,6 +70,13 @@ class BrandWheelImprovementSuggestionResponseParser
         );
     }
 
+    /**
+     * 2026-08-19: forbidden_phrases(「不足」等の否定的評価語)に加え、
+     * assertive_phrases(サイト分析だけでは分からない社内事情を断定する
+     * 表現)も同じ扱いでチェックする。プロンプト側の指示(条件付き表現を
+     * 使わせる)が最初の防波堤、これはAIが指示に従わなかった場合の
+     * 最後の防波堤(forbidden_phrasesと同じ二重構成)。
+     */
     private function parseForbiddenPhraseSafeText(mixed $raw, int $maxChars): ?string
     {
         if (! is_string($raw) || trim($raw) === '') {
@@ -77,9 +84,12 @@ class BrandWheelImprovementSuggestionResponseParser
         }
 
         $text = trim($raw);
-        $forbiddenPhrases = (array) config('brand_wheel.forbidden_phrases', []);
+        $bannedPhrases = array_merge(
+            (array) config('brand_wheel.forbidden_phrases', []),
+            (array) config('brand_wheel.assertive_phrases', []),
+        );
 
-        foreach ($forbiddenPhrases as $phrase) {
+        foreach ($bannedPhrases as $phrase) {
             if (is_string($phrase) && $phrase !== '' && str_contains($text, $phrase)) {
                 return null;
             }

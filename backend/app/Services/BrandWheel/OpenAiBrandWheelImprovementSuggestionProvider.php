@@ -40,8 +40,20 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
      * unique制約により1回しか生成しない設計のため、再利用ロジック自体が
      * 存在しない ―― 既存のGenerateBrandWheelAnalysisJobのようなinput_hash
      * 再利用キャッシュはこの改善提案には無い)。
+     *
+     * v3(2026-08-19): クライアントレビュー対応その2。(1)実際の生成文に
+     * 「既存の社内資料を活用することで迅速に対応可能です」等、サイト分析
+     * だけでは分からない社内事情(資料の有無・実施工数・担当部署・社内調整の
+     * 難易度・社員インタビューの要否・応募数への効果)を断定する表現が
+     * 残っていたため、断定禁止の対象を具体的に列挙し、推奨する条件付き表現
+     * ("〜できる場合" 等)を明示した。(2) mid_term_actionの選定を、AIが
+     * self_unmatched_items×competitor_unmatched_itemsを自分で突き合わせる
+     * のではなく、PHP側で事前計算したmutually_unmatched_items(自社・競合とも
+     * 未充足の項目)から選ばせるよう変更し、「1テーマ(関連項目は最大2件)に
+     * まとめる」「候補が無ければ無理に埋めない」ことを明示した
+     * (BrandWheelImprovementSuggestionInputFactory参照)。
      */
-    public const string PROMPT_VERSION = 'v2';
+    public const string PROMPT_VERSION = 'v3';
 
     public function __construct(
         private readonly BrandWheelImprovementSuggestionResponseParser $parser,
@@ -101,7 +113,10 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
     private function buildPrompt(BrandWheelImprovementSuggestionInput $input): string
     {
         $facts = json_encode($input->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $forbiddenPhrases = implode('」「', (array) config('brand_wheel.forbidden_phrases', []));
+        $forbiddenPhrases = implode('」「', array_merge(
+            (array) config('brand_wheel.forbidden_phrases', []),
+            (array) config('brand_wheel.assertive_phrases', []),
+        ));
 
         $competitorNote = $input->hasCompetitor
             ? '比較サイト(競合)のデータが含まれています。ギャップ埋め(競合にあり自社に無い情報を補う)と、'.
@@ -112,10 +127,32 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
         $forbiddenNote = <<<TXT
 - 以下の語は一切使わないでください: 「{$forbiddenPhrases}」。「魅力が無い/劣っている」という評価を
   示唆するため使用禁止です。
-- 断定を避けてください。「〜という印象を与える可能性があります」「〜の場合、着手しやすい可能性が
-  あります」のように、条件付き・可能性の表現を使ってください。「人事部だけで実施できます」のような
-  断定はしないでください。
 - データに含まれていない事実(社風・具体的な社内制度・実行体制など)を創作しないでください。
+
+【断定禁止(最重要)】
+渡されたデータは「サイト上から確認できた/できなかった記述」のみです。以下の社内事情は、
+サイトの記述だけからは分からない推測に過ぎません。断定せず、必ず条件付き・可能性の表現にしてください:
+- 既存の社内資料・素材の有無
+- 実施にかかる工数・期間
+- 対応できる担当部署(人事部だけで完結するか等)
+- 社内調整の難易度
+- 社員インタビュー等の取材が必須かどうか
+- 応募数・採用数への効果
+
+推奨する表現(このトーンに揃えてください): 「〜できる場合」「〜の可能性があります」「比較的着手しやすい
+と考えられます」「候補者が理解しやすくなる可能性があります」「〜が必要になる可能性があります」。
+
+禁止する断定表現の例(実際に問題視された生成例を含む):
+- 「実行難易度も低く、既存の社内資料を活用することで迅速に対応可能です。」
+  → 「既存の社内資料やプロジェクト情報を活用できる場合、比較的短期間で着手しやすい施策と考えられます。」
+- 「人事部内で対応できます。」
+  → 「既存情報を活用できる場合、人事部内でも比較的検討しやすい施策と考えられます。」
+- 「この改善によって候補者への魅力が高まります。」
+  → 「候補者が企業の強みや具体的な挑戦を理解しやすくなる可能性があります。」
+- 「社員インタビューを実施すれば差別化できます。」
+  → 「社員や職場の実態を具体的に伝える場合は、社員紹介やインタビューなどのコンテンツも選択肢になります。」
+- 「これを実施すれば採用競争力が上がります。」
+  → 「候補者が自社で働くイメージを持ちやすくなり、他社との違いを伝えやすくなる可能性があります。」
 TXT;
 
         $genericBanNote = <<<TXT
@@ -129,15 +166,18 @@ TXT;
 TXT;
 
         $gapDifferentiationNote = <<<TXT
-改善候補は必ず内部的に以下の2種類に分けて検討してください(UIラベルとしては出しませんが、
-判断の軸として明確に区別すること):
-- Gap Closing: 競合には該当があり(competitor_matched_items)、自社には無い(self_unmatched_items)
-  情報を補う施策。競合との差を埋める効果がある。
-- Differentiation: 自社・競合のどちらにも十分に伝えられていない領域
-  (self_unmatched_itemsかつcompetitor_unmatched_items、またはcompetitor_matched_itemsが
-  少ない領域)のうち、自社が先に情報を充実させることで差別化になりうる施策。
-単純にGap Closing(競合に追いつく)だけを提案するのではなく、Differentiationの可能性も
-必ず検討したうえで、両方を比較して最終提言を選んでください。
+提言は必ず以下の2種類を両方とも検討し、両方とも出力してください(片方だけの提言は不可):
+- 今すぐ優先して改善すること(Gap Closing、one_point/reason/recommended_contentsに反映):
+  競合には該当があり(competitor_matched_items)、自社には無い(self_unmatched_items)情報を
+  補う施策。競合との差を埋めながら、比較的着手しやすいものを優先してください。
+- 中長期の差別化ポイント(Differentiation、mid_term_actionに反映): 自社・競合の両方が
+  未充足の項目(mutually_unmatched_items)の中から選んでください。self_unmatched_itemsと
+  competitor_unmatched_itemsを自分で突き合わせる必要はなく、mutually_unmatched_itemsが
+  その候補プールです。選ぶ際は「競合の真似」にならないよう、次を基準にしてください:
+  候補者への影響が比較的大きいか、採用サイト上で表現する意味があるか、自社のブランド形成に
+  つながりやすいか。関連する項目であれば最大2件までまとめて1つのテーマにしてください
+  (複数の独立したテーマを同時に提案しないこと)。mutually_unmatched_itemsが空の場合は、
+  無理に差別化ポイントを作らず、mid_term_actionはnullにしてください。
 TXT;
 
         $reasoningSteps = <<<TXT
@@ -151,15 +191,15 @@ TXT;
 4. 競合でも不足している項目(competitor_unmatched_items、あれば)を整理する
 5. 自社と競合の差(group_totals、あれば)を特定する
 6. それぞれの不足・差が候補者への情報伝達にどう影響するか(候補者への影響度)を判断する
-7. 改善候補を複数(3件程度)作り、Gap ClosingとDifferentiationの両方の観点で分類する
+7. Gap Closing候補(競合にはあり自社には無い項目)を複数作る
 8. 各候補の改善効果(候補者への影響度)を評価する(low/medium/high)
 9. 各候補の実行難易度を評価する(self_unmatched_itemsのexecution_difficulty/execution_noteを
-   根拠にする。他部署・社員を巻き込む必要があるか、人事部内で完結できるか、既存情報から
-   作れるか、社員インタビューや撮影が必要かを考慮する)
+   根拠にする。断定はせず、あくまで可能性として評価すること)
 10. 実行しやすく効果も見込める候補(Quick Win)を特定する ―― 最も改善効果が大きい施策が
     必ずしも最初にやるべき施策とは限らない。実行難易度が高い施策より、既存情報から短期間で
-    整理できる施策を優先することがある
-11. 実行難易度が高いが差別化効果の大きい候補があれば、中長期施策として特定する
+    整理できる可能性が高い施策を優先することがある
+11. mutually_unmatched_items(自社・競合とも未充足の項目)の中から、中長期の差別化ポイントを
+    1テーマ(関連項目は最大2件)選ぶ。候補が無ければ無理に選ばない
 12. 差分の大きさ×候補者への影響×実行難易度×Quick Win性を総合し、最初に着手すべき1つを選ぶ
 
 {$competitorNote}
@@ -184,25 +224,30 @@ TXT;
 
 - one_point: 1文で、最優先で着手すべきアクションを一言で言い切ってください(例:「まずは
   『新しい取り組み』と『競争力・独自性』を、具体的な事例として追加することを推奨します。」)。
-  「掲載する情報を増やすことをおすすめします。」のような曖昧な言い回しは禁止です。
-- reason: 2〜3文で、なぜその施策を最優先にすべきかを説明してください。競合との比較・
-  候補者への影響・実行難易度の観点を、実際のデータに基づいて具体的に書いてください。
-- recommended_contents: 具体的に追加すべき情報を2〜3項目、箇条書きの短いフレーズ(項目名や
+  「掲載する情報を増やすことをおすすめします。」のような曖昧な言い回しは禁止です。何を
+  追加すべきかは言い切って構いませんが、その先の社内事情(実施可否・工数等)は断定しないこと。
+- reason: 最大3文で、なぜその施策を最優先にすべきかを説明してください。競合との比較・
+  候補者への影響の観点は実際のデータに基づいて具体的に書き、実行難易度に触れる場合は
+  【断定禁止】の指示に従い条件付き表現にしてください。
+- recommended_contents: 具体的に追加すべき情報を最大3項目、箇条書きの短いフレーズ(項目名や
   内容の要点、1件20〜30字程度)で挙げてください。data内の実在する下位要素名・具体的な
   内容に基づくものにしてください。
-- mid_term_action: 実行難易度が高いが差別化効果の大きい中長期施策があれば1〜2文で。
-  無ければnullにしてください(無理に埋めないこと)。
-- quick_win: one_pointで挙げた最優先施策が、既存の社内情報から比較的着手しやすいと
-  判断できる場合はtrue、社員インタビューや他部署の協力等が必要で時間がかかると
-  判断できる場合はfalseにしてください。
+- mid_term_action: 「中長期の差別化ポイント」です。mutually_unmatched_items(自社・競合とも
+  未充足の項目)の中から選んだ1テーマ(関連項目は最大2件)について、最大2文で述べてください。
+  候補が無い場合や、自社が既に競合より優位で差別化ポイントを挙げる必要が無い場合はnullに
+  してください(無理に埋めないこと)。「〜を実施すれば差別化できます」のような断定は禁止、
+  「〜を伝える場合は、〜も選択肢になります」のような条件付き表現にしてください。
+- quick_win: one_pointで挙げた最優先施策が、既存の社内情報から比較的着手しやすい
+  可能性があると判断できる場合はtrue、社員インタビューや他部署の協力等が必要になる
+  可能性があり時間がかかると考えられる場合はfalseにしてください(断定ではなく推定)。
 - implementation_difficulty / candidate_impact: one_pointで挙げた施策についての
-  実行難易度・候補者への影響度を、低/中/高のいずれかで判断してください。
-- gap_closing: 競合には該当があり自社には無い項目のうち、今回の提言で言及したものの
+  実行難易度・候補者への影響度を、低/中/高のいずれかで判断してください(推定であり断定ではない)。
+- gap_closing: 競合には該当があり自社には無い項目のうち、one_point/reasonで言及したものの
   下位要素キー(例: "project_initiative")を配列で。無ければ空配列。
-- differentiation_opportunities: 自社・競合とも手薄で、自社が先に充実させれば差別化に
-  なりうる項目の下位要素キーを配列で。無ければ空配列。
+- differentiation_opportunities: mid_term_actionで言及した下位要素のキーを配列で
+  (mutually_unmatched_items由来のキーのみ、最大2件)。mid_term_actionがnullなら空配列。
 - recommendation: 後方互換用に、結論→なぜ→具体的にの3〜5文でも記述してください
-  (reason/recommended_contentsと重複しても構いません)。
+  (reason/recommended_contentsと重複しても構いません。断定禁止の指示は同様に適用されます)。
 - focus_sub_element_keys: 提言全体で言及した下位要素のキーを1〜3件、配列で。
 TXT;
 

@@ -110,4 +110,51 @@ class BrandWheelImprovementSuggestionInputFactoryTest extends TestCase
         $this->assertCount(23, $input->competitorUnmatchedItems);
         $this->assertNotEmpty($input->groupTotals);
     }
+
+    /**
+     * 2026-08-19追加: 「中長期の差別化ポイント」の候補プール
+     * (mutuallyUnmatchedItems、自社・競合とも未充足の項目)は、AIに
+     * self_unmatched_items×competitor_unmatched_itemsを自分で突き合わせ
+     * させるのではなく、PHP側で決定的に事前計算する(依頼者指摘 ――
+     * 断定/捏造リスクを下げるため、判定できる事実はPHPで計算する既存方針)。
+     */
+    public function test_mutually_unmatched_items_are_the_intersection_of_self_and_competitor_unmatched_items(): void
+    {
+        $selfAxes = [
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_sub_elements' => [
+                ['key' => 'purpose', 'name' => 'パーパス'],
+            ], 'label_only_sub_elements' => []],
+        ];
+        // 競合はwill_activity軸の中でpurposeのみ該当あり(=自社と同じ項目は
+        // 互いに充足)、relationship軸はどちらも完全に未充足のまま。
+        $competitorAxes = [
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_sub_elements' => [
+                ['key' => 'purpose', 'name' => 'パーパス'],
+            ], 'label_only_sub_elements' => []],
+        ];
+        $comparisonItems = $this->comparisonComposer()->compose($selfAxes, $competitorAxes);
+
+        $input = $this->factory()->build($comparisonItems, [], [], [], hasCompetitor: true);
+
+        // purpose(自社・競合とも該当)はmutually_unmatched_itemsに含まれない。
+        $this->assertNull(collect($input->mutuallyUnmatchedItems)->firstWhere('sub_name', 'パーパス'));
+
+        // colleagues(同僚・先輩像、relationship軸)は自社・競合とも未充足のため
+        // mutually_unmatched_itemsに含まれ、実行難易度タグも付与される。
+        $colleagues = collect($input->mutuallyUnmatchedItems)->firstWhere('sub_name', '同僚・先輩像');
+        $this->assertNotNull($colleagues);
+        $this->assertSame('high', $colleagues['execution_difficulty']);
+
+        // 24項目中、両者が該当したpurpose 1件を除いた23件がmutually_unmatched。
+        $this->assertCount(23, $input->mutuallyUnmatchedItems);
+    }
+
+    public function test_mutually_unmatched_items_are_empty_when_there_is_no_competitor(): void
+    {
+        $comparisonItems = $this->comparisonComposer()->compose([], []);
+
+        $input = $this->factory()->build($comparisonItems, [], [], [], hasCompetitor: false);
+
+        $this->assertSame([], $input->mutuallyUnmatchedItems);
+    }
 }

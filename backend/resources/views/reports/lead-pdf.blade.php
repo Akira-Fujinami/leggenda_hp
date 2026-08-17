@@ -254,27 +254,39 @@
 
     {{-- 「改善提案」ページ。 --}}
     {{-- widthを明示する理由は.lead1と同じ(2026-08-04、CSS冒頭のh2コメント参照)。 --}}
-    .rlead { width: 265mm; font-size: 9.5pt; color: #6B6767; margin: 0 0 2.5mm; line-height: 1.45; }
+    .rlead { width: 265mm; font-size: 9.5pt; color: #6B6767; margin: 0 0 2mm; line-height: 1.4; }
     {{-- 2026-08-17: 改善提案AI(ワンポイント/詳細提言)追加に伴い、実PDF確認
          (worst-caseの長文AI出力)でページ下部の余白が10mm未満になる不具合が
-         見つかったため、余白・行間を切り詰める。 --}}
-    .onepoint { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 2mm 4mm; margin: 0 0 3mm; }
+         見つかったため、余白・行間を切り詰める。
+         2026-08-19: 「中長期の差別化ポイント」ボックス追加分の高さを吸収する
+         ため、余白・行間をさらに切り詰めた(フォントサイズは変更しない ――
+         極端な縮小は禁止、docs/lead-report-layout/README.mdの検証方法論に
+         従い実PDF確認で調整)。 --}}
+    .onepoint { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 1.6mm 4mm; margin: 0 0 1.5mm; page-break-inside: avoid; }
     .onepoint .t { font-size: 10pt; font-weight: bold; margin: 0 0 1mm; }
-    .onepoint p { font-size: 9.5pt; line-height: 1.5; margin: 0; }
+    .onepoint p { font-size: 9.5pt; line-height: 1.4; margin: 0; }
     {{-- 2026-08-17追加: 改善提案AIの詳細提言パラグラフ。.onepointと同じ
          トーン(藍のleft-border+淡グレー背景)だが、証拠カードの直後に置く
          ため上マージンで区切る。 --}}
-    .recobox { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 2mm 4mm; margin: 2mm 0 0; }
+    .recobox { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 1.4mm 4mm; margin: 1mm 0 0; page-break-inside: avoid; }
     .recobox .t { font-size: 9.5pt; font-weight: bold; margin: 0 0 1mm; }
-    .recobox p { font-size: 9pt; line-height: 1.45; margin: 0; }
+    .recobox p { font-size: 9pt; line-height: 1.3; margin: 0; }
     {{-- 2026-08-18追加: 「理由」(ワンポイント直下の地の文)・「具体的に
-         追加すべき情報」(箇条書き)・「中長期施策」(小さな1行)。 --}}
-    .reasontext { width: 265mm; font-size: 9.5pt; color: #393636; line-height: 1.55; margin: 1.5mm 0 3mm; }
-    .recobox .recolist { margin: 0; padding-left: 4mm; font-size: 9pt; line-height: 1.6; }
-    .midterm { width: 265mm; font-size: 8.5pt; color: #6B6767; line-height: 1.5; margin: 2mm 0 0; }
-    .gapbar td { padding: 0 0 1.3mm; font-size: 9pt; vertical-align: middle; }
+         追加すべき情報」(箇条書き)。 --}}
+    .reasontext { width: 265mm; font-size: 9.5pt; color: #393636; line-height: 1.35; margin: 0.8mm 0 1.2mm; }
+    .recobox .recolist { margin: 0; padding-left: 4mm; font-size: 9pt; line-height: 1.3; }
+    {{-- 2026-08-19追加: 「中長期の差別化ポイント」。Quick Win系のボックス
+         (.onepoint/.recobox、藍の左ボーダー)とは別テーマだと一目で分かる
+         よう、既存パレットの「会社との距離」色(#2C7F96、groupBands参照)を
+         左ボーダーに使う(新色は追加しない)。page-break-inside:avoidは、
+         見出しだけがページ末尾に残り本文が次ページへ分離する不具合
+         (実PDF確認で発見)を防ぐため。 --}}
+    .diffbox { width: 265mm; border-left: 4px solid #2C7F96; background: #F5F5F5; padding: 1.4mm 4mm; margin: 1mm 0 0; page-break-inside: avoid; }
+    .diffbox .t { font-size: 9.5pt; font-weight: bold; margin: 0 0 1mm; color: #2C7F96; }
+    .diffbox p { font-size: 9pt; line-height: 1.3; margin: 0; }
+    .gapbar td { padding: 0 0 0.8mm; font-size: 9pt; vertical-align: middle; }
     .gapbar .nm { width: 34mm; }
-    .gapbar .bar { height: 5mm; display: block; }
+    .gapbar .bar { height: 4.3mm; display: block; }
     .gapbar .v { width: 26mm; text-align: right; color: #6B6767; padding-right: 3mm; }
     {{--
         2026-08-09: height:56mm固定をやめてauto(padding+内容まかせ)にした。
@@ -286,14 +298,14 @@
         引用に文字数上限を設け、極端に長い引用で改善提案ページ全体が
         7ページ枠を超えることも防ぐ。
     --}}
-    .rcard { border: 1px solid #E0E0E0; padding: 2.5mm 3mm; }
+    .rcard { border: 1px solid #E0E0E0; padding: 1.8mm 3mm; }
     .rcard .no { font-size: 9pt; color: #fff; background: #1D2088; padding: 0.6mm 2.2mm; }
-    .rcard .nm { font-size: 11.5pt; font-weight: bold; margin: 1.5mm 0 1mm; }
-    .rcard .q { font-size: 9pt; color: #6B6767; margin: 0 0 2mm; line-height: 1.4; }
-    .rcard .lb { font-size: 8.5pt; color: #8A8A8A; margin: 0 0 0.6mm; }
-    .rcard .own { font-size: 9pt; margin: 0 0 2mm; }
-    .rcard .cmp { font-size: 9pt; line-height: 1.45; margin: 0; border-left: 3px solid #E95446; padding-left: 2.5mm; }
-    .rcell { width: 88.3mm; padding: 0 2mm 4mm 0; vertical-align: top; }
+    .rcard .nm { font-size: 11.5pt; font-weight: bold; margin: 0.8mm 0 0.6mm; }
+    .rcard .q { font-size: 9pt; color: #6B6767; margin: 0 0 1mm; line-height: 1.25; }
+    .rcard .lb { font-size: 8.5pt; color: #8A8A8A; margin: 0 0 0.5mm; }
+    .rcard .own { font-size: 9pt; margin: 0 0 1mm; }
+    .rcard .cmp { font-size: 9pt; line-height: 1.3; margin: 0; border-left: 3px solid #E95446; padding-left: 2.5mm; }
+    .rcell { width: 88.3mm; padding: 0 2mm 2mm 0; vertical-align: top; }
 
     {{--
         7ページ目(最終ページ)。2026-08-08: 旧3ブロック構成(.ctabox/.ctacell)は
@@ -756,7 +768,7 @@
                      (比較サイトの実際の抜粋、長文になりうる)が入るため、autoにすると
                      列幅がページ右端を超える危険がある。列幅は全列88.3mmで
                      等しいので、fixedのままで安全に収まることを確認済み。 --}}
-                <table style="width: 265mm; margin-top: 3mm;">
+                <table style="width: 265mm; margin-top: 2mm;">
                     <tr>
                         @foreach ($focus['items'] as $i => $item)
                             <td class="rcell">
@@ -777,11 +789,22 @@
                 {{--
                     2026-08-18: 単一段落の「改善のご提案」(旧recommendation)を、
                     依頼者指定の構成に合わせて「具体的に追加すべき情報」(箇条書き、
-                    最大3項目)＋「中長期施策」(該当する場合のみ)に分割した。
-                    既存のグループ差バー＋証拠カード(無改修、決定的ロジック)は
-                    「自社と競合の差」の根拠として残し、その下に結論(具体的に
-                    追加すべき情報)を続ける構成にする。未生成/失敗時は非表示
-                    (既存のバー＋カードのみで成立する)。
+                    最大3項目)＋「中長期の差別化ポイント」(該当する場合のみ)に
+                    分割した。既存のグループ差バー＋証拠カード(無改修、決定的
+                    ロジック)は「自社と競合の差」の根拠として残し、その下に
+                    結論(具体的に追加すべき情報=今すぐ優先して改善すること)を
+                    続ける構成にする。未生成/失敗時は非表示(既存のバー＋
+                    カードのみで成立する)。
+
+                    2026-08-19: 「中長期の差別化ポイント」を、単なる末尾の
+                    1行(旧.midterm)から、Quick Win系ボックスと明確に分離した
+                    独立ボックス(.diffbox)へ格上げした(依頼者指定 ――
+                    「競合との差を埋める提案」と「競合も弱い領域での差別化
+                    提案」を役割として分けるため)。中身
+                    ($viewModel->improvementMidTermAction)は
+                    mutually_unmatched_items(自社・競合とも未充足の項目)から
+                    AIが選んだ1テーマのみ(OpenAiBrandWheelImprovementSuggestion
+                    Provider::buildPrompt()参照、決め打ちのカテゴリではない)。
                 --}}
                 @if (count($viewModel->improvementRecommendedContents) > 0)
                     <div class="recobox">
@@ -794,10 +817,13 @@
                     </div>
                 @endif
                 @if ($viewModel->improvementMidTermAction)
-                    <p class="midterm"><b>中長期的には：</b>{{ $viewModel->improvementMidTermAction }}</p>
+                    <div class="diffbox">
+                        <p class="t">中長期の差別化ポイント</p>
+                        <p>{{ $viewModel->improvementMidTermAction }}</p>
+                    </div>
                 @endif
 
-                <p class="rlead" style="margin: 3mm 0 0;">なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。</p>
+                <p class="rlead" style="margin: 1.2mm 0 0;">サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。</p>
             @endif
         @elseif ($viewModel->improvementFocusSelfOnly)
             {{--
@@ -838,7 +864,7 @@
             @if (count($focusSelf['items']) === 0)
                 <p class="gnone" style="margin-top: 3mm;">該当する項目はありませんでした</p>
             @else
-                <table style="width: 265mm; margin-top: 3mm;">
+                <table style="width: 265mm; margin-top: 2mm;">
                     <tr>
                         @foreach ($focusSelf['items'] as $i => $item)
                             <td class="rcell">
@@ -865,10 +891,13 @@
                     </div>
                 @endif
                 @if ($viewModel->improvementMidTermAction)
-                    <p class="midterm"><b>中長期的には：</b>{{ $viewModel->improvementMidTermAction }}</p>
+                    <div class="diffbox">
+                        <p class="t">中長期の差別化ポイント</p>
+                        <p>{{ $viewModel->improvementMidTermAction }}</p>
+                    </div>
                 @endif
 
-                <p class="rlead" style="margin: 3mm 0 0;">なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。</p>
+                <p class="rlead" style="margin: 1.2mm 0 0;">サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。</p>
             @endif
         @endif
     @endif

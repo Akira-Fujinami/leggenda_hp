@@ -438,16 +438,17 @@ class WordReportGenerator
                     }
                 }
 
+                // 2026-08-19: 「中長期的には：」の1行から、Quick Win系
+                // (具体的に追加すべき情報)と明確に分離した見出し付きブロック
+                // へ格上げ(依頼者指定、PDF版の.diffboxと同内容)。
                 if ($viewModel->improvementMidTermAction !== null) {
                     $section->addTextBreak(1);
-                    $section->addText('中長期的には：'.$viewModel->improvementMidTermAction, ['size' => 9, 'color' => '6B6767']);
+                    $section->addText('中長期の差別化ポイント', ['bold' => true, 'size' => 9.5, 'color' => '2C7F96']);
+                    $section->addText($viewModel->improvementMidTermAction, ['size' => 9]);
                 }
 
                 $section->addTextBreak(1);
-                $section->addText(
-                    'なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、'.
-                    'まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。',
-                );
+                $section->addText('サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。');
             }
 
             return;
@@ -501,14 +502,12 @@ class WordReportGenerator
 
         if ($viewModel->improvementMidTermAction !== null) {
             $section->addTextBreak(1);
-            $section->addText('中長期的には：'.$viewModel->improvementMidTermAction, ['size' => 9, 'color' => '6B6767']);
+            $section->addText('中長期の差別化ポイント', ['bold' => true, 'size' => 9.5, 'color' => '2C7F96']);
+            $section->addText($viewModel->improvementMidTermAction, ['size' => 9]);
         }
 
         $section->addTextBreak(1);
-        $section->addText(
-            'なお、これらを『サイトに書き足す』ことで解決するとは限りません。実態はあるのに伝えられていないのか、'.
-            'まだ言葉になっていないのか ―― その切り分けについては最終ページをご覧ください。',
-        );
+        $section->addText('サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。');
     }
 
     /**

@@ -32,9 +32,13 @@ class BrandWheelImprovementSuggestionInputFactory
         $selfUnmatched = [];
         $competitorMatched = [];
         $competitorUnmatched = [];
+        $mutuallyUnmatched = [];
 
         foreach ($comparisonItems as $item) {
-            if ($item['self_matched']) {
+            $selfIsMatched = $item['self_matched'];
+            $difficulty = null;
+
+            if ($selfIsMatched) {
                 $selfMatched[] = [
                     'axis_name' => $item['axis_name'],
                     'sub_name' => $item['sub_name'],
@@ -65,6 +69,17 @@ class BrandWheelImprovementSuggestionInputFactory
                         'sub_name' => $item['sub_name'],
                         'state' => $item['competitor_state'],
                     ];
+
+                    // 2026-08-19追加: 自社・競合とも未充足(=差別化提案の候補)。
+                    // AI自身にself_unmatched_items×competitor_unmatched_itemsを
+                    // 突き合わせさせるのではなく、ここで決定的に算出して渡す。
+                    if (! $selfIsMatched) {
+                        $mutuallyUnmatched[] = [
+                            'axis_name' => $item['axis_name'],
+                            'sub_name' => $item['sub_name'],
+                            'execution_difficulty' => $difficulty,
+                        ];
+                    }
                 }
             }
         }
@@ -74,6 +89,7 @@ class BrandWheelImprovementSuggestionInputFactory
             selfUnmatchedItems: $selfUnmatched,
             competitorMatchedItems: $competitorMatched,
             competitorUnmatchedItems: $competitorUnmatched,
+            mutuallyUnmatchedItems: $hasCompetitor ? $mutuallyUnmatched : [],
             groupTotals: $hasCompetitor ? $groupTotals : [],
             hasCompetitor: $hasCompetitor,
         );

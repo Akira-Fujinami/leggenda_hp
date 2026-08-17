@@ -72,6 +72,24 @@ class BrandWheelImprovementSuggestionResponseParserTest extends TestCase
         $this->assertStringEndsWith('…', $result->recommendation);
     }
 
+    /**
+     * 2026-08-19追加: サイト分析だけでは分からない社内事情(実施工数・担当
+     * 部署等)を断定した実際の生成例(クライアントレビューで指摘)を踏まえた
+     * 防波堤。プロンプト側の指示が最初の防波堤、これはAIが指示に従わなかった
+     * 場合の最後の防波堤(forbidden_phrasesと同じ二重構成)。
+     */
+    public function test_nulls_reason_when_it_contains_an_assertive_phrase(): void
+    {
+        $result = $this->parser()->parse([
+            'one_point' => null,
+            'recommendation' => null,
+            'reason' => '実行難易度も低く、既存の社内資料を活用することで迅速に対応可能です。',
+            'focus_sub_element_keys' => [],
+        ], provider: 'openai', model: null, isMock: false, promptVersion: 'v3');
+
+        $this->assertNull($result->reason);
+    }
+
     public function test_returns_null_for_missing_or_blank_fields(): void
     {
         $result = $this->parser()->parse([], provider: 'mock', model: null, isMock: true, promptVersion: null);
