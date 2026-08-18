@@ -6,17 +6,15 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 
-/**
- * 管理者ダッシュボードの認証(共有アカウント方式、依頼者指定)。DBに
- * ユーザーを作らず、.env(ADMIN_USERNAME/ADMIN_PASSWORD_HASH、
- * config('admin.*'))とのみ照合する。専用のログインページは持たない ――
- * 未認証時はEnsureAdminAuthenticatedミドルウェアがadmin.guestビュー
- * (認証モーダルのみのページ)を返し、そこからこのcontrollerへPOSTする。
- */
 class AuthController extends Controller
 {
+    /**
+     * 管理者ログイン
+     *
+     * DBのusersテーブルは使用せず、
+     * ADMIN_USERNAME / ADMIN_PASSWORD と照合する。
+     */
     public function authenticate(Request $request): JsonResponse
     {
         $credentials = $request->validate([
@@ -25,34 +23,63 @@ class AuthController extends Controller
         ]);
 
         $expectedUsername = (string) config('admin.username');
-        $expectedHash = (string) config('admin.password_hash');
+        $expectedPassword = (string) config('admin.password');
 
-        // ADMIN_USERNAME/ADMIN_PASSWORD_HASHが未設定の環境では、いかなる
-        // 入力でもログインを成立させない(設定漏れが「誰でもログイン可能」に
-        // ならないよう安全側に倒す)。
-        $usernameMatches = $expectedUsername !== '' && hash_equals($expectedUsername, $credentials['username']);
-        $passwordMatches = $expectedHash !== '' && Hash::check($credentials['password'], $expectedHash);
+        /*
+         * 環境変数が未設定の場合は必ず認証失敗。
+         * 設定漏れによって認証を突破できないよう安全側に倒す。
+         */
+        if ($expectedUsername === '' || $expectedPassword === '') {
+            return response()->json([
+                'message' => '管理者認証が設定されていません。',
+            ], 500);
+        }
+
+        /*
+         * タイミング攻撃対策としてhash_equals()で比較する。
+         *
+         * ADMIN_PASSWORDには平文パスワードを設定する仕様なので、
+         * Hash::check()は使用しない。
+         */
+        $usernameMatches = hash_equals(
+            $expectedUsername,
+            (string) $credentials['username']
+        );
+
+        $passwordMatches = hash_equals(
+            $expectedPassword,
+            (string) $credentials['password']
+        );
 
         if (! $usernameMatches || ! $passwordMatches) {
-            // 「ユーザー名は合っているがパスワードが違う」等の詳細を返さない
-            // (依頼者指定)。ユーザー名・パスワードそのものはログに出さない。
             return response()->json([
                 'message' => 'ユーザー名またはパスワードが正しくありません。',
             ], 401);
         }
 
-        // Session fixation対策 ―― 認証成功時にセッションIDを再発行する
-        // (Api\AuthController::register/loginと同じ方針)。
+        /*
+         * Session Fixation対策。
+         * ログイン成功時にセッションIDを再生成する。
+         */
         $request->session()->regenerate();
+
         $request->session()->put('admin_authenticated', true);
 
-        return response()->json(['message' => 'ログインしました。']);
+        return response()->json([
+            'message' => 'ログインしました。',
+            'success' => true,
+        ]);
     }
 
+    /**
+     * 管理者ログアウト
+     */
     public function logout(Request $request): RedirectResponse
     {
         $request->session()->forget('admin_authenticated');
+
         $request->session()->invalidate();
+
         $request->session()->regenerateToken();
 
         return redirect('/admin');
