@@ -125,3 +125,103 @@
     @apply font-sans;
   }
 }
+
+/* ============================================================
+   リード向け公開画面(/lead/*)のブランド適用。2026-08-18。
+   .lead-brand スコープ配下でのみ有効 ―― 管理画面((app)配下)と共有する
+   上の :root ブロックの値は一切変更しない。Tailwindのユーティリティ
+   (bg-primary/rounded-lg等)は@theme inline経由でこれらと同名のCSS変数を
+   参照しているため、.lead-brand配下で同名変数を上書きするだけで、
+   Button/Input等の共有コンポーネント自体を編集せずに配色・角丸を
+   このスコープ内だけ変更できる。
+   ============================================================ */
+.lead-brand {
+  /* 既存shadcnトークンの上書き(このスコープ内のみ)。ロゴの2色 ―― ネイビー
+     (主色)とコーラル(差し色)以外の色は増やさない。 */
+  --background: #f6f5f2;
+  --foreground: #1c1c22;
+  --card: #ffffff;
+  --card-foreground: #1c1c22;
+  --popover: #ffffff;
+  --popover-foreground: #1c1c22;
+  --primary: #1d2088;
+  --primary-foreground: #ffffff;
+  --secondary: #ffffff;
+  --secondary-foreground: #1d2088;
+  --muted: #f6f5f2;
+  --muted-foreground: #71717d;
+  --accent: #f6f5f2;
+  --accent-foreground: #1d2088;
+  --border: #e4e2dd;
+  --input: #e4e2dd;
+  --ring: #1d2088;
+  --radius: 2px;
+
+  /* このスコープ専用の追加トークン(shadcnの共通名には無いもの)。 */
+  --lead-navy: #1d2088;
+  --lead-coral: #e95446;
+  --lead-heading: #15173f;
+  --lead-input-bg: #fcfcfb;
+  --lead-serif:
+    "Hiragino Mincho ProN", "Yu Mincho", YuMincho, "MS PMincho", serif;
+
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+/* 影は使わない(現行のshadow-smに相当する見た目を削除)。 */
+.lead-brand [data-slot="button"],
+.lead-brand [data-slot="input"],
+.lead-brand [data-slot="card"] {
+  box-shadow: none;
+}
+
+/* 入力欄の背景(通常時)。Input自体はbg-transparentのため、このスコープ内
+   でだけ背景色を明示する(input.tsxは編集しない)。 */
+.lead-brand [data-slot="input"] {
+  background-color: var(--lead-input-bg);
+}
+
+.lead-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  color: var(--lead-navy);
+}
+
+.lead-eyebrow {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  color: var(--lead-navy);
+}
+
+.lead-heading {
+  font-family: var(--lead-serif);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--lead-heading);
+  font-size: 1.5rem;
+  line-height: 1.5;
+}
+
+.lead-card-heading {
+  font-family: var(--lead-serif);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--lead-heading);
+  font-size: 1.05rem;
+}
+
+.lead-rule {
+  width: 34px;
+  height: 2px;
+  margin: 0.75rem auto;
+  background-color: var(--lead-coral);
+}
+
+.lead-optional {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}

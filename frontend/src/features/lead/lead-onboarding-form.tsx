@@ -70,35 +70,42 @@ export function LeadOnboardingForm() {
 
       <div className="space-y-2">
         <Label htmlFor="company_name">会社名</Label>
-        <Input id="company_name" {...register("company_name")} />
+        <Input id="company_name" placeholder="株式会社レジェンダ・コーポレーション" {...register("company_name")} />
         {errors.company_name && <p className="text-sm text-destructive">{errors.company_name.message}</p>}
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="contact_name">ご担当者名</Label>
-        <Input id="contact_name" {...register("contact_name")} />
+        <Input id="contact_name" placeholder="採用　太郎" {...register("contact_name")} />
         {errors.contact_name && <p className="text-sm text-destructive">{errors.contact_name.message}</p>}
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="email">メールアドレス</Label>
-        <Input id="email" type="email" {...register("email")} />
+        <Input id="email" type="email" placeholder="taro.saiyo@example.co.jp" {...register("email")} />
         {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
+        <p className="text-xs text-muted-foreground">診断結果のご案内をお送りします。</p>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="phone">電話番号(任意)</Label>
-        <Input id="phone" {...register("phone")} />
+        <Label htmlFor="phone">
+          電話番号<span className="lead-optional">(任意)</span>
+        </Label>
+        <Input id="phone" placeholder="03-0000-0000" {...register("phone")} />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="industry">業種(任意)</Label>
-        <Input id="industry" {...register("industry")} />
+        <Label htmlFor="industry">
+          業種<span className="lead-optional">(任意)</span>
+        </Label>
+        <Input id="industry" placeholder="製造 / 小売 / IT　など" {...register("industry")} />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="employee_range">従業員規模(任意)</Label>
-        <Input id="employee_range" placeholder="例: 50-100" {...register("employee_range")} />
+        <Label htmlFor="employee_range">
+          従業員規模<span className="lead-optional">(任意)</span>
+        </Label>
+        <Input id="employee_range" placeholder="例：50〜100名" {...register("employee_range")} />
       </div>
 
       <div className="flex items-start gap-2">

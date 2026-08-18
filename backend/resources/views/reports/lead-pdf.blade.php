@@ -554,7 +554,7 @@
     'totalMax' => $viewModel->selfTotalMax,
 ])
 
-@if ($viewModel->competitorWebsiteUrl)
+@if ($competitorReadable)
     @include('reports.partials.lead-pdf-brand-wheel-page', [
         'pageTitle' => '競合サイトの分析結果',
         'wheel' => $competitorWheel,
@@ -597,7 +597,7 @@
     @else
         @php
             $comparisonByGroup = collect($viewModel->subElementComparison)->groupBy('group');
-            $showCompetitorColumn = $viewModel->competitorWebsiteUrl !== null;
+            $showCompetitorColumn = $competitorReadable;
             $groupVerdictByKey = collect($viewModel->groupTotals)->keyBy('group');
             $verdictBadge = fn (string $verdict) => match ($verdict) {
                 'self_advantage' => '自社優位',

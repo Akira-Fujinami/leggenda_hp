@@ -597,17 +597,72 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('比較サイト 3 / 8項目', $html);
     }
 
-    public function test_competitor_analysis_page_falls_back_to_the_status_message_when_competitor_is_not_readable(): void
+    /**
+     * 2026-08-18: 取得できなかった競合サイトについて「該当する記述が見つから
+     * なかった」という空のfallbackページを出すのをやめ、ページ自体を出さない
+     * ように変更(依頼者指定 ―― ゴディバの403調査から派生した誤記載の修正)。
+     * $competitorReadable は competitorWebsiteUrl の有無ではなく、実際に
+     * status==='success'かつaxesが空でないかで判定する(431行)。以前は557行
+     * ・600行がcompetitorWebsiteUrlの有無だけで分岐していたため、URLはある
+     * が読み取れなかった場合に、この空ページと「比較サイト 0 / 0項目」が
+     * 出力されてしまっていた。
+     */
+    public function test_competitor_analysis_page_is_omitted_when_the_competitor_url_exists_but_is_not_readable(): void
     {
         $html = $this->render($this->comparisonViewModel([
             'brandWheelCompetitor' => $this->wheel([
-                'status' => 'recruit_page_unreadable',
-                'status_message' => '採用ページの内容を取得できなかったため、この項目の分析は行っていません。',
+                'status' => 'insufficient_input',
+                'status_message' => 'サイトから十分な文章を読み取れなかったため、この項目の分析は行っていません。',
             ]),
+            'competitorTotalMatched' => 0,
+            'competitorTotalMax' => 0,
         ]));
 
-        $this->assertStringContainsString('競合サイトの分析結果', $html);
-        $this->assertStringContainsString('採用ページの内容を取得できなかったため', $html);
+        $this->assertStringNotContainsString('競合サイトの分析結果', $html);
+        $this->assertStringNotContainsString('サイトから十分な文章を読み取れなかったため', $html);
+    }
+
+    public function test_report_has_seven_pages_when_the_competitor_is_readable(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        $this->assertSame(7, substr_count($html, 'class="page'));
+    }
+
+    public function test_report_has_six_pages_when_there_is_no_competitor_website(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertSame(6, substr_count($html, 'class="page'));
+    }
+
+    public function test_report_has_six_pages_when_the_competitor_url_exists_but_is_not_readable(): void
+    {
+        $html = $this->render($this->comparisonViewModel([
+            'brandWheelCompetitor' => $this->wheel([
+                'status' => 'insufficient_input',
+                'status_message' => 'サイトから十分な文章を読み取れなかったため、この項目の分析は行っていません。',
+            ]),
+            'competitorTotalMatched' => 0,
+            'competitorTotalMax' => 0,
+        ]));
+
+        $this->assertSame(6, substr_count($html, 'class="page'));
+    }
+
+    public function test_comparison_page_does_not_show_a_zero_over_zero_competitor_line_when_the_competitor_is_not_readable(): void
+    {
+        $html = $this->render($this->comparisonViewModel([
+            'brandWheelCompetitor' => $this->wheel([
+                'status' => 'insufficient_input',
+                'status_message' => 'サイトから十分な文章を読み取れなかったため、この項目の分析は行っていません。',
+            ]),
+            'competitorTotalMatched' => 0,
+            'competitorTotalMax' => 0,
+        ]));
+
+        $this->assertStringNotContainsString('比較サイト 0 / 0項目', $html);
+        $this->assertStringNotContainsString('<th>比較</th>', $html);
     }
 
     // ------------------------------------------------------------------

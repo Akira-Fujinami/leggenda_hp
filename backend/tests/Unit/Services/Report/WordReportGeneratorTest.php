@@ -324,6 +324,29 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString('競合サイト　確認できた情報：3 / 8項目', $documentXml);
     }
 
+    /**
+     * 2026-08-18: 取得できなかった競合サイトについて「該当する記述が見つから
+     * なかった」という空のセクションを出すのをやめ、セクション自体を出さない
+     * ように変更(依頼者指定 ―― ゴディバの403調査から派生した誤記載の修正、
+     * PDF版lead-pdf.blade.phpと同内容)。以前はcompetitorWebsiteUrlの有無
+     * だけで分岐していたため、URLはあるが読み取れなかった場合に、この空
+     * セクションが出力されてしまっていた。
+     */
+    public function test_competitor_section_is_omitted_when_the_competitor_url_exists_but_is_not_readable(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel([
+            'brandWheelCompetitor' => $this->wheel([
+                'status' => 'insufficient_input',
+                'status_message' => 'サイトから十分な文章を読み取れなかったため、この項目の分析は行っていません。',
+            ]),
+            'competitorTotalMatched' => 0,
+            'competitorTotalMax' => 0,
+        ]));
+
+        $this->assertStringNotContainsString('競合サイトの分析結果', $documentXml);
+        $this->assertStringNotContainsString('サイトから十分な文章を読み取れなかったため', $documentXml);
+    }
+
     // ------------------------------------------------------------------
     // ○△－の対比表(2026-08-08、●／－の2値から3値へ変更)。
     // ------------------------------------------------------------------
@@ -394,6 +417,20 @@ class WordReportGeneratorTest extends TestCase
 
         $this->assertStringContainsString('△自社 2件', $documentXml);
         $this->assertStringContainsString('△比較 4件', $documentXml);
+    }
+
+    public function test_comparison_section_does_not_show_a_zero_over_zero_competitor_line_when_the_competitor_is_not_readable(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel([
+            'brandWheelCompetitor' => $this->wheel([
+                'status' => 'insufficient_input',
+                'status_message' => 'サイトから十分な文章を読み取れなかったため、この項目の分析は行っていません。',
+            ]),
+            'competitorTotalMatched' => 0,
+            'competitorTotalMax' => 0,
+        ]));
+
+        $this->assertStringNotContainsString('比較サイト 0 / 0項目', $documentXml);
     }
 
     // ------------------------------------------------------------------

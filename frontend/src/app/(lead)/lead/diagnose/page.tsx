@@ -45,9 +45,15 @@ function LeadDiagnoseContent() {
 
   if (analysisId === null) {
     return (
-      <div className="space-y-4">
-        <h1 className="text-lg font-semibold">診断するサイトを入力してください</h1>
-        <LeadAnalysisForm token={token} onStarted={handleStarted} />
+      <div className="space-y-6" data-lead-medium>
+        <div className="space-y-3 text-center">
+          <p className="lead-eyebrow">STEP 2 / 2</p>
+          <h1 className="lead-heading">診断するサイトをお選びください。</h1>
+        </div>
+        <div className="space-y-4">
+          <h2 className="lead-card-heading">URLのご入力</h2>
+          <LeadAnalysisForm token={token} onStarted={handleStarted} />
+        </div>
       </div>
     );
   }

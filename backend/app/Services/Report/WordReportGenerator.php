@@ -59,7 +59,7 @@ class WordReportGenerator
             '自社サイト', $viewModel->selfTotalMatched, $viewModel->selfTotalMax,
             $viewModel->brandWheelComparison['self_points'],
         );
-        if ($viewModel->competitorWebsiteUrl !== null) {
+        if ($this->competitorReadable($viewModel)) {
             $this->addBrandWheelAnalysisSection(
                 $phpWord, '競合サイトの分析結果', $viewModel->brandWheelCompetitor,
                 '競合サイト', $viewModel->competitorTotalMatched, $viewModel->competitorTotalMax,
@@ -289,7 +289,7 @@ class WordReportGenerator
             return;
         }
 
-        $showCompetitorColumn = $viewModel->competitorWebsiteUrl !== null;
+        $showCompetitorColumn = $this->competitorReadable($viewModel);
 
         $section->addText(
             '24項目それぞれについて、サイトに該当する記述があったかどうかを3段階で示しています。',
@@ -343,6 +343,21 @@ class WordReportGenerator
             $refLegend .= "　　△比較 {$viewModel->competitorTotalLabelOnly}件";
         }
         $section->addText($refLegend, ['size' => 9, 'color' => '8A8A8A']);
+    }
+
+    /**
+     * 2026-08-18: PDF版(lead-pdf.blade.php)の$competitorReadableと同じ判定
+     * (競合サイトのURLの有無ではなく、実際にstatus==='success'かつaxesが
+     * 空でないかで判定する)。以前は競合サイト分析結果セクション(generate())と
+     * ○△－の対比表(addComparisonSection())がどちらもcompetitorWebsiteUrlの
+     * 有無だけで分岐していたため、URLはあるが読み取れなかった場合(403等)に、
+     * ほぼ空のセクションと「比較サイト 0 / 0項目」が出力されてしまっていた
+     * (ゴディバの403調査から派生した誤記載の修正、依頼者指定)。
+     */
+    private function competitorReadable(ReportViewModel $viewModel): bool
+    {
+        return ($viewModel->brandWheelCompetitor['status'] ?? null) === 'success'
+            && ($viewModel->brandWheelCompetitor['axes'] ?? []) !== [];
     }
 
     private function stateMark(string $state): string

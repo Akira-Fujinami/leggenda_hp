@@ -36,7 +36,7 @@ describe("LeadAnalysisForm", () => {
     const user = userEvent.setup();
     render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
 
-    await user.type(screen.getByLabelText("自社サイトのURL"), "https://example.com");
+    await user.type(screen.getByLabelText("貴社の採用サイト URL"), "https://example.com");
     await user.click(screen.getByRole("button", { name: "診断をはじめる" }));
 
     await waitFor(() => {
@@ -51,8 +51,8 @@ describe("LeadAnalysisForm", () => {
     const user = userEvent.setup();
     render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
 
-    await user.type(screen.getByLabelText("自社サイトのURL"), "https://example.com");
-    await user.type(screen.getByLabelText("比較したい競合サイトのURL(任意)"), "https://competitor.example.com");
+    await user.type(screen.getByLabelText("貴社の採用サイト URL"), "https://example.com");
+    await user.type(screen.getByLabelText("比較したい企業の採用サイト URL(任意・1件まで)"), "https://competitor.example.com");
     await user.click(screen.getByRole("button", { name: "診断をはじめる" }));
 
     await waitFor(() => {
@@ -71,7 +71,7 @@ describe("LeadAnalysisForm", () => {
     });
 
     render(<LeadAnalysisForm token="abc" onStarted={onStarted} />);
-    await user.type(screen.getByLabelText("自社サイトのURL"), "https://example.com");
+    await user.type(screen.getByLabelText("貴社の採用サイト URL"), "https://example.com");
     await user.click(screen.getByRole("button", { name: "診断をはじめる" }));
 
     await waitFor(() => {
@@ -91,7 +91,17 @@ describe("LeadAnalysisForm", () => {
     expect(screen.getByText("この診断URLは利用できません。お手数ですが、もう一度お申し込みください。")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "最初からやり直す" })).toHaveAttribute("href", "/lead/start");
     // トークンが壊れている以上、フォームへ再入力させても無駄なので出さない。
-    expect(screen.queryByLabelText("自社サイトのURL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("貴社の採用サイト URL")).not.toBeInTheDocument();
+  });
+
+  it("shows the url guidance block with all four items", () => {
+    render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
+
+    expect(screen.getByText("どのURLを入力すればよいか")).toBeInTheDocument();
+    expect(screen.getByText("採用サイトのトップページ")).toBeInTheDocument();
+    expect(screen.getByText("コーポレートサイトの「採用情報」ページ")).toBeInTheDocument();
+    expect(screen.getByText("求人媒体の掲載ページ")).toBeInTheDocument();
+    expect(screen.getByText("求人一覧だけのページ・ログインが必要なページ")).toBeInTheDocument();
   });
 
   it("keeps showing the form with the specific message for non-token errors like congestion", () => {
@@ -103,7 +113,7 @@ describe("LeadAnalysisForm", () => {
 
     render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
 
-    expect(screen.getByLabelText("自社サイトのURL")).toBeInTheDocument();
+    expect(screen.getByLabelText("貴社の採用サイト URL")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "最初からやり直す" })).not.toBeInTheDocument();
   });
 });
