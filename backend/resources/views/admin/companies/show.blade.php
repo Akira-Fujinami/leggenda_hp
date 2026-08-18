@@ -27,7 +27,7 @@
 <div class="grid-2">
     <div class="card">
         <h3>営業ステータス</h3>
-        <form method="POST" action="{{ route('admin.companies.sales-status', $company->id) }}">
+        <form method="POST" action="{{ route('admin.companies.sales-status', $company->id, false) }}">
             @csrf
             @method('PATCH')
             <select name="sales_status" onchange="this.form.submit()">
@@ -41,7 +41,7 @@
 
     <div class="card">
         <h3>営業メモ</h3>
-        <form method="POST" action="{{ route('admin.companies.sales-note', $company->id) }}">
+        <form method="POST" action="{{ route('admin.companies.sales-note', $company->id, false) }}">
             @csrf
             @method('PATCH')
             <textarea name="sales_note" placeholder="商談メモ・次回アクション等">{{ old('sales_note', $company->sales_note) }}</textarea>
@@ -82,7 +82,7 @@
                     <dt>Brand Wheel</dt><dd>{{ $brandWheelSummary }}</dd>
                     <dt>PDF</dt><dd>{{ $pdfReport?->status ?? 'processing' }}</dd>
                 </dl>
-                <a href="{{ route('admin.analyses.show', $analysis->id) }}">詳細を見る &rarr;</a>
+                <a href="{{ route('admin.analyses.show', $analysis->id, false) }}">詳細を見る &rarr;</a>
             </div>
         @endforeach
 

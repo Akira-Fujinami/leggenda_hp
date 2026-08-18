@@ -38,7 +38,11 @@ class CompanyController extends Controller
                 'project' => fn ($q) => $q->select('id', 'name', 'lead_session_id'),
             ])
             ->orderByDesc('created_at')
-            ->paginate(10);
+            ->paginate(10)
+            // scheme+hostを含まないパスに固定する(App\Services\Admin\
+            // LeadCompanyQueryService::paginate()と同じ理由 ―― Render上での
+            // mixed content対策)。
+            ->setPath(request()->getPathInfo());
 
         $analyses->getCollection()->transform(function ($analysis) {
             $analysis->setRelation(

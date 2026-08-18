@@ -5,7 +5,7 @@
 @section('content')
 <h2>診断管理</h2>
 
-<form method="GET" action="{{ route('admin.analyses.index') }}" class="toolbar">
+<form method="GET" action="{{ route('admin.analyses.index', [], false) }}" class="toolbar">
     <select name="status">
         <option value="">診断状態(すべて)</option>
         @foreach (['pending', 'queued', 'running', 'completed', 'partial', 'failed', 'cancelled'] as $value)
@@ -25,7 +25,7 @@
         <tbody>
             @foreach ($analyses as $analysis)
                 @php $selfWebsite = $analysis->project?->websites?->firstWhere('is_primary', true); @endphp
-                <tr class="clickable" onclick="location.href='{{ route('admin.analyses.show', $analysis->id) }}'">
+                <tr class="clickable" onclick="location.href='{{ route('admin.analyses.show', $analysis->id, false) }}'">
                     <td>{{ $analysis->created_at->format('Y/n/j H:i') }}</td>
                     <td>{{ $analysis->project?->leadCompany?->company_name ?? '—' }}</td>
                     <td>{{ $selfWebsite?->url ?? '—' }}</td>

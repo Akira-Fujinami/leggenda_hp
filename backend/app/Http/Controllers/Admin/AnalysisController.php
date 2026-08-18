@@ -28,7 +28,10 @@ class AnalysisController extends Controller
             ->with(['project.leadCompany', 'project.websites'])
             ->orderByDesc('created_at')
             ->paginate(self::PER_PAGE)
-            ->withQueryString();
+            ->withQueryString()
+            // scheme+hostを含まないパスに固定する(App\Services\Admin\
+            // LeadCompanyQueryService::paginate()と同じ理由)。
+            ->setPath($request->getPathInfo());
 
         return view('admin.analyses.index', [
             'analyses' => $analyses,

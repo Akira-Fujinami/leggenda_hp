@@ -30,7 +30,12 @@ class LeadCompanyQueryService
         $this->applyReDiagnosedFilter($query, $filters['re_diagnosed'] ?? null);
         $this->applySort($query, $filters['sort'] ?? null, $filters['direction'] ?? null);
 
-        return $query->paginate(self::PER_PAGE)->withQueryString();
+        // setPath()でscheme+hostを含まないパスに固定する ―― admin.guest.blade.php
+        // のfetch URLと同じ理由(Renderがtrust proxies未設定でX-Forwarded-Protoを
+        // 信頼しないため、絶対URL生成だとhttp://になりmixed contentで
+        // ブロックされうる)。JSON API(Api\ProjectController等)のページネーション
+        // には影響しない(呼び出し経路が別)。
+        return $query->paginate(self::PER_PAGE)->withQueryString()->setPath(request()->getPathInfo());
     }
 
     /**

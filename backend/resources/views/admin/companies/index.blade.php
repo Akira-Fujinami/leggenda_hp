@@ -5,7 +5,7 @@
 @section('content')
 <h2>診断企業</h2>
 
-<form method="GET" action="{{ route('admin.companies.index') }}" class="toolbar">
+<form method="GET" action="{{ route('admin.companies.index', [], false) }}" class="toolbar">
     <input type="text" name="search" value="{{ $filters['search'] ?? '' }}" placeholder="企業名・担当者・メール・ドメインで検索">
 
     <select name="sales_status">
@@ -35,7 +35,7 @@
     </select>
 
     <button type="submit" class="btn">絞り込む</button>
-    <a href="{{ route('admin.companies.index') }}" class="btn secondary">リセット</a>
+    <a href="{{ route('admin.companies.index', [], false) }}" class="btn secondary">リセット</a>
 </form>
 
 @if ($companies->isEmpty())
@@ -57,7 +57,7 @@
         </thead>
         <tbody>
             @foreach ($companies as $company)
-                <tr class="clickable" onclick="location.href='{{ route('admin.companies.show', $company->id) }}'">
+                <tr class="clickable" onclick="location.href='{{ route('admin.companies.show', $company->id, false) }}'">
                     <td>{{ $company->company_name }}</td>
                     <td>{{ $company->primary_contact_name }}</td>
                     <td>{{ $company->primary_contact_email }}</td>

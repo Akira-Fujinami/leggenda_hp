@@ -9,7 +9,7 @@
 @endphp
 <h2>診断詳細 #{{ $analysis->id }}</h2>
 
-<p><a href="{{ route('admin.companies.show', $analysis->project?->lead_company_id) }}">&larr; {{ $analysis->project?->leadCompany?->company_name ?? '企業詳細' }}へ戻る</a></p>
+<p><a href="{{ route('admin.companies.show', $analysis->project?->lead_company_id, false) }}">&larr; {{ $analysis->project?->leadCompany?->company_name ?? '企業詳細' }}へ戻る</a></p>
 
 <div class="info-grid">
     <div class="item">

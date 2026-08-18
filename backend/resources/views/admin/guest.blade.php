@@ -58,7 +58,20 @@
                 submitBtn.disabled = true;
                 submitBtn.textContent = 'ログイン中…';
 
-                fetch('{{ route('admin.auth') }}', {
+                {{--
+                    2026-08-19: route()の絶対URL版(scheme+host付き)を使うと、
+                    Render上でLaravelがX-Forwarded-Protoを信頼していない
+                    (trustProxies未設定、bootstrap/app.php参照)ため、実際は
+                    https://leggenda-hp-backend.onrender.com から配信された
+                    ページ内で http://scheme のURLが生成されてしまい、fetch()が
+                    mixed content(ブラウザのコンソールでは"Failed to fetch")
+                    としてブロックされていた(依頼者指摘)。route()の第三引数
+                    $absoluteをfalseにし、host/schemeを含まないパス相対URL
+                    (例: /admin/auth)を生成する ―― ブラウザは常に現在の
+                    ページのoriginに対して解決するため、frontend origin
+                    (leggenda-hp.onrender.com)へ飛ぶことも無い(依頼者指定)。
+                --}}
+                fetch('{{ route('admin.auth', [], false) }}', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -73,7 +86,7 @@
                 })
                     .then(function (response) {
                         if (response.ok) {
-                            window.location.href = '{{ route('admin.dashboard') }}';
+                            window.location.href = '{{ route('admin.dashboard', [], false) }}';
                             return;
                         }
 

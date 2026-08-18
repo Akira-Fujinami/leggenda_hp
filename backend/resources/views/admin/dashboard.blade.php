@@ -41,7 +41,7 @@
             <table class="list">
                 <tbody>
                     @foreach ($recentCompanies as $row)
-                        <tr class="clickable" onclick="location.href='{{ route('admin.companies.show', $row['company_id']) }}'">
+                        <tr class="clickable" onclick="location.href='{{ route('admin.companies.show', $row['company_id'], false) }}'">
                             <td>{{ $row['company_name'] }}</td>
                             <td>{{ $row['diagnosis_count'] }}回</td>
                             <td>{{ $row['last_diagnosed_at']?->diffForHumans() }}</td>
@@ -51,7 +51,7 @@
                 </tbody>
             </table>
         @endif
-        <p style="margin-top: 12px;"><a href="{{ route('admin.companies.index') }}">すべて見る &rarr;</a></p>
+        <p style="margin-top: 12px;"><a href="{{ route('admin.companies.index', [], false) }}">すべて見る &rarr;</a></p>
     </div>
 
     <div class="card">
@@ -61,7 +61,7 @@
         @else
             @foreach ($notableCompanies as $row)
                 <p style="margin: 0 0 10px;">
-                    <a href="{{ route('admin.companies.show', $row['company_id']) }}">
+                    <a href="{{ route('admin.companies.show', $row['company_id'], false) }}">
                         <span class="fire">&#128293;</span> {{ $row['company_name'] }}
                     </a><br>
                     <span style="font-size: 12px; color: var(--muted);">
@@ -88,7 +88,7 @@
                         <td>{{ $issue['company_name'] ?? '(不明)' }}</td>
                         <td>{{ $issue['reason'] }}</td>
                         <td>{{ $issue['occurred_at']?->diffForHumans() }}</td>
-                        <td><a href="{{ route('admin.analyses.show', $issue['analysis_id']) }}">詳細</a></td>
+                        <td><a href="{{ route('admin.analyses.show', $issue['analysis_id'], false) }}">詳細</a></td>
                     </tr>
                 @endforeach
             </tbody>

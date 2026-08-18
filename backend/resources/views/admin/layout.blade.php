@@ -106,12 +106,12 @@
         <aside class="sidebar">
             <h1>管理者ダッシュボード</h1>
             <nav>
-                <a href="{{ route('admin.dashboard') }}" class="{{ request()->routeIs('admin.dashboard*') ? 'active' : '' }}">ダッシュボード</a>
-                <a href="{{ route('admin.companies.index') }}" class="{{ request()->routeIs('admin.companies.*') ? 'active' : '' }}">診断企業</a>
-                <a href="{{ route('admin.analyses.index') }}" class="{{ request()->routeIs('admin.analyses.*') ? 'active' : '' }}">診断管理</a>
+                <a href="{{ route('admin.dashboard', [], false) }}" class="{{ request()->routeIs('admin.dashboard*') ? 'active' : '' }}">ダッシュボード</a>
+                <a href="{{ route('admin.companies.index', [], false) }}" class="{{ request()->routeIs('admin.companies.*') ? 'active' : '' }}">診断企業</a>
+                <a href="{{ route('admin.analyses.index', [], false) }}" class="{{ request()->routeIs('admin.analyses.*') ? 'active' : '' }}">診断管理</a>
             </nav>
             <div class="logout">
-                <form method="POST" action="{{ route('admin.logout') }}">
+                <form method="POST" action="{{ route('admin.logout', [], false) }}">
                     @csrf
                     <button type="submit">ログアウト</button>
                 </form>
