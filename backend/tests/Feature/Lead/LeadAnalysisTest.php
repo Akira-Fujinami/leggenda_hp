@@ -73,8 +73,9 @@ class LeadAnalysisTest extends TestCase
         $response->assertJsonStructure(['data' => ['analysis_id']]);
 
         $analysis = Analysis::find($response->json('data.analysis_id'));
-        // Phase 2でSemrush併用が承認されたため、Lighthouseは省略しない。
-        $this->assertFalse($analysis->skip_lighthouse);
+        // 2026-08-18: 本番実測でLighthouseが1診断の所要時間の大半を占めることが
+        // 判明したため、リード分析では省略する(既定true)。
+        $this->assertTrue($analysis->skip_lighthouse);
         // スクリーンショット由来の指標は0件のため、撮影自体は省略する。
         $this->assertTrue($analysis->skip_screenshots);
         $this->assertSame(1, $analysis->project->websites()->count());

@@ -26,11 +26,22 @@ return [
     // 安易に引き上げないこと(OOM再発のリスクがある)。
     'max_concurrent_analyses' => (int) env('LEAD_MAX_CONCURRENT_ANALYSES', 1),
 
-    // リード分析でもLighthouse/Semrushの両方を実施し、社内向けと同等のスコア
-    // 精度を確保する(Phase 2でSemrush併用が承認されたことに伴い、Phase 1の
-    // 「Lighthouse省略」判断を撤回。既定はfalseで、Analyzer単一Workerの
-    // 占有時間が伸びる点は max_concurrent_analyses の抑制で吸収する)。
-    'skip_lighthouse' => (bool) env('LEAD_SKIP_LIGHTHOUSE', false),
+    // リード分析ではLighthouseを省略する(2026-08-18、Phase 2の「省略しない」
+    // 判断を再度撤回)。本番実測(#99): run_lighthouse/run_recruit_lighthouseの
+    // 合計が1診断(自社+比較)あたり約106秒で、診断全体の平均108秒のほぼ全て
+    // を占めていた。本番は全キュー(analysis/external-api/analysis-heavy/ai/
+    // reports/notifications)を単一Workerが直列処理する構成のため、この間
+    // AI分析・レポート生成も含め他の処理が全て待たされる。
+    // 影響の裏取り(2026-08-18、実データ website_analysis_id=352で比較):
+    // リード向けスコアが26→20点(45点満点)、カバー率88.7%→64.5%に低下し、
+    // レポートの④観点(見やすさ・使いやすさ)の一文が「改善の余地があります」
+    // (needs_improvement)から「確認をおすすめします」(needs_review)に変わる
+    // ―― 画面(lead-results.tsx)は元々perspectives/scoreを表示していないため
+    // 無影響だが、PDF/Wordレポートの文言・点数は変わる。この差分は許容する
+    // 前提での変更(依頼者確認済み)。
+    // 元に戻す場合はLEAD_SKIP_LIGHTHOUSE=falseを設定するだけでよい
+    // (RunLighthouseJob/RunRecruitLighthouseJob自体は削除していない)。
+    'skip_lighthouse' => (bool) env('LEAD_SKIP_LIGHTHOUSE', true),
 
     // リード分析ではスクリーンショット撮影を省略する。77指標のうち
     // スクリーンショット由来の指標は0件のため、採点への影響はない。

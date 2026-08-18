@@ -142,6 +142,26 @@ class HtmlSeoAnalyzer
     ];
 
     /**
+     * 2026-08-18の指摘・実データ再現(ゴディバ採用サイト)。RECRUIT_SUBDOMAIN_
+     * PREFIXESはサブドメインの前方一致のみを見るため、"godiva-saiyo.com"の
+     * ようにセカンドレベルドメイン自体がハイフン区切りで採用ワードを含む
+     * 「会社名-saiyo.com」「会社名-recruit.jp」形式の採用専用ドメインを
+     * 拾えない。ホスト名の各ラベルを"-"/"_"で分割したトークン単位の完全一致
+     * (部分文字列一致ではない)で判定する ―― ハイフン無しで連結された社名
+     * (例: "bigjobs.co.jp")は分割されず誤検出しない。
+     *
+     * job/jobsは意図的に含めない。RECRUIT_EXACT_PATH_SEGMENTSと違い、この
+     * 一致はページ全体を採用ページと確定させ、以降ナビから別候補を探しに
+     * 行かなくなる強い判定のため、無関係なブランド名との衝突可能性がある
+     * 汎用英単語(job/jobs)は対象から外し、より確度の高い語のみを使う。
+     *
+     * @var list<string>
+     */
+    private const RECRUIT_HOST_LABEL_KEYWORDS = [
+        'recruit', 'recruits', 'careers', 'career', 'recruiting', 'saiyo',
+    ];
+
+    /**
      * 正規化(前後空白除去・連続空白の単一化・全角半角統一・小文字化)後に
      * 完全一致で照合するラベル。部分一致(例:「採用強化」)はここに含めない。
      */
@@ -640,7 +660,8 @@ class HtmlSeoAnalyzer
         // リンク(例: 障がい者採用ページ)をより優先シグナル数が高いという理由で
         // 誤って採用ページとして選んでしまう(実データ: 味の素で再現)。
         $pageIsRecruitPage = $this->segmentsMatchAny($this->pathSegments($pageUrl), self::RECRUIT_EXACT_PATH_SEGMENTS)
-            || $this->startsWithAny($pageHost, self::RECRUIT_SUBDOMAIN_PREFIXES);
+            || $this->startsWithAny($pageHost, self::RECRUIT_SUBDOMAIN_PREFIXES)
+            || $this->hostHasRecruitLabelToken($pageHost);
 
         $nodes = $xpath->query('//a[@href]');
         $detected = array_fill_keys(array_keys($categories), null);
@@ -833,6 +854,26 @@ class HtmlSeoAnalyzer
         foreach ($prefixes as $prefix) {
             if (str_starts_with($haystack, mb_strtolower($prefix))) {
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * ホスト名を"."でラベルに分割し、さらに各ラベルを"-"/"_"でトークンに
+     * 分割したうえで、RECRUIT_HOST_LABEL_KEYWORDSとの完全一致を見る。
+     * サブドメイン・TLD部分を区別せず全ラベルを対象にする ―― "com"/"co"/
+     * "jp"/"www"のような短い一般語はキーワードと衝突しないため、除外リストを
+     * 別途保守する必要はない。
+     */
+    private function hostHasRecruitLabelToken(string $host): bool
+    {
+        foreach (explode('.', $host) as $label) {
+            foreach (preg_split('/[-_]/', $label) ?: [] as $token) {
+                if (in_array($token, self::RECRUIT_HOST_LABEL_KEYWORDS, true)) {
+                    return true;
+                }
             }
         }
 

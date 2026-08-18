@@ -442,6 +442,98 @@ class HtmlSeoAnalyzerTest extends TestCase
         $this->assertSame('https://careers.example.com/', $result['business_links']['recruit']['url']);
     }
 
+    /**
+     * 2026-08-18の指摘・実データ再現(ゴディバ採用サイト、www.godiva-saiyo.com)。
+     * RECRUIT_SUBDOMAIN_PREFIXESの前方一致では拾えない「会社名-saiyo.com」
+     * 形式のセカンドレベルドメインを、ホスト名ラベルのハイフン区切りトークン
+     * 完全一致で自己参照と判定できることを確認する。
+     */
+    public function test_it_self_references_when_the_host_second_level_domain_contains_a_hyphenated_recruit_word(): void
+    {
+        $html = '<html><body><a href="/jobs">募集中の求人一覧</a></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://www.godiva-saiyo.com/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('https://www.godiva-saiyo.com/', $result['business_links']['recruit']['url']);
+    }
+
+    /**
+     * サブドメインが採用専用の場合は、従来通りRECRUIT_SUBDOMAIN_PREFIXES
+     * (前方一致)で自己参照と判定される(依頼4検証: recruit.moneyforward.com型)。
+     * 新設のhostHasRecruitLabelToken()を追加しても、この経路の挙動は変わらない。
+     */
+    public function test_it_still_self_references_via_the_existing_subdomain_prefix_signal(): void
+    {
+        $html = '<html><body><a href="https://www.example.com/">コーポレートサイト</a></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://recruit.example.com/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('https://recruit.example.com/', $result['business_links']['recruit']['url']);
+    }
+
+    /**
+     * パスセグメントに採用ワードが含まれる場合は、従来通りRECRUIT_EXACT_
+     * PATH_SEGMENTSで自己参照と判定される(依頼4検証: /saiyo_career型)。
+     */
+    public function test_it_still_self_references_via_the_existing_path_segment_signal(): void
+    {
+        $html = '<html><body><a href="https://www.example.com/">コーポレートサイト</a></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://careers.example.co.jp/saiyo_career');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('https://careers.example.co.jp/saiyo_career', $result['business_links']['recruit']['url']);
+    }
+
+    /**
+     * ホスト名にもパスにも採用ワードが一切無い場合は、従来通りfalseのまま
+     * (依頼4検証: hello-world.smarthr.co.jp型)。ナビゲーションリンクからの
+     * 通常の候補探索経路に進む。
+     */
+    public function test_it_does_not_self_reference_when_the_host_has_no_recruit_word_at_all(): void
+    {
+        $html = '<html><body><a href="/recruit/">採用情報</a></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://hello-world.example.co.jp/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('/recruit/', $result['business_links']['recruit']['url']);
+        $this->assertNotSame('https://hello-world.example.co.jp/', $result['business_links']['recruit']['url']);
+    }
+
+    /**
+     * 誤検出を防ぐ負例①: ハイフン無しで連結された社名("bigjobs")はトークン化
+     * されず、"jobs"単独と一致しないため誤検出しない。
+     */
+    public function test_it_does_not_treat_a_concatenated_non_hyphenated_brand_name_as_a_recruit_host(): void
+    {
+        $html = '<html><body><a href="/careers">採用情報</a></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://www.bigjobs.co.jp/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('/careers', $result['business_links']['recruit']['url']);
+        $this->assertNotSame('https://www.bigjobs.co.jp/', $result['business_links']['recruit']['url']);
+    }
+
+    /**
+     * 誤検出を防ぐ負例②: ハイフン区切りでも"job"/"jobs"は
+     * RECRUIT_HOST_LABEL_KEYWORDSに含まれないため、自己参照と判定しない
+     * (job/jobsは無関係なブランド名との衝突可能性があるため意図的に除外)。
+     */
+    public function test_it_does_not_self_reference_via_hyphenated_job_or_jobs_alone(): void
+    {
+        $html = '<html><body><a href="/careers">採用情報</a></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://www.the-job-shop.example.com/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('/careers', $result['business_links']['recruit']['url']);
+        $this->assertNotSame('https://www.the-job-shop.example.com/', $result['business_links']['recruit']['url']);
+    }
+
     public function test_it_keeps_first_match_wins_behavior_for_non_recruit_categories(): void
     {
         // recruit以外のカテゴリは、後続によりexactな一致があっても、依然として
