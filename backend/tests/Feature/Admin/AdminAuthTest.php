@@ -95,6 +95,27 @@ class AdminAuthTest extends TestCase
         $this->assertNull(session('admin_authenticated'));
     }
 
+    /**
+     * 2026-08-19: /admin/auth へのリクエストで例外(このテストでは
+     * ValidationException)が起きた際、Accept: application/jsonを送って
+     * いるにも関わらずLaravel標準のHTMLエラーページが返り、フロント側の
+     * response.json()が"Unexpected token '<'"で失敗する不具合があった
+     * (依頼者指摘)。原因はbootstrap/app.phpのshouldRenderJsonWhen()が
+     * `api/*`パスのみを対象にしており`/admin/*`が対象外だったこと ――
+     * 実際にCSRFトークン不一致(419)で再現することをcurlで確認済み
+     * (PHPUnitのテスト環境はCSRF自体をbypassするため419そのものは
+     * ここでは再現できないが、同じ$wantsJsonの判定ロジックを通る
+     * ValidationExceptionで同じ修正が効いていることを検証する)。
+     */
+    public function test_missing_credentials_returns_json_not_html(): void
+    {
+        $response = $this->postJson('/admin/auth', []);
+
+        $response->assertStatus(422);
+        $response->assertHeader('content-type', 'application/json');
+        $response->assertJsonStructure(['message', 'errors']);
+    }
+
     public function test_wrong_username_gives_the_same_generic_message_as_wrong_password(): void
     {
         $response = $this->postJson('/admin/auth', [

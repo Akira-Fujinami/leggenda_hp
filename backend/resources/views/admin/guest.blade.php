@@ -50,13 +50,32 @@
             var submitBtn = document.getElementById('submit-btn');
             var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 
+            // ステータスコードごとの汎用メッセージ(依頼者指定)。詳細な
+            // サーバーエラー文言("Unexpected token '<'"等)をそのまま
+            // 画面に出さない。
+            var STATUS_MESSAGES = {
+                401: 'ユーザー名またはパスワードが正しくありません。',
+                419: 'セッションの有効期限が切れました。ページを再読み込みしてください。',
+                429: 'ログイン試行回数が多すぎます。しばらくしてから再度お試しください。',
+                500: 'ログイン処理でエラーが発生しました。',
+            };
+
+            function setLoading(isLoading) {
+                submitBtn.disabled = isLoading;
+                submitBtn.textContent = isLoading ? 'ログイン中…' : 'ログイン';
+            }
+
+            function showError(message) {
+                errorBox.textContent = message;
+                errorBox.classList.add('visible');
+            }
+
             form.addEventListener('submit', function (event) {
                 event.preventDefault();
 
                 errorBox.classList.remove('visible');
                 errorBox.textContent = '';
-                submitBtn.disabled = true;
-                submitBtn.textContent = 'ログイン中…';
+                setLoading(true);
 
                 {{--
                     2026-08-19: route()の絶対URL版(scheme+host付き)を使うと、
@@ -85,20 +104,42 @@
                     }),
                 })
                     .then(function (response) {
-                        if (response.ok) {
-                            window.location.href = '{{ route('admin.dashboard', [], false) }}';
-                            return;
+                        var contentType = response.headers.get('content-type') || '';
+
+                        // 2026-08-19: CSRFトークン不一致(419)等でLaravelの
+                        // HTML「Page Expired」ページが返っていたことがあり、
+                        // response.json()がそのまま失敗して"Unexpected token
+                        // '<'"がユーザーに見えていた(依頼者指摘)。まず
+                        // Content-Typeを確認し、JSONでなければ本文を読まずに
+                        // ステータスコードから汎用メッセージを組み立てる
+                        // (認証情報はログに出さない、bodyの内容だけ診断用に
+                        // console.errorへ残す)。
+                        if (! contentType.includes('application/json')) {
+                            return response.text().then(function (text) {
+                                console.error('Admin auth returned a non-JSON response', {
+                                    status: response.status,
+                                    url: response.url,
+                                    redirected: response.redirected,
+                                    contentType: contentType,
+                                    bodyPreview: text.substring(0, 300),
+                                });
+
+                                throw new Error(STATUS_MESSAGES[response.status] || 'サーバーから予期しないレスポンスが返されました。');
+                            });
                         }
 
                         return response.json().then(function (data) {
-                            throw new Error(data.message || 'ログインに失敗しました。');
+                            if (response.ok) {
+                                window.location.href = '{{ route('admin.dashboard', [], false) }}';
+                                return;
+                            }
+
+                            throw new Error(STATUS_MESSAGES[response.status] || data.message || 'ログインに失敗しました。');
                         });
                     })
                     .catch(function (error) {
-                        errorBox.textContent = error.message || 'ログインに失敗しました。';
-                        errorBox.classList.add('visible');
-                        submitBtn.disabled = false;
-                        submitBtn.textContent = 'ログイン';
+                        showError(error.message || 'ログインに失敗しました。');
+                        setLoading(false);
                     });
             });
         })();

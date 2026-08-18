@@ -47,12 +47,25 @@ return Application::configure(basePath: dirname(__DIR__))
         // 制限(RateLimiter::for('lead-consultation')等)を優先する。
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        $exceptions->shouldRenderJsonWhen(
-            fn (Request $request) => $request->is('api/*'),
-        );
+        // 2026-08-19: /admin/auth(fetch()から呼ぶJSON専用エンドポイント)で
+        // CSRFトークン不一致(419)が発生した際、Accept: application/jsonを
+        // 送っていたにも関わらずLaravelの標準HTML「Page Expired」ページ
+        // (<!DOCTYPE html>...)が返り、フロントのresponse.json()が
+        // "Unexpected token '<'"で失敗する不具合が実PDF...ではなく実curl
+        // 確認で再現した(依頼者指摘)。原因はshouldRenderJsonWhen()が
+        // `api/*`パスのみを対象にしており、/admin配下のJSON期待リクエスト
+        // (Accept: application/json)が対象外だったため。
+        // `admin/*`全体をJSON化すると、通常のページ遷移(GET /admin/companies/
+        // 存在しないID 等)の404がJSONになり管理画面のHTMLエラーページが
+        // 壊れるため、「adminパスかつAccept: application/jsonを明示的に
+        // 要求している」場合のみJSON化する($request->expectsJson()で判定)。
+        $wantsJson = fn (Request $request) => $request->is('api/*')
+            || ($request->is('admin/*') && $request->expectsJson());
 
-        $exceptions->render(function (ValidationException $e, Request $request) {
-            if (! $request->is('api/*')) {
+        $exceptions->shouldRenderJsonWhen($wantsJson);
+
+        $exceptions->render(function (ValidationException $e, Request $request) use ($wantsJson) {
+            if (! $wantsJson($request)) {
                 return null;
             }
 
@@ -63,8 +76,8 @@ return Application::configure(basePath: dirname(__DIR__))
             ], 422);
         });
 
-        $exceptions->render(function (AnalysisAlreadyRunningException $e, Request $request) {
-            if (! $request->is('api/*')) {
+        $exceptions->render(function (AnalysisAlreadyRunningException $e, Request $request) use ($wantsJson) {
+            if (! $wantsJson($request)) {
                 return null;
             }
 
@@ -75,8 +88,8 @@ return Application::configure(basePath: dirname(__DIR__))
             ], 409);
         });
 
-        $exceptions->render(function (AuthenticationException $e, Request $request) {
-            if (! $request->is('api/*')) {
+        $exceptions->render(function (AuthenticationException $e, Request $request) use ($wantsJson) {
+            if (! $wantsJson($request)) {
                 return null;
             }
 
@@ -87,13 +100,17 @@ return Application::configure(basePath: dirname(__DIR__))
             ], 401);
         });
 
+        // TokenMismatchException(CSRF/419)はHttpExceptionInterfaceを実装して
+        // いるため、専用のrender()を足さなくても以下の汎用ハンドラで拾われる
+        // (getStatusCode()===419)。
+        //
         // Illuminate\Auth\Access\AuthorizationException はLaravelの
         // prepareException()内でrender callbackが呼ばれる前に
         // AccessDeniedHttpException (= HttpExceptionInterface) へ変換されて
         // しまうため、専用のrender()コールバックを登録しても発火しない。
         // そのため403は以下の汎用ハンドラ内で明示的に扱う。
-        $exceptions->render(function (HttpExceptionInterface $e, Request $request) {
-            if (! $request->is('api/*') || $e->getStatusCode() < 400) {
+        $exceptions->render(function (HttpExceptionInterface $e, Request $request) use ($wantsJson) {
+            if (! $wantsJson($request) || $e->getStatusCode() < 400) {
                 return null;
             }
 
@@ -103,6 +120,22 @@ return Application::configure(basePath: dirname(__DIR__))
                     'errors' => [],
                     'error_code' => 'FORBIDDEN',
                 ], 403);
+            }
+
+            if ($e->getStatusCode() === 419) {
+                return response()->json([
+                    'message' => 'セッションの有効期限が切れました。ページを再読み込みしてください。',
+                    'errors' => [],
+                    'error_code' => 'SESSION_EXPIRED',
+                ], 419);
+            }
+
+            if ($e->getStatusCode() === 429) {
+                return response()->json([
+                    'message' => 'しばらく時間をおいてから再度お試しください。',
+                    'errors' => [],
+                    'error_code' => 'TOO_MANY_REQUESTS',
+                ], 429);
             }
 
             return response()->json([
