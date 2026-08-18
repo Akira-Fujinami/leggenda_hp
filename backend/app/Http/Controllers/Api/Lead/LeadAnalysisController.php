@@ -21,6 +21,7 @@ use App\Services\Lead\LeadNotificationService;
 use App\Services\Lead\LeadPerspectiveComposer;
 use App\Services\Lead\LeadRecommendationComposer;
 use App\Services\Lead\LeadScoreCalculator;
+use App\Services\Lead\LeadCompanyResolver;
 use App\Services\Lead\LeadSessionService;
 use App\Services\WebsiteService;
 use Illuminate\Database\QueryException;
@@ -45,6 +46,7 @@ class LeadAnalysisController extends Controller
 {
     public function __construct(
         private readonly LeadSessionService $leadSessions,
+        private readonly LeadCompanyResolver $leadCompanies,
         private readonly WebsiteService $websites,
         private readonly AnalysisService $analyses,
         private readonly LeadNotificationService $notifications,
@@ -100,6 +102,18 @@ class LeadAnalysisController extends Controller
         $project->save();
 
         $selfWebsite = $this->websites->create($project, ['name' => '自社サイト', 'url' => $data['self_url'], 'is_primary' => true]);
+
+        // 管理者ダッシュボード(営業リード管理)向け。相談リクエストの有無に
+        // 関わらず、診断を実行した時点で企業として蓄積する(依頼者指定)。
+        // 失敗しても診断そのものは止めない(既存の通知送信と同じ方針)。
+        try {
+            $leadCompany = $this->leadCompanies->resolveForDiagnosis($leadSession, $data['self_url']);
+            $project->lead_company_id = $leadCompany->id;
+            $project->save();
+        } catch (Throwable $e) {
+            report($e);
+            Log::warning('Lead company resolution failed', ['lead_session_id' => $leadSession->id]);
+        }
 
         if (! empty($data['competitor_url'])) {
             $this->websites->create($project, ['name' => '比較サイト', 'url' => $data['competitor_url'], 'is_primary' => false]);

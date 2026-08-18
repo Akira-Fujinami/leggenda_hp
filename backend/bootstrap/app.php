@@ -2,6 +2,7 @@
 
 use App\Exceptions\Analysis\AnalysisAlreadyRunningException;
 use App\Http\Middleware\AssignRequestId;
+use App\Http\Middleware\EnsureAdminAuthenticated;
 use App\Http\Middleware\ResolveLeadToken;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
@@ -26,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api(prepend: [AssignRequestId::class]);
         $middleware->alias([
             'lead.token' => ResolveLeadToken::class,
+            'admin.auth' => EnsureAdminAuthenticated::class,
         ]);
         // 2026-07-27に「$request->ip()が常にRenderのロードバランサーの
         // IPを返す」問題への対処として一度 trustProxies(at: '*') を

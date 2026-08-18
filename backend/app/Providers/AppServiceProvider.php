@@ -28,6 +28,16 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(5)->by($email.'|'.$request->ip());
         });
 
+        // 管理者ダッシュボード(/admin)の共有アカウントへのブルートフォース
+        // 対策。'login'と同じ考え方(入力値+IPをキーにする)。有効な
+        // ユーザー名は実質1つしか無いため、trustProxies未設定でIPが
+        // 常に同一に見える環境でも、この組み合わせキーで一定の制限が働く。
+        RateLimiter::for('admin-login', function (Request $request) {
+            $username = (string) $request->input('username');
+
+            return Limit::perMinute(5)->by($username.'|'.$request->ip());
+        });
+
         // リード向け公開エンドポイント。未認証のIPからのフォーム乱用・
         // 分析実行の乱発を防ぐ(1トークン1回の実行回数制限とは別に、
         // IP単位でも制限する)。

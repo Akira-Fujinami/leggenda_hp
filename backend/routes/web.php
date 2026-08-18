@@ -11,3 +11,5 @@ Route::get('/', function () {
 // webミドルウェアグループ(セッション/CSRF等)も外し、依存を完全に持たない。
 Route::get('/health', fn () => response()->json(['status' => 'ok']))
     ->withoutMiddleware(['web']);
+
+require __DIR__.'/admin.php';

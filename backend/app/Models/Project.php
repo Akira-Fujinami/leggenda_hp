@@ -37,6 +37,17 @@ class Project extends Model
     }
 
     /**
+     * リード獲得フォーム経由のprojectのみ非null(leadSession()と同じ条件)。
+     * 診断企業の集約(管理者ダッシュボード)向け。
+     *
+     * @return BelongsTo<LeadCompany, $this>
+     */
+    public function leadCompany(): BelongsTo
+    {
+        return $this->belongsTo(LeadCompany::class);
+    }
+
+    /**
      * @return HasMany<Website, $this>
      */
     public function websites(): HasMany

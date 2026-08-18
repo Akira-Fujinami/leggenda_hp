@@ -420,16 +420,19 @@ class LeadPdfViewTest extends TestCase
      * サマリー(左列)とレーダー(右列)の高さが内容量(サマリーの行数・
      * レーダー画像の有無)によって変わり、自社/競合ページを重ねて比較すると
      * 6カテゴリ帯以下が数mmずれる不具合が実PDF確認(PyMuPDFでの座標実測)で
-     * 見つかった。両列に同じmin-heightのdivを入れて行の高さを固定した
-     * ことを、レンダリング結果に両方のdivが存在することで確認する
-     * (実際のY座標の一致自体はPHPUnitでは検証できないため、実PDF実測は
-     * 別途tinker+PyMuPDFで実施し、7ページ構成・余白を確認済み)。
+     * 見つかった。左列にmin-heightのdivを入れて行の高さを固定したことを、
+     * レンダリング結果にdivが存在することで確認する(実際のY座標の一致自体
+     * はPHPUnitでは検証できないため、実PDF実測は別途tinker+PyMuPDFで実施し、
+     * 7ページ構成・余白を確認済み)。
+     * 2026-08-24: 68mm→66mmへ縮小(依頼者指摘 ―― サマリーが短い実データで
+     * 空白が大きすぎた)。右列(レーダー)側はvertical-align:middleで中央寄せ
+     * するためmin-heightを持たない ―― 左列のdivだけが行の高さを決める。
      */
-    public function test_self_and_competitor_analysis_pages_reserve_the_same_min_height_for_the_score_card_and_radar_columns(): void
+    public function test_self_and_competitor_analysis_pages_reserve_the_same_min_height_for_the_score_card_column(): void
     {
         $html = $this->render($this->comparisonViewModel());
 
-        $this->assertSame(4, substr_count($html, '<div style="min-height: 68mm;">'));
+        $this->assertSame(2, substr_count($html, '<div style="min-height: 66mm;">'));
     }
 
     /**
@@ -475,7 +478,7 @@ class LeadPdfViewTest extends TestCase
         $countAll = fn (string $section, string $needle): int => substr_count($section, $needle);
 
         foreach ([
-            '<div style="min-height: 68mm;">',
+            '<div style="min-height: 66mm;">',
             '<div class="statbox">',
             'class="axcell"',
             'class="axhead"',
