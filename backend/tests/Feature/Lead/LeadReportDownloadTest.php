@@ -53,12 +53,13 @@ class LeadReportDownloadTest extends TestCase
     }
 
     /**
-     * 2026-08-24追加: maybeDispatchReportGeneration()が自社サイトの
-     * ブランド・ホイール判定を参照するようになったため(BrandWheelReportEligibility)、
-     * レポート生成そのものの起動を検証するテストでは、実際にマッチした
-     * 結果を持つBrandWheelAnalysisResultを用意する必要がある(このテストの
-     * 関心事はレポート生成の起動タイミングであり、ブランド・ホイールの
-     * 判定内容そのものではないため、内容は最小限でよい)。
+     * 2026-08-24追加、2026-08-25に閾値を引き上げ: maybeDispatchReportGeneration()が
+     * 自社サイトのブランド・ホイール判定を参照するようになったため
+     * (BrandWheelReportEligibility)、レポート生成そのものの起動を検証する
+     * テストでは、config('brand_wheel.report_eligibility_min_matched')
+     * (既定6)以上マッチした結果を持つBrandWheelAnalysisResultを用意する
+     * 必要がある(このテストの関心事はレポート生成の起動タイミングであり、
+     * ブランド・ホイールの判定内容そのものではないため、内容は最小限でよい)。
      */
     private function makeReportableSelfBrandWheelResult(int $analysisId): void
     {
@@ -71,7 +72,15 @@ class LeadReportDownloadTest extends TestCase
             'analysis_id' => $analysisId,
             'website_analysis_id' => $selfWebsiteAnalysis->id,
             'status' => 'success',
-            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                ['key' => 'purpose', 'evidence' => 'x1'],
+                ['key' => 'business_expansion', 'evidence' => 'x2'],
+                ['key' => 'project_initiative', 'evidence' => 'x3'],
+                ['key' => 'social_contribution', 'evidence' => 'x4'],
+            ]], ['axis_key' => 'asset', 'matched_sub_elements' => [
+                ['key' => 'brand_recognition', 'evidence' => 'x5'],
+                ['key' => 'competitiveness', 'evidence' => 'x6'],
+            ]]],
         ]);
     }
 
@@ -221,6 +230,37 @@ class LeadReportDownloadTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('data.reports.docx', 'skipped');
         Queue::assertNotPushed(GenerateLeadReportJob::class);
+    }
+
+    /**
+     * 2026-08-25追加(依頼A): matched件数が1件以上でも
+     * config('brand_wheel.report_eligibility_min_matched')(既定6)未満
+     * (2026-08-24発行のレポート33、自社1/24に相当)の場合も、0件と同列に
+     * 「白紙/顧客提出可能な品質に満たない」として扱い、Reportはstatus=
+     * Skippedで作成される。GenerateLeadReportJobは起動しない。
+     */
+    public function test_report_generation_is_skipped_when_self_brand_wheel_result_is_below_the_report_eligibility_threshold(): void
+    {
+        [$token, $analysisId] = $this->issueTokenAndAnalysis([GenerateLeadReportJob::class]);
+        $selfWebsiteAnalysis = WebsiteAnalysis::query()
+            ->where('analysis_id', $analysisId)
+            ->whereHas('website', fn ($q) => $q->where('is_primary', true))
+            ->firstOrFail();
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysisId,
+            'website_analysis_id' => $selfWebsiteAnalysis->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+        Analysis::whereKey($analysisId)->update(['status' => AnalysisStatus::Completed]);
+
+        $response = $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.reports.docx', 'skipped');
+        $response->assertJsonPath('data.reports.pdf', 'skipped');
+        Queue::assertNotPushed(GenerateLeadReportJob::class);
+        $this->assertSame(2, Report::where('analysis_id', $analysisId)->where('status', ReportGenerationStatus::Skipped)->count());
     }
 
     public function test_results_reports_ready_status_once_generation_completes(): void

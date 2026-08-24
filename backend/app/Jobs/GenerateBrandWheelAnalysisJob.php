@@ -431,10 +431,12 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
      * ある場合のみ対象とする ―― 社内向けの通常診断・比較サイト側の判定には
      * 一切影響しない。
      *
-     * 「成功」の定義(2026-08-24変更): $record(保存直後の最新状態)が
-     * BrandWheelReportEligibility::isReportable()を満たすこと(status=
-     * 'success'かつ1件以上マッチ)に加え、トップページのHTTPステータスが
-     * 2xxであること。以前は採用ページ+トップページ本文の文字数閾値
+     * 「成功」の定義(2026-08-24変更、2026-08-25に閾値を引き上げ): $record
+     * (保存直後の最新状態)がBrandWheelReportEligibility::isReportable()を
+     * 満たすこと(status='success'かつmatched件数が
+     * config('brand_wheel.report_eligibility_min_matched')(既定6)以上)に
+     * 加え、トップページのHTTPステータスが2xxであること。以前は採用ページ+
+     * トップページ本文の文字数閾値
      * (isInputInsufficient()の否定)のみを基準にしていたが、これだと本文は
      * 十分でもAI呼び出し自体が失敗(error)した場合に消費だけが先に確定して
      * しまい、レポートを渡せないまま診断回数だけが失われる不具合があった

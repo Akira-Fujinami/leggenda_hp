@@ -179,6 +179,20 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         ]);
     }
 
+    /**
+     * putHomepageHtml()は常にAnalysisPageをcreate()するため、makeLeadOwned
+     * WebsiteAnalysis()が既に作成済みの行に対しては使えない(unique制約
+     * website_analysis_id+page_typeに違反する)。本文だけを差し替えたい
+     * テスト(2026-08-25追加、複数の下位要素に別々のevidenceを割り当てる
+     * ため)向けに、既存のraw_html_pathへ上書きするだけのヘルパー。
+     */
+    private function overwriteHomepageHtml(WebsiteAnalysis $websiteAnalysis, string $bodyText): void
+    {
+        $html = '<html><head><title>Example</title></head><body><p>'.$bodyText.'</p></body></html>';
+        $path = app(AnalysisStoragePaths::class)->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'homepage.html');
+        Storage::disk('analysis')->put($path, $html);
+    }
+
     public function test_timeout_is_always_ai_timeout_plus_thirty_seconds(): void
     {
         config(['services.brand_wheel_ai.timeout' => 45]);
@@ -699,7 +713,9 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
     }
 
     /**
-     * 2026-08-24: 消費の基準がstatus='success'かつ1件以上マッチへ変更された
+     * 2026-08-24: 消費の基準がstatus='success'かつmatched件数が
+     * config('brand_wheel.report_eligibility_min_matched')(2026-08-25に
+     * 1件以上→6件以上へ引き上げ、依頼A)以上へ変更された
      * (BrandWheelReportEligibility参照)。MockBrandWheelAnalysisProviderは
      * 設計上matched_sub_elementsを常に空で返す(実際には何も読んでいないことを
      * 明示するため)ため、この確認にはopenaiプロバイダと、実際にトップページ
@@ -709,13 +725,28 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
     {
         config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
         ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis();
+        // deduplicateEvidenceAcrossAxes()が同一evidence文字列を複数の下位要素
+        // にわたって使い回している場合に1件だけ残し他をduplicate_evidenceとして
+        // 破棄するため(BrandWheelAnalysisResponseParser)、6件それぞれに本文中の
+        // 別々の文を割り当てる。
+        $this->overwriteHomepageHtml($websiteAnalysis, str_repeat(
+            '技術で社会に貢献するという目標を掲げています。複数の事業領域で商品を展開しています。'.
+            '新しいプロジェクトに継続的に取り組んでいます。地域社会への貢献活動を行っています。'.
+            '業界内で高い知名度を持っています。独自の技術力を強みとしています。',
+            5,
+        ));
 
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [
                     ['message' => ['content' => json_encode([
                         'sub_elements' => $this->completeSubElements([
-                            'purpose' => ['matched' => true, 'evidence' => '会社の紹介文です。'],
+                            'purpose' => ['matched' => true, 'evidence' => '技術で社会に貢献するという目標を掲げています。'],
+                            'business_expansion' => ['matched' => true, 'evidence' => '複数の事業領域で商品を展開しています。'],
+                            'project_initiative' => ['matched' => true, 'evidence' => '新しいプロジェクトに継続的に取り組んでいます。'],
+                            'social_contribution' => ['matched' => true, 'evidence' => '地域社会への貢献活動を行っています。'],
+                            'brand_recognition' => ['matched' => true, 'evidence' => '業界内で高い知名度を持っています。'],
+                            'competitiveness' => ['matched' => true, 'evidence' => '独自の技術力を強みとしています。'],
                         ]),
                         'core_value' => ['readable' => false, 'evidence' => null],
                         'key_message' => null,
@@ -758,6 +789,49 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
 
         $this->assertSame('success', $record->fresh()->status);
+        $this->assertSame(0, $leadSession->fresh()->analyses_used);
+        $this->assertNull(Analysis::find($websiteAnalysis->analysis_id)->lead_quota_consumed_at);
+    }
+
+    /**
+     * 2026-08-25追加(依頼A): matched件数が1〜5件(旧基準では消費対象だったが
+     * 新基準config('brand_wheel.report_eligibility_min_matched')=6未満)の
+     * 場合はstatus='success'でも消費しない。2026-08-24発行のレポート33
+     * (自社1/24)がこの区分にあたる。
+     */
+    public function test_lead_quota_is_not_consumed_when_matched_count_is_below_the_report_eligibility_threshold(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis();
+
+        Http::fake([
+            'api.openai.com/*' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => json_encode([
+                        'sub_elements' => $this->completeSubElements([
+                            'purpose' => ['matched' => true, 'evidence' => '会社の紹介文です。'],
+                        ]),
+                        'core_value' => ['readable' => false, 'evidence' => null],
+                        'key_message' => null,
+                        'impression' => [],
+                        'quality_notes' => [],
+                        'cautions' => [],
+                    ])]],
+                ],
+                'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
+            ], 200),
+        ]);
+
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'pending',
+        ]);
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $this->assertSame('success', $record->fresh()->status);
+        $this->assertSame(1, collect((array) $record->fresh()->axes)->sum(fn (array $axis) => count($axis['matched_sub_elements'] ?? [])));
         $this->assertSame(0, $leadSession->fresh()->analyses_used);
         $this->assertNull(Analysis::find($websiteAnalysis->analysis_id)->lead_quota_consumed_at);
     }
@@ -810,17 +884,37 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         // 内容の整ったエラーページ(4xx/5xxだが本文が長い)を誤って成功扱い
         // しないための確認のため、matched_sub_elementsが常に空のmockではなく
         // 実際にマッチが成立するopenaiフェイクを使う(2026-08-24)。
-        // 文字数閾値・matched件数を満たしていても、トップページのHTTP
-        // ステータスが2xxでなければ「本文取得成功」とはみなさない。
+        // 文字数閾値・matched件数(2026-08-25の閾値引き上げ後も6件以上で
+        // 満たす)を満たしていても、トップページのHTTPステータスが2xxで
+        // なければ「本文取得成功」とはみなさない ―― HTTPステータス側の
+        // ガートが単独で効いていることを、matched件数側の閾値未達で
+        // たまたまfalseになる偽陽性と区別するため、matched件数は新閾値を
+        // 満たす6件にしている。
         config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
         ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis(homepageHttpStatus: 403);
+        // deduplicateEvidenceAcrossAxes()が同一evidence文字列の使い回しを
+        // duplicate_evidenceとして破棄するため、6件それぞれに本文中の
+        // 別々の文を割り当てる(このテスト自体の目的である「matched件数は
+        // 新閾値を満たすが、HTTPステータスだけがブロックしている」を正確に
+        // 再現するため)。
+        $this->overwriteHomepageHtml($websiteAnalysis, str_repeat(
+            '技術で社会に貢献するという目標を掲げています。複数の事業領域で商品を展開しています。'.
+            '新しいプロジェクトに継続的に取り組んでいます。地域社会への貢献活動を行っています。'.
+            '業界内で高い知名度を持っています。独自の技術力を強みとしています。',
+            5,
+        ));
 
         Http::fake([
             'api.openai.com/*' => Http::response([
                 'choices' => [
                     ['message' => ['content' => json_encode([
                         'sub_elements' => $this->completeSubElements([
-                            'purpose' => ['matched' => true, 'evidence' => '会社の紹介文です。'],
+                            'purpose' => ['matched' => true, 'evidence' => '技術で社会に貢献するという目標を掲げています。'],
+                            'business_expansion' => ['matched' => true, 'evidence' => '複数の事業領域で商品を展開しています。'],
+                            'project_initiative' => ['matched' => true, 'evidence' => '新しいプロジェクトに継続的に取り組んでいます。'],
+                            'social_contribution' => ['matched' => true, 'evidence' => '地域社会への貢献活動を行っています。'],
+                            'brand_recognition' => ['matched' => true, 'evidence' => '業界内で高い知名度を持っています。'],
+                            'competitiveness' => ['matched' => true, 'evidence' => '独自の技術力を強みとしています。'],
                         ]),
                         'core_value' => ['readable' => false, 'evidence' => null],
                         'key_message' => null,
@@ -878,7 +972,19 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
             'analysis_id' => $websiteAnalysis->analysis_id,
             'website_analysis_id' => $websiteAnalysis->id,
             'status' => 'success',
-            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => '会社の紹介文です。']]]],
+            // 2026-08-25: report_eligibility_min_matched(既定6)を満たす件数
+            // にする ―― 1件のままだと閾値未満でisReportable()がfalseになり、
+            // このテストが検証したい冪等性(2回呼んでも1回しか消費されない)の
+            // 前段(そもそも消費対象か)で早期returnしてしまう。
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                ['key' => 'purpose', 'evidence' => '会社の紹介文です。'],
+                ['key' => 'business_expansion', 'evidence' => '会社の紹介文です。'],
+                ['key' => 'project_initiative', 'evidence' => '会社の紹介文です。'],
+                ['key' => 'social_contribution', 'evidence' => '会社の紹介文です。'],
+            ]], ['axis_key' => 'asset', 'matched_sub_elements' => [
+                ['key' => 'brand_recognition', 'evidence' => '会社の紹介文です。'],
+                ['key' => 'competitiveness', 'evidence' => '会社の紹介文です。'],
+            ]]],
         ]);
 
         $job = new GenerateBrandWheelAnalysisJob(1);

@@ -466,10 +466,13 @@ class LeadAnalysisController extends Controller
      * 既存のFinalizeWebsiteAnalysisJob/FinalizeAnalysisJob等の共有
      * パイプラインには一切触れない。
      *
-     * 2026-08-24追加: Analysis.status自体がcompleted/partialでも、自社サイトの
-     * ブランド・ホイール判定がerror/insufficient_input/matched=0の場合は
-     * レポートの該当セクションが状態メッセージのみになり実質「白紙」になる
-     * (8/24 shinkin.co.jpの調査で判明)。この場合はReport行こそ作るが
+     * 2026-08-24追加、2026-08-25に閾値を引き上げ: Analysis.status自体が
+     * completed/partialでも、自社サイトのブランド・ホイール判定が
+     * error/insufficient_input、またはmatched件数が
+     * config('brand_wheel.report_eligibility_min_matched')(既定6)未満の
+     * 場合はレポートの該当セクションが実質「白紙」または顧客提出可能な
+     * 品質に届かない(8/24 shinkin.co.jpの調査、8/24発行レポート33で判明)。
+     * この場合はReport行こそ作るが
      * status=SkippedのままGenerateLeadReportJobを起動しない ―― 行を作らないと
      * singleReportStatus()が永久に'processing'を返し画面が固まったままに
      * なるため(依頼者指摘)。判定基準はGenerateBrandWheelAnalysisJob::
