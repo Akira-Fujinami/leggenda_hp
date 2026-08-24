@@ -99,7 +99,11 @@ export interface LeadConsultationResult {
   already_requested: boolean;
 }
 
-export type LeadReportStatus = "processing" | "ready" | "unavailable";
+// "skipped": 自社サイトのブランド・ホイール判定に実質的な中身が無かった
+// ための意図的な見送り(診断回数は消費されていない、別のURLで再挑戦可能)。
+// "unavailable"(本当の生成失敗、診断回数は消費済み)とは区別する
+// (バックエンドのLeadAnalysisController::singleReportStatus()参照、2026-08-24)。
+export type LeadReportStatus = "processing" | "ready" | "unavailable" | "skipped";
 
 export interface LeadResults {
   status: LeadAnalysisPhase;

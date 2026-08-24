@@ -8,6 +8,8 @@ use App\Models\BrandWheelAnalysisResult;
 use App\Models\LeadSession;
 use App\Notifications\Lead\LeadAnalysisStartedNotification;
 use App\Notifications\Lead\LeadConsultationRequestedNotification;
+use App\Notifications\Lead\LeadDiagnosisUnavailableNotification;
+use App\Notifications\Lead\LeadDiagnosisUnavailableStaffNotification;
 use App\Services\BrandWheel\BrandWheelEmailContentBuilder;
 use App\Services\BrandWheel\BrandWheelHexagonRenderer;
 use App\Services\BrandWheel\BrandWheelHexagonSvgBuilder;
@@ -38,6 +40,50 @@ class LeadNotificationService
                 email: $leadSession->email,
                 analysisId: $analysisId,
                 resultsUrl: $this->resultsUrl($rawToken),
+            ));
+        });
+    }
+
+    /**
+     * 2026-08-24追加: 自社サイトの診断結果を提供できなかったことをリード
+     * 本人へ伝える(LeadAnalysisController::maybeDispatchReportGeneration()
+     * から、BrandWheelReportEligibility::isReportable()がfalseになった
+     * 時点で1診断につき1回呼ぶ)。
+     */
+    public function notifyDiagnosisUnavailableToLead(LeadSession $leadSession, string $rawToken): void
+    {
+        Notification::route('mail', $leadSession->email)->notify(new LeadDiagnosisUnavailableNotification(
+            leadSessionId: $leadSession->id,
+            companyName: $leadSession->company_name,
+            resultsUrl: $this->resultsUrl($rawToken),
+        ));
+    }
+
+    /**
+     * 2026-08-24追加: 自社サイトの診断結果を提供できなかったことを社内
+     * 共有メールボックスへ通知する。config('lead.notify_staff_on_diagnosis_
+     * unavailable')で無効化できる(既定true)。$reasonSummaryは人が読める
+     * 日本語の要約のみ(内部のstatus文字列・例外メッセージは渡さないこと)。
+     */
+    public function notifyDiagnosisUnavailableToStaff(
+        LeadSession $leadSession,
+        int $analysisId,
+        string $reasonSummary,
+        string $adminUrl,
+    ): void {
+        if (! (bool) config('lead.notify_staff_on_diagnosis_unavailable', true)) {
+            return;
+        }
+
+        $this->dispatch($leadSession, 'diagnosis_unavailable', function (string $recipient) use ($leadSession, $analysisId, $reasonSummary, $adminUrl) {
+            Notification::route('mail', $recipient)->notify(new LeadDiagnosisUnavailableStaffNotification(
+                leadSessionId: $leadSession->id,
+                companyName: $leadSession->company_name,
+                contactName: $leadSession->contact_name,
+                email: $leadSession->email,
+                analysisId: $analysisId,
+                reasonSummary: $reasonSummary,
+                adminUrl: $adminUrl,
             ));
         });
     }

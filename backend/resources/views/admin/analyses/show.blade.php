@@ -28,6 +28,20 @@
         <div class="label">比較URL</div>
         <div class="value">{{ $competitorWebsite?->url ?? '—' }}</div>
     </div>
+    {{-- 2026-08-24追加: 「消費済みなのにレポートが渡っていない」を営業が
+         見分けるための表示(依頼者指定)。レポートがSkipped(見送り)なら
+         必ず未消費、Failed(生成失敗)なら通常消費済みになるはずだが、
+         実際の値をそのまま見せることで前提のズレにも気づける。 --}}
+    <div class="item">
+        <div class="label">診断回数消費</div>
+        <div class="value">
+            @if ($analysis->lead_quota_consumed_at)
+                消費済み({{ $analysis->lead_quota_consumed_at->format('Y/n/j H:i') }})
+            @else
+                未消費
+            @endif
+        </div>
+    </div>
 </div>
 
 <div class="card">
@@ -67,6 +81,17 @@
     @endif
 </div>
 
+@php
+    // 2026-08-24追加: Skipped(見送り・診断回数は消費していない)とFailed
+    // (生成失敗・診断回数は消費済み)を、同じ「レポートが無い」でも対応が
+    // 違うと分かるようラベルで明示する(依頼者指定)。
+    $reportStatusLabels = [
+        'completed' => '生成成功',
+        'pending' => '生成中',
+        'skipped' => '見送り(診断回数は消費していません)',
+        'failed' => '生成失敗(診断回数は消費済みです)',
+    ];
+@endphp
 <div class="card">
     <h3>レポート</h3>
     <table class="list">
@@ -75,7 +100,11 @@
             @forelse ($analysis->reports as $report)
                 <tr>
                     <td>{{ $report->format->value }}</td>
-                    <td><span class="badge status-{{ $report->status->value }}">{{ $report->status->value }}</span></td>
+                    <td>
+                        <span class="badge status-{{ $report->status->value }}">
+                            {{ $reportStatusLabels[$report->status->value] ?? $report->status->value }}
+                        </span>
+                    </td>
                 </tr>
             @empty
                 <tr><td colspan="2" class="empty">レポートは未生成です。</td></tr>

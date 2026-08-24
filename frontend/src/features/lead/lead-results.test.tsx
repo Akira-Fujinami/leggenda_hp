@@ -40,7 +40,7 @@ describe("LeadResults", () => {
   });
 
   it("PDFのダウンロードリンクと相談導線だけを出し、診断内容そのものは画面に描かない", () => {
-    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} onRetry={vi.fn()} />);
 
     expect(screen.getByText("診断結果をPDFにまとめました")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "PDFでダウンロード" })).toBeInTheDocument();
@@ -54,13 +54,13 @@ describe("LeadResults", () => {
   });
 
   it("Wordのダウンロードは画面に出さない(PDFのみ、2026-08-03のユーザー判断)", () => {
-    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} onRetry={vi.fn()} />);
 
     expect(screen.queryByText("Wordでダウンロード")).not.toBeInTheDocument();
   });
 
   it("PDFのリンク先はレポート取得エンドポイントを指す", () => {
-    render(<LeadResults results={baseResults()} token="tok" analysisId={7} />);
+    render(<LeadResults results={baseResults()} token="tok" analysisId={7} onRetry={vi.fn()} />);
 
     expect(screen.getByRole("link", { name: "PDFでダウンロード" })).toHaveAttribute(
       "href",
@@ -71,7 +71,7 @@ describe("LeadResults", () => {
   it("PDF生成中はリンクではなく準備中の状態を出す(壊れたリンクを踏ませない)", () => {
     const processing = baseResults({ reports: { docx: "ready", pdf: "processing" } });
 
-    render(<LeadResults results={processing} token="tok" analysisId={1} />);
+    render(<LeadResults results={processing} token="tok" analysisId={1} onRetry={vi.fn()} />);
 
     expect(screen.queryByRole("link", { name: /PDF/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "PDFでダウンロード(準備中…)" })).toBeDisabled();
@@ -80,7 +80,7 @@ describe("LeadResults", () => {
   it("PDFが出せなかった場合、黙って空白にせず理由と次の導線を出す", () => {
     const unavailable = baseResults({ reports: { docx: "ready", pdf: "unavailable" } });
 
-    render(<LeadResults results={unavailable} token="tok" analysisId={1} />);
+    render(<LeadResults results={unavailable} token="tok" analysisId={1} onRetry={vi.fn()} />);
 
     expect(screen.queryByRole("link", { name: /PDF/ })).not.toBeInTheDocument();
     expect(screen.getByText(/PDFのご用意ができませんでした/)).toBeInTheDocument();
@@ -88,8 +88,25 @@ describe("LeadResults", () => {
     expect(screen.getByRole("button", { name: "相談をリクエストする" })).toBeInTheDocument();
   });
 
+  it("自社サイトの分析が白紙(skipped)の場合、再挑戦導線を出し相談導線は出さない", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    const skipped = baseResults({ reports: { docx: "skipped", pdf: "skipped" } });
+
+    render(<LeadResults results={skipped} token="tok" analysisId={1} onRetry={onRetry} />);
+
+    expect(screen.getByText("今回はご用意できる診断結果がありませんでした。")).toBeInTheDocument();
+    expect(screen.getByText(/ご利用回数に含まれておりません/)).toBeInTheDocument();
+    // 診断回数を消費していないため、比較したい他社を前提とした相談導線は出さない。
+    expect(screen.queryByRole("button", { name: "相談をリクエストする" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /PDF/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "別のURLで試す" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
   it("一部のデータが取得できなかった場合は、その旨をPDFを渡す前に伝える", () => {
-    render(<LeadResults results={baseResults({ status: "partial" })} token="tok" analysisId={1} />);
+    render(<LeadResults results={baseResults({ status: "partial" })} token="tok" analysisId={1} onRetry={vi.fn()} />);
 
     expect(screen.getByText(/一部のデータは取得できませんでした/)).toBeInTheDocument();
   });
@@ -99,7 +116,7 @@ describe("LeadResults", () => {
     const mutate = vi.fn();
     mockConsultationState({ mutate });
 
-    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} onRetry={vi.fn()} />);
 
     expect(mutate).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "相談をリクエストする" }));
@@ -113,7 +130,7 @@ describe("LeadResults", () => {
   it("shows a success message once the consultation request is newly accepted", () => {
     mockConsultationState({ isSuccess: true, data: { data: { already_requested: false } } as never });
 
-    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} onRetry={vi.fn()} />);
 
     expect(screen.getByText("ご相談リクエストを受け付けました")).toBeInTheDocument();
   });
@@ -121,7 +138,7 @@ describe("LeadResults", () => {
   it("honestly reports a repeat click as already requested, not as a fresh success", () => {
     mockConsultationState({ isSuccess: true, data: { data: { already_requested: true } } as never });
 
-    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} onRetry={vi.fn()} />);
 
     expect(screen.getByText("既にご相談リクエストを受け付けています")).toBeInTheDocument();
   });
@@ -129,7 +146,7 @@ describe("LeadResults", () => {
   it("shows an error message when the consultation request fails, without pretending it succeeded", () => {
     mockConsultationState({ isError: true });
 
-    render(<LeadResults results={baseResults()} token="tok" analysisId={1} />);
+    render(<LeadResults results={baseResults()} token="tok" analysisId={1} onRetry={vi.fn()} />);
 
     expect(screen.getByText("送信に失敗しました。しばらくしてから再度お試しください。")).toBeInTheDocument();
   });

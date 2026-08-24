@@ -129,16 +129,58 @@ function ConsultationCta({ token, analysisId }: { token: string; analysisId: num
  * DataQualityNotice)はリポジトリに残してある ―― 表示している内容と同じものを
  * PDF側に載せる作業が残っており、また差し戻しの可能性もあるため。
  */
+/**
+ * 自社サイトの分析が「白紙」(ブランド・ホイールがerror/insufficient_input/
+ * matched=0)だった場合の表示。診断回数は消費していないため、相談導線
+ * (ConsultationCta、比較したい他社3〜5社を前提とした文言)は出さず、
+ * 「別のURLで試す」ボタン(onRetry、STEP2のURL入力フォームへ戻す)と
+ * 一般的なお問い合わせ導線だけを出す(2026-08-24追加、依頼者確定文言)。
+ */
+function SkippedNotice({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="space-y-3 rounded-md border p-4 text-center">
+      <div>
+        <p className="font-medium">今回はご用意できる診断結果がありませんでした。</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          恐れ入りますが、別のURLで再度お試しいただけますでしょうか。採用サイトのトップページ、またはコーポレートサイトの採用情報ページをおすすめします。
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">今回の診断は、ご利用回数に含まれておりません。</p>
+      </div>
+
+      <Button onClick={onRetry}>別のURLで試す</Button>
+
+      <p className="text-sm text-muted-foreground">
+        引き続きサポートいたしますので、ご相談は
+        <a
+          href="https://leggenda-co.web-tools.biz/inquiry"
+          className="underline underline-offset-2"
+          target="_blank"
+          rel="noreferrer"
+        >
+          お問い合わせフォーム
+        </a>
+        からお気軽にどうぞ。
+      </p>
+    </div>
+  );
+}
+
 export function LeadResults({
   results,
   token,
   analysisId,
+  onRetry,
 }: {
   results: LeadResultsType;
   token: string;
   analysisId: number;
+  onRetry: () => void;
 }) {
   const pdfStatus = results.reports.pdf;
+
+  if (pdfStatus === "skipped") {
+    return <SkippedNotice onRetry={onRetry} />;
+  }
 
   return (
     <div className="space-y-4">

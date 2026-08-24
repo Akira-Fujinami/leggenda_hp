@@ -66,6 +66,10 @@
         .badge.status-partial { background: #FFF3D9; color: var(--warn); }
         .badge.status-failed { background: #FDEEEC; color: var(--danger); }
         .badge.status-pending, .badge.status-queued, .badge.status-running { background: #EEF0F2; color: #4B5563; }
+        {{-- 2026-08-24追加: レポート生成の意図的な見送り(白紙防止)。診断回数を
+             消費していない点でstatus-failed(生成失敗・消費済み)と区別する ――
+             警告色ではなく中立色にして「不具合」ではないことを一目で示す。 --}}
+        .badge.status-skipped { background: #EEF0F2; color: #4B5563; }
 
         .fire { color: #D9534F; }
 

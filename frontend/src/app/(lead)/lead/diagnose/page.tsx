@@ -39,6 +39,15 @@ function LeadDiagnoseContent() {
     setAnalysisId(id);
   };
 
+  // 2026-08-24追加: 自社サイトの分析が「白紙」だった場合、診断回数を
+  // 消費していないため別のURLで再挑戦できる(バックエンド側の設計)。
+  // ここでは保存済みのanalysisIdを破棄し、STEP2のURL入力フォームへ
+  // 戻すだけ ―― 新しい診断はLeadAnalysisFormが通常通りPOSTする。
+  const handleRetry = () => {
+    if (token) window.localStorage.removeItem(analysisStorageKey(token));
+    setAnalysisId(null);
+  };
+
   if (!token) {
     return <LeadTokenError />;
   }
@@ -58,10 +67,18 @@ function LeadDiagnoseContent() {
     );
   }
 
-  return <DiagnoseResult token={token} analysisId={analysisId} />;
+  return <DiagnoseResult token={token} analysisId={analysisId} onRetry={handleRetry} />;
 }
 
-function DiagnoseResult({ token, analysisId }: { token: string; analysisId: number }) {
+function DiagnoseResult({
+  token,
+  analysisId,
+  onRetry,
+}: {
+  token: string;
+  analysisId: number;
+  onRetry: () => void;
+}) {
   const progressQuery = useLeadProgress(token, analysisId);
   const isTerminal = progressQuery.data?.data.status !== "processing";
   const resultsQuery = useLeadResults(token, isTerminal ? analysisId : null);
@@ -102,7 +119,7 @@ function DiagnoseResult({ token, analysisId }: { token: string; analysisId: numb
 
   return (
     <div className="space-y-6">
-      <LeadResults results={resultsQuery.data.data} token={token} analysisId={analysisId} />
+      <LeadResults results={resultsQuery.data.data} token={token} analysisId={analysisId} onRetry={onRetry} />
     </div>
   );
 }

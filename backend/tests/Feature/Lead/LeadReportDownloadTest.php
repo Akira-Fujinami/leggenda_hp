@@ -8,10 +8,14 @@ use App\Jobs\Analysis\StartAnalysisJob;
 use App\Jobs\Report\GenerateLeadReportJob;
 use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
+use App\Models\LeadSession;
 use App\Models\Report;
 use App\Models\WebsiteAnalysis;
+use App\Notifications\Lead\LeadDiagnosisUnavailableNotification;
+use App\Notifications\Lead\LeadDiagnosisUnavailableStaffNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -122,11 +126,13 @@ class LeadReportDownloadTest extends TestCase
     /**
      * 2026-08-24追加: 自社サイトのブランド・ホイール分析が'error'
      * (レポートに値する結果を持たない)場合、GenerateLeadReportJobは
-     * 起動されず、Report行はSkipped(リード向けには'unavailable')になる。
+     * 起動されず、Report行はSkipped(リード向けには'skipped')になる。
      * 「白紙のレポートを出さない」の中核となる検証。
      */
     public function test_report_generation_is_skipped_when_self_brand_wheel_result_is_error(): void
     {
+        config(['lead.notification_to' => 'staff@example.com']);
+        Notification::fake();
         [$token, $analysisId] = $this->issueTokenAndAnalysis([GenerateLeadReportJob::class]);
         $selfWebsiteAnalysis = WebsiteAnalysis::query()
             ->where('analysis_id', $analysisId)
@@ -143,10 +149,51 @@ class LeadReportDownloadTest extends TestCase
         $response = $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}");
 
         $response->assertOk();
-        $response->assertJsonPath('data.reports.docx', 'unavailable');
-        $response->assertJsonPath('data.reports.pdf', 'unavailable');
+        $response->assertJsonPath('data.reports.docx', 'skipped');
+        $response->assertJsonPath('data.reports.pdf', 'skipped');
         Queue::assertNotPushed(GenerateLeadReportJob::class);
         $this->assertSame(2, Report::where('analysis_id', $analysisId)->where('status', ReportGenerationStatus::Skipped)->count());
+
+        // 2026-08-24追加: リード本人・社内スタッフへそれぞれ1通ずつ通知する。
+        Notification::assertSentOnDemand(LeadDiagnosisUnavailableNotification::class, function ($notification, $channels, $notifiable) {
+            return $notifiable->routes['mail'] === 'lead@example.com';
+        });
+        Notification::assertSentOnDemand(LeadDiagnosisUnavailableStaffNotification::class, function ($notification, $channels, $notifiable) {
+            return $notifiable->routes['mail'] === 'staff@example.com';
+        });
+
+        // もう一度ポーリングしても二重には送らない(Report行が既に存在する
+        // ため、maybeDispatchReportGeneration()自体がここで早期returnする)。
+        $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}")->assertOk();
+        Notification::assertSentOnDemandTimes(LeadDiagnosisUnavailableStaffNotification::class, 1);
+    }
+
+    /**
+     * 2026-08-24追加: config('lead.notify_staff_on_diagnosis_unavailable')を
+     * falseにすると、営業向け通知だけを止められる。リード本人向け通知・
+     * レポート判定・診断回数消費の挙動には影響しない。
+     */
+    public function test_staff_notification_can_be_disabled_independently_of_the_lead_notification(): void
+    {
+        config(['lead.notification_to' => 'staff@example.com', 'lead.notify_staff_on_diagnosis_unavailable' => false]);
+        Notification::fake();
+        [$token, $analysisId] = $this->issueTokenAndAnalysis([GenerateLeadReportJob::class]);
+        $selfWebsiteAnalysis = WebsiteAnalysis::query()
+            ->where('analysis_id', $analysisId)
+            ->whereHas('website', fn ($q) => $q->where('is_primary', true))
+            ->firstOrFail();
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysisId,
+            'website_analysis_id' => $selfWebsiteAnalysis->id,
+            'status' => 'error',
+            'axes' => null,
+        ]);
+        Analysis::whereKey($analysisId)->update(['status' => AnalysisStatus::Completed]);
+
+        $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}")->assertOk();
+
+        Notification::assertSentOnDemand(LeadDiagnosisUnavailableNotification::class);
+        Notification::assertSentOnDemandTimes(LeadDiagnosisUnavailableStaffNotification::class, 0);
     }
 
     /**
@@ -172,7 +219,7 @@ class LeadReportDownloadTest extends TestCase
         $response = $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}");
 
         $response->assertOk();
-        $response->assertJsonPath('data.reports.docx', 'unavailable');
+        $response->assertJsonPath('data.reports.docx', 'skipped');
         Queue::assertNotPushed(GenerateLeadReportJob::class);
     }
 

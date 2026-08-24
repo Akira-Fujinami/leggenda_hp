@@ -92,4 +92,11 @@ return [
     // 使った「診断結果を開く権限つきリンク」を含めるため、個人宛だと転送時に
     // 権限が漏れるリスクがある(2026-07-28の合意事項)。
     'notification_to' => env('LEAD_NOTIFICATION_TO'),
+
+    // 2026-08-24追加: 自社サイトの診断結果を提供できなかった
+    // (LeadDiagnosisUnavailableStaffNotification)場合に、notification_to
+    // (共有の受信箱、上記と同じ宛先)へ営業向け通知を送るかどうか。
+    // 既定true。falseにすると通知だけを止め、レポート判定・診断回数消費の
+    // 挙動には一切影響しない。
+    'notify_staff_on_diagnosis_unavailable' => (bool) env('LEAD_NOTIFY_STAFF_ON_DIAGNOSIS_UNAVAILABLE', true),
 ];

@@ -201,7 +201,7 @@ class LeadAnalysisController extends Controller
     public function progress(Request $request, Analysis $analysis): JsonResponse
     {
         $this->authorizeLeadOwnsAnalysis($request, $analysis);
-        $this->maybeDispatchReportGeneration($analysis);
+        $this->maybeDispatchReportGeneration($analysis, $request);
 
         return $this->success([
             'percent' => $analysis->progress,
@@ -213,7 +213,7 @@ class LeadAnalysisController extends Controller
     public function results(Request $request, Analysis $analysis): JsonResponse
     {
         $this->authorizeLeadOwnsAnalysis($request, $analysis);
-        $this->maybeDispatchReportGeneration($analysis);
+        $this->maybeDispatchReportGeneration($analysis, $request);
 
         $analysis->load([
             'websiteAnalyses.website',
@@ -474,9 +474,12 @@ class LeadAnalysisController extends Controller
      * singleReportStatus()が永久に'processing'を返し画面が固まったままに
      * なるため(依頼者指摘)。判定基準はGenerateBrandWheelAnalysisJob::
      * maybeConsumeLeadQuota()(診断回数消費の可否)と同じ
-     * BrandWheelReportEligibility を共用する。
+     * BrandWheelReportEligibility を共用する。Skippedになった場合は
+     * リード本人・社内スタッフへそれぞれ1回だけ通知する(Report行の
+     * 作成自体が(analysis_id, format)のunique制約で1回しか成功しないため、
+     * この通知も自然に1診断につき1回に収まる)。
      */
-    private function maybeDispatchReportGeneration(Analysis $analysis): void
+    private function maybeDispatchReportGeneration(Analysis $analysis, Request $request): void
     {
         $status = $this->leadFacingStatus($analysis->status);
 
@@ -488,7 +491,8 @@ class LeadAnalysisController extends Controller
             return;
         }
 
-        $reportable = app(BrandWheelReportEligibility::class)->isReportable($this->selfBrandWheelResult($analysis));
+        $selfResult = $this->selfBrandWheelResult($analysis);
+        $reportable = app(BrandWheelReportEligibility::class)->isReportable($selfResult);
 
         try {
             foreach ([ReportFormat::Docx, ReportFormat::Pdf] as $format) {
@@ -522,7 +526,58 @@ class LeadAnalysisController extends Controller
 
         if ($reportable) {
             GenerateLeadReportJob::dispatch($analysis->id)->onQueue('reports');
+
+            return;
         }
+
+        $this->notifyDiagnosisUnavailable($analysis, $selfResult, $request);
+    }
+
+    /**
+     * @param  ?BrandWheelAnalysisResult  $selfResult
+     */
+    private function notifyDiagnosisUnavailable(Analysis $analysis, ?BrandWheelAnalysisResult $selfResult, Request $request): void
+    {
+        /** @var ?LeadSession $leadSession */
+        $leadSession = $request->attributes->get('leadSession');
+
+        if ($leadSession === null) {
+            return;
+        }
+
+        $rawToken = (string) $request->attributes->get('leadToken');
+
+        $this->notifications->notifyDiagnosisUnavailableToLead($leadSession, $rawToken);
+
+        $this->notifications->notifyDiagnosisUnavailableToStaff(
+            $leadSession,
+            $analysis->id,
+            $this->diagnosisUnavailableReasonSummary($selfResult),
+            $this->adminAnalysisUrl($analysis->id),
+        );
+    }
+
+    /**
+     * 内部のstatus文字列をそのまま渡さず、営業が読める日本語の要約に変換する
+     * (スタックトレース・例外メッセージは一切含めない)。
+     */
+    private function diagnosisUnavailableReasonSummary(?BrandWheelAnalysisResult $selfResult): string
+    {
+        if ($selfResult === null) {
+            return '自社サイトの分析結果が見つかりませんでした。';
+        }
+
+        return match ($selfResult->status) {
+            'error' => '自社サイトの分析処理でエラーが発生しました。',
+            'insufficient_input' => '自社サイトから十分な文章量を読み取れませんでした。',
+            'success' => '自社サイトから該当する記述が見つかりませんでした。',
+            default => '診断結果をご用意できませんでした。',
+        };
+    }
+
+    private function adminAnalysisUrl(int $analysisId): string
+    {
+        return route('admin.analyses.show', $analysisId);
     }
 
     /**
@@ -568,12 +623,14 @@ class LeadAnalysisController extends Controller
 
         return match ($report->status) {
             ReportGenerationStatus::Completed => 'ready',
+            ReportGenerationStatus::Failed => 'unavailable',
             // Skipped(自社サイトのブランド・ホイール判定に実質的な中身が
-            // 無かったための意図的な見送り)も、リード向けには本当の生成
-            // 失敗(Failed)と同じ'unavailable'として扱う ―― 見送った理由
-            // (内部の状態区分)をリードに説明する必要は無いため
-            // (2026-08-24追加)。
-            ReportGenerationStatus::Failed, ReportGenerationStatus::Skipped => 'unavailable',
+            // 無かったための意図的な見送り)は、Failed(本当の生成失敗、
+            // 診断回数は消費済み)とは別の'skipped'として区別する
+            // (2026-08-24変更)。診断回数を消費していないため、フロント側は
+            // 「別のURLで再挑戦できる」導線を出す必要があり、Failedと
+            // 同じ'unavailable'に丸めると区別できなくなる。
+            ReportGenerationStatus::Skipped => 'skipped',
             ReportGenerationStatus::Pending => 'processing',
         };
     }
