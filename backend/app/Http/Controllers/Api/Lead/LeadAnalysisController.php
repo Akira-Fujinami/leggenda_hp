@@ -13,12 +13,14 @@ use App\Models\LeadSession;
 use App\Models\MetricDefinition;
 use App\Models\Project;
 use App\Models\Report;
+use App\Models\WebsiteAnalysis;
 use App\Exceptions\Analysis\AnalysisException;
 use App\Services\Analysis\AnalysisService;
 use App\Services\Analysis\SafeHttpFetcher;
 use App\Services\BrandWheel\BrandWheelCompletionNotifier;
 use App\Services\BrandWheel\BrandWheelComparisonSummaryComposer;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
+use App\Services\BrandWheel\BrandWheelReportEligibility;
 use App\Services\Lead\LeadNotificationService;
 use App\Services\Lead\LeadPerspectiveComposer;
 use App\Services\Lead\LeadRecommendationComposer;
@@ -83,6 +85,19 @@ class LeadAnalysisController extends Controller
             ], 403);
         }
 
+        if ($this->leadSessions->hasExceededMaxAttempts($leadSession)) {
+            // 2026-08-24追加: 成果を受け取れていない(analyses_used未消費)
+            // まま試行だけを繰り返しているケースの歯止め(白紙レポート防止に
+            // 伴う無制限リトライ対策、依頼者指定)。
+            Log::info('Lead analysis start rejected: max attempts exceeded', ['lead_session_id' => $leadSession->id]);
+
+            return response()->json([
+                'message' => 'このリンクでの診断は何度かお試しいただいておりますが、結果をご用意できておりません。お手数ですがお問い合わせフォームからご連絡ください。',
+                'errors' => [],
+                'error_code' => 'LEAD_ANALYSIS_MAX_ATTEMPTS_EXCEEDED',
+            ], 403);
+        }
+
         if ($this->leadSessions->hasAnalysisInProgress($leadSession)) {
             // 診断回数の消費(recordAnalysisStarted())を開始直後ではなく
             // 自社サイトの本文取得成功時点へ遅らせているため、消費されるまでの
@@ -124,6 +139,11 @@ class LeadAnalysisController extends Controller
                 'error_code' => 'SELF_URL_UNREACHABLE',
             ], 422);
         }
+
+        // 2026-08-24追加: ここから先は実際に診断を開始する(=試行1回として
+        // 数える)。SELF_URL_UNREACHABLE(上記)はこの前でreturnしているため
+        // カウントされない。
+        $this->leadSessions->recordAnalysisAttempted($leadSession);
 
         $sentinelUser = $this->leadSessions->sentinelUser();
 
@@ -437,14 +457,24 @@ class LeadAnalysisController extends Controller
 
     /**
      * 結果が終端状態(completed/partial)になった最初のポーリングで一度だけ
-     * レポート生成Jobを起動する。Reportテーブルの行(pending)をこの場で
-     * 即座に作ってから冪等性のガードにするため、Job自体がまだ実行されて
-     * いない(=行がまだ無い)間に2回目のポーリングが来ても二重dispatchしない。
+     * レポート生成Jobを起動する。Reportテーブルの行をこの場で即座に作って
+     * から冪等性のガードにするため、Job自体がまだ実行されていない
+     * (=行がまだ無い)間に2回目のポーリングが来ても二重dispatchしない。
      * 同時リクエストでの競合は(analysis_id, format)のunique制約違反として
      * 検出し、その場合は既に他方が作成済みとみなして何もしない。
      * failedの分析にはレポートを生成しない(表示できる結果が何もないため)。
      * 既存のFinalizeWebsiteAnalysisJob/FinalizeAnalysisJob等の共有
      * パイプラインには一切触れない。
+     *
+     * 2026-08-24追加: Analysis.status自体がcompleted/partialでも、自社サイトの
+     * ブランド・ホイール判定がerror/insufficient_input/matched=0の場合は
+     * レポートの該当セクションが状態メッセージのみになり実質「白紙」になる
+     * (8/24 shinkin.co.jpの調査で判明)。この場合はReport行こそ作るが
+     * status=SkippedのままGenerateLeadReportJobを起動しない ―― 行を作らないと
+     * singleReportStatus()が永久に'processing'を返し画面が固まったままに
+     * なるため(依頼者指摘)。判定基準はGenerateBrandWheelAnalysisJob::
+     * maybeConsumeLeadQuota()(診断回数消費の可否)と同じ
+     * BrandWheelReportEligibility を共用する。
      */
     private function maybeDispatchReportGeneration(Analysis $analysis): void
     {
@@ -458,13 +488,16 @@ class LeadAnalysisController extends Controller
             return;
         }
 
+        $reportable = app(BrandWheelReportEligibility::class)->isReportable($this->selfBrandWheelResult($analysis));
+
         try {
             foreach ([ReportFormat::Docx, ReportFormat::Pdf] as $format) {
                 Report::query()->create([
                     'analysis_id' => $analysis->id,
                     'format' => $format->value,
                     'storage_path' => '',
-                    'status' => ReportGenerationStatus::Pending->value,
+                    'status' => $reportable ? ReportGenerationStatus::Pending->value : ReportGenerationStatus::Skipped->value,
+                    'error_message' => $reportable ? null : '自社サイトのブランド・ホイール分析がレポートに値する結果を持たなかったため、生成を見送りました。',
                 ]);
             }
         } catch (QueryException $e) {
@@ -487,7 +520,31 @@ class LeadAnalysisController extends Controller
             return;
         }
 
-        GenerateLeadReportJob::dispatch($analysis->id)->onQueue('reports');
+        if ($reportable) {
+            GenerateLeadReportJob::dispatch($analysis->id)->onQueue('reports');
+        }
+    }
+
+    /**
+     * 自社サイト(is_primary=true)の最新BrandWheelAnalysisResultを取得する。
+     * GenerateBrandWheelAnalysisJob::maybeConsumeLeadQuota()と同じ「自社
+     * サイトのみを見る」スコープ(競合サイト側の結果は一切影響させない)。
+     */
+    private function selfBrandWheelResult(Analysis $analysis): ?BrandWheelAnalysisResult
+    {
+        $selfWebsiteAnalysis = WebsiteAnalysis::query()
+            ->where('analysis_id', $analysis->id)
+            ->whereHas('website', fn ($q) => $q->where('is_primary', true))
+            ->first();
+
+        if ($selfWebsiteAnalysis === null) {
+            return null;
+        }
+
+        return BrandWheelAnalysisResult::query()
+            ->where('website_analysis_id', $selfWebsiteAnalysis->id)
+            ->latest('id')
+            ->first();
     }
 
     /**
@@ -511,7 +568,12 @@ class LeadAnalysisController extends Controller
 
         return match ($report->status) {
             ReportGenerationStatus::Completed => 'ready',
-            ReportGenerationStatus::Failed => 'unavailable',
+            // Skipped(自社サイトのブランド・ホイール判定に実質的な中身が
+            // 無かったための意図的な見送り)も、リード向けには本当の生成
+            // 失敗(Failed)と同じ'unavailable'として扱う ―― 見送った理由
+            // (内部の状態区分)をリードに説明する必要は無いため
+            // (2026-08-24追加)。
+            ReportGenerationStatus::Failed, ReportGenerationStatus::Skipped => 'unavailable',
             ReportGenerationStatus::Pending => 'processing',
         };
     }

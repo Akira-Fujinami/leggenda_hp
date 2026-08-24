@@ -19,6 +19,7 @@ use App\Services\BrandWheel\BrandWheelAnalysisProvider;
 use App\Services\BrandWheel\BrandWheelAnalysisProviderFactory;
 use App\Services\BrandWheel\BrandWheelCompletionNotifier;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionDispatcher;
+use App\Services\BrandWheel\BrandWheelReportEligibility;
 use App\Services\BrandWheel\Data\BrandWheelAnalysisInput;
 use App\Services\Lead\LeadSessionService;
 use Illuminate\Bus\Queueable;
@@ -127,7 +128,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         try {
             $input = $inputFactory->build($websiteAnalysis);
         } catch (\Throwable $e) {
-            $record->update(['status' => 'error', 'error_code' => 'BRAND_WHEEL_INPUT_BUILD_FAILED', 'error_message' => $e->getMessage()]);
+            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => 'BRAND_WHEEL_INPUT_BUILD_FAILED', 'error_message' => $e->getMessage()]);
             $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
@@ -148,22 +149,18 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
 
         $inputInsufficient = $this->isInputInsufficient($input);
 
-        // 2026-08-22追加: リード診断の実行回数消費(#B-2)。診断開始時ではなく
-        // ここ(自社サイトの本文取得成功が確定した時点)で消費する ―― 403等で
-        // 何も読み取れなかった場合に、リードの唯一の診断回数が無駄に失われない
-        // ようにするため。「成功」の定義はisInputInsufficient()と同じ基準
-        // (採用ページ+トップページ本文の合計文字数が閾値以上)に、トップページの
-        // HTTPステータスが2xxであることを加えたもの。競合サイト側の失敗は
-        // 消費に一切影響しない(is_primary=trueのWebsiteAnalysisでのみ判定する)。
-        $this->maybeConsumeLeadQuota($websiteAnalysis, inputSufficient: ! $inputInsufficient);
-
         if ($inputInsufficient) {
             // 「サイトに記述が読み取れなかった」(=評価した結果、何も無かった)
             // と「サイトの記述を読みに行けなかった」(=生HTML取得・ストレージ
             // 到達に失敗した等)を混同しないため、AIを一切呼ばず、6軸すべて
             // unreadという体裁の整った結果ではなく、判定自体を持たない
             // insufficient_inputとして記録する(2026-07-29の指摘)。
-            $record->update([
+            //
+            // 2026-08-24: insufficient_inputはリード向けレポートとしては
+            // 状態メッセージのみで実質的な中身を持たない(「白紙」と同列)ため、
+            // finalizeBrandWheelResult()経由でも診断回数は消費されない
+            // (BrandWheelReportEligibility参照)。
+            $this->finalizeBrandWheelResult($record, $websiteAnalysis, [
                 'status' => 'insufficient_input',
                 'provider' => null,
                 'model' => null,
@@ -206,7 +203,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         try {
             $provider = app(BrandWheelAnalysisProviderFactory::class)->make();
         } catch (BrandWheelAnalysisException $e) {
-            $record->update(['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage()]);
+            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage()]);
             $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
@@ -228,7 +225,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             ->first();
 
         if ($reusable !== null) {
-            $record->update([
+            $this->finalizeBrandWheelResult($record, $websiteAnalysis, [
                 'provider' => $reusable->provider,
                 'model' => $reusable->model,
                 'status' => 'success',
@@ -276,7 +273,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 return;
             }
 
-            $record->update(['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_hash' => $inputHash, 'input_truncated' => $input->inputTruncated]);
+            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_hash' => $inputHash, 'input_truncated' => $input->inputTruncated]);
             $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
@@ -285,7 +282,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         $durationMs = (int) round((microtime(true) - $started) * 1000);
         $result = $outcome->result;
 
-        $record->update([
+        $this->finalizeBrandWheelResult($record, $websiteAnalysis, [
             'provider' => $result->provider,
             'model' => $result->model,
             'status' => 'success',
@@ -364,6 +361,32 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
     }
 
     /**
+     * ブランド・ホイール判定の終端ステータスを保存する唯一の入口
+     * (2026-08-24追加、依頼者指定)。handle()内の全ての終端分岐
+     * (insufficient_input確定・再利用キャッシュ命中・AI成功・AI失敗
+     * (非リトライ)・provider未設定エラー)は、$record->update()を直接
+     * 呼ばずここを経由すること。保存直後に必ずmaybeConsumeLeadQuota()を
+     * 呼ぶことで、「ステータスを保存したのに消費判定を素通りする」ことを
+     * 構造的に起こせなくする(個々の分岐が消費判定を呼び忘れるリスクを、
+     * 呼び出し側のテストで洗うのではなく、そもそも分岐できない形にする)。
+     *
+     * WEBSITE_ANALYSIS_NOT_FOUND(handle()冒頭)だけは例外 ―― この時点では
+     * まだ$websiteAnalysisを解決できていないため、この入口を経由しない
+     * (診断回数消費の対象となる自社サイト情報がそもそも無い)。
+     *
+     * リトライ待ちのrelease()(status='pending'への一時更新)も対象外 ――
+     * まだ終端に達していないため、ここを経由せず直接$record->update()する。
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    private function finalizeBrandWheelResult(BrandWheelAnalysisResultRecord $record, WebsiteAnalysis $websiteAnalysis, array $attributes): void
+    {
+        $record->update($attributes);
+
+        $this->maybeConsumeLeadQuota($websiteAnalysis, $record->fresh());
+    }
+
+    /**
      * 2026-08-19追加: analysis_id=45/website_analysis_id=93の障害調査用の
      * 一時的な診断ログ。fetch_recruit_page/render_pageは完了しており、本番
      * tinkerからは3ファイルとも存在確認できているにも関わらず、この
@@ -402,15 +425,25 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
     }
 
     /**
-     * リード診断の実行回数消費(#B-2、2026-08-22)。自社サイト
-     * (WebsiteAnalysis.website.is_primary=true)かつ、そのAnalysisがリード
-     * セッション由来(project.lead_session_id あり)である場合のみ対象とする
-     * ―― 社内向けの通常診断・比較サイト側の判定には一切影響しない。
+     * リード診断の実行回数消費(#B-2、2026-08-22。2026-08-24に判定基準を
+     * 変更)。自社サイト(WebsiteAnalysis.website.is_primary=true)かつ、
+     * そのAnalysisがリードセッション由来(project.lead_session_id あり)で
+     * ある場合のみ対象とする ―― 社内向けの通常診断・比較サイト側の判定には
+     * 一切影響しない。
      *
-     * 「成功」の定義: $inputSufficient(=isInputInsufficient()の否定、採用ページ+
-     * トップページ本文の合計文字数が閾値以上)に加え、トップページの
-     * HTTPステータスが2xxであること。文字数だけでは、内容の整ったエラー
-     * ページ(4xx/5xxだが本文が長い)を「読み取れた」と誤判定しかねないため。
+     * 「成功」の定義(2026-08-24変更): $record(保存直後の最新状態)が
+     * BrandWheelReportEligibility::isReportable()を満たすこと(status=
+     * 'success'かつ1件以上マッチ)に加え、トップページのHTTPステータスが
+     * 2xxであること。以前は採用ページ+トップページ本文の文字数閾値
+     * (isInputInsufficient()の否定)のみを基準にしていたが、これだと本文は
+     * 十分でもAI呼び出し自体が失敗(error)した場合に消費だけが先に確定して
+     * しまい、レポートを渡せないまま診断回数だけが失われる不具合があった
+     * (8/24 shinkin.co.jp、依頼者指摘)。insufficient_input・error・
+     * matched=0(no_matched_content)はいずれも「白紙」でレポート生成の
+     * 対象外のため消費もしない ―― リトライしても結果が変わらない
+     * insufficient_inputも同様に扱う点に注意(サイトの中身が薄いこと自体は
+     * リトライで直らないが、無制限リトライの歯止めはLeadSession.
+     * attempts_used側で別途かける、依頼者指定)。
      *
      * GenerateBrandWheelAnalysisJobはAI呼び出しのレート制限等でリトライ
      * (最大2回)されることがあり、そのたびにこのメソッドも再実行される。
@@ -421,9 +454,9 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
      * 本来Leadサブシステムに依存しない設計だが、消費タイミングをここへ
      * 統合することは依頼者との合意事項(#B-2設計確認)。
      */
-    private function maybeConsumeLeadQuota(WebsiteAnalysis $websiteAnalysis, bool $inputSufficient): void
+    private function maybeConsumeLeadQuota(WebsiteAnalysis $websiteAnalysis, BrandWheelAnalysisResultRecord $record): void
     {
-        if (! $inputSufficient) {
+        if (! app(BrandWheelReportEligibility::class)->isReportable($record)) {
             return;
         }
 

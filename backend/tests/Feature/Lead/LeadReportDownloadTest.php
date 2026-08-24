@@ -7,7 +7,9 @@ use App\Enums\ReportGenerationStatus;
 use App\Jobs\Analysis\StartAnalysisJob;
 use App\Jobs\Report\GenerateLeadReportJob;
 use App\Models\Analysis;
+use App\Models\BrandWheelAnalysisResult;
 use App\Models\Report;
+use App\Models\WebsiteAnalysis;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -46,9 +48,33 @@ class LeadReportDownloadTest extends TestCase
         return [$token, $analysisId];
     }
 
+    /**
+     * 2026-08-24追加: maybeDispatchReportGeneration()が自社サイトの
+     * ブランド・ホイール判定を参照するようになったため(BrandWheelReportEligibility)、
+     * レポート生成そのものの起動を検証するテストでは、実際にマッチした
+     * 結果を持つBrandWheelAnalysisResultを用意する必要がある(このテストの
+     * 関心事はレポート生成の起動タイミングであり、ブランド・ホイールの
+     * 判定内容そのものではないため、内容は最小限でよい)。
+     */
+    private function makeReportableSelfBrandWheelResult(int $analysisId): void
+    {
+        $selfWebsiteAnalysis = WebsiteAnalysis::query()
+            ->where('analysis_id', $analysisId)
+            ->whereHas('website', fn ($q) => $q->where('is_primary', true))
+            ->firstOrFail();
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysisId,
+            'website_analysis_id' => $selfWebsiteAnalysis->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+        ]);
+    }
+
     public function test_progress_dispatches_report_generation_exactly_once_when_the_analysis_completes(): void
     {
         [$token, $analysisId] = $this->issueTokenAndAnalysis([GenerateLeadReportJob::class]);
+        $this->makeReportableSelfBrandWheelResult($analysisId);
         Analysis::whereKey($analysisId)->update(['status' => AnalysisStatus::Completed]);
 
         $this->getJson("/api/lead/analyses/{$analysisId}/progress?token={$token}")->assertOk();
@@ -83,6 +109,7 @@ class LeadReportDownloadTest extends TestCase
     public function test_results_reports_processing_status_before_generation_completes(): void
     {
         [$token, $analysisId] = $this->issueTokenAndAnalysis([GenerateLeadReportJob::class]);
+        $this->makeReportableSelfBrandWheelResult($analysisId);
         Analysis::whereKey($analysisId)->update(['status' => AnalysisStatus::Completed]);
 
         $response = $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}");
@@ -90,6 +117,63 @@ class LeadReportDownloadTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('data.reports.docx', 'processing');
         $response->assertJsonPath('data.reports.pdf', 'processing');
+    }
+
+    /**
+     * 2026-08-24追加: 自社サイトのブランド・ホイール分析が'error'
+     * (レポートに値する結果を持たない)場合、GenerateLeadReportJobは
+     * 起動されず、Report行はSkipped(リード向けには'unavailable')になる。
+     * 「白紙のレポートを出さない」の中核となる検証。
+     */
+    public function test_report_generation_is_skipped_when_self_brand_wheel_result_is_error(): void
+    {
+        [$token, $analysisId] = $this->issueTokenAndAnalysis([GenerateLeadReportJob::class]);
+        $selfWebsiteAnalysis = WebsiteAnalysis::query()
+            ->where('analysis_id', $analysisId)
+            ->whereHas('website', fn ($q) => $q->where('is_primary', true))
+            ->firstOrFail();
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysisId,
+            'website_analysis_id' => $selfWebsiteAnalysis->id,
+            'status' => 'error',
+            'axes' => null,
+        ]);
+        Analysis::whereKey($analysisId)->update(['status' => AnalysisStatus::Completed]);
+
+        $response = $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.reports.docx', 'unavailable');
+        $response->assertJsonPath('data.reports.pdf', 'unavailable');
+        Queue::assertNotPushed(GenerateLeadReportJob::class);
+        $this->assertSame(2, Report::where('analysis_id', $analysisId)->where('status', ReportGenerationStatus::Skipped)->count());
+    }
+
+    /**
+     * 2026-08-24追加: status='success'でも24項目すべてmatched=0
+     * (no_matched_content)の場合も、error/insufficient_inputと同列に
+     * 「白紙」として扱い、レポート生成を見送る。
+     */
+    public function test_report_generation_is_skipped_when_self_brand_wheel_result_has_zero_matched_sub_elements(): void
+    {
+        [$token, $analysisId] = $this->issueTokenAndAnalysis([GenerateLeadReportJob::class]);
+        $selfWebsiteAnalysis = WebsiteAnalysis::query()
+            ->where('analysis_id', $analysisId)
+            ->whereHas('website', fn ($q) => $q->where('is_primary', true))
+            ->firstOrFail();
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysisId,
+            'website_analysis_id' => $selfWebsiteAnalysis->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => []]],
+        ]);
+        Analysis::whereKey($analysisId)->update(['status' => AnalysisStatus::Completed]);
+
+        $response = $this->getJson("/api/lead/analyses/{$analysisId}/results?token={$token}");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.reports.docx', 'unavailable');
+        Queue::assertNotPushed(GenerateLeadReportJob::class);
     }
 
     public function test_results_reports_ready_status_once_generation_completes(): void

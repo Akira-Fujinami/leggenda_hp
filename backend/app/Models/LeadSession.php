@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * メールアドレス等の個人情報を保持するため、ログ・エラーメッセージ・
  * レポート・API応答にこのモデルの属性を直接出力しないこと。
  */
-#[Fillable(['company_name', 'contact_name', 'email', 'phone', 'industry', 'employee_range', 'token_hash', 'expires_at', 'analyses_used'])]
+#[Fillable(['company_name', 'contact_name', 'email', 'phone', 'industry', 'employee_range', 'token_hash', 'expires_at', 'analyses_used', 'attempts_used'])]
 class LeadSession extends Model
 {
     /** @use HasFactory<LeadSessionFactory> */
@@ -24,6 +24,7 @@ class LeadSession extends Model
         return [
             'expires_at' => 'datetime',
             'analyses_used' => 'integer',
+            'attempts_used' => 'integer',
             'consultation_requested_at' => 'datetime',
         ];
     }

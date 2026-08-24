@@ -103,6 +103,29 @@ class LeadSessionService
     }
 
     /**
+     * 2026-08-24追加: 「成果を受け取った回数」(analyses_used)とは別の、
+     * 「試行した回数」(成否を問わない)の上限判定。ブランド・ホイールが
+     * error/insufficient_input/matched=0で終端した場合はanalyses_usedが
+     * 消費されないため、canStartAnalysis()だけでは同一トークンからの
+     * 無制限リトライを止められない(白紙レポート防止に伴う副作用への対策、
+     * 依頼者指定)。
+     */
+    public function hasExceededMaxAttempts(LeadSession $session): bool
+    {
+        return $session->attempts_used >= (int) config('lead.max_attempts_per_token');
+    }
+
+    /**
+     * SELF_URL_UNREACHABLE(#B-1)で診断そのものを開始しなかった場合は
+     * 呼ばない ―― 既にリードへ「この診断はご利用回数に含まれておりません」と
+     * 明示している経路のため、試行回数にも数えない。
+     */
+    public function recordAnalysisAttempted(LeadSession $session): void
+    {
+        $session->increment('attempts_used');
+    }
+
+    /**
      * この同一トークン(LeadSession)に紐づく診断が既に実行中(未終端状態)かどうか。
      * 診断回数の消費(recordAnalysisStarted())を開始直後ではなく後段
      * (自社サイトの本文取得成功時点)へ遅らせると、消費されるまでの間は

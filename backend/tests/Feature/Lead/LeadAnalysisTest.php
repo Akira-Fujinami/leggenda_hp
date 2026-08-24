@@ -182,6 +182,65 @@ class LeadAnalysisTest extends TestCase
     }
 
     /**
+     * 2026-08-24追加: 白紙レポート防止に伴う無制限リトライ対策
+     * (LeadSession.attempts_used、config('lead.max_attempts_per_token'))。
+     * analyses_used(成果を受け取った回数)が0のままでも、試行回数の上限に
+     * 達していれば新規受付を拒否する。
+     */
+    public function test_a_new_analysis_is_rejected_once_max_attempts_are_exceeded_even_without_any_successful_quota_consumption(): void
+    {
+        Queue::fake([StartAnalysisJob::class]);
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
+        config(['lead.max_attempts_per_token' => 3]);
+        $token = $this->issueToken();
+
+        for ($i = 0; $i < 3; $i++) {
+            $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])->assertCreated();
+            // 次の試行を受け付けさせるため、実行中扱いを都度解除する
+            // (hasAnalysisInProgress()による409を回避するためのテスト内の
+            // 都合であり、この作業自体はattempts_usedのカウントには関与しない)。
+            Analysis::latest('id')->first()->update(['status' => AnalysisStatus::Completed]);
+        }
+
+        $this->assertSame(3, LeadSession::first()->attempts_used);
+        $this->assertSame(0, LeadSession::first()->analyses_used, '成果は一度も受け取っていない(analyses_usedは消費されていない)前提のテスト');
+
+        Log::spy();
+        $response = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com']);
+
+        $response->assertStatus(403);
+        $response->assertJsonPath('error_code', 'LEAD_ANALYSIS_MAX_ATTEMPTS_EXCEEDED');
+        $this->assertSame(3, Analysis::count(), '拒否された場合は新しいAnalysisを作ってはいけない');
+        $this->assertSame(3, LeadSession::first()->attempts_used, '拒否された試行はカウントしない');
+
+        Log::shouldHaveReceived('info')
+            ->once()
+            ->withArgs(fn (string $message, array $context = []) => $message === 'Lead analysis start rejected: max attempts exceeded'
+                && isset($context['lead_session_id']));
+    }
+
+    /**
+     * SELF_URL_UNREACHABLE(#B-1)は既存の仕様通り「診断そのものを開始して
+     * いない」ため、試行回数(attempts_used)にも数えない
+     * (2026-08-24追加、依頼者指定)。
+     */
+    public function test_self_url_unreachable_does_not_count_toward_max_attempts(): void
+    {
+        // isSelfUrlUnreachable()は例外(DNS解決失敗等)発生時は「保守的判定」
+        // として通す側へ倒すため、この検証には実在するホスト名(SafeUrlValidator
+        // の名前解決を通過する)に対して403を返すfakeが必要(存在しない
+        // ホスト名だとDNS解決失敗でunreachable判定自体をすり抜けてしまう)。
+        Http::fake(['https://example.com' => Http::response('<html></html>', 403, ['Content-Type' => 'text/html'])]);
+        $token = $this->issueToken();
+
+        $response = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com']);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('error_code', 'SELF_URL_UNREACHABLE');
+        $this->assertSame(0, LeadSession::first()->attempts_used);
+    }
+
+    /**
      * 診断回数の消費(recordAnalysisStarted())を診断開始直後ではなく後段
      * (自社サイトの本文取得成功時点)へ遅らせる変更に備えたガード
      * (LeadSessionService::hasAnalysisInProgress())。消費前でも、同一

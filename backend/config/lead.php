@@ -17,8 +17,19 @@ return [
     // ワンタイムトークンの有効期限(日数)。
     'token_expiry_days' => (int) env('LEAD_TOKEN_EXPIRY_DAYS', 7),
 
-    // 1トークンあたりに許可する分析実行回数。
+    // 1トークンあたりに許可する分析実行回数(成果を受け取った回数 ――
+    // ブランド・ホイールがsuccessかつ1件以上マッチした場合のみ消費される。
+    // LeadSession.analyses_used参照)。
     'max_analyses_per_token' => (int) env('LEAD_MAX_ANALYSES_PER_TOKEN', 1),
+
+    // 2026-08-24追加: 1トークンあたりに許可する「試行」回数上限(成否を
+    // 問わない、LeadSession.attempts_used参照)。ブランド・ホイールが
+    // error/insufficient_input/matched=0で終端した場合はanalyses_usedが
+    // 消費されないため、max_analyses_per_tokenだけでは同一トークンからの
+    // 無制限リトライを止められない。この上限に達したら、成否によらず
+    // お問い合わせフォームへ誘導する(LeadAnalysisController::store()参照)。
+    // SELF_URL_UNREACHABLE(#B-1)はここでカウントしない。
+    'max_attempts_per_token' => (int) env('LEAD_MAX_ATTEMPTS_PER_TOKEN', 5),
 
     // 同時に実行中(running)でよいリード分析の件数上限。超過時は
     // 「現在混み合っています」を返し、トークンの実行回数を消費しない。

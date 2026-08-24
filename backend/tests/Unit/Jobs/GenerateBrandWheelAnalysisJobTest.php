@@ -698,7 +698,54 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         return ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession];
     }
 
+    /**
+     * 2026-08-24: 消費の基準がstatus='success'かつ1件以上マッチへ変更された
+     * (BrandWheelReportEligibility参照)。MockBrandWheelAnalysisProviderは
+     * 設計上matched_sub_elementsを常に空で返す(実際には何も読んでいないことを
+     * 明示するため)ため、この確認にはopenaiプロバイダと、実際にトップページ
+     * 本文に存在する抜粋を使う。
+     */
     public function test_lead_quota_is_consumed_once_self_site_input_is_sufficient_and_reachable(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis();
+
+        Http::fake([
+            'api.openai.com/*' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => json_encode([
+                        'sub_elements' => $this->completeSubElements([
+                            'purpose' => ['matched' => true, 'evidence' => '会社の紹介文です。'],
+                        ]),
+                        'core_value' => ['readable' => false, 'evidence' => null],
+                        'key_message' => null,
+                        'impression' => [],
+                        'quality_notes' => [],
+                        'cautions' => [],
+                    ])]],
+                ],
+                'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
+            ], 200),
+        ]);
+
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'pending',
+        ]);
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $this->assertSame('success', $record->fresh()->status);
+        $this->assertSame(1, $leadSession->fresh()->analyses_used);
+        $this->assertNotNull(Analysis::find($websiteAnalysis->analysis_id)->lead_quota_consumed_at);
+    }
+
+    /**
+     * 2026-08-24追加: status='success'でも24項目すべてmatched=0
+     * (no_matched_content、白紙と同列)の場合は消費しない。
+     */
+    public function test_lead_quota_is_not_consumed_when_success_has_zero_matched_sub_elements(): void
     {
         config(['services.brand_wheel_ai.provider' => 'mock', 'analysis.allow_mock_providers' => true]);
         ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis();
@@ -710,8 +757,9 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
 
         (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
 
-        $this->assertSame(1, $leadSession->fresh()->analyses_used);
-        $this->assertNotNull(Analysis::find($websiteAnalysis->analysis_id)->lead_quota_consumed_at);
+        $this->assertSame('success', $record->fresh()->status);
+        $this->assertSame(0, $leadSession->fresh()->analyses_used);
+        $this->assertNull(Analysis::find($websiteAnalysis->analysis_id)->lead_quota_consumed_at);
     }
 
     public function test_lead_quota_is_not_consumed_when_input_is_insufficient(): void
@@ -759,11 +807,32 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
 
     public function test_lead_quota_is_not_consumed_when_the_homepage_http_status_is_not_2xx(): void
     {
-        // 文字数閾値は満たしていても、トップページのHTTPステータスが2xxで
-        // なければ「本文取得成功」とはみなさない(内容の整ったエラーページを
-        // 誤って成功扱いしないため)。
-        config(['services.brand_wheel_ai.provider' => 'mock', 'analysis.allow_mock_providers' => true]);
+        // 内容の整ったエラーページ(4xx/5xxだが本文が長い)を誤って成功扱い
+        // しないための確認のため、matched_sub_elementsが常に空のmockではなく
+        // 実際にマッチが成立するopenaiフェイクを使う(2026-08-24)。
+        // 文字数閾値・matched件数を満たしていても、トップページのHTTP
+        // ステータスが2xxでなければ「本文取得成功」とはみなさない。
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
         ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis(homepageHttpStatus: 403);
+
+        Http::fake([
+            'api.openai.com/*' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => json_encode([
+                        'sub_elements' => $this->completeSubElements([
+                            'purpose' => ['matched' => true, 'evidence' => '会社の紹介文です。'],
+                        ]),
+                        'core_value' => ['readable' => false, 'evidence' => null],
+                        'key_message' => null,
+                        'impression' => [],
+                        'quality_notes' => [],
+                        'cautions' => [],
+                    ])]],
+                ],
+                'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5],
+            ], 200),
+        ]);
+
         $record = BrandWheelAnalysisResult::factory()->create([
             'analysis_id' => $websiteAnalysis->analysis_id,
             'website_analysis_id' => $websiteAnalysis->id,
@@ -772,6 +841,8 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
 
         (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
 
+        $this->assertSame('success', $record->fresh()->status);
+        $this->assertGreaterThan(0, collect((array) $record->fresh()->axes)->sum(fn (array $axis) => count($axis['matched_sub_elements'] ?? [])));
         $this->assertSame(0, $leadSession->fresh()->analyses_used);
     }
 
@@ -803,13 +874,19 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
     public function test_lead_quota_consumption_is_idempotent_across_job_retries(): void
     {
         ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis();
+        $reportableRecord = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => '会社の紹介文です。']]]],
+        ]);
 
         $job = new GenerateBrandWheelAnalysisJob(1);
         $method = new \ReflectionMethod($job, 'maybeConsumeLeadQuota');
         $method->setAccessible(true);
 
-        $method->invoke($job, $websiteAnalysis, true);
-        $method->invoke($job, $websiteAnalysis, true);
+        $method->invoke($job, $websiteAnalysis, $reportableRecord);
+        $method->invoke($job, $websiteAnalysis, $reportableRecord);
 
         $this->assertSame(1, $leadSession->fresh()->analyses_used);
     }
