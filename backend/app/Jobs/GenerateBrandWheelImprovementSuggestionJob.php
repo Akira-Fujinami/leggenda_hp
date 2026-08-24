@@ -6,6 +6,7 @@ use App\Models\Analysis;
 use App\Models\BrandWheelImprovementSuggestion;
 use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelAnalysisException;
+use App\Services\BrandWheel\BrandWheelComparisonSufficiency;
 use App\Services\BrandWheel\BrandWheelEvidenceLookupBuilder;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionInputFactory;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionProviderFactory;
@@ -64,6 +65,7 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
         BrandWheelSubElementComparisonComposer $comparisonComposer,
         BrandWheelImprovementSuggestionInputFactory $inputFactory,
         BrandWheelEvidenceLookupBuilder $evidenceLookupBuilder,
+        BrandWheelComparisonSufficiency $comparisonSufficiency,
     ): void {
         $suggestion = BrandWheelImprovementSuggestion::find($this->suggestionId);
 
@@ -107,6 +109,57 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
             return;
         }
 
+        // 2026-08-25追加(修正2): 自社の合計matched件数が閾値未満のときは、
+        // 個別項目の提案が的外れになる(実物レポート32 ―― 4/24項目しか
+        // 読み取れていないのに「重視する価値を書きましょう」という個別助言は
+        // 成立しない)ため、AIを呼ばず「掲載する情報を増やす」定型文
+        // (config('brand_wheel.one_point_messages.insufficient_content'))
+        // のみを保存する。他のフィールド(reason/recommended_contents/
+        // mid_term_action等)はnull/空配列のままとし、Blade/WordReport
+        // Generator側の「AI未生成時は該当ブロックを出さない」既存仕様に
+        // 委ねる。
+        $selfTotalMatched = array_sum(array_column((array) $selfWheel['axes'], 'matched_count'));
+        if (! $comparisonSufficiency->isSufficient($selfTotalMatched)) {
+            $suggestion->update([
+                'provider' => null,
+                'model' => null,
+                'status' => 'success',
+                'prompt_version' => null,
+                'one_point' => (string) config('brand_wheel.one_point_messages.insufficient_content'),
+                'recommendation' => null,
+                'focus_sub_element_keys' => [],
+                'reason' => null,
+                'recommended_contents' => [],
+                'mid_term_action' => null,
+                'quick_win' => null,
+                'implementation_difficulty' => null,
+                'candidate_impact' => null,
+                'gap_closing' => [],
+                'differentiation_opportunities' => [],
+                'is_mock' => false,
+                'input_hash' => null,
+                'usage_input_tokens' => null,
+                'usage_output_tokens' => null,
+                'duration_ms' => 0,
+                'error_code' => null,
+                'error_message' => null,
+                'generated_at' => now(),
+            ]);
+
+            return;
+        }
+
+        // 2026-08-25追加(修正1): 競合の合計matched件数が閾値未満のときは、
+        // AIへ競合データを一切渡さない(competitorReadable=trueでも、
+        // 1件程度の読み取り結果を根拠に「競合がこの点を強調しているため」
+        // という比較の文章をAIが書いてしまう不具合への対応、実物レポート32)。
+        // $hasCompetitorをfalseにすると、BrandWheelImprovementSuggestion
+        // InputFactoryは競合関連の配列を一切含めず、プロバイダのプロンプトも
+        // 既存の「比較サイトのデータはありません」という自社単独モード
+        // (競合が本当に無いケースと同じ分岐)に切り替わる。
+        $competitorTotalMatched = $competitorReadable ? array_sum(array_column((array) $competitorWheel['axes'], 'matched_count')) : 0;
+        $hasSufficientCompetitor = $competitorReadable && $comparisonSufficiency->isSufficient($competitorTotalMatched);
+
         $comparisonItems = $comparisonComposer->compose((array) $selfWheel['axes'], $competitorReadable ? (array) $competitorWheel['axes'] : []);
         $groupTotals = $competitorReadable ? $comparisonComposer->groupTotals($comparisonItems) : [];
 
@@ -115,7 +168,7 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
             $evidenceLookupBuilder->build($selfRecord),
             $competitorReadable ? $evidenceLookupBuilder->build($competitorRecord) : [],
             $groupTotals,
-            $competitorReadable,
+            $hasSufficientCompetitor,
             // 2026-08-20追加: 差別化テーマ選定に自社の既存ブランド文脈を
             // 考慮させるための自社強みデータ(依頼者指摘)。key_message/
             // positive_impressionはBrandWheelLeadResponseComposer::compose()が

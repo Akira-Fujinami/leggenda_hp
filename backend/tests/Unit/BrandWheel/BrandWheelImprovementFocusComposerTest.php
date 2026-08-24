@@ -24,6 +24,7 @@ class BrandWheelImprovementFocusComposerTest extends TestCase
             'sub_key' => $subKey,
             'sub_name' => $subKey.'_name',
             'definition' => $subKey.'の定義文。',
+            'recommendation' => $subKey.'の行動文。',
             'self_matched' => $selfMatched,
             'competitor_matched' => $competitorMatched,
         ];
@@ -151,5 +152,26 @@ class BrandWheelImprovementFocusComposerTest extends TestCase
         $result = $this->composer->compose($items, []);
 
         $this->assertSame('leadershipの定義文。', $result['items'][0]['definition']);
+    }
+
+    /**
+     * 修正4(2026-08-25): 競合引用(60字上限)も、上限内に収まる最後の句点
+     * (。)で切る(文の途中で切らない)。
+     */
+    public function test_competitor_evidence_is_truncated_at_the_last_sentence_boundary_within_the_limit(): void
+    {
+        $firstSentence = str_repeat('あ', 20).'。';
+        $secondSentence = str_repeat('い', 50).'。';
+
+        $items = [
+            $this->item('personality', 'company_distance', 'leadership', false, true),
+        ];
+
+        $result = $this->composer->compose($items, [
+            'personality' => ['leadership' => $firstSentence.$secondSentence],
+        ]);
+
+        $this->assertSame($firstSentence, $result['items'][0]['competitor_evidence']);
+        $this->assertStringEndsWith('。', $result['items'][0]['competitor_evidence']);
     }
 }

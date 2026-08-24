@@ -58,6 +58,7 @@ class WordReportGenerator
             $phpWord, '自社サイトの分析結果', $viewModel->brandWheelSelf,
             '自社サイト', $viewModel->selfTotalMatched, $viewModel->selfTotalMax,
             $viewModel->brandWheelComparison['self_points'],
+            $viewModel->selfLowContentNotice,
         );
         if ($this->competitorReadable($viewModel)) {
             $this->addBrandWheelAnalysisSection(
@@ -196,6 +197,7 @@ class WordReportGenerator
         int $totalMatched,
         int $totalMax,
         array $summaryPoints,
+        ?string $lowContentNotice = null,
     ): void {
         $section = $phpWord->addSection();
         $section->addTitle($title, 1);
@@ -217,6 +219,10 @@ class WordReportGenerator
         $section->addTextBreak(1);
         $section->addText("{$seriesLabel}　確認できた情報：{$totalMatched} / {$totalMax}項目", ['bold' => true, 'size' => 14]);
         $section->addText('ブランドホイール24項目のうち、サイト上で情報を確認できた項目数', ['size' => 8, 'color' => '9A9A9A']);
+        if ($lowContentNotice !== null) {
+            // 2026-08-25追加(修正5): 自社の合計matched件数が閾値未満のときの但し書き。
+            $section->addText($lowContentNotice, ['size' => 8, 'color' => '6B6767']);
+        }
 
         if ($summaryPoints !== []) {
             $section->addTextBreak(1);
@@ -438,8 +444,8 @@ class WordReportGenerator
                 foreach ($focus['items'] as $i => $item) {
                     $section->addTextBreak(1);
                     $section->addText(($i + 1).'. '.$item['sub_name'], ['bold' => true]);
-                    $section->addText($item['definition'], ['size' => 9, 'color' => '6B6767']);
-                    $section->addText('御社のサイト：記述が見つかりませんでした');
+                    $section->addText($item['recommendation'], ['size' => 9, 'color' => '6B6767']);
+                    $section->addText('（現在、サイトからは読み取れませんでした）', ['size' => 8, 'color' => '9A9A9A']);
                     $section->addText('比較サイトの記述：「'.$item['competitor_evidence'].'」');
                 }
 
@@ -503,8 +509,8 @@ class WordReportGenerator
         foreach ($focusSelfOnly['items'] as $i => $item) {
             $section->addTextBreak(1);
             $section->addText(($i + 1).'. '.$item['sub_name'], ['bold' => true]);
-            $section->addText($item['definition'], ['size' => 9, 'color' => '6B6767']);
-            $section->addText('御社のサイト：'.$this->selfOnlyReasonLabel($item['self_reason']));
+            $section->addText($item['recommendation'], ['size' => 9, 'color' => '6B6767']);
+            $section->addText($this->selfOnlyReasonLabel($item['self_reason']), ['size' => 8, 'color' => '9A9A9A']);
         }
 
         if (count($viewModel->improvementRecommendedContents) > 0) {
@@ -534,8 +540,8 @@ class WordReportGenerator
     private function selfOnlyReasonLabel(string $reason): string
     {
         return $reason === 'label_only'
-            ? '見出し・リンクラベルのみで、具体的な記述は見つかりませんでした'
-            : '記述が見つかりませんでした';
+            ? '（現在、見出し・リンクラベルのみで、具体的な記述は見つかりませんでした）'
+            : '（現在、サイトからは読み取れませんでした）';
     }
 
     /**

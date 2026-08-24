@@ -95,7 +95,7 @@ class BrandWheelImprovementSuggestionResponseParser
             }
         }
 
-        return mb_strlen($text) > $maxChars ? mb_substr($text, 0, $maxChars).'…' : $text;
+        return BrandWheelTextTruncator::truncateAtSentenceBoundary($text, $maxChars);
     }
 
     /**

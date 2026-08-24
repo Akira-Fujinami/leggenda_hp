@@ -515,7 +515,12 @@ class ReportViewModelBuilderTest extends TestCase
         $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
 
         // 自社はrelationship軸が0件、競合は3件該当 ―― company_distanceグループの
-        // 差が最大になるように仕組む。
+        // 差が最大になるように仕組む。競合の合計matched件数は6以上
+        // (comparison_sufficiency_threshold)にする ―― asset/financial_benefitの
+        // 追加分はcompany_distanceのgapを超えないよう振り分けており
+        // (asset: gap=2-1=1、financial_benefit: gap=2-0=2で同点だが
+        // company_distanceが先に評価され`>`比較のため据え置かれる)、
+        // 選定される領域・3項目のcompetitor_evidenceには影響しない。
         BrandWheelAnalysisResult::factory()->create([
             'analysis_id' => $analysis->id,
             'website_analysis_id' => $selfWa->id,
@@ -526,10 +531,18 @@ class ReportViewModelBuilderTest extends TestCase
             'analysis_id' => $analysis->id,
             'website_analysis_id' => $competitorWa->id,
             'status' => 'success',
-            'axes' => [['axis_key' => 'relationship', 'matched_sub_elements' => [
-                ['key' => 'colleagues', 'evidence' => '同僚についての競合サイトの抜粋'],
-                ['key' => 'atmosphere', 'evidence' => '雰囲気についての競合サイトの抜粋'],
-            ]]],
+            'axes' => [
+                ['axis_key' => 'relationship', 'matched_sub_elements' => [
+                    ['key' => 'colleagues', 'evidence' => '同僚についての競合サイトの抜粋'],
+                    ['key' => 'atmosphere', 'evidence' => '雰囲気についての競合サイトの抜粋'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'y1'], ['key' => 'competitiveness', 'evidence' => 'y2'],
+                ]],
+                ['axis_key' => 'financial_benefit', 'matched_sub_elements' => [
+                    ['key' => 'salary_level', 'evidence' => 'y3'], ['key' => 'benefits', 'evidence' => 'y4'],
+                ]],
+            ],
         ]);
 
         $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
@@ -584,19 +597,37 @@ class ReportViewModelBuilderTest extends TestCase
         $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
         $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
 
+        // 自社・競合とも合計matched件数を6以上(comparison_sufficiency_threshold)
+        // にする ―― 閾値未満だと修正3によりgroupTotals/comparisonOverviewが
+        // 空配列になるため、この「両方十分」ケースの回帰確認には閾値以上の
+        // フィクスチャが必要。
         BrandWheelAnalysisResult::factory()->create([
             'analysis_id' => $analysis->id,
             'website_analysis_id' => $selfWa->id,
             'status' => 'success',
-            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => 'x1'], ['key' => 'business_expansion', 'evidence' => 'x2'],
+                    ['key' => 'project_initiative', 'evidence' => 'x3'], ['key' => 'social_contribution', 'evidence' => 'x4'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'x5'], ['key' => 'competitiveness', 'evidence' => 'x6'],
+                ]],
+            ],
         ]);
         BrandWheelAnalysisResult::factory()->create([
             'analysis_id' => $analysis->id,
             'website_analysis_id' => $competitorWa->id,
             'status' => 'success',
-            'axes' => [['axis_key' => 'relationship', 'matched_sub_elements' => [
-                ['key' => 'colleagues', 'evidence' => 'y'], ['key' => 'atmosphere', 'evidence' => 'z'],
-            ]]],
+            'axes' => [
+                ['axis_key' => 'relationship', 'matched_sub_elements' => [
+                    ['key' => 'colleagues', 'evidence' => 'y'], ['key' => 'atmosphere', 'evidence' => 'z'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'y1'], ['key' => 'competitiveness', 'evidence' => 'y2'],
+                    ['key' => 'scale_influence', 'evidence' => 'y3'], ['key' => 'office_facility', 'evidence' => 'y4'],
+                ]],
+            ],
         ]);
 
         $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
@@ -675,11 +706,23 @@ class ReportViewModelBuilderTest extends TestCase
         $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
         $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
 
+        // 自社の合計matched件数を6以上(comparison_sufficiency_threshold)にする
+        // ―― 閾値未満だと修正2によりAI結果は使われず決定的フォールバックに
+        // なるため、この「AI結果が使われる」ケースの回帰確認には閾値以上の
+        // フィクスチャが必要。
         BrandWheelAnalysisResult::factory()->create([
             'analysis_id' => $analysis->id,
             'website_analysis_id' => $selfWa->id,
             'status' => 'success',
-            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => 'x']]]],
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => 'x1'], ['key' => 'business_expansion', 'evidence' => 'x2'],
+                    ['key' => 'project_initiative', 'evidence' => 'x3'], ['key' => 'social_contribution', 'evidence' => 'x4'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'x5'], ['key' => 'competitiveness', 'evidence' => 'x6'],
+                ]],
+            ],
         ]);
         BrandWheelImprovementSuggestion::factory()->create([
             'analysis_id' => $analysis->id,
@@ -733,5 +776,298 @@ class ReportViewModelBuilderTest extends TestCase
 
         $this->assertSame($viewModel->brandWheelComparison['one_point']['text'], $viewModel->improvementOnePoint);
         $this->assertNull($viewModel->improvementRecommendation);
+    }
+
+    // ------------------------------------------------------------------
+    // 2026-08-25追加: 診断レポートを商談で使える状態にする(修正1〜3・5)。
+    // 自社/競合いずれかの合計matched件数がconfig('brand_wheel.
+    // comparison_sufficiency_threshold')(既定6)未満のとき、比較に基づく
+    // 主張(競合引用・優劣判定・個別提案)を出さない。
+    // ------------------------------------------------------------------
+
+    /**
+     * 修正1: 競合の合計matched件数が閾値未満のとき、compose()は使わず
+     * composeSelfOnly()へフォールバックする。競合引用(competitor_evidence)は
+     * 一切出ない。
+     */
+    public function test_improvement_focus_falls_back_to_self_only_when_competitor_is_below_the_sufficiency_threshold(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        // レポート32相当: 自社4/24、競合1/24。
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
+                ['key' => 'leadership', 'evidence' => 'a'], ['key' => 'org_structure', 'evidence' => 'b'],
+                ['key' => 'company_character', 'evidence' => 'c'], ['key' => 'core_values', 'evidence' => 'd'],
+            ]]],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
+                ['key' => 'core_values', 'evidence' => '当社の理念に共感してもらえる方、またIT最先端技術を追求し、新しい機能開発に打ち込みたい方は是非ご応募ください。'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNull($viewModel->improvementFocus);
+        $this->assertNotNull($viewModel->improvementFocusSelfOnly);
+        foreach ($viewModel->improvementFocusSelfOnly['items'] as $item) {
+            $this->assertArrayNotHasKey('competitor_evidence', $item);
+        }
+        $raw = json_encode([
+            $viewModel->improvementFocus,
+            $viewModel->improvementFocusSelfOnly,
+            $viewModel->improvementReason,
+            $viewModel->improvementOnePoint,
+            $viewModel->improvementRecommendedContents,
+        ], JSON_UNESCAPED_UNICODE);
+        $this->assertStringNotContainsString('当社の理念に共感してもらえる方', $raw);
+    }
+
+    /**
+     * 修正2: 自社の合計matched件数が閾値未満のとき、個別項目(reason/
+     * recommended_contents/mid_term_action)の提案は出ず、one_pointは
+     * config('brand_wheel.one_point_messages.insufficient_content')の
+     * 定型文になる(AIが生成した値があっても使わない)。
+     */
+    public function test_individual_item_suggestions_are_suppressed_and_one_point_uses_the_deterministic_template_when_self_is_below_the_sufficiency_threshold(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        // 自社4/24(閾値6未満)。
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
+                ['key' => 'leadership', 'evidence' => 'a'], ['key' => 'org_structure', 'evidence' => 'b'],
+                ['key' => 'company_character', 'evidence' => 'c'], ['key' => 'core_values', 'evidence' => 'd'],
+            ]]],
+        ]);
+        // AIが(閾値導入前や不具合等で)個別提案を生成済みだったとしても、
+        // ここでは一切使われないこと。
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'one_point' => 'まずは『重視する価値』を具体的に伝えることを推奨します。',
+            'recommendation' => 'まずは重視する価値に関する情報を拡充することを推奨します。',
+            'reason' => '競合がこの点を強調しているため、御社も具体的な価値観を示すことで差を埋めることができます。',
+            'recommended_contents' => ['具体的な価値観のエピソード'],
+            'mid_term_action' => '中長期的には、社員インタビューの連載化も検討できます。',
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame(
+            (string) config('brand_wheel.one_point_messages.insufficient_content'),
+            $viewModel->improvementOnePoint,
+        );
+        $this->assertNull($viewModel->improvementRecommendation);
+        $this->assertNull($viewModel->improvementReason);
+        $this->assertSame([], $viewModel->improvementRecommendedContents);
+        $this->assertNull($viewModel->improvementMidTermAction);
+    }
+
+    /**
+     * 修正3: 自社・競合のいずれかが閾値未満のとき、groupTotals/
+     * comparisonOverview(優劣判定・対比表のバッジの元データ)は空配列になる。
+     * 件数の事実(selfTotalMatched等)自体は表示され続ける。
+     */
+    public function test_group_totals_and_comparison_overview_are_suppressed_when_either_side_is_below_the_sufficiency_threshold(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        // 自社4/24、競合1/24。1件対1件を「同程度」と判定させない
+        // (実際は両方とも読めていないだけ)。
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
+                ['key' => 'leadership', 'evidence' => 'a'], ['key' => 'org_structure', 'evidence' => 'b'],
+                ['key' => 'company_character', 'evidence' => 'c'], ['key' => 'core_values', 'evidence' => 'd'],
+            ]]],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [['key' => 'core_values', 'evidence' => 'e']]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame([], $viewModel->groupTotals);
+        $this->assertSame([], $viewModel->comparisonOverview);
+        // 件数そのものは引き続き表示される。
+        $this->assertSame(4, $viewModel->selfTotalMatched);
+        $this->assertSame(1, $viewModel->competitorTotalMatched);
+    }
+
+    /**
+     * 修正5: 自社の合計matched件数が閾値未満のとき、件数の近くに添える
+     * 但し書きがViewModelに設定される。閾値以上のときはnull。
+     */
+    public function test_self_low_content_notice_is_set_only_when_self_is_below_the_sufficiency_threshold(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
+                ['key' => 'leadership', 'evidence' => 'a'], ['key' => 'org_structure', 'evidence' => 'b'],
+                ['key' => 'company_character', 'evidence' => 'c'], ['key' => 'core_values', 'evidence' => 'd'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame((string) config('brand_wheel.self_low_content_notice'), $viewModel->selfLowContentNotice);
+        $this->assertStringNotContainsString('情報が無い', $viewModel->selfLowContentNotice);
+    }
+
+    public function test_self_low_content_notice_is_null_when_self_meets_the_sufficiency_threshold(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => 'x1'], ['key' => 'business_expansion', 'evidence' => 'x2'],
+                    ['key' => 'project_initiative', 'evidence' => 'x3'], ['key' => 'social_contribution', 'evidence' => 'x4'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'x5'], ['key' => 'competitiveness', 'evidence' => 'x6'],
+                ]],
+            ],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNull($viewModel->selfLowContentNotice);
+    }
+
+    /**
+     * レポート32(2026-08-24、自社=NTTデータ4/24、競合=しんきん1/24)と
+     * 同じ条件のフィクスチャ。修正後、商談で言えない文章
+     * (「競合がこの点を強調しているため」等)が一切出ないことを確認する。
+     */
+    public function test_report_32_fixture_no_longer_produces_a_comparison_based_claim_from_thin_data(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社NTTデータ']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => '技術で社会基盤を支える']]],
+                ['axis_key' => 'personality', 'matched_sub_elements' => [['key' => 'core_values', 'evidence' => '挑戦を続ける']]],
+                ['axis_key' => 'financial_benefit', 'matched_sub_elements' => [
+                    ['key' => 'salary_level', 'evidence' => '給与水準の記述'], ['key' => 'benefits', 'evidence' => '福利厚生の記述'],
+                ]],
+            ],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
+                ['key' => 'core_values', 'evidence' => '当社の理念に共感してもらえる方、またIT最先端技術を追求し、新しい機能開発に打ち込みたい方は是非ご応募ください。'],
+            ]]],
+        ]);
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'one_point' => 'まずは『重視する価値』を具体的に伝えることを推奨します。',
+            'reason' => '候補者は御社の価値観を理解することで応募意欲が高まります。競合がこの点を強調しているため、御社も具体的な価値観を示すことで差を埋めることができます。',
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame(4, $viewModel->selfTotalMatched);
+        $this->assertSame(1, $viewModel->competitorTotalMatched);
+
+        // 個別項目の提案(閾値未満のAI reasonを含む)は一切出ない。
+        $this->assertNull($viewModel->improvementReason);
+        $this->assertNotEquals('まずは『重視する価値』を具体的に伝えることを推奨します。', $viewModel->improvementOnePoint);
+        // 競合の引用付きcompose()は使わない。
+        $this->assertNull($viewModel->improvementFocus);
+        // 優劣判定は出ない。
+        $this->assertSame([], $viewModel->groupTotals);
+        $this->assertSame([], $viewModel->comparisonOverview);
+        // 但し書きが出る。
+        $this->assertNotNull($viewModel->selfLowContentNotice);
+
+        $raw = json_encode([
+            $viewModel->improvementFocus,
+            $viewModel->improvementFocusSelfOnly,
+            $viewModel->improvementOnePoint,
+            $viewModel->improvementReason,
+            $viewModel->improvementRecommendation,
+            $viewModel->improvementRecommendedContents,
+            $viewModel->improvementMidTermAction,
+            $viewModel->groupTotals,
+            $viewModel->comparisonOverview,
+        ], JSON_UNESCAPED_UNICODE);
+        $this->assertStringNotContainsString('競合がこの点を強調している', $raw);
+        $this->assertStringNotContainsString('当社の理念に共感してもらえる方', $raw);
+        $this->assertStringNotContainsString('差を埋める', $raw);
     }
 }

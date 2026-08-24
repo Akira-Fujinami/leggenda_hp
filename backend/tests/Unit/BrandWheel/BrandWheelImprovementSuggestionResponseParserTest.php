@@ -90,6 +90,49 @@ class BrandWheelImprovementSuggestionResponseParserTest extends TestCase
         $this->assertNull($result->reason);
     }
 
+    /**
+     * 修正4(2026-08-25): 上限内に収まる最後の句点(。)で切る。句点が
+     * 上限より手前にあっても、句点の直後で切る(文の途中で切らない)。
+     */
+    public function test_truncates_mid_term_action_at_the_last_sentence_boundary_within_the_limit(): void
+    {
+        // 120字上限(MID_TERM_ACTION_MAX_CHARS)。1文目は句点まで短く、
+        // 2文目が上限を跨いで途中で終わる長さにする。
+        $firstSentence = str_repeat('あ', 30).'。';
+        $secondSentence = str_repeat('い', 100).'。';
+        $text = $firstSentence.$secondSentence;
+
+        $result = $this->parser()->parse([
+            'one_point' => null,
+            'recommendation' => null,
+            'mid_term_action' => $text,
+            'focus_sub_element_keys' => [],
+        ], provider: 'openai', model: null, isMock: false, promptVersion: 'v3');
+
+        $this->assertSame($firstSentence, $result->midTermAction);
+        $this->assertStringEndsWith('。', $result->midTermAction);
+        $this->assertStringEndsNotWith('…', $result->midTermAction);
+    }
+
+    /**
+     * 句点が1つも無い場合のみ、従来どおり上限で切って末尾に「…」を付ける
+     * (回帰防止)。
+     */
+    public function test_truncates_reason_with_an_ellipsis_when_no_sentence_boundary_exists(): void
+    {
+        $longText = str_repeat('あ', 500);
+
+        $result = $this->parser()->parse([
+            'one_point' => null,
+            'recommendation' => null,
+            'reason' => $longText,
+            'focus_sub_element_keys' => [],
+        ], provider: 'openai', model: null, isMock: false, promptVersion: 'v3');
+
+        $this->assertLessThanOrEqual(201, mb_strlen($result->reason));
+        $this->assertStringEndsWith('…', $result->reason);
+    }
+
     public function test_returns_null_for_missing_or_blank_fields(): void
     {
         $result = $this->parser()->parse([], provider: 'mock', model: null, isMock: true, promptVersion: null);

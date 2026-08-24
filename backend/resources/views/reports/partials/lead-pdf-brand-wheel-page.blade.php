@@ -17,6 +17,11 @@
       $totalMax       int     分母
       $leggendaLogoImageBase64  string
       $groupBands     array   本体テンプレート冒頭で定義済み
+
+    任意変数:
+      $lowContentNotice  ?string  2026-08-25追加(修正5)。$totalMatchedが
+        閾値未満のときの但し書き($viewModel->selfLowContentNotice)。
+        自社ページの呼び出し側でのみ渡す(競合ページには渡さない)。
 --}}
 <div class="page">
     <h2>{{ $pageTitle }}</h2>
@@ -72,6 +77,9 @@
                         <p class="lab"><span class="swatch" style="background: {{ $seriesColor }};"></span>{{ $seriesLabel }}　確認できた情報</p>
                         <p class="num">{{ $totalMatched }}<small> / {{ $totalMax }}項目</small></p>
                         <p class="statnote">ブランドホイール24項目のうち、サイト上で情報を確認できた項目数</p>
+                        @if ($lowContentNotice ?? null)
+                            <p class="lowcontentnotice">{{ $lowContentNotice }}</p>
+                        @endif
                     </div>
                     <p class="sumhead" style="margin-top: 2mm;">サマリー</p>
                     <ul class="sum">

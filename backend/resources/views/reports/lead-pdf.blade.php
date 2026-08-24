@@ -261,6 +261,8 @@
          小さな注釈として添える(依頼者指定 ―― 取得件数そのものの説明は
          メインコピーにしない)。 --}}
     .statbox .statnote { font-size: 7.5pt; color: #9A9A9A; margin: 1.5mm 0 0; line-height: 1.3; }
+    {{-- 2026-08-25追加(修正5): 自社の合計matched件数が閾値未満のときの但し書き。 --}}
+    .lowcontentnotice { font-size: 7.5pt; color: #6B6767; margin: 1.5mm 0 0; line-height: 1.4; }
     .swatch { display: inline-block; width: 9px; height: 9px; margin-right: 4px; }
 
     {{-- 「○△－の対比表」ページ。2026-08-08: ●／－の2値から○△－の3値へ変更。 --}}
@@ -356,7 +358,10 @@
     .rcard .nm { font-size: 11.5pt; font-weight: bold; margin: 0.8mm 0 0.6mm; }
     .rcard .q { font-size: 9pt; color: #6B6767; margin: 0 0 1mm; line-height: 1.25; }
     .rcard .lb { font-size: 8.5pt; color: #8A8A8A; margin: 0 0 0.5mm; }
-    .rcard .own { font-size: 9pt; margin: 0 0 1mm; }
+    {{-- 2026-08-25更新: 所見(旧「御社のサイト／記述が見つかりませんでした」の
+         2行)から提案への切替に伴い、現状注記は控えめな1行にする(依頼者指定
+         「小さく、控えめに」)。 --}}
+    .rcard .own { font-size: 8pt; color: #9A9A9A; margin: 0 0 1mm; }
     .rcard .cmp { font-size: 9pt; line-height: 1.3; margin: 0; border-left: 3px solid #E95446; padding-left: 2.5mm; }
     .rcell { width: 88.3mm; padding: 0 2mm 2mm 0; vertical-align: top; }
 
@@ -552,6 +557,7 @@
     'summaryPoints' => $comparison['self_points'],
     'totalMatched' => $viewModel->selfTotalMatched,
     'totalMax' => $viewModel->selfTotalMax,
+    'lowContentNotice' => $viewModel->selfLowContentNotice,
 ])
 
 @if ($competitorReadable)
@@ -828,9 +834,8 @@
                                 <div class="rcard">
                                     <span class="no">{{ $i + 1 }}</span>
                                     <p class="nm">{{ $item['sub_name'] }}</p>
-                                    <p class="q">{{ $item['definition'] }}</p>
-                                    <p class="lb">御社のサイト</p>
-                                    <p class="own">記述が見つかりませんでした</p>
+                                    <p class="q">{{ $item['recommendation'] }}</p>
+                                    <p class="own">（現在、サイトからは読み取れませんでした）</p>
                                     <p class="lb">比較サイトの記述</p>
                                     <p class="cmp">「{{ $item['competitor_evidence'] }}」</p>
                                 </div>
@@ -892,8 +897,8 @@
                 $focusSelf = $viewModel->improvementFocusSelfOnly;
                 $selectedLabelSelf = $groupBands[$focusSelf['selected_group']]['label'] ?? $focusSelf['selected_group'];
                 $selfOnlyReasonLabel = fn (string $reason) => $reason === 'label_only'
-                    ? '見出し・リンクラベルのみで、具体的な記述は見つかりませんでした'
-                    : '記述が見つかりませんでした';
+                    ? '（現在、見出し・リンクラベルのみで、具体的な記述は見つかりませんでした）'
+                    : '（現在、サイトからは読み取れませんでした）';
             @endphp
             <p class="rlead">3つの領域のうち、サイトの記述から読み取れた項目が最も少なかったのは「{{ $selectedLabelSelf }}」でした。この領域から、候補者が知りたがる項目を{{ count($focusSelf['items']) }}件挙げます。</p>
 
@@ -924,8 +929,7 @@
                                 <div class="rcard">
                                     <span class="no">{{ $i + 1 }}</span>
                                     <p class="nm">{{ $item['sub_name'] }}</p>
-                                    <p class="q">{{ $item['definition'] }}</p>
-                                    <p class="lb">御社のサイト</p>
+                                    <p class="q">{{ $item['recommendation'] }}</p>
                                     <p class="own">{{ $selfOnlyReasonLabel($item['self_reason']) }}</p>
                                 </div>
                             </td>

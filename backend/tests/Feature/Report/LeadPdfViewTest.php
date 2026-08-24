@@ -121,6 +121,7 @@ class LeadPdfViewTest extends TestCase
             'improvementReason' => null,
             'improvementRecommendedContents' => [],
             'improvementMidTermAction' => null,
+            'selfLowContentNotice' => null,
         ];
         $defaults['improvementFocusSelfOnly'] = app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($defaults['subElementComparison']);
 
@@ -830,7 +831,47 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('会社との距離', $html);
         $this->assertStringContainsString('入社3年目の先輩が、日々どんな判断をしているかを紹介しています。', $html);
         $this->assertStringContainsString('部署をまたいだ相談が日常的に起きる、フラットな環境です。', $html);
-        $this->assertStringContainsString('記述が見つかりませんでした', $html);
+        $this->assertStringContainsString('（現在、サイトからは読み取れませんでした）', $html);
+    }
+
+    /**
+     * 2026-08-25(修正: 所見→提案): カードの本文は判定用の定義文
+     * (sub_element_definitions)ではなく、行動を促す提案文
+     * (config('brand_wheel.axes.*.sub_element_recommendations'))を表示する。
+     * 競合ありのケースでも、提案文と競合の引用の両方が出る。
+     */
+    public function test_improvement_page_cards_show_the_recommendation_text_alongside_competitor_evidence(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        // fixture(colleagues/atmosphere)に対応する行動文(config原文)。
+        $this->assertStringContainsString('実際に働いている人を、名前と経歴つきで紹介してください。', $html);
+        $this->assertStringContainsString('普段のオフィスの様子や、チームの空気が伝わる描写を載せてください。', $html);
+        // 競合の引用は従来どおり出る(行動文とは排他ではない)。
+        $this->assertStringContainsString('入社3年目の先輩が、日々どんな判断をしているかを紹介しています。', $html);
+        // 判定用の定義文(旧「同僚や先輩がどのような人物かについての具体的な記述。」)は
+        // カードにはもう出ない。
+        $this->assertStringNotContainsString('同僚や先輩がどのような人物かについての具体的な記述。', $html);
+    }
+
+    /**
+     * 修正2の自社単独カード(competitor無し)でも、同様に定義文ではなく
+     * 提案文を表示する。
+     */
+    public function test_improvement_page_self_only_cards_show_the_recommendation_text(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $start = mb_strpos($html, '改善提案');
+        $this->assertNotFalse($start);
+        $pageHtml = mb_substr($html, $start);
+
+        // viewModel()のfixtureはwill_activity(パーパス)のみ○、残り23項目が－。
+        // company_distanceグループ(personality+relationship、8件とも－で最多)の
+        // 上位3件(リーダーシップ/組織構造/会社の性格)の行動文が出る
+        // (BrandWheelImprovementFocusComposer::composeSelfOnly()で実測確認済み)。
+        $this->assertStringContainsString('経営者がどんな考えで会社を率いているかを、本人の言葉で載せてください。', $pageHtml);
+        $this->assertStringNotContainsString('部門・チームの編成、階層、意思決定の通り方についての記述。', $pageHtml);
     }
 
     /**
@@ -1000,6 +1041,27 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringNotContainsString('6つの項目それぞれについて、該当する内容がサイトの記述から何件読み取れたかを集計しています', $html);
     }
 
+    /**
+     * 修正5(2026-08-25): 自社の合計matched件数が閾値未満のときの但し書き
+     * (config('brand_wheel.self_low_content_notice'))。自社ページにのみ出て、
+     * 競合ページには出ない。
+     */
+    public function test_self_analysis_page_shows_the_low_content_notice_when_present(): void
+    {
+        $notice = 'このページから読み取れた本文が少なかったため、確認できた項目数が少なくなっています。採用サイトのトップページなど、文章量の多いページをご指定いただくと、より詳しい診断が可能です。';
+
+        $html = $this->render($this->comparisonViewModel(['selfLowContentNotice' => $notice]));
+
+        $this->assertStringContainsString($notice, $html);
+    }
+
+    public function test_self_analysis_page_omits_the_low_content_notice_by_default(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertStringNotContainsString('文章量の多いページをご指定いただくと', $html);
+    }
+
     public function test_intro_page_shows_axis_level_definitions_and_url_scope_note(): void
     {
         $html = $this->render($this->viewModel());
@@ -1025,6 +1087,28 @@ class LeadPdfViewTest extends TestCase
         $html = $this->render($this->viewModel());
 
         $this->assertStringNotContainsString('比較結果サマリー', $html);
+    }
+
+    /**
+     * 修正3(2026-08-25): 自社/競合いずれかの合計matched件数が閾値未満の
+     * ときは、ReportViewModelBuilderがgroupTotals/comparisonOverviewを
+     * 空配列にする(ReportViewModelBuilderTest側で検証済み)。ここでは、
+     * その空配列がBlade側で「優劣判定・バッジを一切出さない」という
+     * 表示結果に正しくつながることを確認する(競合自体は存在する
+     * ケースであることに注意 ―― showCompetitorColumn=trueでも
+     * groupTotalsが空ならバッジは出ない)。
+     */
+    public function test_comparison_page_omits_overview_summary_and_verdict_badge_when_group_totals_and_overview_are_empty_despite_a_competitor_existing(): void
+    {
+        $html = $this->render($this->comparisonViewModel([
+            'groupTotals' => [],
+            'comparisonOverview' => [],
+        ]));
+
+        $this->assertStringNotContainsString('比較結果サマリー', $html);
+        $this->assertStringNotContainsString('（自社優位）', $html);
+        $this->assertStringNotContainsString('（競合優位）', $html);
+        $this->assertStringNotContainsString('（同程度）', $html);
     }
 
     public function test_improvement_page_one_point_uses_the_ai_generated_text_when_available(): void

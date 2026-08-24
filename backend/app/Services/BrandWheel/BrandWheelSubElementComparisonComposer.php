@@ -31,7 +31,7 @@ class BrandWheelSubElementComparisonComposer
     /**
      * @param  list<array{key: string, group: string, name: string, matched_sub_elements: list<array{key: string, name: string}>, label_only_sub_elements: list<array{key: string, name: string}>}>  $selfAxes
      * @param  list<array{key: string, group: string, name: string, matched_sub_elements: list<array{key: string, name: string}>, label_only_sub_elements: list<array{key: string, name: string}>}>  $competitorAxes
-     * @return list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, self_matched: bool, competitor_matched: bool, self_state: string, competitor_state: string}>
+     * @return list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, recommendation: string, self_matched: bool, competitor_matched: bool, self_state: string, competitor_state: string}>
      */
     public function compose(array $selfAxes, array $competitorAxes): array
     {
@@ -46,6 +46,12 @@ class BrandWheelSubElementComparisonComposer
         foreach ($axesConfig as $axisKey => $axisDefinition) {
             $subElements = (array) ($axisDefinition['sub_elements'] ?? []);
             $definitions = (array) ($axisDefinition['sub_element_definitions'] ?? []);
+            // 2026-08-25追加: 改善提案カード表示専用の行動文
+            // (config('brand_wheel.axes.*.sub_element_recommendations'))。
+            // 判定用のsub_element_definitionsとは別物 ―― AIプロンプトには
+            // 使わない(BrandWheelImprovementSuggestionInputFactory/
+            // OpenAiBrandWheelAnalysisProvider参照)。
+            $recommendations = (array) ($axisDefinition['sub_element_recommendations'] ?? []);
 
             foreach ($subElements as $subKey => $subName) {
                 $selfMatched = in_array($subKey, $selfMatchedKeys[$axisKey] ?? [], true);
@@ -58,6 +64,7 @@ class BrandWheelSubElementComparisonComposer
                     'sub_key' => $subKey,
                     'sub_name' => $subName,
                     'definition' => (string) ($definitions[$subKey] ?? ''),
+                    'recommendation' => (string) ($recommendations[$subKey] ?? ''),
                     'self_matched' => $selfMatched,
                     'competitor_matched' => $competitorMatched,
                     'self_state' => $this->state($selfMatched, in_array($subKey, $selfLabelOnlyKeys[$axisKey] ?? [], true)),

@@ -85,6 +85,7 @@ class PdfReportGeneratorTest extends TestCase
             improvementReason: '就業環境は競合が読み取れているのに対し自社は0件で、候補者が働くイメージを持ちにくい状態です。',
             improvementRecommendedContents: ['入社数年目の社員の1日の過ごし方'],
             improvementMidTermAction: '中長期的には、部署横断プロジェクトの事例をシリーズ化することも検討できます。',
+            selfLowContentNotice: null,
         );
     }
 

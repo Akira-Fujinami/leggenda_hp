@@ -82,6 +82,7 @@ class WordReportGeneratorTest extends TestCase
             'improvementReason' => null,
             'improvementRecommendedContents' => [],
             'improvementMidTermAction' => null,
+            'selfLowContentNotice' => null,
         ];
         $defaults['improvementFocusSelfOnly'] = app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($defaults['subElementComparison']);
 
@@ -456,7 +457,34 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString('会社との距離', $documentXml);
         $this->assertStringContainsString('入社3年目の先輩が、日々どんな判断をしているかを紹介しています。', $documentXml);
         $this->assertStringContainsString('部署をまたいだ相談が日常的に起きる、フラットな環境です。', $documentXml);
-        $this->assertStringContainsString('記述が見つかりませんでした', $documentXml);
+        $this->assertStringContainsString('（現在、サイトからは読み取れませんでした）', $documentXml);
+    }
+
+    /**
+     * 2026-08-25(修正: 所見→提案): カードの本文は判定用の定義文
+     * (sub_element_definitions)ではなく、行動を促す提案文
+     * (config('brand_wheel.axes.*.sub_element_recommendations'))を表示する。
+     * 競合ありのケースでも、提案文と競合の引用の両方が出る。
+     */
+    public function test_improvement_section_shows_the_recommendation_text_alongside_competitor_evidence(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel());
+
+        $this->assertStringContainsString('実際に働いている人を、名前と経歴つきで紹介してください。', $documentXml);
+        $this->assertStringContainsString('普段のオフィスの様子や、チームの空気が伝わる描写を載せてください。', $documentXml);
+        $this->assertStringContainsString('入社3年目の先輩が、日々どんな判断をしているかを紹介しています。', $documentXml);
+        $this->assertStringNotContainsString('同僚や先輩がどのような人物かについての具体的な記述。', $documentXml);
+    }
+
+    public function test_improvement_section_self_only_cards_show_the_recommendation_text(): void
+    {
+        $documentXml = $this->generate($this->viewModel());
+
+        // viewModel()のfixtureはwill_activity(パーパス)のみ○、残り23項目が－。
+        // company_distanceグループ(personality+relationship、8件とも－で最多)の
+        // 上位3件(リーダーシップ/組織構造/会社の性格)の行動文が出る。
+        $this->assertStringContainsString('経営者がどんな考えで会社を率いているかを、本人の言葉で載せてください。', $documentXml);
+        $this->assertStringNotContainsString('部門・チームの編成、階層、意思決定の通り方についての記述。', $documentXml);
     }
 
     /**
@@ -614,5 +642,40 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString('中長期の差別化ポイント', $documentXml);
         $this->assertStringNotContainsString('中長期的には：', $documentXml);
         $this->assertStringContainsString('部署横断プロジェクトの事例をシリーズ化することも検討できます。', $documentXml);
+    }
+
+    /**
+     * 修正3(2026-08-25): groupTotals/comparisonOverviewが空配列のとき
+     * (ReportViewModelBuilderが自社/競合いずれかの閾値未満で空にする)、
+     * Word版も比較結果サマリー自体を出さない(PDF版と同じ挙動)。
+     */
+    public function test_comparison_section_omits_overview_summary_when_group_totals_and_overview_are_empty_despite_a_competitor_existing(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel([
+            'groupTotals' => [],
+            'comparisonOverview' => [],
+        ]));
+
+        $this->assertStringNotContainsString('比較結果サマリー', $documentXml);
+    }
+
+    /**
+     * 修正5(2026-08-25): 自社の合計matched件数が閾値未満のときの但し書き
+     * (config('brand_wheel.self_low_content_notice'))がWord版にも出る。
+     */
+    public function test_self_analysis_section_shows_the_low_content_notice_when_present(): void
+    {
+        $notice = 'このページから読み取れた本文が少なかったため、確認できた項目数が少なくなっています。採用サイトのトップページなど、文章量の多いページをご指定いただくと、より詳しい診断が可能です。';
+
+        $documentXml = $this->generate($this->comparisonViewModel(['selfLowContentNotice' => $notice]));
+
+        $this->assertStringContainsString($notice, $documentXml);
+    }
+
+    public function test_self_analysis_section_omits_the_low_content_notice_by_default(): void
+    {
+        $documentXml = $this->generate($this->viewModel());
+
+        $this->assertStringNotContainsString('文章量の多いページをご指定いただくと', $documentXml);
     }
 }

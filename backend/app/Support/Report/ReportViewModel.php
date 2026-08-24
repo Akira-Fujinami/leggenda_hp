@@ -45,6 +45,7 @@ readonly class ReportViewModel
      * @param  ?string  $improvementReason  ワンポイントの理由(2026-08-18追加、2〜3文)。未生成/失敗時はnull。
      * @param  list<string>  $improvementRecommendedContents  具体的に追加すべき情報(2026-08-18追加、最大3項目)。未生成/失敗時は空配列。
      * @param  ?string  $improvementMidTermAction  中長期施策(2026-08-18追加、該当する場合のみ1〜2文)。未生成/失敗/該当なしの場合はnull。
+     * @param  ?string  $selfLowContentNotice  自社の合計matched件数がconfig('brand_wheel.comparison_sufficiency_threshold')未満のときの但し書き(2026-08-25追加、修正5)。config('brand_wheel.self_low_content_notice')。閾値以上のときはnull。
      */
     public function __construct(
         public string $companyDisplayName,
@@ -74,5 +75,6 @@ readonly class ReportViewModel
         public ?string $improvementReason,
         public array $improvementRecommendedContents,
         public ?string $improvementMidTermAction,
+        public ?string $selfLowContentNotice,
     ) {}
 }

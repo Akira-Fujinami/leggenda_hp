@@ -103,6 +103,103 @@ class BrandWheelSubElementComparisonComposerTest extends TestCase
     }
 
     /**
+     * 2026-08-25追加(修正: 所見→提案): 改善提案カード表示専用の行動文
+     * (sub_element_recommendations)。判定用のsub_element_definitionsとは
+     * 別のconfigキーから引く。
+     */
+    public function test_recommendation_text_comes_from_config_sub_element_recommendations(): void
+    {
+        $items = $this->composer->compose($this->axesWithMatches([]), $this->axesWithMatches([]));
+
+        $orgStructure = collect($items)->firstWhere('sub_key', 'org_structure');
+        $this->assertSame(
+            (string) config('brand_wheel.axes.personality.sub_element_recommendations.org_structure'),
+            $orgStructure['recommendation'],
+        );
+        $this->assertNotSame('', $orgStructure['recommendation']);
+        // definitionとrecommendationは別テキスト(取り違えて同じキーを
+        // 参照していないことの確認)。
+        $this->assertNotSame($orgStructure['definition'], $orgStructure['recommendation']);
+    }
+
+    /**
+     * 24項目すべてに行動文が定義されていること(欠けがないことを機械的に
+     * 検証する ―― config('brand_wheel.axes')に新しい下位要素が追加された
+     * 場合、sub_element_recommendationsの追加漏れをここで検知する)。
+     */
+    public function test_all_24_items_have_a_non_empty_recommendation_text(): void
+    {
+        $items = $this->composer->compose($this->axesWithMatches([]), $this->axesWithMatches([]));
+
+        $this->assertCount(24, $items);
+        foreach ($items as $item) {
+            $this->assertNotSame(
+                '',
+                $item['recommendation'],
+                "missing sub_element_recommendations for {$item['axis_key']}.{$item['sub_key']}",
+            );
+        }
+    }
+
+    /**
+     * 2026-08-25追加: sub_element_definitions(判定用、AIプロンプトで使用)は
+     * 今回のカード表示変更(所見→提案)で変更していないことを確認する。
+     * ここを変えるとAIの判定基準が変わってしまうため、行動文
+     * (sub_element_recommendations)とは完全に別のキーとして追加した。
+     */
+    public function test_sub_element_definitions_are_unchanged_by_the_recommendation_text_addition(): void
+    {
+        $expected = [
+            'will_activity' => [
+                'purpose' => '会社が何を目指しているか、存在意義や志を述べた記述。取扱商品・サービス内容の説明のみでは該当しない。',
+                'business_expansion' => '具体的な事業領域・商品・サービスの内容についての記述。',
+                'project_initiative' => '新規プロジェクトや新しい取り組みの具体的な紹介。既存事業の説明のみでは該当しない。',
+                'social_contribution' => '地域貢献・CSR等、社会に対する貢献活動についての記述。',
+            ],
+            'asset' => [
+                'brand_recognition' => '会社や実績が外部からどう評価・認知されているかについての記述。',
+                'competitiveness' => '他社にはない強みや独自の技術・ポジションについての記述。',
+                'scale_influence' => '売上高・拠点数・従業員数など、事業規模や業界内での影響力を示す記述。',
+                'office_facility' => 'オフィス環境や設備についての具体的な記述。',
+            ],
+            'personality' => [
+                'leadership' => '経営者・幹部の考え方や意思決定スタイルについての記述。',
+                'org_structure' => '部門・チームの編成、階層、意思決定の通り方についての記述。部署名や役職名の列挙のみでは該当しない。',
+                'company_character' => '会社全体としての気質・社風を述べた記述。個人の心構えや意気込みの表明のみでは該当しない。',
+                'core_values' => '組織として大切にしている価値観や行動指針についての記述。',
+            ],
+            'relationship' => [
+                'colleagues' => '同僚や先輩がどのような人物かについての具体的な記述。',
+                'atmosphere' => '職場の雰囲気や社内の空気感についての記述。',
+                'physical_freedom' => 'リモートワーク・フレックス等、働く場所や時間の裁量についての記述。',
+                'mental_freedom' => '意見の言いやすさや裁量の大きさなど、心理的な自由度についての記述。',
+            ],
+            'emotional_benefit' => [
+                'pride' => 'その仕事に就くことで誇りを持てるという記述。',
+                'talkable' => '他人に話したくなる、自慢したくなるという記述。',
+                'satisfaction' => '仕事を通じて得られる満足感や充実感についての記述。',
+                'superiority' => '他と比べて優れている、選ばれた立場にあるという感覚についての記述。',
+            ],
+            'financial_benefit' => [
+                'salary_level' => '給与の水準についての具体的な記述。',
+                'benefits' => '福利厚生制度についての具体的な記述。',
+                'growth_opportunity' => 'スキルアップやキャリア形成の機会についての記述。',
+                'employment_stability' => '雇用の継続性や経営の安定性についての記述。',
+            ],
+        ];
+
+        foreach ($expected as $axisKey => $subElements) {
+            foreach ($subElements as $subKey => $definition) {
+                $this->assertSame(
+                    $definition,
+                    (string) config("brand_wheel.axes.{$axisKey}.sub_element_definitions.{$subKey}"),
+                    "sub_element_definitions.{$axisKey}.{$subKey} changed unexpectedly",
+                );
+            }
+        }
+    }
+
+    /**
      * 2026-08-08: ○△－の3値化。self_state/competitor_stateは
      * 'matched'(○)|'label_only'(△)|'none'(－)のいずれかを返す
      * (self_matched/competitor_matchedは○のみtrueのまま、改善提案の

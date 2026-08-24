@@ -133,10 +133,12 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
         // 2026-08-17: 1回目の実行で自社(単独)がsuccessに達した時点で、
         // BrandWheelImprovementSuggestionDispatcherが改善提案AIを1回だけ
         // 追加でdispatchする(QUEUE_CONNECTION=syncのためこのテスト内で同期
-        // 実行される)。brand_wheel_improvement_suggestions.analysis_idの
-        // unique制約により2回目の実行では追加dispatchされないため、合計は
-        // 「ブランド・ホイール分析1回+改善提案1回」の2回で固定される。
-        Http::assertSentCount(2);
+        // 実行される)。ただしこのfixtureの自社matched件数は1件のみ
+        // (config('brand_wheel.comparison_sufficiency_threshold')既定6未満)
+        // のため、2026-08-25の修正2により改善提案AIは呼ばれず(定型文の
+        // one_pointのみ保存)、HTTPリクエストは増えない。よって合計は
+        // 「ブランド・ホイール分析1回」の1回で固定される。
+        Http::assertSentCount(1);
     }
 
     /**
@@ -155,9 +157,11 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
         $this->artisan('brand-wheel:run', ['website_analysis_id' => $websiteAnalysis->id, '--force' => true])->assertSuccessful();
         $this->artisan('brand-wheel:run', ['website_analysis_id' => $websiteAnalysis->id, '--force' => true])->assertSuccessful();
 
-        // 2026-08-17: 上のテストと同じ理由で+1(改善提案AIは1回だけ追加dispatch
-        // される、analysis_idのunique制約により2回目以降は追加されない)。
-        Http::assertSentCount(4);
+        // 2026-08-17/2026-08-25: 上のテストと同じ理由で、改善提案AIは
+        // (自社matched件数が閾値未満のため)HTTPを呼ばない。ブランド・ホイール
+        // 分析自体は3回とも(1回目は通常実行、2・3回目は--forceで再実行)AIを
+        // 呼ぶため、合計は3回で固定される。
+        Http::assertSentCount(3);
     }
 
     /**
@@ -240,9 +244,12 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
             app()->detectEnvironment(fn () => 'testing');
         }
 
-        // 2026-08-17: 上のテストと同じ理由で+1(1回目実行時に改善提案AIが
-        // 1回だけ追加でdispatchされる)。
-        Http::assertSentCount(2);
+        // 2026-08-17/2026-08-25: 上のテストと同じ理由で、改善提案AIは
+        // (自社matched件数が閾値未満のため)HTTPを呼ばない。production環境では
+        // forceが無視され2回目のhandle()呼び出しは既存成功結果を再利用する
+        // ため、ブランド・ホイール分析自体も1回目のコマンド実行分のみ。
+        // よって合計は1回で固定される。
+        Http::assertSentCount(1);
         $second->refresh();
         $this->assertSame('success', $second->status);
     }

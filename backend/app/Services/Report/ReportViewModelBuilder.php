@@ -7,6 +7,7 @@ use App\Models\Analysis;
 use App\Models\BrandWheelImprovementSuggestion;
 use App\Models\LeadSession;
 use App\Models\WebsiteAnalysis;
+use App\Services\BrandWheel\BrandWheelComparisonSufficiency;
 use App\Services\BrandWheel\BrandWheelComparisonSummaryComposer;
 use App\Services\BrandWheel\BrandWheelEvidenceLookupBuilder;
 use App\Services\BrandWheel\BrandWheelHexagonRenderer;
@@ -55,6 +56,9 @@ class ReportViewModelBuilder
         // 「改善提案」ページの領域選択・3項目選定(決定的な規則)。
         private readonly BrandWheelImprovementFocusComposer $improvementFocusComposer,
         private readonly BrandWheelEvidenceLookupBuilder $evidenceLookupBuilder,
+        // 自社/競合それぞれの合計matched件数が、比較・個別提案の根拠として
+        // 十分な情報量かどうかの判定(2026-08-25追加、修正1〜3・5)。
+        private readonly BrandWheelComparisonSufficiency $comparisonSufficiency,
     ) {}
 
     public function build(Analysis $analysis, LeadSession $leadSession): ReportViewModel
@@ -121,14 +125,28 @@ class ReportViewModelBuilder
         $selfTotalLabelOnly = array_sum(array_map(fn (array $a) => count($a['label_only_sub_elements'] ?? []), $selfAxes));
         $competitorTotalLabelOnly = array_sum(array_map(fn (array $a) => count($a['label_only_sub_elements'] ?? []), $competitorAxes));
 
+        // 2026-08-25追加: 自社/競合それぞれの合計matched件数が、比較・個別
+        // 提案の根拠として十分な情報量かどうか(修正1〜3・5)。「読み取れたか
+        // どうか」($selfReadable/$competitorReadable、既存)とは別の判定 ――
+        // 1件でも読み取れれば$readableはtrueになるが、その1件を根拠に比較や
+        // 優劣判定を組み立てるのは不適切なため。
+        $selfSufficient = $this->comparisonSufficiency->isSufficient($selfTotalMatched);
+        $competitorSufficient = $this->comparisonSufficiency->isSufficient($competitorTotalMatched);
+
         // 「○△－対比表」「改善提案」の唯一の情報源(2026-08-04)。
         $subElementComparison = $this->subElementComparisonComposer->compose($selfAxes, $competitorAxes);
 
         // 2026-08-17追加: 比較ページ冒頭の比較サマリー・グループ優劣バッジ。
         // 競合が読み取れない場合は意味を持たないため空配列にする(呼び出し側は
         // 空配列かどうかで表示可否を判断する)。
-        $groupTotals = $competitorReadable ? $this->subElementComparisonComposer->groupTotals($subElementComparison) : [];
-        $comparisonOverview = $selfReadable && $competitorReadable
+        // 2026-08-25追加: 自社・競合のいずれかが閾値未満のときも同様に空配列
+        // とする(修正3 ―― 例えば1件対1件のような薄いデータ同士を「同程度」
+        // と判定して見せるのは、実態は「両方とも読めていないだけ」であり
+        // 不適切なため)。
+        $groupTotals = $competitorReadable && $selfSufficient && $competitorSufficient
+            ? $this->subElementComparisonComposer->groupTotals($subElementComparison)
+            : [];
+        $comparisonOverview = $selfReadable && $competitorReadable && $selfSufficient && $competitorSufficient
             ? $this->brandWheelSummaryComposer->comparisonOverview($selfTotalMatched, $selfTotalMax, $competitorTotalMatched, $competitorTotalMax, $groupTotals)
             : [];
 
@@ -147,19 +165,39 @@ class ReportViewModelBuilder
             ->where('analysis_id', $analysis->id)
             ->where('status', 'success')
             ->first();
-        $improvementOnePoint = $improvementSuggestion?->one_point ?? ($brandWheelComparison['one_point']['text'] ?? null);
-        $improvementRecommendation = $improvementSuggestion?->recommendation;
+        // 2026-08-25追加: 自社が閾値未満のときは、AIが生成したone_pointが
+        // あっても使わず、config('brand_wheel.one_point_messages.insufficient_content')
+        // を直接使う(修正2、依頼者指定)。既存のBrandWheelComparisonSummaryComposer::
+        // onePoint()はzero_axes_min_count(軸単位、既定2)という別の閾値で
+        // 判定しており、必ずしもinsufficient_contentを返すとは限らないため、
+        // ここではその結果を経由せず直接参照する。
+        $improvementOnePoint = $selfSufficient
+            ? ($improvementSuggestion?->one_point ?? ($brandWheelComparison['one_point']['text'] ?? null))
+            : (string) config('brand_wheel.one_point_messages.insufficient_content');
         // 2026-08-18追加: 「情報が不足しているので追加してください」という
         // 一般論から脱却させるための構造化フィールド(依頼者指定の表示構成
         // ワンポイント→理由→自社と競合の差(既存)→具体的に追加すべき情報→
         // 中長期施策に対応)。AI未生成/失敗時はすべてnull/空配列のままとなり、
         // Blade/WordReportGenerator側は該当ブロックを出さないだけで、既存の
         // グループ差バー・証拠カードは無条件に表示され続ける。
-        $improvementReason = $improvementSuggestion?->reason;
-        $improvementRecommendedContents = $improvementSuggestion?->recommended_contents ?? [];
-        $improvementMidTermAction = $improvementSuggestion?->mid_term_action;
+        // 2026-08-25追加: 自社が閾値未満のときは、個別項目に基づく提案
+        // (旧recommendation/reason/recommended_contents/mid_term_action)を
+        // 一律で出さない(修正2)。GenerateBrandWheelImprovementSuggestionJob
+        // 側でも自社が閾値未満のときはAIを呼ばずこれらをnull/空配列のまま
+        // 保存するが、ここでも同じ判定をかけることで、閾値導入前に生成済みの
+        // BrandWheelImprovementSuggestion行が残っていても営業資料として
+        // 不適切な個別提案を出さない。
+        $improvementRecommendation = $selfSufficient ? $improvementSuggestion?->recommendation : null;
+        $improvementReason = $selfSufficient ? $improvementSuggestion?->reason : null;
+        $improvementRecommendedContents = $selfSufficient ? ($improvementSuggestion?->recommended_contents ?? []) : [];
+        $improvementMidTermAction = $selfSufficient ? $improvementSuggestion?->mid_term_action : null;
 
-        $improvementFocus = $selfReadable && $competitorReadable
+        // 2026-08-25追加: 競合が閾値未満のときはcompose()を使わない(修正1)。
+        // 「競合の該当件数の合計 - 自社の該当件数の合計」が最大の領域を選ぶ
+        // compose()の計算は、競合が1件しか読み取れていない場合もそのまま
+        // 走ってしまい、その1件のnoiseを根拠に比較サイトの引用付き提案が
+        // 組み立てられる(実物レポート32で確認された不具合)。
+        $improvementFocus = $selfReadable && $competitorReadable && $competitorSufficient
             ? $this->improvementFocusComposer->compose(
                 $subElementComparison,
                 $this->evidenceLookupBuilder->build($competitorBrandWheelRecord),
@@ -169,10 +207,19 @@ class ReportViewModelBuilder
         // 2026-08-10: 競合が無い(または読み取れない)診断向けの改善提案
         // (ユーザー指示 ―― 「比較サイトが無いため、領域ごとの比較はご用意
         // できません。」の1行だけでページの大半が空白になる問題への対応)。
-        // $improvementFocusが立つケース(自社・競合とも読み取れた)とは排他。
-        $improvementFocusSelfOnly = $selfReadable && ! $competitorReadable
+        // $improvementFocusが立つケース(自社・競合とも読み取れかつ十分な
+        // 情報量)とは排他。
+        // 2026-08-25追加: 競合が閾値未満の場合もこちら(自社単独の改善提案)へ
+        // フォールバックする(修正1)。
+        $improvementFocusSelfOnly = $selfReadable && (! $competitorReadable || ! $competitorSufficient)
             ? $this->improvementFocusComposer->composeSelfOnly($subElementComparison)
             : null;
+
+        // 2026-08-25追加: 自社が閾値未満のときの但し書き(修正5)。サイトを
+        // 責める表現("情報が無い")ではなく、こちら側の読み取り量の問題として
+        // 書く(依頼者指定の文言、config('brand_wheel.self_low_content_notice')、
+        // 原文ママ)。
+        $selfLowContentNotice = ! $selfSufficient ? (string) config('brand_wheel.self_low_content_notice') : null;
 
         return new ReportViewModel(
             companyDisplayName: $this->nameFormatter->format($leadSession->company_name),
@@ -202,6 +249,7 @@ class ReportViewModelBuilder
             improvementReason: $improvementReason,
             improvementRecommendedContents: $improvementRecommendedContents,
             improvementMidTermAction: $improvementMidTermAction,
+            selfLowContentNotice: $selfLowContentNotice,
         );
     }
 

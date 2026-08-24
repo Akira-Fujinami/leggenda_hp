@@ -36,9 +36,9 @@ class BrandWheelImprovementFocusComposer
     private const EVIDENCE_MAX_CHARS = 60;
 
     /**
-     * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, self_matched: bool, competitor_matched: bool}>  $comparisonItems  BrandWheelSubElementComparisonComposer::compose()の戻り値
+     * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, recommendation: string, self_matched: bool, competitor_matched: bool}>  $comparisonItems  BrandWheelSubElementComparisonComposer::compose()の戻り値
      * @param  array<string, array<string, string>>  $competitorEvidenceByAxisAndSubKey  (axis_key => (sub_key => evidence))。選ばれた項目の分だけ実際に使う ―― 比較サイトの本文をこのページの目的以外に広く露出させないため、呼び出し側もこの用途専用に組み立てたものを渡すこと
-     * @return array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, competitor_evidence: ?string}>}|null nullは項目が1件も無い場合(呼び出し側でこのページ自体を出さない判断に使う)
+     * @return array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, recommendation: string, competitor_evidence: ?string}>}|null nullは項目が1件も無い場合(呼び出し側でこのページ自体を出さない判断に使う)
      */
     public function compose(array $comparisonItems, array $competitorEvidenceByAxisAndSubKey): ?array
     {
@@ -86,6 +86,7 @@ class BrandWheelImprovementFocusComposer
             'axis_name' => $i['axis_name'],
             'sub_name' => $i['sub_name'],
             'definition' => $i['definition'],
+            'recommendation' => $i['recommendation'],
             'competitor_evidence' => $this->capEvidence($competitorEvidenceByAxisAndSubKey[$i['axis_key']][$i['sub_key']] ?? null),
         ], array_slice($candidateItems, 0, self::MAX_ITEMS));
 
@@ -119,8 +120,8 @@ class BrandWheelImprovementFocusComposer
      * 自社の24項目すべてが○の場合のみnullを返す(24/24は実運用ではまず
      * 起きないが、白紙ページを作らないための保険としてログに記録する)。
      *
-     * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, self_matched: bool, competitor_matched: bool, self_state: string, competitor_state: string}>  $comparisonItems  BrandWheelSubElementComparisonComposer::compose()の戻り値
-     * @return array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, self_reason: string}>}|null nullは自社24項目すべてが○の場合(呼び出し側でこのページ自体を出さない判断に使う)
+     * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, recommendation: string, self_matched: bool, competitor_matched: bool, self_state: string, competitor_state: string}>  $comparisonItems  BrandWheelSubElementComparisonComposer::compose()の戻り値
+     * @return array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, recommendation: string, self_reason: string}>}|null nullは自社24項目すべてが○の場合(呼び出し側でこのページ自体を出さない判断に使う)
      */
     public function composeSelfOnly(array $comparisonItems): ?array
     {
@@ -191,6 +192,7 @@ class BrandWheelImprovementFocusComposer
             'axis_name' => $i['axis_name'],
             'sub_name' => $i['sub_name'],
             'definition' => $i['definition'],
+            'recommendation' => $i['recommendation'],
             'self_reason' => $i['self_reason'],
         ], array_slice($candidateItems, 0, self::MAX_ITEMS));
 
@@ -215,8 +217,6 @@ class BrandWheelImprovementFocusComposer
             return null;
         }
 
-        return mb_strlen($evidence) > self::EVIDENCE_MAX_CHARS
-            ? mb_substr($evidence, 0, self::EVIDENCE_MAX_CHARS).'…'
-            : $evidence;
+        return BrandWheelTextTruncator::truncateAtSentenceBoundary($evidence, self::EVIDENCE_MAX_CHARS);
     }
 }
