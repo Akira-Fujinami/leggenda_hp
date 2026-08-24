@@ -9,6 +9,7 @@ use App\Jobs\Report\GenerateLeadReportJob;
 use App\Models\Analysis;
 use App\Models\Report;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -29,6 +30,8 @@ class LeadReportDownloadTest extends TestCase
         // 生成されるという不具合の原因になった)。必ず1回のfake呼び出しに
         // まとめる。
         Queue::fake([StartAnalysisJob::class, ...$additionalFakedJobs]);
+        // #B-1: store()がself_urlへ1回だけ到達性チェックを行う分。
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
 
         $token = $this->postJson('/api/lead/onboarding', [
             'company_name' => '株式会社サンプル',

@@ -46,6 +46,7 @@ class BrandWheelAnalysisResponseParser
         $linkLabelSet = $this->buildLinkLabelSet($input);
 
         $axesConfig = (array) config('brand_wheel.axes', []);
+        $definitionSet = $this->buildDefinitionSet($axesConfig);
         $rawSubElements = is_array($raw['sub_elements'] ?? null) ? $raw['sub_elements'] : [];
 
         $this->guardAgainstIncompleteSchema($rawSubElements, $axesConfig);
@@ -59,7 +60,7 @@ class BrandWheelAnalysisResponseParser
         foreach ($axesConfig as $axisKey => $axisDefinition) {
             $subElementKeys = array_keys((array) ($axisDefinition['sub_elements'] ?? []));
 
-            $axisDrafts[$axisKey] = $this->parseAxisDraft($rawSubElements, $subElementKeys, $haystack, $headingSet, $linkLabelSet);
+            $axisDrafts[$axisKey] = $this->parseAxisDraft($rawSubElements, $subElementKeys, $haystack, $headingSet, $linkLabelSet, $definitionSet);
         }
 
         $axisDrafts = $this->deduplicateEvidenceAcrossAxes($axisDrafts, $axesConfig);
@@ -163,9 +164,10 @@ class BrandWheelAnalysisResponseParser
      * @param  list<string>  $subElementKeys  この軸に属する下位要素キー
      * @param  array<string, true>  $headingSet  正規化済みの見出し文字列の集合
      * @param  array<string, true>  $linkLabelSet  正規化済みのリンクラベル文字列の集合
+     * @param  array<string, true>  $definitionSet  正規化済みのsub_element_definitions文字列の集合
      * @return array{matched: list<BrandWheelSubElementMatch>, discarded: list<BrandWheelDiscardedSubElement>, claimed: int}
      */
-    private function parseAxisDraft(array $rawSubElements, array $subElementKeys, string $haystack, array $headingSet, array $linkLabelSet): array
+    private function parseAxisDraft(array $rawSubElements, array $subElementKeys, string $haystack, array $headingSet, array $linkLabelSet, array $definitionSet): array
     {
         $matched = [];
         $discarded = [];
@@ -190,6 +192,21 @@ class BrandWheelAnalysisResponseParser
             $claimedCount++;
 
             $normalizedEvidence = $this->normalizeForEvidenceMatch($evidence);
+
+            // 2026-08-24追加: AIが「該当なし」と判断しづらい状況で、実際のサイト
+            // 本文の代わりに【下位要素チェックリスト】自体のsub_element_definitions
+            // (定義文)をそのままevidenceとして返す実行単位のモード崩壊が実測で
+            // 確認された(#99)。定義文はサイト本文には通常存在しないため、この
+            // チェックを入れなくても最終的にevidence_not_foundとして破棄はされる
+            // (誤ったmatched=trueには至らない、安全網は機能している)が、
+            // どちらの理由で破棄されたかが区別できず本番での発生頻度を測れない
+            // ため、evidence_not_foundより先に判定し理由を分ける。判定結果
+            // (matched/discardedになるかどうか)は変えない。
+            if (isset($definitionSet[$normalizedEvidence])) {
+                $discarded[] = new BrandWheelDiscardedSubElement($key, $evidence, 'definition_echo');
+
+                continue;
+            }
 
             if (! str_contains($haystack, $normalizedEvidence)) {
                 $discarded[] = new BrandWheelDiscardedSubElement($key, $evidence, 'evidence_not_found');
@@ -476,6 +493,26 @@ class BrandWheelAnalysisResponseParser
             $input->businessLinkLabels,
             $input->allLinkLabels,
         ));
+    }
+
+    /**
+     * definition_echo判定用に、24下位要素それぞれのsub_element_definitions
+     * (frameworkDefinition()経由でプロンプトへ埋め込まれる定義文)を正規化済み
+     * 集合として持つ(buildHeadingSet()/buildLinkLabelSet()と同じ形)。
+     *
+     * @param  array<string, mixed>  $axesConfig
+     * @return array<string, true>
+     */
+    private function buildDefinitionSet(array $axesConfig): array
+    {
+        $definitions = [];
+        foreach ($axesConfig as $axisDefinition) {
+            foreach ((array) ($axisDefinition['sub_element_definitions'] ?? []) as $definition) {
+                $definitions[] = $definition;
+            }
+        }
+
+        return $this->normalizeToSet($definitions);
     }
 
     /**

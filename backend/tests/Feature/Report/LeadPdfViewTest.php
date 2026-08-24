@@ -965,7 +965,12 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('競合比較について相談する', $html);
         $this->assertStringContainsString('href="https://leggenda-co.web-tools.biz/inquiry"', $html);
         $this->assertStringContainsString("お問い合わせの際は、本レポートの発行日（{$viewModel->generatedAtLabel}）と貴社名をお知らせください。", $html);
-        $this->assertStringNotContainsString('leggenda-co.web-tools.biz', $html);
+        // URLはボタン風のラベル付きリンク(href属性)としてのみ存在し、生の
+        // 文字列としては表示しない ―― href自体の存在は966行目で確認済みのため、
+        // ここではタグを除いた可視テキスト側にURLが露出していないことを確認する
+        // (2026-08-24修正: 以前はraw $htmlに対して「含む」と「含まない」を
+        // 同じ文字列で両方要求しており、両立不可能な自己矛盾アサーションだった)。
+        $this->assertStringNotContainsString('leggenda-co.web-tools.biz', strip_tags($html));
         $this->assertStringNotContainsString('お電話', $html);
     }
 

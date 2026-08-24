@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\SalesStatus;
 use App\Http\Controllers\Controller;
 use App\Models\LeadCompany;
+use App\Models\LeadSession;
 use App\Services\Admin\LeadCompanyQueryService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\View\View;
 
 class CompanyController extends Controller
@@ -33,9 +35,8 @@ class CompanyController extends Controller
         // project.websitesからis_primaryで判別する。
         $analyses = $company->analyses()
             ->with([
-                'project.websites',
+                'project' => fn ($q) => $q->select('id', 'name', 'lead_session_id')->with(['websites', 'leadSession']),
                 'reports',
-                'project' => fn ($q) => $q->select('id', 'name', 'lead_session_id'),
             ])
             ->orderByDesc('created_at')
             ->paginate(10)
@@ -84,5 +85,31 @@ class CompanyController extends Controller
         $company->update(['sales_note' => $data['sales_note'] ?? null]);
 
         return back()->with('status', '営業メモを保存しました。');
+    }
+
+    /**
+     * 本番環境にトークン再発行の導線が一切無いため(IssueTestLeadSessionCommandは
+     * 非本番限定、routes/admin.phpにも該当エンドポイントが無かった)、営業が
+     * 個別の申込(LeadSession)についてanalyses_usedを0へ戻すための導線。
+     * リクエストボディに値を持たせず常に0固定にする(任意の数値を入力させない
+     * ―― 依頼要件)。誰が・いつ・どのリードに対して実行したかをログに残す
+     * (管理画面はADMIN_USERNAME/PASSWORDの共有アカウントのため、個人を
+     * 特定できる識別子は無く、IPアドレスのみを合わせて記録する)。
+     * 確認ダイアログはBlade側(resources/views/admin/companies/show.blade.php)の
+     * onsubmit="return confirm(...)"で表示する。
+     */
+    public function resetAnalysesUsed(Request $request, LeadSession $leadSession): RedirectResponse
+    {
+        $previousAnalysesUsed = $leadSession->analyses_used;
+
+        $leadSession->update(['analyses_used' => 0]);
+
+        Log::warning('Admin reset lead session analyses_used', [
+            'lead_session_id' => $leadSession->id,
+            'previous_analyses_used' => $previousAnalysesUsed,
+            'ip' => $request->ip(),
+        ]);
+
+        return back()->with('status', '診断回数をリセットしました。');
     }
 }

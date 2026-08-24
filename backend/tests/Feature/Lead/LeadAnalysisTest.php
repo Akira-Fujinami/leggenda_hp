@@ -65,6 +65,10 @@ class LeadAnalysisTest extends TestCase
     public function test_valid_token_starts_an_analysis_for_self_site_only(): void
     {
         Queue::fake([StartAnalysisJob::class]);
+        // #B-1: store()がself_urlへ1回だけ到達性チェックを行う(SafeHttpFetcher
+        // 経由)。StartAnalysisJobはfakeしているため、後続のパイプライン
+        // (FetchStaticPageJob等)の実取得は発生しない。
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
         $token = $this->issueToken();
 
         $response = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com']);
@@ -81,7 +85,12 @@ class LeadAnalysisTest extends TestCase
         $this->assertSame(1, $analysis->project->websites()->count());
         $this->assertTrue($analysis->project->websites()->first()->is_primary);
 
-        $this->assertSame(1, LeadSession::first()->analyses_used);
+        // 2026-08-22: 実行回数の消費は診断開始時ではなく、自社サイトの本文取得
+        // 成功時点(GenerateBrandWheelAnalysisJob::maybeConsumeLeadQuota())へ
+        // 後ろにずらした(#B-2)。StartAnalysisJobをfakeしているため後続の
+        // パイプラインは走らず、この時点ではまだ消費されていない
+        // (消費自体はGenerateBrandWheelAnalysisJobTestで検証する)。
+        $this->assertSame(0, LeadSession::first()->analyses_used);
     }
 
     public function test_starting_an_analysis_sends_the_analysis_started_notification_when_a_recipient_is_configured(): void
@@ -89,6 +98,7 @@ class LeadAnalysisTest extends TestCase
         config(['lead.notification_to' => 'staff@example.com']);
         Notification::fake();
         Queue::fake([StartAnalysisJob::class]);
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
         $token = $this->issueToken();
 
         $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])->assertCreated();
@@ -101,6 +111,7 @@ class LeadAnalysisTest extends TestCase
         config(['lead.notification_to' => null]);
         Notification::fake();
         Queue::fake([StartAnalysisJob::class]);
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
         $token = $this->issueToken();
 
         $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])->assertCreated();
@@ -111,6 +122,8 @@ class LeadAnalysisTest extends TestCase
     public function test_valid_token_with_a_competitor_url_registers_two_websites(): void
     {
         Queue::fake([StartAnalysisJob::class]);
+        // #B-1のチェック対象はself_urlのみ(competitor_urlは対象外)。
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
         $token = $this->issueToken();
 
         $response = $this->postJson("/api/lead/analyses?token={$token}", [
@@ -136,10 +149,20 @@ class LeadAnalysisTest extends TestCase
     public function test_a_second_analysis_attempt_with_the_same_token_is_rejected_and_does_not_start_a_new_analysis(): void
     {
         Queue::fake([StartAnalysisJob::class]);
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
         $token = $this->issueToken();
 
         $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])->assertCreated();
         $this->assertSame(1, Analysis::count());
+
+        // 2026-08-22: 実行回数の消費は自社サイトの本文取得成功時点
+        // (GenerateBrandWheelAnalysisJob)へ後ろにずらした(#B-2)。ここでは
+        // StartAnalysisJobをfakeしているためその消費は起きないので、
+        // 「1回目の診断が完了し、消費も済んでいる」状態を直接再現してから
+        // 2回目を試す(でなければhasAnalysisInProgress()の409で拒否され、
+        // quota超過の経路を検証できない ―― その409はB-3の別テストで検証済み)。
+        Analysis::first()->update(['status' => AnalysisStatus::Completed]);
+        LeadSession::first()->update(['analyses_used' => 1]);
 
         Log::spy();
         $response = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://another-example.com']);
@@ -156,6 +179,74 @@ class LeadAnalysisTest extends TestCase
                     && isset($context['lead_session_id'])
                     && ! str_contains(json_encode($context), $token);
             });
+    }
+
+    /**
+     * 診断回数の消費(recordAnalysisStarted())を診断開始直後ではなく後段
+     * (自社サイトの本文取得成功時点)へ遅らせる変更に備えたガード
+     * (LeadSessionService::hasAnalysisInProgress())。消費前でも、同一
+     * トークンに実行中のAnalysisが既にある場合は新規受付を拒否する ――
+     * ここではAnalysisを直接作って「まだ消費されていないが実行中」の
+     * 状態を再現する(store()経由では現状すぐに消費されるため到達できない)。
+     */
+    public function test_a_second_analysis_attempt_while_one_is_still_in_progress_is_rejected(): void
+    {
+        Queue::fake([StartAnalysisJob::class]);
+        $token = $this->issueToken();
+
+        $session = LeadSession::first();
+        $user = User::factory()->create();
+        $project = new Project(['name' => 'in-progress']);
+        $project->user_id = $user->id;
+        $project->lead_session_id = $session->id;
+        $project->save();
+        Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Running]);
+
+        Log::spy();
+        $response = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com']);
+
+        $response->assertStatus(409);
+        $response->assertJsonPath('error_code', 'LEAD_ANALYSIS_IN_PROGRESS');
+        $this->assertSame(1, Analysis::count(), '実行中の診断があるときは新しいAnalysisを作ってはいけない');
+        $this->assertSame(0, $session->fresh()->analyses_used, '拒否された場合はトークンを消費してはいけない');
+
+        Log::shouldHaveReceived('info')
+            ->once()
+            ->withArgs(function (string $message, array $context = []) use ($token) {
+                return $message === 'Lead analysis start rejected: already in progress'
+                    && isset($context['lead_session_id'])
+                    && ! str_contains(json_encode($context), $token);
+            });
+    }
+
+    /**
+     * Worker停止・OOM等で終端処理に到達できず、statusがRunningのまま残った
+     * 「停止した」Analysisは、config('lead.stale_analysis_after_minutes')
+     * (既定30分)を過ぎたらhasAnalysisInProgress()の対象から除外され、
+     * 同一トークンで新規に受け付けられる(依頼者指摘の恒久対応)。
+     */
+    public function test_a_stale_in_progress_analysis_does_not_block_a_new_attempt(): void
+    {
+        Queue::fake([StartAnalysisJob::class]);
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
+        $token = $this->issueToken();
+
+        $session = LeadSession::first();
+        $user = User::factory()->create();
+        $project = new Project(['name' => 'stale']);
+        $project->user_id = $user->id;
+        $project->lead_session_id = $session->id;
+        $project->save();
+        Analysis::factory()->create([
+            'project_id' => $project->id,
+            'status' => AnalysisStatus::Running,
+            'created_at' => now()->subMinutes(31),
+        ]);
+
+        $response = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com']);
+
+        $response->assertCreated();
+        $this->assertSame(2, Analysis::count(), 'staleな行はそのまま残り、新しいAnalysisが作られる');
     }
 
     public function test_congestion_rejects_without_consuming_the_tokens_one_time_allowance(): void
@@ -182,9 +273,34 @@ class LeadAnalysisTest extends TestCase
         $this->assertSame(0, LeadSession::where('id', '!=', $busySession->id)->first()->analyses_used);
     }
 
+    public function test_a_stale_busy_analysis_does_not_count_toward_congestion(): void
+    {
+        Queue::fake([StartAnalysisJob::class]);
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
+        config(['lead.max_concurrent_analyses' => 1]);
+
+        $busySession = LeadSession::factory()->create();
+        $busyUser = User::factory()->create();
+        $busyProject = new Project(['name' => 'stale-busy']);
+        $busyProject->user_id = $busyUser->id;
+        $busyProject->lead_session_id = $busySession->id;
+        $busyProject->save();
+        Analysis::factory()->create([
+            'project_id' => $busyProject->id,
+            'status' => AnalysisStatus::Running,
+            'created_at' => now()->subMinutes(31),
+        ]);
+
+        $token = $this->issueToken();
+        $response = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com']);
+
+        $response->assertCreated();
+    }
+
     public function test_lead_token_cannot_be_used_to_access_internal_sanctum_routes(): void
     {
         Queue::fake([StartAnalysisJob::class]);
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
         $token = $this->issueToken();
         $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])->assertCreated();
 
@@ -197,6 +313,7 @@ class LeadAnalysisTest extends TestCase
     public function test_a_lead_owned_analysis_does_not_appear_in_an_internal_users_project_list(): void
     {
         Queue::fake([StartAnalysisJob::class]);
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
         $token = $this->issueToken();
         $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])->assertCreated();
 
@@ -210,6 +327,7 @@ class LeadAnalysisTest extends TestCase
     public function test_progress_and_results_return_404_for_an_analysis_owned_by_a_different_lead_session(): void
     {
         Queue::fake([StartAnalysisJob::class]);
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
         $tokenA = $this->issueToken();
         $analysisId = $this->postJson("/api/lead/analyses?token={$tokenA}", ['self_url' => 'https://example.com'])
             ->json('data.analysis_id');
@@ -229,6 +347,7 @@ class LeadAnalysisTest extends TestCase
     public function test_progress_reports_a_simplified_status_without_any_job_names_or_error_codes(): void
     {
         Queue::fake([StartAnalysisJob::class]);
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
         $token = $this->issueToken();
         $analysisId = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com'])
             ->json('data.analysis_id');
@@ -246,6 +365,8 @@ class LeadAnalysisTest extends TestCase
     public function test_results_endpoint_never_leaks_internal_job_or_error_details(): void
     {
         Http::fake([
+            // #B-1: store()がself_urlへ1回だけ到達性チェックを行う分。
+            'https://example.com' => Http::response('<html></html>', 200),
             '*/analyze/render' => Http::response(['success' => true, 'data' => ['html' => '<html></html>', 'fixed_cta' => ['detected' => false]]], 200),
             '*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => []]], 200),
             '*/analyze/lighthouse' => Http::response(['success' => true, 'data' => ['scores' => [], 'metrics' => []]], 200),
@@ -271,6 +392,7 @@ class LeadAnalysisTest extends TestCase
     public function test_partial_analysis_still_returns_results_instead_of_nothing(): void
     {
         Http::fake([
+            'https://example.com' => Http::response('<html></html>', 200),
             '*/analyze/render' => Http::response([], 500),
             '*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => []]], 200),
             '*/analyze/lighthouse' => Http::response([], 500),
@@ -296,6 +418,7 @@ class LeadAnalysisTest extends TestCase
     public function test_results_endpoint_returns_the_four_lead_perspectives_without_internal_category_names(): void
     {
         Http::fake([
+            'https://example.com' => Http::response('<html></html>', 200),
             '*/analyze/render' => Http::response(['success' => true, 'data' => ['html' => '<html></html>', 'fixed_cta' => ['detected' => false]]], 200),
             '*/analyze/technology' => Http::response(['success' => true, 'data' => ['technologies' => []]], 200),
             '*/analyze/lighthouse' => Http::response(['success' => true, 'data' => ['scores' => [], 'metrics' => []]], 200),

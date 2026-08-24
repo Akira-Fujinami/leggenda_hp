@@ -276,6 +276,108 @@ class BrandWheelAnalysisInputFactoryTest extends TestCase
         $this->assertGreaterThan(0, mb_strlen($input->recruitPageBodyText));
     }
 
+    /**
+     * 優先度4-3(2026-08-24追加)。FetchRecruitPageJob::process()が自己参照
+     * (トップページ自身が既に採用ページ)を検出すると、RecruitとHomepageの
+     * AnalysisPage行が同一のraw_html_pathを指す状態になる
+     * (FetchRecruitPageJobTest参照)。この状態を再現するヘルパー。
+     */
+    private function putSelfReferencingHomepageAndRecruitPage(WebsiteAnalysis $websiteAnalysis, string $html): void
+    {
+        $path = app(AnalysisStoragePaths::class)->rawHtmlPath($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'homepage.html');
+        Storage::disk('analysis')->put($path, $html);
+
+        foreach ([PageType::Homepage, PageType::Recruit] as $pageType) {
+            AnalysisPage::query()->create([
+                'website_analysis_id' => $websiteAnalysis->id,
+                'url' => 'https://www.example-saiyo.com/',
+                'final_url' => 'https://www.example-saiyo.com/',
+                'page_type' => $pageType,
+                'http_status' => 200,
+                'raw_html_path' => $path,
+                'fetched_at' => now(),
+            ]);
+        }
+    }
+
+    /**
+     * 優先度4-3: 自己参照サイトで、トップページ本文が閾値(200文字)以上なら
+     * insufficient_inputにならないこと(重複除去後も正しく充足と判定される)。
+     */
+    public function test_self_reference_site_with_sufficient_homepage_body_is_not_treated_as_insufficient(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+        $body = str_repeat('採用に関する記述です。', 20); // 220文字程度、単独で閾値(200)を超える。
+        $this->putSelfReferencingHomepageAndRecruitPage($websiteAnalysis, '<html><body><p>'.$body.'</p></body></html>');
+
+        $input = $this->factory->build($websiteAnalysis->fresh());
+
+        $totalChars = mb_strlen($input->recruitPageBodyText) + mb_strlen($input->homepageBodyText);
+        $this->assertGreaterThanOrEqual(200, $totalChars);
+    }
+
+    /**
+     * 優先度4-3: 自己参照サイトで、トップページ本文が120文字程度(単独では
+     * 閾値未満)のとき、重複計上によって240文字相当として安全弁を通過して
+     * しまわないこと。
+     */
+    public function test_self_reference_site_with_thin_homepage_body_is_treated_as_insufficient(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+        $body = str_repeat('薄い記述。', 20); // 100文字。
+        $this->putSelfReferencingHomepageAndRecruitPage($websiteAnalysis, '<html><body><p>'.$body.'</p></body></html>');
+
+        $input = $this->factory->build($websiteAnalysis->fresh());
+
+        $totalChars = mb_strlen($input->recruitPageBodyText) + mb_strlen($input->homepageBodyText);
+        $this->assertLessThan(200, $totalChars, '自己参照による重複計上で閾値(200文字)を安全弁のつもりが通過してしまっている');
+    }
+
+    /**
+     * 優先度4-3: 自己参照サイトで、AIへ渡る入力(recruitPageBodyText/
+     * homepageBodyText)に同じ本文が2回含まれないこと。見出し・ナビゲーション
+     * ラベルについても同様(recruitPageHeadings/allLinkLabelsの重複除去)。
+     * source_pages.recruit_pageが既存の'absent'/'unreadable'とは異なる
+     * 専用ステータスになることも併せて確認する。
+     */
+    public function test_self_reference_site_does_not_duplicate_body_headings_or_link_labels_in_the_ai_payload(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+        $html = '<html><body>'
+            .'<header><nav><a href="/energy">エネルギー事業</a></nav></header>'
+            .'<h1>採用に関する見出し</h1><p>私たちは仲間を募集しています。</p>'
+            .'</body></html>';
+        $this->putSelfReferencingHomepageAndRecruitPage($websiteAnalysis, $html);
+
+        $input = $this->factory->build($websiteAnalysis->fresh());
+
+        $this->assertSame('', $input->recruitPageBodyText);
+        $this->assertSame([], $input->recruitPageHeadings);
+        $this->assertStringContainsString('私たちは仲間を募集しています', $input->homepageBodyText);
+        $this->assertSame(['エネルギー事業'], $input->businessLinkLabels);
+        $this->assertSame(1, count(array_filter($input->allLinkLabels, fn (string $l) => $l === 'エネルギー事業')));
+
+        $this->assertSame('self_reference', $input->sourcePages['recruit_page']);
+    }
+
+    /**
+     * 非自己参照(通常の別ページ)サイトでは、従来どおり採用ページ・
+     * トップページ両方の本文が別々に渡ることを確認する回帰テスト。
+     */
+    public function test_non_self_reference_site_still_passes_both_bodies_separately(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+
+        $this->putHtmlPage($websiteAnalysis, PageType::Recruit, '<html><body><p>採用ページの本文です。</p></body></html>');
+        $this->putHtmlPage($websiteAnalysis, PageType::Homepage, '<html><body><p>トップページの本文です。</p></body></html>');
+
+        $input = $this->factory->build($websiteAnalysis->fresh());
+
+        $this->assertStringContainsString('採用ページの本文です', $input->recruitPageBodyText);
+        $this->assertStringContainsString('トップページの本文です', $input->homepageBodyText);
+        $this->assertSame('read', $input->sourcePages['recruit_page']);
+    }
+
     public function test_it_does_not_throw_when_recruit_page_is_missing(): void
     {
         $websiteAnalysis = WebsiteAnalysis::factory()->create();

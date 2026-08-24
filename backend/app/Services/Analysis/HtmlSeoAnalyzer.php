@@ -158,7 +158,9 @@ class HtmlSeoAnalyzer
      * @var list<string>
      */
     private const RECRUIT_HOST_LABEL_KEYWORDS = [
-        'recruit', 'recruits', 'careers', 'career', 'recruiting', 'saiyo',
+        // saiyou(長音あり表記)は2026-08-24追加。saiyo(長音無し)のみでは
+        // 「-saiyou.jp」のようなドメインを拾えなかった(優先度4-1)。
+        'recruit', 'recruits', 'careers', 'career', 'recruiting', 'saiyo', 'saiyou',
     ];
 
     /**
@@ -737,9 +739,9 @@ class HtmlSeoAnalyzer
         // ページ自身が既に採用ページの場合、探索結果に関わらず自己参照
         // (このページ自身のURL)を採用ページとして確定させる。resolveRecruitUrl()
         // (AnalysisPipeline.php)がこのURLをそのまま解決するため、
-        // FetchRecruitPageJobは同一URLを取得する(内容は正しいが取得は
-        // 冗長になる。無駄な二重取得の解消は別対応とし、ここでは「誤った
-        // 別ページを採用ページとして掴む」ことの防止のみを扱う)。
+        // FetchRecruitPageJob::process()は同一URLへの2回目のHTTP取得を
+        // 行わず、既に取得済みのトップページのAnalysisPage行を複製する
+        // (優先度4-3、2026-08-24対応 ―― 以前は無駄な二重取得を許容していた)。
         $detected['recruit'] = $pageIsRecruitPage
             ? ['url' => $pageUrl, 'text' => null, 'confidence' => 1.0, 'link_type' => $this->classifyLinkType($pageUrl, $pageHost)]
             : $this->selectRecruitCandidate($recruitCandidates);
@@ -866,6 +868,23 @@ class HtmlSeoAnalyzer
      * サブドメイン・TLD部分を区別せず全ラベルを対象にする ―― "com"/"co"/
      * "jp"/"www"のような短い一般語はキーワードと衝突しないため、除外リストを
      * 別途保守する必要はない。
+     *
+     * 【既知の誤検出リスク(優先度4-2、2026-08-24文書化、未対応)】
+     * 社名・ブランド名自体が"recruit"を含む実在企業(例: 株式会社リクルート、
+     * ドメインが"recruit.co.jp"や"recruit-xxx.jp"等)の場合、その企業の
+     * 通常のコーポレートサイト(採用ページではない任意のページ)を診断対象と
+     * すると、この関数はホスト名だけを見て`true`を返す。呼び出し元
+     * (656-666行目の$pageIsRecruitPage)はこれを「診断中のページ自身が既に
+     * 採用ページである」との判定に使うため、本来ナビゲーションから探すべき
+     * 本物の採用ページを探しに行かず、コーポレートサイトのトップページ自体を
+     * 採用ページとして扱ってしまう可能性がある。ブランド名がたまたま
+     * RECRUIT_HOST_LABEL_KEYWORDSと衝突するケースはこの関数の設計上
+     * 避けられない(サブドメイン・第二レベルドメインに"-saiyo"/"-recruit"を
+     * 付ける採用専用ドメイン(ゴディバ型)を検出するための意図的な設計であり、
+     * 社名自体との衝突を除外する一般的な方法が無いため)。対応は未着手
+     * (HtmlSeoAnalyzerTest::test_it_treats_a_company_whose_own_brand_name_
+     * contains_recruit_as_a_self_reference_known_limitation()に現在の挙動を
+     * 固定するテストがある)。
      */
     private function hostHasRecruitLabelToken(string $host): bool
     {

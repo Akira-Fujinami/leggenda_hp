@@ -127,6 +127,15 @@ class AdminAuthTest extends TestCase
         $response->assertJsonPath('message', 'ユーザー名またはパスワードが正しくありません。');
     }
 
+    /**
+     * 2026-08-24訂正: 以前は401(パスワード不一致と同じ)を期待していたが、
+     * これは仕様と食い違ったテストの不具合だった。認証情報が未設定なのは
+     * クライアントの入力ミスではなくサーバー側の設定不備のため、401ではなく
+     * 500を返す(HTTPの意味論上も5xxが妥当)。401にすると「パスワードを
+     * 間違えた」と区別がつかず、監視・記録上も異常として気づけない ――
+     * 実際にこの設定不備自体が長期間このテストの赤として放置されていた
+     * (依頼者指摘)。
+     */
     public function test_login_is_refused_when_admin_credentials_are_not_configured(): void
     {
         config(['admin.username' => null, 'admin.password_hash' => null]);
@@ -136,8 +145,27 @@ class AdminAuthTest extends TestCase
             'password' => 'correct-password',
         ]);
 
-        $response->assertStatus(401);
+        $response->assertStatus(500);
         $this->assertNull(session('admin_authenticated'));
+    }
+
+    /**
+     * 認証情報が未設定であること自体は、未認証の相手に教える必要のない
+     * サーバー内部の状態のため、応答本文にその旨を示す語(「設定」等)が
+     * 含まれないことを確認する(2026-08-24追加、依頼者指摘)。
+     */
+    public function test_the_not_configured_response_does_not_leak_the_configuration_state(): void
+    {
+        config(['admin.username' => null, 'admin.password_hash' => null]);
+
+        $response = $this->postJson('/admin/auth', [
+            'username' => 'admin',
+            'password' => 'correct-password',
+        ]);
+
+        $response->assertStatus(500);
+        $message = (string) ($response->json('message') ?? '');
+        $this->assertStringNotContainsString('設定', $message);
     }
 
     public function test_rate_limit_blocks_repeated_failed_attempts(): void

@@ -39,7 +39,11 @@ class IssueTestLeadSessionCommandTest extends TestCase
         $session = LeadSession::first();
 
         $this->assertStringEndsWith('@example.com', $session->email);
-        $this->assertSame(1, $session->analyses_used);
+        // 2026-08-22: 実行回数の消費は自社サイトの本文取得成功時点
+        // (GenerateBrandWheelAnalysisJob)へ後ろにずらされたため、StartAnalysisJob
+        // をfakeしたこのテストの時点ではまだ消費されていない
+        // (LeadAnalysisTest::test_valid_token_starts_an_analysis_for_self_site_onlyと同じ理由)。
+        $this->assertSame(0, $session->analyses_used);
         $this->assertSame(1, $session->projects()->count());
     }
 

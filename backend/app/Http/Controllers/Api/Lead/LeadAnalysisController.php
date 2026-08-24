@@ -13,7 +13,9 @@ use App\Models\LeadSession;
 use App\Models\MetricDefinition;
 use App\Models\Project;
 use App\Models\Report;
+use App\Exceptions\Analysis\AnalysisException;
 use App\Services\Analysis\AnalysisService;
+use App\Services\Analysis\SafeHttpFetcher;
 use App\Services\BrandWheel\BrandWheelCompletionNotifier;
 use App\Services\BrandWheel\BrandWheelComparisonSummaryComposer;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
@@ -54,6 +56,7 @@ class LeadAnalysisController extends Controller
         private readonly BrandWheelLeadResponseComposer $brandWheelComposer,
         private readonly BrandWheelComparisonSummaryComposer $brandWheelSummaryComposer,
         private readonly BrandWheelCompletionNotifier $brandWheelNotifier,
+        private readonly SafeHttpFetcher $safeHttpFetcher,
     ) {}
 
     /**
@@ -80,6 +83,20 @@ class LeadAnalysisController extends Controller
             ], 403);
         }
 
+        if ($this->leadSessions->hasAnalysisInProgress($leadSession)) {
+            // 診断回数の消費(recordAnalysisStarted())を開始直後ではなく
+            // 自社サイトの本文取得成功時点へ遅らせているため、消費されるまでの
+            // 間はcanStartAnalysis()が通り続ける。同一トークンでの多重受付を
+            // ここで別途防ぐ(LeadSessionService::hasAnalysisInProgress()参照)。
+            Log::info('Lead analysis start rejected: already in progress', ['lead_session_id' => $leadSession->id]);
+
+            return response()->json([
+                'message' => '既に診断を実行中です。完了までしばらくお待ちください。',
+                'errors' => [],
+                'error_code' => 'LEAD_ANALYSIS_IN_PROGRESS',
+            ], 409);
+        }
+
         if ($this->isCongested()) {
             // トークンを消費してはいけない(混雑は本人の責任ではないため)。
             return response()->json([
@@ -93,6 +110,20 @@ class LeadAnalysisController extends Controller
             'self_url' => ['required', 'string', 'max:2048'],
             'competitor_url' => ['nullable', 'string', 'max:2048'],
         ]);
+
+        if ($this->isSelfUrlUnreachable($data['self_url'])) {
+            // 401/403/429で自社サイトを読み取れなかった場合は、Project/Website/
+            // Analysisのいずれも作らず、トークンも一切消費しない(#B-1)。
+            // URL自体は個人情報ではないがログには含めない(既存の他の拒否ログと
+            // 同じ方針)。
+            Log::info('Lead analysis start rejected: self url unreachable', ['lead_session_id' => $leadSession->id]);
+
+            return response()->json([
+                'message' => 'このURLは読み取れませんでした。別のURLをお試しください。なお、この診断はご利用回数に含まれておりません。',
+                'errors' => [],
+                'error_code' => 'SELF_URL_UNREACHABLE',
+            ], 422);
+        }
 
         $sentinelUser = $this->leadSessions->sentinelUser();
 
@@ -132,7 +163,12 @@ class LeadAnalysisController extends Controller
             'skip_brand_wheel' => false,
         ], $sentinelUser);
 
-        $this->leadSessions->recordAnalysisStarted($leadSession);
+        // 2026-08-22: 実行回数の消費(recordAnalysisStarted())はここでは行わない。
+        // 自社サイトの本文取得成功(2xx かつ 文字数閾値以上)が確定した時点
+        // (GenerateBrandWheelAnalysisJob::maybeConsumeLeadQuota())へ後ろに
+        // ずらした(#B-2、依頼者との合意事項)。ここで即座に消費すると、
+        // 取得自体に失敗した場合(=B-1のチェックをすり抜けた一時的な失敗等)にも
+        // リードの唯一の診断回数が失われてしまうため。
 
         // 通知はnotificationsキュー経由の非同期送信のため、ここでの失敗は
         // このレスポンス(=リードの診断開始そのもの)に一切影響しない。
@@ -431,7 +467,23 @@ class LeadAnalysisController extends Controller
                     'status' => ReportGenerationStatus::Pending->value,
                 ]);
             }
-        } catch (QueryException) {
+        } catch (QueryException $e) {
+            // 想定しているのは(analysis_id, format)の一意制約違反(23505、
+            // 457行目のexists()チェックと後続のcreate()の間で別プロセスが
+            // 先にReportを作成した場合)のみ。それ以外(カラム欠落等の本当の
+            // スキーマ不一致)を同じ握りつぶしに含めると、8月の障害同様に
+            // 無言で通過してしまう(2026-08-24修正)。ここは進捗/結果ポーリング
+            // エンドポイントの副作用のため、再スローはせずログのみに留める
+            // (173行目の通知送信と同じ方針: このJobの失敗でレスポンス自体を
+            // 壊さない)。
+            if ((string) $e->getCode() !== '23505') {
+                Log::error('Failed to create lead report rows', [
+                    'analysis_id' => $analysis->id,
+                    'sqlstate' => $e->getCode(),
+                    'exception_message' => $e->getMessage(),
+                ]);
+            }
+
             return;
         }
 
@@ -476,11 +528,54 @@ class LeadAnalysisController extends Controller
         }
     }
 
+    /**
+     * 自社サイト(self_url)への1回きりの到達性チェック(#B-1)。本番の実取得
+     * (FetchStaticPageJob)と完全に同じ経路(backend/PHPからSafeHttpFetcher、
+     * 同じallowed content-type)で1回だけ取得する ―― analyzer(Node)は
+     * homepage.html/recruit.htmlの取得には使われていないため、そちらから
+     * チェックすると外向きIPの違いにより「チェックは通ったのに本番の取得は
+     * 403」という食い違いが起こり得る(依頼者との合意事項)。
+     *
+     * 401/403/429のみを「読み取れなかった」として扱う。タイムアウト・
+     * 接続エラー・5xx等(SafeHttpFetcherが例外を投げるケースを含む)は
+     * 相手側の一時的な事情の可能性があるため、保守的に「通す」側へ倒す
+     * (診断自体は止めない)。リトライはしない(相手サイトへの負荷を
+     * 増やさないため)。
+     *
+     * 2026-08-22追加: この呼び出しはリードが送信ボタンを押したまま待つ
+     * 同期処理のため、本番の実取得(config('analysis.http.total_timeout_seconds')、
+     * 既定20秒)より短いconfig('lead.self_url_reachability_check_timeout_seconds')
+     * (既定6秒)で打ち切る。超過時の扱い(保守的に通す)は変わらないため、
+     * 短くしても誤って診断をブロックすることはなく、待ち時間だけ減る。
+     */
+    private function isSelfUrlUnreachable(string $selfUrl): bool
+    {
+        try {
+            $result = $this->safeHttpFetcher->fetch(
+                $selfUrl,
+                ['text/html', 'application/xhtml+xml'],
+                totalTimeoutSeconds: (int) config('lead.self_url_reachability_check_timeout_seconds'),
+            );
+        } catch (AnalysisException) {
+            return false;
+        }
+
+        return in_array($result->httpStatus, [401, 403, 429], true);
+    }
+
+    /**
+     * 2026-08-22追加: LeadSessionService::hasAnalysisInProgress()と同じ理由
+     * (停止したAnalysisを対象から除外する)。除外しないと、停止した1件が
+     * max_concurrent_analyses(既定1)に達したまま居座り、全リードが
+     * 503で無期限にブロックされ得る(依頼者指摘)。閾値の根拠は
+     * config/lead.phpのコメント参照。
+     */
     private function isCongested(): bool
     {
         $inFlight = Analysis::query()
             ->whereHas('project', fn ($q) => $q->whereNotNull('lead_session_id'))
             ->whereIn('status', [AnalysisStatus::Pending, AnalysisStatus::Queued, AnalysisStatus::Running])
+            ->where('created_at', '>=', now()->subMinutes((int) config('lead.stale_analysis_after_minutes')))
             ->count();
 
         return $inFlight >= (int) config('lead.max_concurrent_analyses');

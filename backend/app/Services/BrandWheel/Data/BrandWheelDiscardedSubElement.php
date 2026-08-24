@@ -23,7 +23,15 @@ namespace App\Services\BrandWheel\Data;
  *         ことがあるため、20文字未満の場合のみ破棄する(本文中の短い正当な
  *         一文は対象外)。2026-08-05追加、prompt_version v5〜。20文字閾値を
  *         リンクラベルにも適用していた設計を、種類ごとの条件へ分離
- *         (2026-08-05、v6)。
+ *         (2026-08-05、v6) |
+ *         'definition_echo'(evidenceが【下位要素チェックリスト】の
+ *         sub_element_definitions=定義文そのものと完全一致。AIが「該当なし」と
+ *         判断しづらい状況で、実際のサイト本文の代わりにプロンプト自体の
+ *         定義文を返す実行単位のモード崩壊が実測で確認された。定義文は通常
+ *         サイト本文には存在しないためこの判定が無くてもevidence_not_foundとして
+ *         最終的には破棄されており誤ったmatched=trueには至らないが、
+ *         evidence_not_foundと区別することでこの現象の発生頻度を観測できる
+ *         ようにする。2026-08-24追加、prompt_version v10〜)。
  */
 readonly class BrandWheelDiscardedSubElement
 {

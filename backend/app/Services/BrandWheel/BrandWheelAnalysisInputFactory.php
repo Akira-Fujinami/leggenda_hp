@@ -85,6 +85,18 @@ class BrandWheelAnalysisInputFactory
 
     private const PAGE_STATUS_UNREADABLE = 'unreadable';
 
+    /**
+     * 優先度4-3(2026-08-24追加)。トップページ自身が既に採用ページである
+     * 自己参照(FetchRecruitPageJob::process()参照、Recruit/Homepageの
+     * AnalysisPage行が同一のraw_html_pathを指す)の場合に使う。既存の
+     * 'absent'(採用ページが見つからなかった)や'unreadable'(取得失敗)とは
+     * 意味が異なる ―― こちらは正常に取得できているが、トップページ本文と
+     * 重複するため意図的に本文を空扱いにしている。同じ値にすると2通目
+     * メールの読み手が「採用ページが見つからなかった/取得に失敗した」と
+     * 取り違えるため、既存値とは別の値にする(依頼者指摘)。
+     */
+    private const PAGE_STATUS_SELF_REFERENCE = 'self_reference';
+
     public function __construct(
         private readonly HtmlSeoAnalyzer $htmlSeoAnalyzer,
         private readonly PageHtmlResolver $htmlResolver,
@@ -102,7 +114,27 @@ class BrandWheelAnalysisInputFactory
             ->where('page_type', PageType::Homepage)
             ->first();
 
-        [$recruitBodyText, $recruitHeadings, $recruitNavLabels, $recruitPageStatus, $recruitHtmlSource, $recruitAllLinkLabels] = $this->extractPageText($recruitPage);
+        // 優先度4-3(2026-08-24): FetchRecruitPageJob::process()が自己参照
+        // (トップページ自身が既に採用ページ)を検出した場合、RecruitとHomepageの
+        // AnalysisPage行は同一のraw_html_pathを指す。ここで検出せずに両方を
+        // extractPageText()すると、同じHTMLファイルから同じ本文・見出し・
+        // ナビゲーションラベルを2回読み出してしまい、(1)AIへ同じ本文が2回
+        // 渡る、(2)isInputInsufficient()の文字数合計が実質2倍になり薄い
+        // サイトが安全弁を通過する、という問題が生じる(依頼者指摘)。
+        // raw_html_pathの一致で判定する ―― 同じファイルを指していれば内容も
+        // 必ず同一のため、これ以上の判定(final_urlの正規化比較等)は不要。
+        $isSelfReference = $recruitPage !== null
+            && $homepage !== null
+            && $recruitPage->raw_html_path !== null
+            && $recruitPage->raw_html_path === $homepage->raw_html_path;
+
+        if ($isSelfReference) {
+            [$recruitBodyText, $recruitHeadings, $recruitNavLabels, $recruitPageStatus, $recruitHtmlSource, $recruitAllLinkLabels]
+                = ['', [], [], self::PAGE_STATUS_SELF_REFERENCE, null, []];
+        } else {
+            [$recruitBodyText, $recruitHeadings, $recruitNavLabels, $recruitPageStatus, $recruitHtmlSource, $recruitAllLinkLabels] = $this->extractPageText($recruitPage);
+        }
+
         [$homepageBodyText, $homepageHeadings, $homepageNavLabels, $homepageStatus, $homepageHtmlSource, $homepageAllLinkLabels] = $this->extractPageText($homepage);
 
         // どちらのHTML(rendered/static)を読んだかは、レース(RenderPageJobが

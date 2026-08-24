@@ -30,8 +30,10 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::get('/companies/{company}', [CompanyController::class, 'show'])->name('companies.show');
         Route::patch('/companies/{company}/sales-status', [CompanyController::class, 'updateSalesStatus'])->name('companies.sales-status');
         Route::patch('/companies/{company}/sales-note', [CompanyController::class, 'updateSalesNote'])->name('companies.sales-note');
+        Route::patch('/lead-sessions/{leadSession}/reset-analyses-used', [CompanyController::class, 'resetAnalysesUsed'])->name('lead-sessions.reset-analyses-used');
 
         Route::get('/analyses', [AnalysisController::class, 'index'])->name('analyses.index');
         Route::get('/analyses/{analysis}', [AnalysisController::class, 'show'])->name('analyses.show');
+        Route::patch('/analyses/{analysis}/force-terminate', [AnalysisController::class, 'forceTerminate'])->name('analyses.force-terminate');
     });
 });

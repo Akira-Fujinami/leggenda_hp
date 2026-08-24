@@ -68,8 +68,15 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
      * 候補しかない場合は無理に選ばずmid_term_action=nullにすることも明示。
      * 出力スキーマ自体は変更しない(mid_term_actionは引き続き単一テキスト、
      * テーマ→理由→広げ方を2〜3文に収める)。
+     *
+     * v5(2026-08-22): 出力構造・判定ロジックは変えず、自由記述
+     * (one_point/reason/recommended_contents/mid_term_action)の文体指示
+     * のみを追加した(依頼者指定「やさしく、寄り添うトーン」への改修、
+     * OpenAiBrandWheelAnalysisProviderのv9と同時対応)。プロンプト冒頭に
+     * 【読み手について】【文章の書き方】を挿入した(この提供者には
+     * 【最重要】見出しが無いため、他の指示より前=プロンプト冒頭に置く)。
      */
-    public const string PROMPT_VERSION = 'v4';
+    public const string PROMPT_VERSION = 'v5';
 
     public function __construct(
         private readonly BrandWheelImprovementSuggestionResponseParser $parser,
@@ -133,6 +140,36 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
             (array) config('brand_wheel.forbidden_phrases', []),
             (array) config('brand_wheel.assertive_phrases', []),
         ));
+
+        $readerNote = <<<TXT
+
+【読み手について】
+このレポートを読むのは、その会社の採用担当者ご本人です。限られた予算と
+時間の中で自社の採用サイトを作り、日々更新している方です。書かれていない
+項目があるのは、怠慢ではなく、優先順位と制約の結果です。
+
+あなたの役割は、足りないものを指摘することではありません。すでに伝わって
+いることを正しく言語化し、そのうえで「次に何を足すと候補者により届くか」を
+一緒に考えることです。
+
+TXT;
+
+        $writingStyleNote = <<<TXT
+
+【文章の書き方】
+- まず読み取れたことに触れてから、次の一手に進んでください。読み取れなかった
+  ことから書き始めないでください。
+- 主語を「サイト」ではなく「候補者」に寄せてください。
+    ×「〜の記述がありません」
+    ○「候補者は〜を知りたいと感じるかもしれません」
+- 語尾は提案形にしてください。
+    ×「〜すべきです」「〜する必要があります」
+    ○「〜から始めてみてはいかがでしょうか」
+    ○「〜を添えると、より伝わりやすくなります」
+- 断定を避け、「〜可能性があります」「〜かもしれません」を使ってください。
+- 会社の呼称は「御社」で統一してください。
+
+TXT;
 
         $competitorNote = $input->hasCompetitor
             ? '比較サイト(競合)のデータが含まれています。ギャップ埋め(競合にあり自社に無い情報を補う)と、'.
@@ -308,6 +345,7 @@ TXT;
 TXT;
 
         return <<<PROMPT
+{$readerNote}{$writingStyleNote}
 {$reasoningSteps}
 {$forbiddenNote}
 

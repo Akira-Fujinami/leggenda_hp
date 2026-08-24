@@ -134,6 +134,43 @@ class SafeHttpFetcherTest extends TestCase
         }
     }
 
+    /**
+     * #B-1: 同期処理から短い締切りで1回だけ試したい呼び出し元
+     * (LeadAnalysisController::isSelfUrlUnreachable())向けの
+     * $totalTimeoutSeconds引数。config('analysis.http.total_timeout_seconds')が
+     * 十分大きくても、引数で渡した値が優先されることを確認する。
+     */
+    public function test_the_totalTimeoutSeconds_argument_overrides_the_configured_value(): void
+    {
+        config(['analysis.http.total_timeout_seconds' => 999]);
+
+        Http::fake([
+            'https://example.com/a' => Http::response('', 301, ['Location' => 'https://example.com/b']),
+            'https://example.com/b' => Http::response('<html>ok</html>', 200, ['Content-Type' => 'text/html']),
+        ]);
+
+        try {
+            $this->fetcher->fetch('https://example.com/a', totalTimeoutSeconds: 0);
+            $this->fail('Expected AnalysisException');
+        } catch (AnalysisException $e) {
+            $this->assertSame(AnalysisErrorCode::RequestTimeout, $e->errorCode);
+        }
+    }
+
+    public function test_omitting_totalTimeoutSeconds_falls_back_to_the_configured_value(): void
+    {
+        config(['analysis.http.total_timeout_seconds' => 0]);
+
+        Http::fake(['https://example.com/' => Http::response('<html>ok</html>', 200, ['Content-Type' => 'text/html'])]);
+
+        try {
+            $this->fetcher->fetch('https://example.com/');
+            $this->fail('Expected AnalysisException');
+        } catch (AnalysisException $e) {
+            $this->assertSame(AnalysisErrorCode::RequestTimeout, $e->errorCode);
+        }
+    }
+
     public function test_it_rejects_unsupported_content_types(): void
     {
         Http::fake([

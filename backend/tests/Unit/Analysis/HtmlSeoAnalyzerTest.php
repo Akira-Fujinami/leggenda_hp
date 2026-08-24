@@ -459,6 +459,22 @@ class HtmlSeoAnalyzerTest extends TestCase
     }
 
     /**
+     * 優先度4-1(2026-08-24): saiyo(長音無し)のみではドメイン名のローマ字
+     * 表記ゆれ「会社名-saiyou.jp」(長音あり)を拾えなかった。ゴディバの例
+     * (godiva-saiyo.com)と同じホスト名ラベルのハイフン区切りトークン完全
+     * 一致で、saiyouも自己参照と判定できることを確認する。
+     */
+    public function test_it_self_references_when_the_host_second_level_domain_contains_the_long_vowel_saiyou_spelling(): void
+    {
+        $html = '<html><body><a href="/jobs">募集中の求人一覧</a></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://www.example-saiyou.com/');
+
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('https://www.example-saiyou.com/', $result['business_links']['recruit']['url']);
+    }
+
+    /**
      * サブドメインが採用専用の場合は、従来通りRECRUIT_SUBDOMAIN_PREFIXES
      * (前方一致)で自己参照と判定される(依頼4検証: recruit.moneyforward.com型)。
      * 新設のhostHasRecruitLabelToken()を追加しても、この経路の挙動は変わらない。
@@ -532,6 +548,31 @@ class HtmlSeoAnalyzerTest extends TestCase
         $this->assertTrue($result['business_links']['recruit']['present']);
         $this->assertSame('/careers', $result['business_links']['recruit']['url']);
         $this->assertNotSame('https://www.the-job-shop.example.com/', $result['business_links']['recruit']['url']);
+    }
+
+    /**
+     * 優先度4-2(2026-08-24文書化、未対応): 社名・ブランド名自体が"recruit"を
+     * 含む実在企業(例: recruit.co.jp)の通常のコーポレートページを診断すると、
+     * hostHasRecruitLabelToken()がホスト名だけを見て「このページ自身が既に
+     * 採用ページである」と誤判定し、ナビ内の本物の採用ページを探しに行かない。
+     * これは既知の誤検出であり、この関数の設計(ゴディバ型のハイフン区切り
+     * 採用専用ドメインを検出するため)上、社名との衝突を一般的に除外する方法が
+     * 無いため未対応。このテストは修正済みの挙動を示すものではなく、現在の
+     * (望ましくない)挙動を固定して回帰を検知するためのもの。
+     */
+    public function test_it_treats_a_company_whose_own_brand_name_contains_recruit_as_a_self_reference_known_limitation(): void
+    {
+        $html = '<html><body><a href="/careers">キャリア採用</a></body></html>';
+
+        $result = $this->analyzer->analyze($html, 'https://www.recruit.co.jp/');
+
+        // 本来は「診断対象ページ自身がすでに採用ページ」ではなく、コーポレート
+        // サイトのトップページであるにもかかわらず、自己参照(診断対象URL自身)を
+        // 採用ページとして返してしまう ―― ナビ内の実際の候補(/careers)は
+        // 使われない。
+        $this->assertTrue($result['business_links']['recruit']['present']);
+        $this->assertSame('https://www.recruit.co.jp/', $result['business_links']['recruit']['url']);
+        $this->assertNotSame('/careers', $result['business_links']['recruit']['url']);
     }
 
     public function test_it_keeps_first_match_wins_behavior_for_non_recruit_categories(): void

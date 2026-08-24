@@ -83,6 +83,10 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
     public function test_model_and_prompt_version_are_available_before_calling_analyze(): void
     {
         config(['services.openai.model' => 'gpt-test-model']);
+        // 開発環境の.envがBRAND_WHEEL_AI_MODEL(2026-08-24追加、既定gpt-4o)を
+        // 設定している場合でも、このテストはopenai.modelへのフォールバックを
+        // 検証する意図のため、明示的にnullへ戻す(2026-08-24修正)。
+        config(['services.brand_wheel_ai.model' => null]);
 
         $provider = new OpenAiBrandWheelAnalysisProvider(new BrandWheelAnalysisResponseParser);
 

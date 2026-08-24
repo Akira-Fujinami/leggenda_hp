@@ -37,6 +37,11 @@ use Illuminate\Support\Facades\Storage;
  *
  * 取得には既存のSafeHttpFetcher(SafeUrlValidator経由のSSRF検証込み)を
  * そのまま使う ―― 新たな取得経路を作らない。
+ *
+ * $recruitUrlがトップページ自身のURLと一致する場合(トップページ自身が
+ * 既に採用ページである自己参照、HtmlSeoAnalyzer::$pageIsRecruitPage参照)は、
+ * HTTP取得を行わずトップページの既存AnalysisPage行を複製する
+ * (優先度4-3、2026-08-24対応。以前は同一URLへ無駄な2回目の取得を行っていた)。
  */
 class FetchRecruitPageJob extends BaseWebsiteAnalysisJob
 {
@@ -62,6 +67,41 @@ class FetchRecruitPageJob extends BaseWebsiteAnalysisJob
     protected function process(AnalysisJobRecord $record, WebsiteAnalysis $websiteAnalysis, AnalysisPipeline $pipeline): void
     {
         if ($this->recruitUrl === null || $this->recruitUrl === '') {
+            return;
+        }
+
+        // 優先度4-3(2026-08-24): トップページ自身が既に採用ページである場合
+        // (HtmlSeoAnalyzer::$pageIsRecruitPage)、AnalysisPipeline::resolveRecruitUrl()
+        // が解決するURLはトップページのfinal_url(またはurl)と厳密に一致する
+        // (RelativeUrlResolverは絶対URLをそのまま返すため)。この場合、
+        // トップページと同一URLへ2回目のHTTPリクエストを送るのは無駄取得
+        // (実データ: カヤック採用ページで再現)のため、既に取得済みの
+        // トップページのHTMLをそのまま複製し、ネットワークアクセスを行わない。
+        $homepage = AnalysisPage::query()
+            ->where('website_analysis_id', $this->websiteAnalysisId)
+            ->where('page_type', PageType::Homepage)
+            ->first();
+
+        $homepageUrl = $homepage?->final_url ?? $homepage?->url;
+
+        // 厳密な===比較(末尾スラッシュ・www有無・大文字小文字等の正規化はしない)。
+        // $this->recruitUrlはresolveRecruitUrl()がトップページのfinal_urlを
+        // そのまま返す経路のため一致するはずで、正規化は不要と判断した
+        // (2026-08-24の指摘への回答)。万一一致しなかった場合も、単に
+        // 従来通りHTTP取得へフォールバックするだけで安全側に倒れる。
+        if ($homepage !== null && $homepageUrl !== null && $homepageUrl === $this->recruitUrl) {
+            AnalysisPage::query()->updateOrCreate(
+                ['website_analysis_id' => $this->websiteAnalysisId, 'page_type' => PageType::Recruit],
+                [
+                    'url' => $homepage->url,
+                    'final_url' => $homepage->final_url,
+                    'http_status' => $homepage->http_status,
+                    'content_type' => $homepage->content_type,
+                    'raw_html_path' => $homepage->raw_html_path,
+                    'fetched_at' => $homepage->fetched_at,
+                ],
+            );
+
             return;
         }
 

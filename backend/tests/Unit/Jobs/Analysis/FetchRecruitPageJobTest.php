@@ -78,6 +78,46 @@ class FetchRecruitPageJobTest extends TestCase
         Queue::assertPushed(AnalyzeRecruitPageJob::class);
     }
 
+    /**
+     * 優先度4-3(2026-08-24): $recruitUrlがトップページ自身のURL
+     * (HtmlSeoAnalyzer::$pageIsRecruitPage、自己参照)と一致する場合、
+     * 同一URLへの2回目のHTTP取得を行わず、既に取得済みのトップページの
+     * AnalysisPage行をそのまま複製する。
+     */
+    public function test_it_reuses_the_homepage_row_without_refetching_when_the_recruit_url_is_a_self_reference(): void
+    {
+        Queue::fake([AnalyzeRecruitPageJob::class]);
+        Http::fake();
+
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        AnalysisPage::factory()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'page_type' => PageType::Homepage,
+            'url' => 'https://www.godiva-saiyo.com/',
+            'final_url' => 'https://www.godiva-saiyo.com/',
+            'http_status' => 200,
+            'content_type' => 'text/html',
+            'raw_html_path' => 'fake/homepage.html',
+        ]);
+        Storage::disk('analysis')->put('fake/homepage.html', '<html><body>採用情報トップ</body></html>');
+
+        (new FetchRecruitPageJob($websiteAnalysis->analysis_id, $websiteAnalysis->id, 'https://www.godiva-saiyo.com/'))
+            ->handle(app(AnalysisPipeline::class));
+
+        Http::assertNothingSent();
+
+        $recruitPage = AnalysisPage::query()->where('website_analysis_id', $websiteAnalysis->id)->where('page_type', PageType::Recruit)->first();
+        $this->assertNotNull($recruitPage);
+        $this->assertSame('https://www.godiva-saiyo.com/', $recruitPage->final_url);
+        $this->assertSame('fake/homepage.html', $recruitPage->raw_html_path);
+        $this->assertSame(200, $recruitPage->http_status);
+
+        $job = $websiteAnalysis->jobs()->where('job_type', JobType::FetchRecruitPage)->first();
+        $this->assertSame(AnalysisJobStatus::Completed, $job->status);
+
+        Queue::assertPushed(AnalyzeRecruitPageJob::class);
+    }
+
     public function test_a_fetch_failure_still_dispatches_the_next_job_and_marks_this_job_failed(): void
     {
         Queue::fake([AnalyzeRecruitPageJob::class]);

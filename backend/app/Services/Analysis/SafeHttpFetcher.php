@@ -19,13 +19,18 @@ class SafeHttpFetcher
 
     /**
      * @param  list<string>  $allowedContentTypePrefixes  空の場合はContent-Typeを検証しない
+     * @param  ?int  $totalTimeoutSeconds  未指定時はconfig('analysis.http.total_timeout_seconds')。
+     *   本番の実取得(FetchStaticPageJob等)とは別に、同期処理から短い締切りで
+     *   1回だけ試したい呼び出し元(LeadAnalysisController::isSelfUrlUnreachable()
+     *   等)向けの上書き。接続タイムアウトはこの値を超えないよう自動的に
+     *   丸められる(下記min()参照)ため、別途指定する必要はない。
      */
-    public function fetch(string $url, array $allowedContentTypePrefixes = []): FetchResult
+    public function fetch(string $url, array $allowedContentTypePrefixes = [], ?int $totalTimeoutSeconds = null): FetchResult
     {
         $maxRedirects = (int) config('analysis.http.max_redirects');
         $maxBytes = (int) config('analysis.http.max_response_bytes');
         $connectTimeout = (int) config('analysis.http.connect_timeout_seconds');
-        $totalTimeout = (int) config('analysis.http.total_timeout_seconds');
+        $totalTimeout = $totalTimeoutSeconds ?? (int) config('analysis.http.total_timeout_seconds');
         $userAgent = (string) config('analysis.crawler_user_agent');
 
         $requestedUrl = $url;

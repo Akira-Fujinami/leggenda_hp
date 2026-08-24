@@ -2,12 +2,14 @@
 
 namespace Tests\Unit\Jobs\Analysis;
 
+use App\Enums\AnalysisErrorCode;
 use App\Enums\AnalysisJobStatus;
 use App\Enums\JobType;
 use App\Jobs\Analysis\FetchRobotsJob;
 use App\Jobs\Analysis\FinalizeWebsiteAnalysisJob;
 use App\Models\AnalysisJob;
 use App\Models\WebsiteAnalysis;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -64,6 +66,66 @@ class BaseWebsiteAnalysisJobFailedTest extends TestCase
         $job->failed(new \RuntimeException('simulated queue-level timeout'));
 
         Queue::assertPushed(FinalizeWebsiteAnalysisJob::class, 1);
+    }
+
+    /**
+     * 2026-08-24追加: 8/16〜17の本番障害(positive_impressionカラム欠落による
+     * QueryExceptionがJOB_TIMEOUTとして記録され、AIタイムアウト設定の調査へ
+     * ミスリードされた)の再発防止。undefined_column(SQLSTATE 42703)は
+     * SchemaMismatchとして分類されることを確認する。
+     */
+    public function test_failed_classifies_undefined_column_query_exception_as_schema_mismatch(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+        AnalysisJob::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'job_type' => JobType::FetchRobots,
+            'status' => AnalysisJobStatus::Running,
+        ]);
+
+        $previous = new \PDOException('column "positive_impression" does not exist', '42703');
+        $queryException = new QueryException('pgsql', 'insert into x (positive_impression) values (?)', [], $previous);
+
+        $job = new FetchRobotsJob($websiteAnalysis->analysis_id, $websiteAnalysis->id);
+        $job->failed($queryException);
+
+        $record = AnalysisJob::query()
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('job_type', JobType::FetchRobots)
+            ->first();
+
+        $this->assertSame(AnalysisJobStatus::Failed, $record->status);
+        $this->assertSame(AnalysisErrorCode::SchemaMismatch->value, $record->error_code);
+    }
+
+    /**
+     * undefined_column/undefined_table/datatype_mismatch以外のQueryException
+     * (デッドロック・接続断等、一過性の可能性がある)はDatabaseErrorとして
+     * 分類され、SchemaMismatchとは区別されることを確認する。
+     */
+    public function test_failed_classifies_other_query_exceptions_as_database_error(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+        AnalysisJob::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'job_type' => JobType::FetchRobots,
+            'status' => AnalysisJobStatus::Running,
+        ]);
+
+        $previous = new \PDOException('deadlock detected', '40001');
+        $queryException = new QueryException('pgsql', 'update x set y = 1', [], $previous);
+
+        $job = new FetchRobotsJob($websiteAnalysis->analysis_id, $websiteAnalysis->id);
+        $job->failed($queryException);
+
+        $record = AnalysisJob::query()
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('job_type', JobType::FetchRobots)
+            ->first();
+
+        $this->assertSame(AnalysisErrorCode::DatabaseError->value, $record->error_code);
     }
 
     public function test_failed_is_a_no_op_when_the_job_already_reached_a_terminal_status(): void

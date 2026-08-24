@@ -107,6 +107,54 @@ class BrandWheelAnalysisResponseParserTest extends TestCase
         $this->assertSame(1, $axis->claimedSubElementCount);
     }
 
+    public function test_evidence_that_exactly_matches_the_sub_element_definition_is_discarded_as_definition_echo(): void
+    {
+        // #99実測(2026-08-24)で確認された失敗パターン: AIが「該当なし」と
+        // 判断しづらい状況で、サイト本文の代わりに【下位要素チェックリスト】の
+        // 定義文(config('brand_wheel.axes.will_activity.sub_element_definitions.business_expansion'))
+        // をそのままevidenceとして返す。定義文はサイト本文には存在しないため、
+        // 判定はevidence_not_foundと同じくdiscardedになるが、理由は区別する。
+        $definition = config('brand_wheel.axes.will_activity.sub_element_definitions.business_expansion');
+        $input = $this->makeInput(recruitBody: '私たちは地域社会に貢献しています。');
+
+        $raw = [
+            'sub_elements' => $this->completeSubElements([
+                'business_expansion' => ['matched' => true, 'evidence' => $definition],
+            ]),
+        ];
+
+        $result = $this->parser->parse($raw, $input, 'openai', 'gpt-4o-mini', false, 'v10');
+
+        $axis = collect($result->axes)->firstWhere('axisKey', 'will_activity');
+        $this->assertSame([], $axis->matchedSubElements);
+        $this->assertSame('unread', $axis->state);
+        $this->assertCount(1, $axis->discardedSubElements);
+        $this->assertSame('definition_echo', $axis->discardedSubElements[0]->reason);
+        $this->assertSame(1, $axis->claimedSubElementCount);
+    }
+
+    public function test_definition_echo_is_detected_even_when_normalization_differs_by_width_or_whitespace(): void
+    {
+        $definition = config('brand_wheel.axes.will_activity.sub_element_definitions.business_expansion');
+        // 全角スペースを挟んでも正規化後に一致することを確認する(normalizeToSet()
+        // が空白を完全除去するため、buildHeadingSet()/buildLinkLabelSet()と同じ挙動)。
+        $spacedDefinition = mb_substr($definition, 0, 5).'　'.mb_substr($definition, 5);
+
+        $input = $this->makeInput(recruitBody: '私たちは地域社会に貢献しています。');
+
+        $raw = [
+            'sub_elements' => $this->completeSubElements([
+                'business_expansion' => ['matched' => true, 'evidence' => $spacedDefinition],
+            ]),
+        ];
+
+        $result = $this->parser->parse($raw, $input, 'openai', 'gpt-4o-mini', false, 'v10');
+
+        $axis = collect($result->axes)->firstWhere('axisKey', 'will_activity');
+        $this->assertCount(1, $axis->discardedSubElements);
+        $this->assertSame('definition_echo', $axis->discardedSubElements[0]->reason);
+    }
+
     public function test_matched_false_is_ignored_even_when_evidence_is_present(): void
     {
         // 2026-08-05: 新方式ではAIがmatched:falseの項目にもevidenceを

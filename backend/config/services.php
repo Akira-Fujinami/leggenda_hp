@@ -82,6 +82,13 @@ return [
         // (=OPENAI_MODEL、既定gpt-4o-mini)をそのまま使うため、既存の挙動は
         // 変えない。入力・プロンプト(teaching_points/examples/caveat)・
         // temperatureはこの測定では一切変更しないこと。
+        //
+        // 本番はgpt-4o固定(.env.example参照)。gpt-4o-miniへコスト削減目的で
+        // 下げないこと ―― プロンプト中のsub_element_definitions(定義文)を
+        // そのままevidenceとして返す挙動がgpt-4o-miniで高頻度に発生し、同一
+        // 入力でも判定結果が実行ごとに変わることを実測で確認済み(2026-08実測:
+        // 同一サイト同一入力でmatchedが3/0/3、gpt-4oでは8/8/8で完全安定。
+        // BrandWheelDiscardedSubElementのdefinition_echo理由で観測できる)。
         'model' => env('BRAND_WHEEL_AI_MODEL'),
         'timeout' => (int) env('BRAND_WHEEL_AI_TIMEOUT', env('AI_TIMEOUT', 60)),
         'max_retries' => (int) env('BRAND_WHEEL_AI_MAX_RETRIES', env('AI_MAX_RETRIES', 1)),

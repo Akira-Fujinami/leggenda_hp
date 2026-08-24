@@ -2,6 +2,8 @@
 
 namespace App\Services\Lead;
 
+use App\Enums\AnalysisStatus;
+use App\Models\Analysis;
 use App\Models\LeadSession;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
@@ -98,6 +100,31 @@ class LeadSessionService
     public function recordAnalysisStarted(LeadSession $session): void
     {
         $session->increment('analyses_used');
+    }
+
+    /**
+     * この同一トークン(LeadSession)に紐づく診断が既に実行中(未終端状態)かどうか。
+     * 診断回数の消費(recordAnalysisStarted())を開始直後ではなく後段
+     * (自社サイトの本文取得成功時点)へ遅らせると、消費されるまでの間は
+     * canStartAnalysis()が通り続けてしまう ―― この間に同一トークンで二重に
+     * 診断が受け付けられることを防ぐための、消費タイミングとは独立したガード。
+     * isCongested()(全体の同時実行数)とは別の観点(トークン単位)のため、
+     * 呼び出し元(LeadAnalysisController::store())で両方チェックする。
+     *
+     * 2026-08-22追加: Worker停止・OOM・例外で終端処理に到達できず、statusが
+     * Pending/Queued/Runningのまま残った「停止した」Analysisは対象から除外する
+     * (config('lead.stale_analysis_after_minutes')、既定30分、Analysis.created_at
+     * 基準)。除外しないと、そのリードは永久に409でブロックされ続ける
+     * (依頼者指摘、B-4のリセットではanalyses_used自体が0のため復旧できない)。
+     * 閾値の根拠はconfig/lead.phpのコメント参照。
+     */
+    public function hasAnalysisInProgress(LeadSession $session): bool
+    {
+        return Analysis::query()
+            ->whereHas('project', fn ($q) => $q->where('lead_session_id', $session->id))
+            ->whereIn('status', [AnalysisStatus::Pending, AnalysisStatus::Queued, AnalysisStatus::Running])
+            ->where('created_at', '>=', now()->subMinutes((int) config('lead.stale_analysis_after_minutes')))
+            ->exists();
     }
 
     /**

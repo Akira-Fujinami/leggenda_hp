@@ -11,6 +11,7 @@ use App\Models\LeadSession;
 use App\Models\WebsiteAnalysis;
 use App\Notifications\Lead\LeadConsultationRequestedNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
@@ -31,6 +32,8 @@ class LeadConsultationTest extends TestCase
         $token = $onboarding->json('data.token');
 
         Queue::fake([StartAnalysisJob::class]);
+        // #B-1: store()がself_urlへ1回だけ到達性チェックを行う分。
+        Http::fake(['https://example.com' => Http::response('<html></html>', 200)]);
         $started = $this->postJson("/api/lead/analyses?token={$token}", ['self_url' => 'https://example.com']);
 
         return [$token, $started->json('data.analysis_id')];

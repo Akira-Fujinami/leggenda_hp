@@ -6,6 +6,7 @@ use App\Jobs\GenerateBrandWheelImprovementSuggestionJob;
 use App\Models\BrandWheelAnalysisResult;
 use App\Models\BrandWheelImprovementSuggestion;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Log;
 
 /**
  * 改善提案(page6)AIの生成タイミングを判定し、必要ならJobをdispatchする。
@@ -80,8 +81,23 @@ class BrandWheelImprovementSuggestionDispatcher
                 'analysis_id' => $analysisId,
                 'status' => 'pending',
             ]);
-        } catch (QueryException) {
-            // analysis_idのunique制約違反 ―― 別プロセスが同時に作成済み。
+        } catch (QueryException $e) {
+            // 想定しているのはanalysis_idの一意制約違反(23505、別プロセスが
+            // 同時に作成済み)のみ。それ以外(カラム欠落等の本当のスキーマ
+            // 不一致)を同じ握りつぶしに含めると無言で通過してしまう
+            // (2026-08-24修正、8月の障害の再発防止)。呼び出し元
+            // (GenerateBrandWheelAnalysisJob::cascadeProgress())は「改善提案の
+            // 生成は判定後の副作用であり、診断本体の進捗・完了判定には
+            // 影響させない」方針のため、ここでも再スローはせずログのみに
+            // 留める。
+            if ((string) $e->getCode() !== '23505') {
+                Log::error('Failed to create brand wheel improvement suggestion row', [
+                    'analysis_id' => $analysisId,
+                    'sqlstate' => $e->getCode(),
+                    'exception_message' => $e->getMessage(),
+                ]);
+            }
+
             return;
         }
 

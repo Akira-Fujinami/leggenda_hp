@@ -23,6 +23,7 @@ use App\Models\AnalysisJob;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\BrandWheel\BrandWheelAnalysisInputFactory;
+use App\Services\BrandWheel\OpenAiBrandWheelAnalysisProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -254,7 +255,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $this->assertSame('success', $record->status);
         $this->assertFalse($record->is_mock);
         $this->assertSame('openai', $record->provider);
-        $this->assertSame('v8', $record->prompt_version);
+        $this->assertSame(OpenAiBrandWheelAnalysisProvider::PROMPT_VERSION, $record->prompt_version);
         $this->assertSame(120, $record->usage_input_tokens);
         $this->assertSame(40, $record->usage_output_tokens);
         // 実在しない抜粋は検証で破棄されるため、unreadのまま(AIの自己申告を信用しない)。
@@ -671,6 +672,146 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $record->refresh();
         $this->assertSame('success', $record->status);
         $this->assertNotNull($record->axes);
+    }
+
+    /**
+     * #B-2: リード診断の実行回数消費(LeadSession.analyses_used)は、診断開始時
+     * ではなく自社サイトの本文取得成功が確定するこの時点で行われる
+     * (LeadAnalysisController::store()側の検証はLeadAnalysisTestを参照)。
+     *
+     * @return array{website_analysis: WebsiteAnalysis, lead_session: LeadSession}
+     */
+    private function makeLeadOwnedWebsiteAnalysis(bool $isPrimary = true, int $homepageHttpStatus = 200): array
+    {
+        $leadSession = LeadSession::factory()->create(['analyses_used' => 0]);
+        $project = Project::factory()->create(['lead_session_id' => $leadSession->id]);
+        $website = Website::factory()->for($project)->create(['is_primary' => $isPrimary]);
+        $analysis = Analysis::factory()->for($project)->completed()->create();
+        $websiteAnalysis = WebsiteAnalysis::factory()->completed()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id]);
+
+        $this->putHomepageHtml($websiteAnalysis, str_repeat('会社の紹介文です。', 30));
+        AnalysisPage::query()
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('page_type', PageType::Homepage)
+            ->update(['http_status' => $homepageHttpStatus]);
+
+        return ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession];
+    }
+
+    public function test_lead_quota_is_consumed_once_self_site_input_is_sufficient_and_reachable(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'mock', 'analysis.allow_mock_providers' => true]);
+        ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'pending',
+        ]);
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $this->assertSame(1, $leadSession->fresh()->analyses_used);
+        $this->assertNotNull(Analysis::find($websiteAnalysis->analysis_id)->lead_quota_consumed_at);
+    }
+
+    public function test_lead_quota_is_not_consumed_when_input_is_insufficient(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        Http::fake(['api.openai.com/*' => Http::response(['choices' => []], 200)]);
+
+        $leadSession = LeadSession::factory()->create(['analyses_used' => 0]);
+        $project = Project::factory()->create(['lead_session_id' => $leadSession->id]);
+        $website = Website::factory()->for($project)->create(['is_primary' => true]);
+        $analysis = Analysis::factory()->for($project)->completed()->create();
+        $websiteAnalysis = WebsiteAnalysis::factory()->completed()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id]);
+        // AnalysisPage自体を作らない(=正常系の入力不足)。
+
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'pending',
+        ]);
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $this->assertSame('insufficient_input', $record->fresh()->status);
+        $this->assertSame(0, $leadSession->fresh()->analyses_used);
+    }
+
+    public function test_lead_quota_is_not_consumed_for_the_competitor_website(): void
+    {
+        // is_primary=falseの比較サイト側でinput十分でも消費してはいけない
+        // (依頼要件: 比較サイトのみが403でも診断は続行され、自社側の判定
+        // だけが消費に影響する)。
+        config(['services.brand_wheel_ai.provider' => 'mock', 'analysis.allow_mock_providers' => true]);
+        ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis(isPrimary: false);
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'pending',
+        ]);
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $this->assertSame('success', $record->fresh()->status);
+        $this->assertSame(0, $leadSession->fresh()->analyses_used);
+    }
+
+    public function test_lead_quota_is_not_consumed_when_the_homepage_http_status_is_not_2xx(): void
+    {
+        // 文字数閾値は満たしていても、トップページのHTTPステータスが2xxで
+        // なければ「本文取得成功」とはみなさない(内容の整ったエラーページを
+        // 誤って成功扱いしないため)。
+        config(['services.brand_wheel_ai.provider' => 'mock', 'analysis.allow_mock_providers' => true]);
+        ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis(homepageHttpStatus: 403);
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'pending',
+        ]);
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $this->assertSame(0, $leadSession->fresh()->analyses_used);
+    }
+
+    public function test_lead_quota_is_untouched_for_a_non_lead_analysis(): void
+    {
+        // project.lead_session_idが無い(社内向けの通常診断)場合は一切触れない。
+        config(['services.brand_wheel_ai.provider' => 'mock', 'analysis.allow_mock_providers' => true]);
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'pending',
+        ]);
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $this->assertSame('success', $record->fresh()->status);
+        $this->assertNull(Analysis::find($websiteAnalysis->analysis_id)->lead_quota_consumed_at);
+        $this->assertSame(0, LeadSession::query()->count());
+    }
+
+    /**
+     * GenerateBrandWheelAnalysisJobはAI呼び出しのレート制限等でリトライされる
+     * ことがあり、そのたびにmaybeConsumeLeadQuota()も再実行される。
+     * Analysis.lead_quota_consumed_atへの条件付きUPDATEで二重消費が防がれる
+     * ことを、privateメソッドを直接2回呼び出して確認する(リトライのタイミングを
+     * 正確に再現するより、ガードそのものを直接検証する方が確実なため)。
+     */
+    public function test_lead_quota_consumption_is_idempotent_across_job_retries(): void
+    {
+        ['website_analysis' => $websiteAnalysis, 'lead_session' => $leadSession] = $this->makeLeadOwnedWebsiteAnalysis();
+
+        $job = new GenerateBrandWheelAnalysisJob(1);
+        $method = new \ReflectionMethod($job, 'maybeConsumeLeadQuota');
+        $method->setAccessible(true);
+
+        $method->invoke($job, $websiteAnalysis, true);
+        $method->invoke($job, $websiteAnalysis, true);
+
+        $this->assertSame(1, $leadSession->fresh()->analyses_used);
     }
 
     /**
@@ -1145,5 +1286,43 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
             ->where('job_type', JobType::GenerateBrandWheelAnalysis)
             ->count());
         $this->assertSame(JobType::GenerateBrandWheelAnalysis->weight(), $websiteAnalysis->fresh()->progress);
+    }
+
+    /**
+     * 2026-08-24追加: 8/16〜17の本番障害(positive_impressionカラム欠落による
+     * QueryExceptionが、failed()側で常にJobTimeout固定だったためJOB_TIMEOUTと
+     * して記録され、AIタイムアウト設定の調査へミスリードされた)の再発防止。
+     * failed()がQueryExceptionをSQLSTATEで分類し、brand_wheel_analysis_results.
+     * error_code / analysis_jobs.error_codeの両方に正しく反映することを確認する。
+     */
+    public function test_failed_classifies_undefined_column_query_exception_as_schema_mismatch(): void
+    {
+        $websiteAnalysis = WebsiteAnalysis::factory()->create();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id, 'website_analysis_id' => $websiteAnalysis->id, 'status' => 'pending',
+        ]);
+        AnalysisJob::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'job_type' => JobType::GenerateBrandWheelAnalysis,
+            'status' => AnalysisJobStatus::Running,
+        ]);
+
+        $previous = new \PDOException('column "positive_impression" does not exist', '42703');
+        $queryException = new \Illuminate\Database\QueryException('pgsql', 'update brand_wheel_analysis_results set positive_impression = ?', [], $previous);
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->failed($queryException);
+
+        $this->assertSame('error', $record->fresh()->status);
+        $this->assertSame(\App\Enums\AnalysisErrorCode::SchemaMismatch->value, $record->fresh()->error_code);
+
+        $jobRecord = AnalysisJob::query()
+            ->where('analysis_id', $websiteAnalysis->analysis_id)
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('job_type', JobType::GenerateBrandWheelAnalysis)
+            ->first();
+
+        $this->assertSame(AnalysisJobStatus::Failed, $jobRecord->status);
+        $this->assertSame(\App\Enums\AnalysisErrorCode::SchemaMismatch->value, $jobRecord->error_code);
     }
 }

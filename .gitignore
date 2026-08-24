@@ -30,6 +30,11 @@ docker/certs/*.pem
 docker/certs/*.crt
 !docker/certs/.gitkeep
 
+# 誤ってコミットされたWindowsパス化けディレクトリ (2026-08 cookies.txt事故)
+backend/C*/Users/*/AppData/**
+# 調査用の一時ファイル(パスによらず除外)
+cookies.txt
+
 # OS/Editor
 .DS_Store
 Thumbs.db

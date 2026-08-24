@@ -67,6 +67,7 @@
                 $brandWheelSummary = $analysis->brandWheelResults->isEmpty()
                     ? '—'
                     : $analysis->brandWheelResults->pluck('status')->unique()->implode(' / ');
+                $leadSession = $analysis->project?->leadSession;
             @endphp
             <div class="history-item">
                 <div class="date">
@@ -81,6 +82,39 @@
                     <dt>所要時間</dt><dd>{{ $duration ? $duration->format('%i分%s秒') : '—' }}</dd>
                     <dt>Brand Wheel</dt><dd>{{ $brandWheelSummary }}</dd>
                     <dt>PDF</dt><dd>{{ $pdfReport?->status ?? 'processing' }}</dd>
+                    @unless ($analysis->status->isTerminal())
+                        <dt>⚠ 実行中</dt>
+                        <dd>
+                            開始から{{ $analysis->created_at->diffForHumans(null, true) }}経過({{ $analysis->status->value }})。
+                            異常終了で止まっている場合、診断回数リセットだけでは復旧しません。
+                            <form
+                                method="POST"
+                                action="{{ route('admin.analyses.force-terminate', $analysis->id, false) }}"
+                                style="display: inline;"
+                                onsubmit="return confirm('この診断(ID: {{ $analysis->id }})を強制終了します。よろしいですか?');"
+                            >
+                                @csrf
+                                @method('PATCH')
+                                <button type="submit" class="btn" style="margin-left: 8px;">診断を強制終了</button>
+                            </form>
+                        </dd>
+                    @endunless
+                    @if ($leadSession)
+                        <dt>診断回数</dt>
+                        <dd>
+                            {{ $leadSession->analyses_used }} / {{ config('lead.max_analyses_per_token') }}
+                            <form
+                                method="POST"
+                                action="{{ route('admin.lead-sessions.reset-analyses-used', $leadSession->id, false) }}"
+                                style="display: inline;"
+                                onsubmit="return confirm('この申込(診断回数 {{ $leadSession->analyses_used }} / {{ config('lead.max_analyses_per_token') }})を0にリセットします。よろしいですか?');"
+                            >
+                                @csrf
+                                @method('PATCH')
+                                <button type="submit" class="btn" style="margin-left: 8px;">診断回数をリセット</button>
+                            </form>
+                        </dd>
+                    @endif
                 </dl>
                 <a href="{{ route('admin.analyses.show', $analysis->id, false) }}">詳細を見る &rarr;</a>
             </div>

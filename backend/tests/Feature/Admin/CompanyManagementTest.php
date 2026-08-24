@@ -5,10 +5,12 @@ namespace Tests\Feature\Admin;
 use App\Enums\AnalysisStatus;
 use App\Models\Analysis;
 use App\Models\LeadCompany;
+use App\Models\LeadSession;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\Website;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 /**
@@ -159,5 +161,108 @@ class CompanyManagementTest extends TestCase
         $response->assertOk();
         $response->assertSee('株式会社複数回');
         $response->assertDontSee('株式会社一回のみ');
+    }
+
+    /**
+     * 依頼B-4: 本番に導線が無いトークン再発行の代替として、営業が管理画面から
+     * 個別のLeadSessionのanalyses_usedを0へリセットできること。
+     */
+    public function test_company_detail_page_shows_the_reset_control_for_a_lead_linked_diagnosis(): void
+    {
+        $company = LeadCompany::factory()->create();
+        $sentinel = User::factory()->create();
+        $leadSession = LeadSession::factory()->create(['analyses_used' => 1]);
+        $project = Project::factory()->for($sentinel)->create([
+            'lead_company_id' => $company->id,
+            'lead_session_id' => $leadSession->id,
+        ]);
+        Website::factory()->for($project)->create(['is_primary' => true]);
+        Analysis::factory()->for($project)->create(['created_by' => $sentinel->id, 'status' => AnalysisStatus::Completed]);
+
+        $response = $this->asAdmin()->get("/admin/companies/{$company->id}");
+
+        $response->assertOk();
+        $response->assertSee('診断回数をリセット');
+        $response->assertSee(route('admin.lead-sessions.reset-analyses-used', $leadSession->id, false), false);
+    }
+
+    /**
+     * #c: 実行中(Pending/Queued/Running)の診断がある行にだけ、警告と
+     * 強制終了ボタンを表示する。診断回数リセットだけでは復旧しないことを
+     * 営業に気づかせるための表示(依頼者指摘)。
+     */
+    public function test_company_detail_page_shows_a_warning_and_force_terminate_button_for_a_stuck_analysis(): void
+    {
+        $company = LeadCompany::factory()->create();
+        $sentinel = User::factory()->create();
+        $project = Project::factory()->for($sentinel)->create(['lead_company_id' => $company->id]);
+        Website::factory()->for($project)->create(['is_primary' => true]);
+        $stuck = Analysis::factory()->for($project)->create(['created_by' => $sentinel->id, 'status' => AnalysisStatus::Running]);
+
+        $response = $this->asAdmin()->get("/admin/companies/{$company->id}");
+
+        $response->assertOk();
+        $response->assertSee('実行中');
+        $response->assertSee('診断を強制終了');
+        $response->assertSee(route('admin.analyses.force-terminate', $stuck->id, false), false);
+    }
+
+    public function test_company_detail_page_does_not_show_the_stuck_warning_for_a_completed_analysis(): void
+    {
+        $company = LeadCompany::factory()->create();
+        $sentinel = User::factory()->create();
+        $project = Project::factory()->for($sentinel)->create(['lead_company_id' => $company->id]);
+        Website::factory()->for($project)->create(['is_primary' => true]);
+        Analysis::factory()->for($project)->create(['created_by' => $sentinel->id, 'status' => AnalysisStatus::Completed]);
+
+        $response = $this->asAdmin()->get("/admin/companies/{$company->id}");
+
+        $response->assertOk();
+        $response->assertDontSee('診断を強制終了');
+    }
+
+    public function test_admin_can_reset_a_lead_sessions_analyses_used(): void
+    {
+        Log::spy();
+        $leadSession = LeadSession::factory()->create(['analyses_used' => 1]);
+
+        $response = $this->asAdmin()->patch("/admin/lead-sessions/{$leadSession->id}/reset-analyses-used");
+
+        $response->assertRedirect();
+        $this->assertSame(0, $leadSession->fresh()->analyses_used);
+
+        Log::shouldHaveReceived('warning')
+            ->once()
+            ->withArgs(function (string $message, array $context = []) use ($leadSession) {
+                return $message === 'Admin reset lead session analyses_used'
+                    && $context['lead_session_id'] === $leadSession->id
+                    && $context['previous_analyses_used'] === 1
+                    && isset($context['ip']);
+            });
+    }
+
+    /**
+     * リクエストボディに何を積んでも0固定になること(依頼要件:
+     * 「任意の数値を入れられないこと」)。
+     */
+    public function test_reset_ignores_any_analyses_used_value_in_the_request_body(): void
+    {
+        $leadSession = LeadSession::factory()->create(['analyses_used' => 1]);
+
+        $this->asAdmin()->patch("/admin/lead-sessions/{$leadSession->id}/reset-analyses-used", [
+            'analyses_used' => 99,
+        ]);
+
+        $this->assertSame(0, $leadSession->fresh()->analyses_used);
+    }
+
+    public function test_reset_requires_admin_authentication(): void
+    {
+        $leadSession = LeadSession::factory()->create(['analyses_used' => 1]);
+
+        $response = $this->patch("/admin/lead-sessions/{$leadSession->id}/reset-analyses-used");
+
+        $response->assertStatus(401);
+        $this->assertSame(1, $leadSession->fresh()->analyses_used);
     }
 }

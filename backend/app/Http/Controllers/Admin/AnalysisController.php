@@ -2,10 +2,13 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\AnalysisStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\View\View;
 
 /**
@@ -55,5 +58,37 @@ class AnalysisController extends Controller
             'analysis' => $analysis,
             'brandWheelResults' => $brandWheelResults,
         ]);
+    }
+
+    /**
+     * Worker停止・OOM・例外で終端処理に到達できず、statusがPending/Queued/
+     * Runningのまま残った「停止した」Analysisを、営業が管理画面から即座に
+     * 終端(Cancelled)にできる導線(依頼者指摘)。config('lead.stale_analysis_
+     * after_minutes')(既定30分)を待たずに、hasAnalysisInProgress()・
+     * isCongested()の両ガードから即座に外すための手動介入。B-4のリセット
+     * (analyses_used→0)とは別のアクション ―― 停止したAnalysisはそもそも
+     * analyses_usedが未消費(0)のことが多く、リセットしても復旧しない。
+     */
+    public function forceTerminate(Request $request, Analysis $analysis): RedirectResponse
+    {
+        if ($analysis->status->isTerminal()) {
+            return back()->with('status', 'この診断は既に終了しています。');
+        }
+
+        $previousStatus = $analysis->status->value;
+
+        $analysis->update([
+            'status' => AnalysisStatus::Cancelled,
+            'failed_at' => now(),
+            'error_summary' => '管理者により強制終了されました。',
+        ]);
+
+        Log::warning('Admin force-terminated a stuck analysis', [
+            'analysis_id' => $analysis->id,
+            'previous_status' => $previousStatus,
+            'ip' => $request->ip(),
+        ]);
+
+        return back()->with('status', '診断を強制終了しました。');
     }
 }

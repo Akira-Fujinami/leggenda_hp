@@ -40,6 +40,15 @@ enum AnalysisErrorCode: string
     case JobTimeout = 'JOB_TIMEOUT';
     case MaxAttemptsExceeded = 'MAX_ATTEMPTS_EXCEEDED';
     case UnknownError = 'UNKNOWN_ERROR';
+    // 2026-08-24追加: Job::failed()がQueryExceptionをSQLSTATEで分類するために
+    // 追加(8/16〜17の本番障害で、positive_impressionカラム欠落によるQuery
+    // ExceptionがJOB_TIMEOUTとして記録され調査をミスリードした再発防止)。
+    // SchemaMismatch: undefined_column/undefined_table/datatype_mismatch
+    // (マイグレーション未適用等、リトライしても直らない定義不一致)。
+    case SchemaMismatch = 'SCHEMA_MISMATCH';
+    // DatabaseError: それ以外のQueryException(デッドロック・接続断等、
+    // 一過性の可能性がある)。
+    case DatabaseError = 'DATABASE_ERROR';
 
     /**
      * このエラーはリトライしても解決しないため、Jobを即failed扱いにしてよいか。
@@ -56,6 +65,10 @@ enum AnalysisErrorCode: string
             // 依存元のデータ(HTML等)がそもそも存在しないため、retryしても
             // 結果は変わらない。
             self::DependencyUnavailable,
+            // マイグレーション未適用等の定義不一致はリトライしても解決せず、
+            // 無駄に再試行してfailed_jobsを汚すだけ(2026-08-24追加、8月の
+            // 障害ではattempts:2で同じ失敗が8件記録された)。
+            self::SchemaMismatch,
         ], true);
     }
 }

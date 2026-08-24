@@ -26,6 +26,23 @@ return [
     // 安易に引き上げないこと(OOM再発のリスクがある)。
     'max_concurrent_analyses' => (int) env('LEAD_MAX_CONCURRENT_ANALYSES', 1),
 
+    // 2026-08-22追加: 停止した診断(Worker停止・OOM・例外で終端処理に到達
+    // できず、Analysis.statusがPending/Queued/Runningのまま残ったもの)を、
+    // hasAnalysisInProgress()(トークン単位の多重実行ガード)・isCongested()
+    // (全体の同時実行数ガード)の両方で「対象外」とみなすまでの経過時間
+    // (分、Analysis.created_at基準)。消費(analyses_used)をAnalysis開始時
+    // ではなく自社サイトの本文取得成功時点へ遅らせたことで、停止した
+    // Analysisが永久に居座ると、そのリードは409で、max_concurrent_analyses=1
+    // の場合は全リードが503で、それぞれ無期限にブロックされ得るようになった
+    // (依頼者指摘)。実測分布(#99、completed 平均108秒/最大127秒、
+    // partial 平均411秒/最大801秒)の最大値(partial 801秒 ≒ 13.4分)に対し
+    // 約2.25倍の安全マージンを取った値。「生きている低速な診断」を誤って
+    // stale扱いする(=二重実行を許してしまう)ことの実害の方が、「stuckな
+    // Analysisが最大30分居座る」ことの実害より大きいと判断し、安全側
+    // (長め)に倒した。急ぎ復旧させたい場合は管理画面から手動で強制終了
+    // できる(CompanyController::forceTerminateAnalysis())。
+    'stale_analysis_after_minutes' => (int) env('LEAD_STALE_ANALYSIS_AFTER_MINUTES', 30),
+
     // リード分析ではLighthouseを省略する(2026-08-18、Phase 2の「省略しない」
     // 判断を再度撤回)。本番実測(#99): run_lighthouse/run_recruit_lighthouseの
     // 合計が1診断(自社+比較)あたり約106秒で、診断全体の平均108秒のほぼ全て
@@ -51,6 +68,13 @@ return [
     // lead_sessions/その配下データの保持期間(日数)。有効期限切れから
     // この日数を過ぎたセッションを lead:purge-expired-sessions --execute で削除する。
     'retention_days_after_expiry' => (int) env('LEAD_RETENTION_DAYS_AFTER_EXPIRY', 180),
+
+    // 自社URL到達性チェック(#B-1、LeadAnalysisController::store())専用の
+    // タイムアウト秒数。同期処理(リードが送信ボタンを押したまま待つ)のため、
+    // 本番の実取得(config('analysis.http.total_timeout_seconds')、既定20秒)
+    // より短く設定する。超過した場合も現状どおり「通す」側へ倒すため
+    // (保守的判定)、短くしても誤って診断をブロックすることはない。
+    'self_url_reachability_check_timeout_seconds' => (int) env('LEAD_SELF_URL_REACHABILITY_CHECK_TIMEOUT_SECONDS', 6),
 
     // 診断開始通知・相談リクエスト通知の送信先。個人のメールアドレスではなく
     // 必ず共有の受信箱を指定すること ―― 通知本文にはリード自身のトークンを

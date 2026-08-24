@@ -19,11 +19,13 @@ use Illuminate\Support\Str;
  *
  * 製品機能としての「同じURLからの再診断」を可能にするものではない ――
  * 本番の「1トークン1回」という制限(config('lead.max_analyses_per_token'))は
- * このコマンドが作るセッションにもそのまま適用される。実行回数の消費を
- * 通常の診断開始(LeadAnalysisController::store())と同じ経路
- * (LeadSessionService::recordAnalysisStarted())で記録するため、
- * production環境の挙動を一切変えない。何度でも診断を回したい場合は、
- * このコマンドを都度実行して新しいセッション/トークンを都度発行すること。
+ * このコマンドが作るセッションにもそのまま適用される。実行回数の消費は
+ * 通常の診断開始(LeadAnalysisController::store())と全く同じ経路
+ * (GenerateBrandWheelAnalysisJob::maybeConsumeLeadQuota()、自社サイトの
+ * 本文取得成功時点、2026-08-22変更)で非同期に記録されるため、このコマンドが
+ * 明示的に消費を記録する必要はない ―― production環境の挙動を一切変えない。
+ * 何度でも診断を回したい場合は、このコマンドを都度実行して新しいセッション/
+ * トークンを都度発行すること。
  *
  * リード情報はテスト用のダミー値(会社名・氏名は固定文字列、メールアドレスは
  * @example.com)を使う。実在しそうな値は使わない。
@@ -84,9 +86,11 @@ class IssueTestLeadSessionCommand extends Command
             'max_websites' => (int) config('lead.max_websites'),
             'skip_lighthouse' => (bool) config('lead.skip_lighthouse'),
             'skip_screenshots' => (bool) config('lead.skip_screenshots'),
+            // skip_brand_wheelの既定はtrue(実行しない)。LeadAnalysisController::store()
+            // と同じくリード診断側は明示的にfalseにしないとブランドホイール分析が
+            // 動かない(2026-08-24修正、依頼者指摘)。
+            'skip_brand_wheel' => false,
         ], $sentinelUser);
-
-        $leadSessions->recordAnalysisStarted($session);
 
         $frontendUrl = rtrim((string) config('cors.frontend_url'), '/');
         $url = "{$frontendUrl}/lead/diagnose?token={$token}";

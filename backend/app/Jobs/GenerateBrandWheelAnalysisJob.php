@@ -5,9 +5,12 @@ namespace App\Jobs;
 use App\Enums\AnalysisErrorCode;
 use App\Enums\JobType;
 use App\Enums\PageType;
+use App\Jobs\Analysis\Concerns\ClassifiesJobFailureExceptions;
+use App\Models\Analysis;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\AnalysisPage;
 use App\Models\BrandWheelAnalysisResult as BrandWheelAnalysisResultRecord;
+use App\Models\LeadSession;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\BrandWheel\BrandWheelAnalysisException;
@@ -17,6 +20,7 @@ use App\Services\BrandWheel\BrandWheelAnalysisProviderFactory;
 use App\Services\BrandWheel\BrandWheelCompletionNotifier;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionDispatcher;
 use App\Services\BrandWheel\Data\BrandWheelAnalysisInput;
+use App\Services\Lead\LeadSessionService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -57,7 +61,7 @@ use Illuminate\Support\Facades\Storage;
  */
 class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use ClassifiesJobFailureExceptions, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public $tries = 2;
 
@@ -142,7 +146,18 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             ]);
         }
 
-        if ($this->isInputInsufficient($input)) {
+        $inputInsufficient = $this->isInputInsufficient($input);
+
+        // 2026-08-22追加: リード診断の実行回数消費(#B-2)。診断開始時ではなく
+        // ここ(自社サイトの本文取得成功が確定した時点)で消費する ―― 403等で
+        // 何も読み取れなかった場合に、リードの唯一の診断回数が無駄に失われない
+        // ようにするため。「成功」の定義はisInputInsufficient()と同じ基準
+        // (採用ページ+トップページ本文の合計文字数が閾値以上)に、トップページの
+        // HTTPステータスが2xxであることを加えたもの。競合サイト側の失敗は
+        // 消費に一切影響しない(is_primary=trueのWebsiteAnalysisでのみ判定する)。
+        $this->maybeConsumeLeadQuota($websiteAnalysis, inputSufficient: ! $inputInsufficient);
+
+        if ($inputInsufficient) {
             // 「サイトに記述が読み取れなかった」(=評価した結果、何も無かった)
             // と「サイトの記述を読みに行けなかった」(=生HTML取得・ストレージ
             // 到達に失敗した等)を混同しないため、AIを一切呼ばず、6軸すべて
@@ -387,6 +402,74 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
     }
 
     /**
+     * リード診断の実行回数消費(#B-2、2026-08-22)。自社サイト
+     * (WebsiteAnalysis.website.is_primary=true)かつ、そのAnalysisがリード
+     * セッション由来(project.lead_session_id あり)である場合のみ対象とする
+     * ―― 社内向けの通常診断・比較サイト側の判定には一切影響しない。
+     *
+     * 「成功」の定義: $inputSufficient(=isInputInsufficient()の否定、採用ページ+
+     * トップページ本文の合計文字数が閾値以上)に加え、トップページの
+     * HTTPステータスが2xxであること。文字数だけでは、内容の整ったエラー
+     * ページ(4xx/5xxだが本文が長い)を「読み取れた」と誤判定しかねないため。
+     *
+     * GenerateBrandWheelAnalysisJobはAI呼び出しのレート制限等でリトライ
+     * (最大2回)されることがあり、そのたびにこのメソッドも再実行される。
+     * Analysis.lead_quota_consumed_at への「nullの行だけを対象にした条件付き
+     * UPDATE」で一度だけ勝者を決めることで、二重消費を防ぐ
+     * (LeadSessionService::recordConsultationRequested()と同じ方式)。
+     * このJob(および入力を組み立てるBrandWheelAnalysisInputFactory)は
+     * 本来Leadサブシステムに依存しない設計だが、消費タイミングをここへ
+     * 統合することは依頼者との合意事項(#B-2設計確認)。
+     */
+    private function maybeConsumeLeadQuota(WebsiteAnalysis $websiteAnalysis, bool $inputSufficient): void
+    {
+        if (! $inputSufficient) {
+            return;
+        }
+
+        if (! (bool) $websiteAnalysis->website?->is_primary) {
+            return;
+        }
+
+        $analysis = Analysis::query()->with('project')->find($websiteAnalysis->analysis_id);
+        $leadSessionId = $analysis?->project?->lead_session_id;
+
+        if ($analysis === null || $leadSessionId === null) {
+            return;
+        }
+
+        $homepage = AnalysisPage::query()
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('page_type', PageType::Homepage)
+            ->first();
+
+        $httpStatusOk = $homepage !== null
+            && $homepage->http_status !== null
+            && $homepage->http_status >= 200
+            && $homepage->http_status < 300;
+
+        if (! $httpStatusOk) {
+            return;
+        }
+
+        $updated = Analysis::query()
+            ->whereKey($analysis->id)
+            ->whereNull('lead_quota_consumed_at')
+            ->update(['lead_quota_consumed_at' => now()]);
+
+        if ($updated === 0) {
+            // 既に消費済み(このJobのリトライによる再実行)。二重消費しない。
+            return;
+        }
+
+        $leadSession = LeadSession::find($leadSessionId);
+
+        if ($leadSession !== null) {
+            app(LeadSessionService::class)->recordAnalysisStarted($leadSession);
+        }
+    }
+
+    /**
      * 採用ページ本文・トップページ本文の合計文字数が
      * config('brand_wheel.insufficient_input_min_total_chars')未満かどうか。
      * 見出し・ナビゲーションラベルは判定に含めない(具体的な裏づけ根拠は
@@ -427,9 +510,11 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             return;
         }
 
+        [$errorCode, $message] = $this->classifyJobFailureException($exception);
+
         $record->update([
             'status' => 'error',
-            'error_code' => 'BRAND_WHEEL_JOB_FAILED',
+            'error_code' => $errorCode->value,
             'error_message' => $exception?->getMessage(),
         ]);
 
@@ -438,7 +523,10 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         // 直接来る。ここでmarkFailed()しておかないとAnalysisJob.statusが
         // runningのまま残り、maybeFinalizeWebsiteAnalysis()の「全Job終端待ち」が
         // 完了しない(BaseWebsiteAnalysisJob::failed()と同じ理由、2026-07-25の
-        // 本番障害の再発防止)。
+        // 本番障害の再発防止)。$errorCode/$messageは上のclassifyJobFailure
+        // Exception()と同じ分類結果を使う(以前は常にJobTimeout固定だったため、
+        // 8/16〜17の障害でpositive_impressionカラム欠落によるQueryExceptionが
+        // JOB_TIMEOUTとして記録され調査をミスリードした、2026-08-24修正)。
         $pipeline = app(AnalysisPipeline::class);
         $jobRecord = AnalysisJobRecord::query()
             ->where('analysis_id', $record->analysis_id)
@@ -450,7 +538,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             return;
         }
 
-        $pipeline->markFailed($jobRecord, AnalysisErrorCode::JobTimeout, $exception?->getMessage() ?? 'ジョブがタイムアウトしたか、想定外のエラーで終了しました。');
+        $pipeline->markFailed($jobRecord, $errorCode, $message);
         $this->cascadeProgress($pipeline, $record->analysis_id, $record->website_analysis_id);
     }
 }
