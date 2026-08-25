@@ -123,6 +123,7 @@ class LeadPdfViewTest extends TestCase
             'improvementMidTermAction' => null,
             'selfLowContentNotice' => null,
             'crawlSiteEnabled' => false,
+            'selfEvidenceByAxis' => [],
         ];
         $defaults['improvementFocusSelfOnly'] = app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($defaults['subElementComparison']);
 
@@ -861,7 +862,121 @@ class LeadPdfViewTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // 6. 改善提案。
+    // 6. ○と判定した根拠(依頼R、2026-08-26新設)。
+    // ------------------------------------------------------------------
+
+    public function test_evidence_page_is_omitted_when_self_evidence_by_axis_is_empty(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertStringNotContainsString('○と判定した根拠', $html);
+    }
+
+    /**
+     * 依頼R: matchedが6件(複数軸)のとき、6件すべてが引用付きで、対比表と
+     * 同じ軸順で表示されること。導入文はconfig由来。
+     */
+    public function test_evidence_page_shows_axis_grouped_quotes_in_config_order(): void
+    {
+        $selfEvidenceByAxis = [
+            ['axis_name' => '活動的魅力', 'items' => [
+                ['sub_name' => 'パーパス', 'evidence' => 'パーパスの原文抜粋です。'],
+                ['sub_name' => '展開事業・商品', 'evidence' => '事業内容の原文抜粋です。'],
+            ]],
+            ['axis_name' => '資産的魅力', 'items' => [
+                ['sub_name' => '知名度・評判', 'evidence' => '知名度の原文抜粋です。'],
+            ]],
+            ['axis_name' => '経営スタイル', 'items' => [
+                ['sub_name' => 'リーダーシップ', 'evidence' => 'リーダーシップの原文抜粋です。'],
+            ]],
+            ['axis_name' => '就業環境', 'items' => [
+                ['sub_name' => '同僚・先輩像', 'evidence' => '同僚・先輩像の原文抜粋です。'],
+            ]],
+            ['axis_name' => '金銭的便益', 'items' => [
+                ['sub_name' => '給与水準', 'evidence' => '給与水準の原文抜粋です。'],
+            ]],
+        ];
+
+        $html = $this->render($this->viewModel(['selfEvidenceByAxis' => $selfEvidenceByAxis]));
+
+        $this->assertStringContainsString('○と判定した根拠', $html);
+        $this->assertStringContainsString(config('brand_wheel.evidence_page_intro'), $html);
+
+        $start = mb_strpos($html, '○と判定した根拠');
+        $end = mb_strpos($html, '<h2>改善提案</h2>');
+        $pageHtml = mb_substr($html, $start, $end - $start);
+
+        // 軸の順序どおりに出現すること(活動的魅力→資産的魅力→経営スタイル→
+        // 就業環境→金銭的便益)。
+        $posWillActivity = mb_strpos($pageHtml, '活動的魅力');
+        $posAsset = mb_strpos($pageHtml, '資産的魅力');
+        $posPersonality = mb_strpos($pageHtml, '経営スタイル');
+        $posRelationship = mb_strpos($pageHtml, '就業環境');
+        $posFinancial = mb_strpos($pageHtml, '金銭的便益');
+        $this->assertTrue($posWillActivity < $posAsset);
+        $this->assertTrue($posAsset < $posPersonality);
+        $this->assertTrue($posPersonality < $posRelationship);
+        $this->assertTrue($posRelationship < $posFinancial);
+
+        foreach (['パーパスの原文抜粋です。', '事業内容の原文抜粋です。', '知名度の原文抜粋です。', 'リーダーシップの原文抜粋です。', '同僚・先輩像の原文抜粋です。', '給与水準の原文抜粋です。'] as $quote) {
+            $this->assertStringContainsString($quote, $html);
+        }
+    }
+
+    /**
+     * 依頼R: 引用はかぎ括弧で囲み、原文のまま(要約・改変なし)表示すること。
+     */
+    public function test_evidence_page_shows_the_quote_in_quotation_marks_verbatim(): void
+    {
+        $html = $this->render($this->viewModel([
+            'selfEvidenceByAxis' => [
+                ['axis_name' => '活動的魅力', 'items' => [
+                    ['sub_name' => 'パーパス', 'evidence' => '弊社は地域社会への貢献を第一に考えています。'],
+                ]],
+            ],
+        ]));
+
+        $this->assertStringContainsString('「弊社は地域社会への貢献を第一に考えています。」', $html);
+    }
+
+    /**
+     * 依頼R最重要: 引用に<script>や&が含まれていてもHTMLエスケープされ、
+     * 生のタグとして解釈されないこと。
+     */
+    public function test_evidence_page_escapes_html_in_the_quote(): void
+    {
+        $html = $this->render($this->viewModel([
+            'selfEvidenceByAxis' => [
+                ['axis_name' => '活動的魅力', 'items' => [
+                    ['sub_name' => 'パーパス', 'evidence' => '<script>alert(1)</script>採用 & 育成'],
+                ]],
+            ],
+        ]));
+
+        $this->assertStringNotContainsString('<script>alert(1)</script>', $html);
+        $this->assertStringContainsString('&lt;script&gt;', $html);
+        $this->assertStringContainsString('採用 &amp; 育成', $html);
+    }
+
+    /**
+     * 依頼R: 「○と判定した根拠」ページが追加された分、既存ページの数は
+     * 変わらず合計だけ+1されること(既存ページのレイアウトは変更していない)。
+     */
+    public function test_report_has_eight_pages_when_the_evidence_page_is_present(): void
+    {
+        $html = $this->render($this->comparisonViewModel([
+            'selfEvidenceByAxis' => [
+                ['axis_name' => '活動的魅力', 'items' => [
+                    ['sub_name' => 'パーパス', 'evidence' => 'パーパスの原文抜粋です。'],
+                ]],
+            ],
+        ]));
+
+        $this->assertSame(8, substr_count($html, 'class="page'));
+    }
+
+    // ------------------------------------------------------------------
+    // 7. 改善提案。
     // ------------------------------------------------------------------
 
     /**
@@ -1067,7 +1182,7 @@ class LeadPdfViewTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // 7. サイトの改善をすれば課題が解決するとは限りません(最終ページ、
+    // 8. サイトの改善をすれば課題が解決するとは限りません(最終ページ、
     //    2026-08-08新文言)。
     // ------------------------------------------------------------------
 

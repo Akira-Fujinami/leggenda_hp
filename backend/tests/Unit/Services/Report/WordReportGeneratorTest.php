@@ -84,6 +84,7 @@ class WordReportGeneratorTest extends TestCase
             'improvementMidTermAction' => null,
             'selfLowContentNotice' => null,
             'crawlSiteEnabled' => false,
+            'selfEvidenceByAxis' => [],
         ];
         $defaults['improvementFocusSelfOnly'] = app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($defaults['subElementComparison']);
 
@@ -484,6 +485,73 @@ class WordReportGeneratorTest extends TestCase
         ]));
 
         $this->assertStringNotContainsString('比較サイト 0 / 0項目', $documentXml);
+    }
+
+    // ------------------------------------------------------------------
+    // ○と判定した根拠(依頼R、2026-08-26新設)。
+    // ------------------------------------------------------------------
+
+    public function test_evidence_section_is_omitted_when_self_evidence_by_axis_is_empty(): void
+    {
+        $documentXml = $this->generate($this->viewModel());
+
+        $this->assertStringNotContainsString('○と判定した根拠', $documentXml);
+    }
+
+    /**
+     * 依頼R: matchedが複数軸にまたがるとき、軸ごとにまとめて対比表と
+     * 同じ順序で表示されること。導入文はconfig由来(PDF版と同内容)。
+     */
+    public function test_evidence_section_shows_axis_grouped_quotes_in_config_order(): void
+    {
+        $selfEvidenceByAxis = [
+            ['axis_name' => '活動的魅力', 'items' => [
+                ['sub_name' => 'パーパス', 'evidence' => 'パーパスの原文抜粋です。'],
+            ]],
+            ['axis_name' => '経営スタイル', 'items' => [
+                ['sub_name' => 'リーダーシップ', 'evidence' => 'リーダーシップの原文抜粋です。'],
+            ]],
+        ];
+
+        $documentXml = $this->generate($this->viewModel(['selfEvidenceByAxis' => $selfEvidenceByAxis]));
+
+        $this->assertStringContainsString('○と判定した根拠', $documentXml);
+        $this->assertStringContainsString(config('brand_wheel.evidence_page_intro'), $documentXml);
+        $this->assertStringContainsString('「パーパスの原文抜粋です。」', $documentXml);
+        $this->assertStringContainsString('「リーダーシップの原文抜粋です。」', $documentXml);
+
+        $posWillActivity = mb_strpos($documentXml, '活動的魅力');
+        $posPersonality = mb_strpos($documentXml, '経営スタイル');
+        $this->assertTrue($posWillActivity < $posPersonality);
+    }
+
+    /**
+     * 依頼R(2026-08-26で判明した既存バグの修正込み): 引用に&が含まれていても
+     * XMLとして正しくエスケープされること。PhpWordは既定(Settings::
+     * $outputEscapingEnabled=false)ではaddText()の内容をエスケープせず、
+     * 生の&を含むテキストがあるとdocument.xml自体が不正なXMLになり
+     * Wordで開けなくなる不具合があった(このメソッド内の全addText()呼び出しに
+     * 及ぶ潜在バグ、依頼Rの実装中に発覚)。DOMDocument::loadXML()で
+     * document.xml自体が整形式(well-formed)であることまで確認する
+     * (文字列に「&amp;」が含まれているかどうかの表面的な確認だけでは、
+     * 実際に不正なXMLになっていないことまでは保証できないため)。
+     */
+    public function test_evidence_section_escapes_special_characters_in_the_quote(): void
+    {
+        $documentXml = $this->generate($this->viewModel([
+            'selfEvidenceByAxis' => [
+                ['axis_name' => '活動的魅力', 'items' => [
+                    ['sub_name' => 'パーパス', 'evidence' => '採用 & 育成'],
+                ]],
+            ],
+        ]));
+
+        libxml_use_internal_errors(true);
+        $dom = new \DOMDocument();
+        $this->assertTrue($dom->loadXML($documentXml), 'document.xmlが整形式のXMLとして読み込めること');
+
+        $this->assertStringNotContainsString('採用 & 育成', $documentXml);
+        $this->assertStringContainsString('採用 &amp; 育成', $documentXml);
     }
 
     // ------------------------------------------------------------------

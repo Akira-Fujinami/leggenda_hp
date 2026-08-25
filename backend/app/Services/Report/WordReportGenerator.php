@@ -6,6 +6,7 @@ use App\Support\Report\ReportViewModel;
 use PhpOffice\PhpWord\Element\Section;
 use PhpOffice\PhpWord\IOFactory;
 use PhpOffice\PhpWord\PhpWord;
+use PhpOffice\PhpWord\Settings;
 use PhpOffice\PhpWord\SimpleType\Jc;
 use PhpOffice\PhpWord\Style\Language;
 
@@ -47,6 +48,21 @@ class WordReportGenerator
 
     public function generate(ReportViewModel $viewModel): string
     {
+        // 依頼R(2026-08-26)で「○と判定した根拠」ページの引用(サイトの生の
+        // 原文抜粋、&/</>を含みうる)を追加した際に判明: PhpWordは既定
+        // (Settings::$outputEscapingEnabled=false、0.13.0互換のための既定値)
+        // ではaddText()に渡した文字列をXMLエスケープせず生のまま書き込む
+        // ―― &を含むテキストが1件でもあると、生成される.docxのdocument.xml
+        // 自体が不正なXMLになり、Wordで開けなくなる(実際に確認: DOMDocument::
+        // loadXML()が構文エラーで失敗する)。この不具合はこのメソッドの
+        // addText()呼び出しすべて(evidence/competitor_evidence/key_message/
+        // impression/会社名等、サイト由来の自由記述を渡す箇所すべて)に
+        // 及んでいた、この依頼以前からの潜在バグのため、1箇所で確実に
+        // 直せるこのフラグを有効化する(個々のaddText()呼び出しへ手作業で
+        // エスケープ処理を加える方式は、将来のaddText()追加箇所での
+        // 対応漏れを構造的に防げないため採らない)。
+        Settings::setOutputEscapingEnabled(true);
+
         $phpWord = new PhpWord;
         $phpWord->setDefaultFontName(self::FONT_NAME);
         $phpWord->setDefaultFontSize(11);
@@ -68,6 +84,7 @@ class WordReportGenerator
             );
         }
         $this->addComparisonSection($phpWord, $viewModel);
+        $this->addEvidenceSection($phpWord, $viewModel);
         $this->addImprovementProposalSection($phpWord, $viewModel);
         $this->addCallToActionSection($phpWord, $viewModel);
 
@@ -388,6 +405,46 @@ class WordReportGenerator
             'label_only' => '△',
             default => '－',
         };
+    }
+
+    /**
+     * 依頼R(2026-08-26): 「○と判定した根拠」ページ(PDF版lead-pdf.blade.php
+     * と同内容)。○△－の対比表の直後に独立ページとして追加する
+     * (既存ページには一切差し込まない、依頼者指定)。$viewModel->
+     * selfEvidenceByAxis(ReportViewModelBuilder::buildSelfEvidenceByAxis()、
+     * 対比表と同じ軸順・下位要素順、自社のmatched項目のみ・evidenceが
+     * 空文字の項目は含まない)が唯一の情報源。競合サイトの引用・
+     * discarded_sub_elements(棄却された引用)はそもそもこのフィールドに
+     * 含まれない。
+     *
+     * 空配列(matched=0件、または全項目のevidenceが空文字)の場合は
+     * addSection()自体を呼ばない ―― 見出しだけの空セクション(空のページ)を
+     * 作らない(PDF版の`@if ($viewModel->selfEvidenceByAxis !== [])`と同じ方針)。
+     *
+     * 1軸に複数件、matchedが多いサイト(実測: カヤック16件)で1ページに
+     * 収まらない場合は、Wordの通常の文章送り(page-break-after相当の指定を
+     * 一切していない)により自然に次ページへ続く ―― PDF版と同じ考え方
+     * (.pageに高さを固定しないのと同様、Word側もこのセクション内で明示的な
+     * 改ページを入れない)。
+     */
+    private function addEvidenceSection(PhpWord $phpWord, ReportViewModel $viewModel): void
+    {
+        if ($viewModel->selfEvidenceByAxis === []) {
+            return;
+        }
+
+        $section = $phpWord->addSection();
+        $section->addTitle('○と判定した根拠', 1);
+        $section->addText((string) config('brand_wheel.evidence_page_intro'), ['size' => 9, 'color' => '6B6767']);
+
+        foreach ($viewModel->selfEvidenceByAxis as $axisGroup) {
+            $section->addTextBreak(1);
+            $section->addText($axisGroup['axis_name'], ['bold' => true, 'size' => 11.5, 'color' => '1D2088']);
+            foreach ($axisGroup['items'] as $item) {
+                $section->addText($item['sub_name'], ['bold' => true, 'size' => 9.5]);
+                $section->addText('「'.$item['evidence'].'」', ['size' => 9]);
+            }
+        }
     }
 
     /**

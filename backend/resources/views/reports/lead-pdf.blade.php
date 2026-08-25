@@ -307,6 +307,24 @@
     .vslegend { width: 265mm; font-size: 9pt; color: #6B6767; margin: 1mm 0 0; }
     .vsreflegend { width: 265mm; font-size: 8.5pt; color: #8A8A8A; margin: 0.5mm 0 0; }
 
+    {{--
+        「○と判定した根拠」ページ(依頼R、2026-08-26追加)。○△－の対比表の
+        直後の独立ページ。matchedが多いサイト(実測: カヤック16件)では1ページに
+        収まらないことを想定している ―― .pageに高さを固定していないため
+        (CSS冒頭のh2コメント参照)、内容が1物理ページを超えれば自然に次の
+        物理ページへ続く(page-break-after: alwaysは.page全体の終端でのみ
+        効く)。.evidenceitem(1件の引用)単位でpage-break-inside: avoidを
+        付け、1件の引用が途中でページをまたいで分断されないようにする
+        (軸見出し単位では付けない ―― 1軸に複数件ある場合まで丸ごと
+        次ページへ押し出すと、かえって余白の無駄が大きくなるため)。
+    --}}
+    .evidenceintro { width: 265mm; font-size: 9pt; color: #6B6767; margin: 0 0 3mm; line-height: 1.3; }
+    .evidenceaxis { margin: 0 0 3mm; }
+    .evidenceaxis .axisname { width: 265mm; font-size: 11.5pt; font-weight: bold; color: #1D2088; margin: 0 0 1.5mm; border-bottom: 1px solid #D3D4EC; padding-bottom: 0.8mm; }
+    .evidenceitem { width: 265mm; margin: 0 0 2mm; page-break-inside: avoid; }
+    .evidenceitem .subname { font-size: 9.5pt; font-weight: bold; margin: 0 0 0.5mm; }
+    .evidenceitem .quote { font-size: 9pt; line-height: 1.3; margin: 0; border-left: 3px solid #3A3FC0; padding-left: 2.5mm; color: #393636; }
+
     {{-- 「改善提案」ページ。 --}}
     {{-- widthを明示する理由は.lead1と同じ(2026-08-04、CSS冒頭のh2コメント参照)。 --}}
     .rlead { width: 265mm; font-size: 9.5pt; color: #6B6767; margin: 0 0 2mm; line-height: 1.4; }
@@ -738,7 +756,50 @@
 </div>
 
 {{--
-    6. 改善提案。ブランド・ホイール起点(README「技術的な指標から作らない
+    6. ○と判定した根拠(依頼R、2026-08-26追加)。○△－の対比表の直後に、
+    独立したページとして追加する(3ページ目の軸カード・5ページ目の対比表は
+    既に情報密度が高く、引用を混ぜるとレイアウトが崩れるため、依頼者指定 ――
+    既存ページには一切差し込まない)。
+
+    自社サイトのみ(競合サイトの引用は載せない、依頼者指定 ―― 第三者の
+    文章であること、本レポートの主題が自社サイトの診断であることの2点が
+    理由)。$viewModel->selfEvidenceByAxis(ReportViewModelBuilder::
+    buildSelfEvidenceByAxis()が組み立てる、対比表と同じ軸順・下位要素順の
+    配列)が唯一の情報源で、Bladeから$viewModel->brandWheelSelf['axes']等の
+    生JSONを直接掘らない。
+
+    「－」の項目(discarded_sub_elements、AIが挙げた引用が原文照合で棄却
+    されたもの)は一切参照しない ―― buildSelfEvidenceByAxis()がそもそも
+    matched_sub_elementsしか読まないため、参照する経路自体が無い
+    (依頼者指定: 顧客に見せるものではない)。「－」については2ページ目の
+    既存の断り書き(「読み取れなかった項目は、その魅力が『無い』という
+    意味ではありません」)で足りている。
+
+    $viewModel->selfEvidenceByAxisが空配列(matched=0件、または全項目の
+    evidenceが空文字)の場合はページ自体を出さない(空のページを作らない)。
+--}}
+@if ($viewModel->selfEvidenceByAxis !== [])
+<div class="page">
+    <h2>○と判定した根拠</h2>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
+    <p class="evidenceintro">{{ config('brand_wheel.evidence_page_intro') }}</p>
+
+    @foreach ($viewModel->selfEvidenceByAxis as $axisGroup)
+        <div class="evidenceaxis">
+            <p class="axisname">{{ $axisGroup['axis_name'] }}</p>
+            @foreach ($axisGroup['items'] as $item)
+                <div class="evidenceitem">
+                    <p class="subname">{{ $item['sub_name'] }}</p>
+                    <p class="quote">「{{ $item['evidence'] }}」</p>
+                </div>
+            @endforeach
+        </div>
+    @endforeach
+</div>
+@endif
+
+{{--
+    7. 改善提案。ブランド・ホイール起点(README「技術的な指標から作らない
     こと」)。ワンポイントは自社のみで判定可能なため常に自社の状態から出す。
     領域差・3項目は競合ありなら$viewModel->improvementFocus、競合なし
     (または読み取れない)なら$viewModel->improvementFocusSelfOnly
@@ -979,7 +1040,7 @@
 @endif
 
 {{--
-    7. 最終CTAページ。2026-08-17: 長い説明文(「サイトの改善をすれば課題が
+    8. 最終CTAページ。2026-08-17: 長い説明文(「サイトの改善をすれば課題が
     解決するとは限りません」+本文2段落)を削除し、営業CTAに集中させる
     (依頼者指定 ―― 「レポートをここまで読んだユーザーに長文を読ませない
     ことを優先する」)。

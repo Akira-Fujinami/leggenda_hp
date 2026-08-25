@@ -47,6 +47,7 @@ readonly class ReportViewModel
      * @param  ?string  $improvementMidTermAction  中長期施策(2026-08-18追加、該当する場合のみ1〜2文)。未生成/失敗/該当なしの場合はnull。
      * @param  ?string  $selfLowContentNotice  自社の合計matched件数がconfig('brand_wheel.comparison_sufficiency_threshold')未満のときの但し書き(2026-08-25追加、修正5)。config('brand_wheel.self_low_content_notice')。閾値以上のときはnull。
      * @param  bool  $crawlSiteEnabled  依頼Q-1(2026-08-25追加)。Analysis.crawl_siteをそのまま複製したもの。前置きページの「本分析の対象範囲」の文言(config('brand_wheel.crawl_disabled_scope_notice')/config('brand_wheel.crawl_enabled_scope_notice'))の出し分けにのみ使う。
+     * @param  list<array{axis_name: string, items: list<array{sub_name: string, evidence: string}>}>  $selfEvidenceByAxis  依頼R(2026-08-26追加)。「○と判定した根拠」ページ(○△－の対比表の直後)の唯一の情報源。ReportViewModelBuilder::buildSelfEvidenceByAxis()が、自社のBrandWheelAnalysisResult.axes(matched_sub_elementsのevidence、原文の抜粋)と$subElementComparisonから、対比表と同じ軸順・下位要素順で組み立てる。evidenceが空文字の項目は含まれない。1件あたりconfig('brand_wheel.evidence_page_quote_max_chars')でBrandWheelTextTruncator::truncateAtSentenceBoundary()により切り詰め済み(文の途中では切らない)。競合サイトの引用・discarded_sub_elements(棄却された引用)は一切含まない。空配列の場合、Blade/WordReportGenerator側はこのページ自体を出さない。
      */
     public function __construct(
         public string $companyDisplayName,
@@ -78,5 +79,6 @@ readonly class ReportViewModel
         public ?string $improvementMidTermAction,
         public ?string $selfLowContentNotice,
         public bool $crawlSiteEnabled,
+        public array $selfEvidenceByAxis,
     ) {}
 }

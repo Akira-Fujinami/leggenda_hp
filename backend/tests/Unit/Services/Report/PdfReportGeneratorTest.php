@@ -87,6 +87,7 @@ class PdfReportGeneratorTest extends TestCase
             improvementMidTermAction: '中長期的には、部署横断プロジェクトの事例をシリーズ化することも検討できます。',
             selfLowContentNotice: null,
             crawlSiteEnabled: false,
+            selfEvidenceByAxis: [],
         );
     }
 
