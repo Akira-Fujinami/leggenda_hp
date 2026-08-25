@@ -1309,13 +1309,15 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $this->assertTrue($jobRecord->status->isTerminal());
 
         // このJob単体しかanalysis_jobsに存在しない(他のJob種別は一切
-        // dispatchしていない)ため、進捗カスケードがちょうど1回呼ばれていれば
-        // WebsiteAnalysis.progressはGenerateBrandWheelAnalysisの重み(10)と
-        // 正確に一致する。2回呼ばれていれば同じ値のまま(重み合算ではなく
+        // dispatchしていない)ため、依頼N以降のProgressCalculatorは
+        // 「行が存在する種別の重みの合計」で正規化する ―― 分母
+        // (GenerateBrandWheelAnalysisの重みのみ)と分子が一致し、
+        // 進捗カスケードがちょうど1回呼ばれていればWebsiteAnalysis.progress
+        // は100になる。2回呼ばれていれば同じ値のまま(重み合算ではなく
         // 完了済みJob種別の重み合計を都度計算し直す設計のため)だが、
         // 「呼ばれていない」場合は0のまま変化しないため、この比較で
         // 「呼び忘れ」だけは確実に検出できる。
-        $this->assertSame(JobType::GenerateBrandWheelAnalysis->weight(), $websiteAnalysis->fresh()->progress);
+        $this->assertSame(100, $websiteAnalysis->fresh()->progress);
     }
 
     public function test_insufficient_input_marks_the_analysis_job_terminal_and_updates_progress_once(): void
@@ -1458,7 +1460,9 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         ]);
 
         (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
-        $this->assertSame(JobType::GenerateBrandWheelAnalysis->weight(), $websiteAnalysis->fresh()->progress);
+        // このJob単体しかanalysis_jobsに存在しないため、正規化後は100になる
+        // (依頼N)。
+        $this->assertSame(100, $websiteAnalysis->fresh()->progress);
 
         // 同じレコードに対する2回目の実行(キュー再配送を模す)。
         (new GenerateBrandWheelAnalysisJob($record->id))->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
@@ -1468,7 +1472,7 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
             ->where('website_analysis_id', $websiteAnalysis->id)
             ->where('job_type', JobType::GenerateBrandWheelAnalysis)
             ->count());
-        $this->assertSame(JobType::GenerateBrandWheelAnalysis->weight(), $websiteAnalysis->fresh()->progress);
+        $this->assertSame(100, $websiteAnalysis->fresh()->progress);
     }
 
     /**

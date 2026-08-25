@@ -181,6 +181,10 @@ class LeadAnalysisController extends Controller
             // skip_brand_wheelの既定はtrue(実行しない)なので、リード側だけが
             // 明示的にfalseを渡す。
             'skip_brand_wheel' => false,
+            // 依頼L-1(2026-08-25): LEAD_CRAWL_SITE(既定false)で本番の
+            // リード診断における巡回・条件付きレンダリングを制御する。
+            // env未設定なら従来どおりcrawl_site=false。
+            'crawl_site' => (bool) config('lead.crawl_site'),
         ], $sentinelUser);
 
         // 2026-08-22: 実行回数の消費(recordAnalysisStarted())はここでは行わない。

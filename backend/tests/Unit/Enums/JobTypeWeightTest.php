@@ -6,19 +6,37 @@ use App\Enums\JobType;
 use Tests\TestCase;
 
 /**
- * JobType::weight()はサイト単位の進捗計算(ProgressCalculator)の基礎であり、
- * websiteLevelTypes()の合計が100からズレると進捗が100%に到達しない、
- * または100%を超えるといった不具合につながる。新しいJobTypeを追加する
- * たびに、既存の重みを再配分して合計を100に保つ必要があることを
- * このテストで機械的に保証する。
+ * JobType::weight()はサイト単位の進捗計算(ProgressCalculator)の基礎。
+ *
+ * 依頼N(2026-08-25): ProgressCalculator::forWebsiteAnalysis()を「行が
+ * 存在するジョブ種別の重みの合計」で正規化する方式に変更したため、
+ * websiteLevelTypes()全体の合計が100であることはもはや進捗計算の
+ * 正しさに必須ではなくなった(正規化により、どの部分集合が欠けても
+ * 100%まで到達する)。CrawlWebsite/RenderCrawledPagesは依頼M-1で追加した
+ * 独立の重み(合計が100を超えてよい、依頼N指定)であるため、この2種を
+ * 除いた「基本16種」の合計が100であることだけを保証する。
  */
 class JobTypeWeightTest extends TestCase
 {
-    public function test_website_level_job_type_weights_sum_to_100(): void
+    public function test_base_job_type_weights_excluding_crawl_sum_to_100(): void
     {
-        $sum = array_sum(array_map(fn (JobType $type) => $type->weight(), JobType::websiteLevelTypes()));
+        $baseTypes = array_values(array_filter(
+            JobType::websiteLevelTypes(),
+            fn (JobType $type) => ! in_array($type, [JobType::CrawlWebsite, JobType::RenderCrawledPages], true),
+        ));
+
+        $sum = array_sum(array_map(fn (JobType $type) => $type->weight(), $baseTypes));
 
         $this->assertSame(100, $sum);
+    }
+
+    public function test_crawl_website_and_render_crawled_pages_weights_are_independent_of_the_100_budget(): void
+    {
+        // CrawlWebsite/RenderCrawledPagesは依頼M-1で追加した独立の重みであり、
+        // 基本16種の合計100とは別枠(ProgressCalculatorが行の存在するジョブ種別
+        // の重みの合計で正規化するため、絶対値ではなく比だけが意味を持つ)。
+        $this->assertSame(12, JobType::CrawlWebsite->weight());
+        $this->assertSame(8, JobType::RenderCrawledPages->weight());
     }
 
     public function test_analysis_level_orchestration_jobs_carry_no_weight(): void

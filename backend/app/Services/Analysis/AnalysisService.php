@@ -52,6 +52,11 @@ class AnalysisService
                 // (LeadAnalysisController::store())だけが実行対象になる
                 // (2026-08-03のユーザー指摘)。
                 'skip_brand_wheel' => (bool) ($data['skip_brand_wheel'] ?? true),
+                // 依頼L-1: LeadAnalysisController::store()のみ明示的に
+                // config('lead.crawl_site')を渡す。他の呼び出し元は渡さない
+                // ため常にfalseで、既存の挙動(トップページ・採用ページの
+                // 2枚のみ)は一切変わらない。
+                'crawl_site' => (bool) ($data['crawl_site'] ?? false),
             ]);
 
             foreach ($websites as $website) {

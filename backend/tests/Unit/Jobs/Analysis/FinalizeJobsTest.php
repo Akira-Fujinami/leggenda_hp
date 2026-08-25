@@ -162,7 +162,10 @@ class FinalizeJobsTest extends TestCase
         // GenerateBrandWheelAnalysisがrequiredTypesから除外され、この
         // テストが検証したい「websiteFanOutTypesの最後の1件が終端になるまで
         // finalizeが起動しない」というループの前提(全件が必須)が崩れる。
-        $analysis = Analysis::factory()->create(['skip_brand_wheel' => false]);
+        // crawl_site=true(明示、依頼M-1)も同じ理由 ―― 既定のfalseのままだと
+        // CrawlWebsite/RenderCrawledPagesがrequiredTypesから除外され、
+        // 同じ理由でループの前提が崩れる。
+        $analysis = Analysis::factory()->create(['skip_brand_wheel' => false, 'crawl_site' => true]);
         $websiteAnalysis = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id]);
         $pipeline = app(AnalysisPipeline::class);
 
@@ -228,12 +231,15 @@ class FinalizeJobsTest extends TestCase
 
         $this->assertSame(AnalysisStatus::Running, $analysis->refresh()->status);
 
-        // GenerateBrandWheelAnalysisは対象外 ―― このテストのAnalysisは
-        // skip_brand_wheelを明示していないため既定のtrue(実行しない)になり、
+        // GenerateBrandWheelAnalysis/CrawlWebsite/RenderCrawledPagesは対象外 ――
+        // このテストのAnalysisはskip_brand_wheel/crawl_siteをいずれも
+        // 明示していないため既定値(順にtrue=実行しない/false=巡回しない)になり、
         // 意図どおりプレースホルダー自体が登録されない
-        // (AnalysisPipelineSkipBrandWheelTestが既定値の挙動を別途検証する)。
+        // (AnalysisPipelineSkipBrandWheelTest/LeadAnalysisCrawlSiteTestが
+        // 既定値の挙動を別途検証する)。
+        $excludedByDefault = [JobType::GenerateBrandWheelAnalysis, JobType::CrawlWebsite, JobType::RenderCrawledPages];
         foreach (JobType::websiteLevelTypes() as $jobType) {
-            if ($jobType === JobType::GenerateBrandWheelAnalysis) {
+            if (in_array($jobType, $excludedByDefault, true)) {
                 $this->assertDatabaseMissing('analysis_jobs', [
                     'analysis_id' => $analysis->id,
                     'website_analysis_id' => $websiteAnalysis->id,

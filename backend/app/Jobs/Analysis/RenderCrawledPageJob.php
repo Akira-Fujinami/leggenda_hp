@@ -47,6 +47,15 @@ class RenderCrawledPageJob implements ShouldQueue
     public function __construct(
         public readonly int $analysisId,
         public readonly int $websiteAnalysisId,
+        // 依頼M-1: finalizeCrawl()が選定した候補の総数(依頼D-4のcrawl_render_
+        // candidate_max_count以下)。連鎖の各ジョブへそのまま引き継ぎ、
+        // 「残り件数/総数」で進捗(0-99)を算出する。DBには候補選定時点の
+        // スナップショットが残らない(render_candidate=trueは処理済みに
+        // なると単純にfalseへ戻るだけで、失敗による解除と「元々候補で
+        // なかった」行を区別できない)ため、コンストラクタ引数として運ぶ
+        // 方式にした。nullの場合(既存呼び出し元・テストとの互換用)は
+        // 進捗更新自体を行わない。
+        public readonly ?int $totalCandidates = null,
     ) {}
 
     public function handle(AnalysisPipeline $pipeline, AnalyzerClient $client, AnalysisStoragePaths $paths): void
@@ -88,7 +97,23 @@ class RenderCrawledPageJob implements ShouldQueue
             $next->update(['render_candidate' => false]);
         }
 
-        self::dispatch($this->analysisId, $this->websiteAnalysisId)->onQueue('analysis-heavy');
+        if ($this->totalCandidates !== null && $this->totalCandidates > 0) {
+            $remaining = AnalysisCrawledPage::query()
+                ->where('website_analysis_id', $this->websiteAnalysisId)
+                ->where('render_candidate', true)
+                ->count();
+            $processed = max(0, $this->totalCandidates - $remaining);
+            $progress = (int) round(100 * $processed / $this->totalCandidates);
+
+            $pipeline->updateCrawlProgress(
+                $this->analysisId,
+                $this->websiteAnalysisId,
+                \App\Enums\JobType::RenderCrawledPages,
+                $progress,
+            );
+        }
+
+        self::dispatch($this->analysisId, $this->websiteAnalysisId, $this->totalCandidates)->onQueue('analysis-heavy');
     }
 
     public function failed(\Throwable $exception): void

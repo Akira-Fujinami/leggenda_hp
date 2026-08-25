@@ -202,12 +202,44 @@ class CrawlWebsitePageJob implements ShouldQueue
 
     private function dispatchNext(bool $withDelay): void
     {
-        $pending = self::dispatch($this->analysisId, $this->websiteAnalysisId)->onQueue('analysis');
+        $pendingDispatch = self::dispatch($this->analysisId, $this->websiteAnalysisId)->onQueue('analysis');
 
         if ($withDelay) {
             $intervalSeconds = (float) config('brand_wheel.crawl_request_interval_seconds', 1.0);
-            $pending->delay(now()->addMilliseconds((int) round($intervalSeconds * 1000)));
+            $pendingDispatch->delay(now()->addMilliseconds((int) round($intervalSeconds * 1000)));
         }
+
+        $this->reportCrawlProgress();
+    }
+
+    /**
+     * 依頼M-1: フロンティア(analysis_crawled_pages)のうち処理済み(取得成功/
+     * 失敗/各種除外)の割合を、CrawlWebsiteのAnalysisJob.progressへ反映する。
+     * サイトの規模に関わらず0→1へ収束する自己正規化した指標であり
+     * (crawl_max_pagesに達する前にフロンティアが自然に枯渇する小規模サイトでも
+     * 100%手前で止まったままにならない)、finalizeCrawl()が呼ばれる
+     * (=処理済みがフロンティア全体に達する、または上限到達)瞬間に自然と
+     * 100%近くへ収束する。
+     */
+    private function reportCrawlProgress(): void
+    {
+        $processed = $this->pages()->whereIn('status', [
+            AnalysisCrawledPage::STATUS_FETCHED,
+            AnalysisCrawledPage::STATUS_FAILED,
+            AnalysisCrawledPage::STATUS_EXCLUDED_BY_PATTERN,
+            AnalysisCrawledPage::STATUS_EXCLUDED_BY_ROBOTS,
+            AnalysisCrawledPage::STATUS_EXCLUDED_BY_SCOPE,
+        ])->count();
+        $pending = $this->pages()->where('status', AnalysisCrawledPage::STATUS_PENDING)->count();
+
+        $progress = (int) round(100 * $processed / max(1, $processed + $pending));
+
+        app(AnalysisPipeline::class)->updateCrawlProgress(
+            $this->analysisId,
+            $this->websiteAnalysisId,
+            \App\Enums\JobType::CrawlWebsite,
+            $progress,
+        );
     }
 
     /**
@@ -299,6 +331,11 @@ class CrawlWebsitePageJob implements ShouldQueue
             'candidate_count' => $candidates->count(),
         ]);
 
-        RenderCrawledPageJob::dispatch($this->analysisId, $this->websiteAnalysisId)->onQueue('analysis-heavy');
+        // 依頼M-1: レンダリング対象が実際に決まった時点でRenderCrawledPagesを
+        // Running化する(候補0件のときはPendingのまま、
+        // dispatchBrandWheelAnalysisAfterCrawl()側で直接Completedになる)。
+        $pipeline->markRunning($this->analysisId, $this->websiteAnalysisId, \App\Enums\JobType::RenderCrawledPages);
+
+        RenderCrawledPageJob::dispatch($this->analysisId, $this->websiteAnalysisId, $candidates->count())->onQueue('analysis-heavy');
     }
 }

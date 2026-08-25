@@ -172,6 +172,50 @@ class RenderCrawledPageJobTest extends TestCase
     }
 
     /**
+     * 依頼M-1: レンダリングの進行に応じてRenderCrawledPagesのAnalysisJob.
+     * progressが増加すること。totalCandidatesはfinalizeCrawl()が
+     * dispatch時に渡す値を模擬する(このテストではRenderCrawledPageJobを
+     * 直接構築するため、コンストラクタで明示的に渡す)。
+     */
+    public function test_analysis_job_progress_increases_as_candidates_are_rendered(): void
+    {
+        Queue::fake([RenderCrawledPageJob::class]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis();
+        $this->makeCandidate($websiteAnalysis, 'https://example.co.jp/one', depth: 1);
+        $this->makeCandidate($websiteAnalysis, 'https://example.co.jp/two', depth: 2);
+        app(AnalysisPipeline::class)->markRunning($analysis->id, $websiteAnalysis->id, \App\Enums\JobType::RenderCrawledPages);
+
+        Http::fake([
+            '*/analyze/render' => Http::response([
+                'success' => true,
+                'data' => ['html' => '<html><body>rendered</body></html>'],
+            ], 200),
+        ]);
+
+        (new RenderCrawledPageJob($analysis->id, $websiteAnalysis->id, totalCandidates: 2))->handle(
+            app(AnalysisPipeline::class),
+            app(AnalyzerClient::class),
+            app(AnalysisStoragePaths::class),
+        );
+
+        $job = \App\Models\AnalysisJob::query()
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('job_type', \App\Enums\JobType::RenderCrawledPages)
+            ->first();
+        $this->assertSame(50, $job->progress);
+        $this->assertSame(\App\Enums\AnalysisJobStatus::Running, $job->status);
+        $this->assertGreaterThan(0, $websiteAnalysis->fresh()->progress);
+
+        (new RenderCrawledPageJob($analysis->id, $websiteAnalysis->id, totalCandidates: 2))->handle(
+            app(AnalysisPipeline::class),
+            app(AnalyzerClient::class),
+            app(AnalysisStoragePaths::class),
+        );
+
+        $this->assertSame(99, $job->fresh()->progress);
+    }
+
+    /**
      * 順序保証(依頼D-4): 候補が残っている間はブランド・ホイール分析は
      * 起動されない。最後の候補が処理された後の連鎖でのみ起動される。
      */

@@ -2,6 +2,7 @@
 
 namespace App\Jobs\Analysis;
 
+use App\Enums\JobType;
 use App\Enums\PageType;
 use App\Models\AnalysisCrawledPage;
 use App\Models\AnalysisPage;
@@ -49,6 +50,13 @@ class CrawlWebsiteJob implements ShouldQueue
         SitemapParser $sitemapParser,
         CrawlLinkExtractor $linkExtractor,
     ): void {
+        // 依頼M-1: 進捗表示用のAnalysisJob行(CrawlWebsite)をPending→Running
+        // へ遷移させる。このJobはcrawl_site=trueのときにしかdispatchされない
+        // (AnalysisPipeline::dispatchBrandWheelAnalysisIfDue()参照)ため、
+        // 常に登録済みのはずだが、markRunning()自体もfirstOrCreate経由で
+        // 冪等に動く。
+        $pipeline->markRunning($this->analysisId, $this->websiteAnalysisId, JobType::CrawlWebsite);
+
         $robotsDecision = $policyResolver->resolveRobotsPolicy($this->websiteAnalysisId, $robotsTxtParser);
 
         if ($robotsDecision === null) {

@@ -2,6 +2,8 @@
 
 namespace Tests\Unit\Jobs\Analysis;
 
+use App\Enums\AnalysisJobStatus;
+use App\Enums\JobType;
 use App\Enums\PageType;
 use App\Jobs\Analysis\CrawlWebsitePageJob;
 use App\Jobs\Analysis\RenderCrawledPageJob;
@@ -129,6 +131,49 @@ class CrawlWebsitePageJobTest extends TestCase
 
         $this->assertSame(2, AnalysisCrawledPage::query()->where('status', AnalysisCrawledPage::STATUS_FETCHED)->count());
         $this->assertSame(0, AnalysisCrawledPage::query()->where('status', AnalysisCrawledPage::STATUS_PENDING)->count());
+    }
+
+    /**
+     * 依頼M-1: 巡回の進行に応じてCrawlWebsiteのAnalysisJob.progressが
+     * 増加し、WebsiteAnalysis.progressにも反映されること。本番では
+     * CrawlWebsiteJobが最初にmarkRunning(CrawlWebsite)を呼ぶため、ここでも
+     * 同じ前提(Running状態のプレースホルダーが既に存在する)を再現する。
+     */
+    public function test_analysis_job_progress_increases_as_pages_are_processed(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis();
+        app(AnalysisPipeline::class)->markRunning($analysis->id, $websiteAnalysis->id, JobType::CrawlWebsite);
+
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/page-1');
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/page-2');
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/page-3');
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/page-4');
+
+        Http::fake([
+            'https://example.co.jp/*' => Http::response('<html><body>ok</body></html>', 200, ['Content-Type' => 'text/html']),
+        ]);
+
+        $progressAfterEachCall = [];
+        for ($i = 0; $i < 4; $i++) {
+            $this->handle($analysis, $websiteAnalysis);
+            $job = \App\Models\AnalysisJob::query()
+                ->where('website_analysis_id', $websiteAnalysis->id)
+                ->where('job_type', JobType::CrawlWebsite)
+                ->first();
+            $progressAfterEachCall[] = $job->progress;
+            $this->assertSame(AnalysisJobStatus::Running, $job->status);
+        }
+
+        // 単調増加(またはページ発見により一時的に足踏みすることはあっても
+        // 減少はしない)であり、最初と最後で明確に動いていること。
+        $this->assertLessThan($progressAfterEachCall[3], $progressAfterEachCall[0], 'progressが全く動いていない');
+        for ($i = 1; $i < count($progressAfterEachCall); $i++) {
+            $this->assertGreaterThanOrEqual($progressAfterEachCall[$i - 1], $progressAfterEachCall[$i]);
+        }
+
+        // WebsiteAnalysis.progressにも反映されている(0ではない)。
+        $this->assertGreaterThan(0, $websiteAnalysis->fresh()->progress);
     }
 
     /**

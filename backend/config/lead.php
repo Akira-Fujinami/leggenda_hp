@@ -87,6 +87,17 @@ return [
     // (保守的判定)、短くしても誤って診断をブロックすることはない。
     'self_url_reachability_check_timeout_seconds' => (int) env('LEAD_SELF_URL_REACHABILITY_CHECK_TIMEOUT_SECONDS', 6),
 
+    // 依頼L-1(2026-08-25): リード診断でサイト全ページ巡回・条件付き
+    // レンダリングを有効にするかどうか。既定false ―― envを設定しない限り
+    // LeadAnalysisController::store()が作るAnalysisは従来どおり
+    // crawl_site=false(トップページ・採用ページの2枚のみ)のままで、
+    // 挙動は一切変わらない。true時、自社・競合の両方のWebsiteAnalysisが
+    // 巡回対象になる(AnalysisPipeline::dispatchBrandWheelAnalysisIfDue()は
+    // website_analysis_id単位で呼ばれ、is_primaryによる分岐が無いため
+    // ―― 依頼L-2、自社のみを巡回する経路は存在しない)。問題が出た場合は
+    // このenvをfalseに戻すだけで再デプロイ無しに切り戻せる。
+    'crawl_site' => (bool) env('LEAD_CRAWL_SITE', false),
+
     // 診断開始通知・相談リクエスト通知の送信先。個人のメールアドレスではなく
     // 必ず共有の受信箱を指定すること ―― 通知本文にはリード自身のトークンを
     // 使った「診断結果を開く権限つきリンク」を含めるため、個人宛だと転送時に

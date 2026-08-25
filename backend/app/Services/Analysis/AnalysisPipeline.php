@@ -209,6 +209,10 @@ class AnalysisPipeline
             return;
         }
 
+        // 依頼M-1: この関数に到達した時点でCrawlWebsite/RenderCrawledPagesの
+        // 巡回・レンダリングは(どの終端経路であれ)実質的に終わっている。
+        $this->completeCrawlJobsIfEnabled($analysisId, $websiteAnalysisId);
+
         $record = BrandWheelAnalysisResult::query()->create([
             'analysis_id' => $analysisId,
             'website_analysis_id' => $websiteAnalysisId,
@@ -269,6 +273,18 @@ class AnalysisPipeline
 
         if ($analysis->skip_brand_wheel === true) {
             $excluded[] = JobType::GenerateBrandWheelAnalysis;
+        }
+
+        // 依頼M-1: crawl_site=false(既定)のときはCrawlWebsite/
+        // RenderCrawledPagesのAnalysisJob行を一切登録しない ―― 他のskip_*と
+        // 向きが逆(trueなら除外ではなく、true**でなければ**除外)である点に
+        // 注意。この除外により、registerWebsiteJobPlaceholders()での未登録
+        // (=進捗計算・完了判定の対象外)とProgressCalculatorでの未加点が
+        // 従来のskip_lighthouse等と同じ仕組みで揃い、crawl_site=falseの
+        // 進捗推移はこの依頼の変更前後で完全に同一になる。
+        if ($analysis->crawl_site !== true) {
+            $excluded[] = JobType::CrawlWebsite;
+            $excluded[] = JobType::RenderCrawledPages;
         }
 
         if ($excluded === []) {
@@ -437,6 +453,70 @@ class AnalysisPipeline
             'error_code' => $errorCode->value,
             'error_message' => $message,
         ]);
+    }
+
+    /**
+     * 依頼M-1: CrawlWebsite/RenderCrawledPagesの進捗(0-99)を更新する。
+     * ページ1枚ごとにAnalysisJob行を作らず、巡回全体・レンダリング全体で
+     * それぞれ1行の`progress`カラムを更新していく方式(依頼者指定)。
+     * 100はmarkCompleted()の専権とするため、ここでは99を上限にする
+     * (実行中の間に誤って満額扱いになるのを防ぐ安全策)。
+     *
+     * 対象行が無い(crawl_site=falseで未登録)、または既に終端状態の場合は
+     * 何もしない ―― 終端後に古い呼び出しが遅延して届いても上書きしない。
+     */
+    public function updateCrawlProgress(int $analysisId, int $websiteAnalysisId, JobType $jobType, int $progress): void
+    {
+        $record = AnalysisJobRecord::query()
+            ->where('analysis_id', $analysisId)
+            ->where('website_analysis_id', $websiteAnalysisId)
+            ->where('job_type', $jobType)
+            ->first();
+
+        if ($record === null || $record->status->isTerminal()) {
+            return;
+        }
+
+        $record->update(['progress' => max(0, min(99, $progress))]);
+        $this->updateWebsiteAnalysisProgress($websiteAnalysisId);
+    }
+
+    /**
+     * 依頼M-1: crawl_site=trueのとき、CrawlWebsite/RenderCrawledPagesの
+     * AnalysisJob行を(まだ終端でなければ)完了させる。dispatchBrandWheel
+     * AnalysisAfterCrawl()の「最初の1回だけ勝つ」冪等ガードの内側から
+     * 呼ぶことで、このJobチェーンのどの終端経路(0件seed・robots
+     * unavailable・上限打ち切り・レンダリング候補0件・failed()経由)から
+     * 来ても、必ずこの1箇所で両方の行が終端することを保証する ――
+     * CrawlWebsiteJob/CrawlWebsitePageJob/RenderCrawledPageJob側の
+     * 個々の終端分岐それぞれにmarkCompleted()を書いて回る必要がない。
+     *
+     * crawl_site=falseの場合は何もしない ―― この関数はcrawl_site=falseの
+     * 通常経路(dispatchBrandWheelAnalysisIfDue()から直接)からも呼ばれるが、
+     * その場合CrawlWebsite/RenderCrawledPages行はそもそも登録されていない
+     * (excludeSkippedJobTypes())ため、ここで新規作成してしまうと進捗の
+     * 分母が変わり「crawl_site=falseの進捗推移は変更前後で完全に同一」を
+     * 破ってしまう。
+     */
+    private function completeCrawlJobsIfEnabled(int $analysisId, int $websiteAnalysisId): void
+    {
+        if (Analysis::find($analysisId)?->crawl_site !== true) {
+            return;
+        }
+
+        foreach ([JobType::CrawlWebsite, JobType::RenderCrawledPages] as $jobType) {
+            $record = AnalysisJobRecord::query()
+                ->where('analysis_id', $analysisId)
+                ->where('website_analysis_id', $websiteAnalysisId)
+                ->where('job_type', $jobType)
+                ->first();
+
+            if ($record !== null && ! $record->status->isTerminal()) {
+                $this->markCompleted($record);
+            }
+        }
+
+        $this->updateWebsiteAnalysisProgress($websiteAnalysisId);
     }
 
     /**

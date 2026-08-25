@@ -11,6 +11,17 @@ namespace App\Services\Analysis;
  */
 class AnalysisStoragePaths
 {
+    /**
+     * 依頼M-2: Analysis単位でストレージを丸ごと削除する場合に使う
+     * (レポート削除等、個別ファイルを消す既存メソッドとは別に用意する ――
+     * パス組み立てをコマンド側に書かせないため)。配下の全WebsiteAnalysisの
+     * raw/screenshots/metadataをまとめて含む。
+     */
+    public function analysisDir(int $analysisId): string
+    {
+        return "analyses/{$analysisId}";
+    }
+
     public function rawDir(int $analysisId, int $websiteAnalysisId): string
     {
         return $this->base($analysisId, $websiteAnalysisId).'/raw';
