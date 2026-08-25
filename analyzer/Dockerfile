@@ -24,6 +24,34 @@ RUN set -eux; \
     rm -rf /tmp/extra-certs
 ENV NODE_EXTRA_CA_CERTS=/etc/node-extra-ca-certs.pem
 
+# 依頼K-2: Chromium(Playwright)はLinux上ではOpenSSLの/etc/ssl/certsではなく
+# NSSのデータベースを参照するため、直前のupdate-ca-certificatesだけでは
+# 信頼されず、Playwrightのレンダリングがnet::ERR_CERT_AUTHORITY_INVALIDで
+# 失敗する(依頼F〜Iの間、これが原因でクロール対象ページのレンダリングが
+# 全サイトで0枚になっていた)。このDockerfileにUSER指定が無くChromiumは
+# rootで動くため、NSSのDBは/root/.pki/nssdbになる。
+#
+# docker/certsが空の通常環境・本番ビルドでは`ls`が失敗して何もしない
+# (libnss3-toolsも証明書もインストールしない) ―― docker/certsは.gitignore
+# 対象でRenderのビルドコンテキストにも含まれないため、本番ビルドで
+# このifが真になることはない。
+#
+# certutil -N は素の状態だと対話でパスワード入力を求めてビルドが
+# 対話待ちで止まることがあるため、--empty-password で非対話にする
+# (依頼者が手作業で登録した際に実際にこれで詰まった)。
+RUN set -eux; \
+    if ls /usr/local/share/ca-certificates/*.crt >/dev/null 2>&1; then \
+        apt-get update; \
+        apt-get install -y --no-install-recommends libnss3-tools; \
+        rm -rf /var/lib/apt/lists/*; \
+        mkdir -p /root/.pki/nssdb; \
+        certutil -d sql:/root/.pki/nssdb -N --empty-password; \
+        for f in /usr/local/share/ca-certificates/*.crt; do \
+            name=$(basename "$f" .crt); \
+            certutil -d sql:/root/.pki/nssdb -A -t "C,," -n "$name" -i "$f"; \
+        done; \
+    fi
+
 # ---- 依存関係インストール専用ステージ (ビルドキャッシュ用) ----
 FROM base AS deps
 COPY analyzer/package.json analyzer/package-lock.json ./

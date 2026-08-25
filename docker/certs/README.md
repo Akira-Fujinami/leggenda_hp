@@ -25,3 +25,25 @@ Dockerコンテナ (Linux) 側にはその証明書が入っていないため�
 本番イメージは必ずCI/クリーンチェックアウトからビルドすること (Renderはgitリポジトリから
 ビルドするため、`.gitignore` で除外されているこのディレクトリの中身はそもそもビルドコンテキストに
 含まれず、通常のデプロイ経路では問題にならない)。
+
+## analyzer(Playwright/Chromium)側の追加対応が必要な理由
+
+`backend`/`analyzer` とも、上記の仕組みで `update-ca-certificates` によって
+OpenSSL側の証明書ストア(`/etc/ssl/certs`)には証明書が追加される。しかし
+**Chromium(Playwright)はLinux上ではこのOpenSSLストアを見ず、NSSという別の
+証明書データベースを参照する。** そのため `docker/certs/*.pem` を置いて
+`analyzer` イメージをビルドし直しても、`update-ca-certificates` だけでは
+Chromiumからのレンダリング要求は `net::ERR_CERT_AUTHORITY_INVALID` で
+失敗し続ける(TLS傍受環境でこの現象が実際に発生し、原因特定に依頼F〜Kの
+複数回のやり取りを要した)。
+
+この問題に対応するため、`analyzer/Dockerfile` は OpenSSL側の証明書取り込み
+ブロックの直後に、同じ証明書を `libnss3-tools` の `certutil` で
+`/root/.pki/nssdb`(analyzerはrootでChromiumを起動するため)へ登録する
+処理を追加している。`docker/certs` が空の通常環境・本番ビルドでは
+`libnss3-tools` のインストール自体が起きず、完全にno-opになる。
+
+**したがって、このディレクトリに証明書を置いて `analyzer` イメージを
+再ビルドすれば、OpenSSL側・NSS側(Chromium)の両方が自動的に対応される。**
+コンテナ内で手作業により `certutil` を叩いて一時的に登録する運用は不要
+(イメージを再ビルドすると消えるため、恒久的にはDockerfile側の対応を使うこと)。
