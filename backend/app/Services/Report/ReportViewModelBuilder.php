@@ -211,15 +211,57 @@ class ReportViewModelBuilder
         // 情報量)とは排他。
         // 2026-08-25追加: 競合が閾値未満の場合もこちら(自社単独の改善提案)へ
         // フォールバックする(修正1)。
+        //
+        // 依頼Q-2(2026-08-25): composeSelfOnly()自体(グループ選定・items選定
+        // 規則)は無改修 ―― ここでは$groups(棒グラフ用の数値、規則のまま)は
+        // そのまま使い、$items(3枚のカード)だけをAI(改善提案AI、
+        // focus_sub_element_keys)由来のものに差し替える。理由: レポート35で
+        // AI由来のワンポイント/理由と、規則由来の「最も少なかったのは〜」+
+        // 3枚のカードが同時に描画され、領域が食い違って見える不具合が
+        // あった(1ページに2つの推奨が並ぶ状態)。AI(サイト固有の着手
+        // しやすさ判断ができる)を主、規則(数値の棒グラフ)を従にする方針
+        // (依頼者指定)。$selfSufficient=falseのとき(GenerateBrandWheelImprovement
+        // SuggestionJobがAIを呼ばずfocus_sub_element_keysが空のまま保存される
+        // ケース、修正2)や、AIの提案がまだ生成されていない/失敗している場合は
+        // 差し替える材料が無いため、従来どおり規則由来の$itemsのまま
+        // (items_source='rule')にフォールバックする ―― 「誤ったカードを
+        // 出すくらいなら規則由来のほうがマシ」という依頼者方針どおり、
+        // AI由来の有効なカードが1件も作れない場合は必ず規則側にフォール
+        // バックする(buildAiSelfOnlyFocusItems()参照)。
         $improvementFocusSelfOnly = $selfReadable && (! $competitorReadable || ! $competitorSufficient)
             ? $this->improvementFocusComposer->composeSelfOnly($subElementComparison)
             : null;
+
+        if ($improvementFocusSelfOnly !== null) {
+            $aiItems = $selfSufficient
+                ? $this->buildAiSelfOnlyFocusItems($subElementComparison, $improvementSuggestion?->focus_sub_element_keys ?? [])
+                : [];
+
+            if ($aiItems !== []) {
+                $improvementFocusSelfOnly['items'] = $aiItems;
+                $improvementFocusSelfOnly['items_source'] = 'ai';
+            } else {
+                $improvementFocusSelfOnly['items_source'] = 'rule';
+            }
+        }
 
         // 2026-08-25追加: 自社が閾値未満のときの但し書き(修正5)。サイトを
         // 責める表現("情報が無い")ではなく、こちら側の読み取り量の問題として
         // 書く(依頼者指定の文言、config('brand_wheel.self_low_content_notice')、
         // 原文ママ)。
-        $selfLowContentNotice = ! $selfSufficient ? (string) config('brand_wheel.self_low_content_notice') : null;
+        //
+        // 依頼O-1/依頼P-2(2026-08-25): この文言は元々「本文が少なかった」と
+        // 主張するが、判定材料は$selfSufficient(matched件数)であって本文の
+        // 文字数ではなかった。本文は十分あったのに該当項目が少なかっただけの
+        // ケース(レポート34: 本文23,935字→17,945字に切り詰め、matched=5/24)を
+        // 「本文が少ない」と誤って断定しないよう、実際の入力文字数
+        // (brand_wheel_analysis_results.input_char_count)を根拠に分岐する
+        // (詳細はresolveSelfLowContentNotice()のdocblock参照)。
+        $selfLowContentNotice = $this->resolveSelfLowContentNotice(
+            $selfSufficient,
+            (bool) ($selfBrandWheelRecord->input_truncated ?? false),
+            $selfBrandWheelRecord->input_char_count ?? null,
+        );
 
         return new ReportViewModel(
             companyDisplayName: $this->nameFormatter->format($leadSession->company_name),
@@ -250,7 +292,105 @@ class ReportViewModelBuilder
             improvementRecommendedContents: $improvementRecommendedContents,
             improvementMidTermAction: $improvementMidTermAction,
             selfLowContentNotice: $selfLowContentNotice,
+            crawlSiteEnabled: $analysis->crawl_site === true,
         );
+    }
+
+    /**
+     * 依頼Q-2(2026-08-25): 改善提案ページ(自社単独モード)の3枚のカードを、
+     * 改善提案AI(BrandWheelImprovementSuggestion.focus_sub_element_keys)が
+     * 挙げた下位要素キーから組み立てる。カードの文面自体は
+     * BrandWheelImprovementFocusComposer::composeSelfOnly()と同じ情報源
+     * (config('brand_wheel.axes.*.sub_element_recommendations')、
+     * $subElementComparisonの'recommendation')を使う ―― AIは「どの3項目を
+     * 選ぶか」だけを判断し、文面自体は既存の決定的カタログのまま
+     * (依頼者指定: sub_element_recommendationsの文面をそのまま使う)。
+     *
+     * 二重の安全策で「誤ったカードを出さない」ことを保証する:
+     * 1. focus_sub_element_keys自体、AIの応答パーサ
+     *    (BrandWheelImprovementSuggestionResponseParser::parseSubElementKeyList())
+     *    が実在する24キー以外を既に除外済み(捏造キーの防止)。
+     * 2. ここでさらに、$subElementComparison上でself_state==='matched'
+     *    (自社に既にある)キーを除外する ―― プロンプト側(v7)でAIに
+     *    self_unmatched_itemsのみを選ばせる指示を追加したが、指示に従わない
+     *    場合の最後の防波堤として、呼び出し側でも機械的に検証する。
+     *
+     * 有効なキーが1件も残らない場合は空配列を返す ―― 呼び出し側
+     * (build())はこの場合、規則由来(composeSelfOnly()の元のitems)に
+     * フォールバックする。「AIの選定が信頼できないなら、規則由来だけの
+     * ほうがマシ」という依頼者方針をコードでそのまま表現している。
+     *
+     * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, recommendation: string, self_matched: bool, competitor_matched: bool, self_state: string, competitor_state: string}>  $subElementComparison
+     * @param  list<string>  $focusSubElementKeys
+     * @return list<array{axis_name: string, sub_name: string, definition: string, recommendation: string, self_reason: string}>
+     */
+    private function buildAiSelfOnlyFocusItems(array $subElementComparison, array $focusSubElementKeys): array
+    {
+        $bySubKey = collect($subElementComparison)->keyBy('sub_key');
+
+        $items = [];
+        foreach (array_slice($focusSubElementKeys, 0, 3) as $key) {
+            $item = $bySubKey->get($key);
+
+            if ($item === null || $item['self_state'] === 'matched') {
+                continue;
+            }
+
+            $items[] = [
+                'axis_name' => $item['axis_name'],
+                'sub_name' => $item['sub_name'],
+                'definition' => $item['definition'],
+                'recommendation' => $item['recommendation'],
+                // self_state('none'|'label_only'、'matched'は上で除外済み)を
+                // そのままself_reasonとして使う ――
+                // BrandWheelImprovementFocusComposer::composeSelfOnly()の
+                // 出力形式と一致させ、Blade/WordReportGenerator側の
+                // 表示ロジック(selfOnlyReasonLabel等)を無改修で共有できる
+                // ようにする。
+                'self_reason' => $item['self_state'],
+            ];
+        }
+
+        return $items;
+    }
+
+    /**
+     * 依頼P-2(2026-08-25、依頼Oの続き): matched件数が閾値未満のときに
+     * 何を出すかの分岐。
+     *
+     * - matched件数が閾値以上: 何も出さない(従来どおり)。
+     * - matched未満 かつ input_truncated=true: 予算(AI_MAX_INPUT_TOKENS)
+     *   上限まで本文があった証拠のため、本文は十分あったのに該当項目が
+     *   少なかっただけ ―― (b)。
+     * - matched未満 かつ input_char_count(実際の入力文字数)が
+     *   config('brand_wheel.self_low_content_notice_min_chars')以上:
+     *   同じく本文は十分あった ―― (b)。
+     * - matched未満 かつ input_char_count がその閾値未満: 実際に本文が
+     *   少なかった ―― (a)(従来の文言のまま)。
+     * - matched未満 かつ input_char_count が null(旧データ・入力組み立て
+     *   失敗等で判定材料が無い): 何も出さない。判定材料が無いときに推測で
+     *   「本文が少なかった」と断定しない(レポート34の誤りの再発防止、
+     *   依頼者指定)。
+     */
+    private function resolveSelfLowContentNotice(bool $selfSufficient, bool $selfInputTruncated, ?int $selfInputCharCount): ?string
+    {
+        if ($selfSufficient) {
+            return null;
+        }
+
+        if ($selfInputTruncated) {
+            return (string) config('brand_wheel.self_low_content_notice_thin_match');
+        }
+
+        if ($selfInputCharCount === null) {
+            return null;
+        }
+
+        $minChars = (int) config('brand_wheel.self_low_content_notice_min_chars');
+
+        return $selfInputCharCount >= $minChars
+            ? (string) config('brand_wheel.self_low_content_notice_thin_match')
+            : (string) config('brand_wheel.self_low_content_notice');
     }
 
     /**

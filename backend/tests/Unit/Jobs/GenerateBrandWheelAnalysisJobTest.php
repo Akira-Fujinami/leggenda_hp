@@ -284,6 +284,11 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
                     && ! $bodyContainsSiteText;
             })
             ->once();
+
+        // 依頼P-1: success(285行目)は$inputが存在する終端経路なので、
+        // input_char_countも書かれる。
+        $this->assertNotNull($record->input_char_count);
+        $this->assertGreaterThan(0, $record->input_char_count);
     }
 
     public function test_openai_malformed_json_marks_result_as_error_without_failing_the_job(): void
@@ -326,6 +331,10 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $record->refresh();
         $this->assertSame('error', $record->status);
         $this->assertSame('AI_AUTH_FAILED', $record->error_code);
+        // 依頼P-1: AI呼び出し失敗(276行目)は$inputが存在する終端経路なので、
+        // input_char_countも書かれる。
+        $this->assertNotNull($record->input_char_count);
+        $this->assertGreaterThan(0, $record->input_char_count);
     }
 
     public function test_provider_unset_marks_result_as_error_without_hanging(): void
@@ -344,6 +353,36 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $record->refresh();
         $this->assertSame('error', $record->status);
         $this->assertSame('BRAND_WHEEL_PROVIDER_INVALID', $record->error_code);
+        // 依頼P-1: provider未設定エラー(206行目)は$inputが存在する終端経路
+        // なので、input_char_countも書かれる。
+        $this->assertNotNull($record->input_char_count);
+        $this->assertGreaterThan(0, $record->input_char_count);
+    }
+
+    /**
+     * 依頼P-1: 入力の組み立て自体が失敗した場合(131行目、$inputが存在
+     * しない)は、input_char_countを算出しようがないためnullのまま
+     * (既存行に対する遡及計算はしない、というマイグレーションの方針と
+     * 同じ考え方)。
+     */
+    public function test_input_char_count_stays_null_when_input_assembly_fails(): void
+    {
+        $websiteAnalysis = $this->makeWebsiteAnalysis();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id,
+            'website_analysis_id' => $websiteAnalysis->id,
+            'status' => 'pending',
+        ]);
+
+        $failingFactory = \Mockery::mock(BrandWheelAnalysisInputFactory::class);
+        $failingFactory->shouldReceive('build')->once()->andThrow(new \RuntimeException('simulated input assembly failure'));
+
+        (new GenerateBrandWheelAnalysisJob($record->id))->handle($failingFactory, app(AnalysisPipeline::class));
+
+        $record->refresh();
+        $this->assertSame('error', $record->status);
+        $this->assertSame('BRAND_WHEEL_INPUT_BUILD_FAILED', $record->error_code);
+        $this->assertNull($record->input_char_count);
     }
 
     public function test_repeat_call_with_identical_input_reuses_prior_success_without_calling_the_api_again(): void
@@ -380,6 +419,12 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         Http::assertSentCount(1);
         $second->refresh();
         $this->assertSame('success', $second->status);
+        // 依頼P-1最重要: キャッシュ再利用(228行目)でinput_char_countが
+        // 落ちていないこと。usage_input_tokensは再利用時に0固定になり
+        // 判定材料として使えない(依頼Oで判明)ため、input_char_countは
+        // ここで確実に書かれている必要がある。
+        $this->assertNotNull($second->input_char_count);
+        $this->assertGreaterThan(0, $second->input_char_count);
     }
 
     public function test_repeat_call_does_not_reuse_prior_success_when_brand_wheel_config_changed(): void
@@ -558,6 +603,10 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $record->refresh();
         $this->assertSame('insufficient_input', $record->status);
         Http::assertNothingSent();
+        // 依頼P-1: insufficient_input(163行目)は$inputが存在する終端経路
+        // なので、input_char_countも書かれる(nullのままにならない)。
+        $this->assertNotNull($record->input_char_count);
+        $this->assertGreaterThan(0, $record->input_char_count);
     }
 
     public function test_missing_html_file_is_logged_as_an_error_and_treated_as_insufficient_input(): void

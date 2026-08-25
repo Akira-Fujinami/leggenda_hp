@@ -53,7 +53,7 @@ class WordReportGenerator
         $phpWord->getSettings()->setThemeFontLang(new Language(Language::JA_JP));
 
         $this->addCoverSection($phpWord, $viewModel);
-        $this->addBrandWheelFrameworkIntroSection($phpWord);
+        $this->addBrandWheelFrameworkIntroSection($phpWord, $viewModel);
         $this->addBrandWheelAnalysisSection(
             $phpWord, '自社サイトの分析結果', $viewModel->brandWheelSelf,
             '自社サイト', $viewModel->selfTotalMatched, $viewModel->selfTotalMax,
@@ -93,6 +93,17 @@ class WordReportGenerator
 
         if ($viewModel->competitorWebsiteUrl !== null) {
             $section->addText('比較サイト: '.$viewModel->competitorWebsiteUrl, [], ['alignment' => Jc::CENTER]);
+
+            // 依頼O-2/P-3(2026-08-25): 競合サイトの分析が成立しなかった場合、
+            // PDF版と同じ注記を添える(案B、依頼者確定)。$competitorReadable()の
+            // 判定ロジック自体は変更しない(既存のまま)。
+            if (! $this->competitorReadable($viewModel)) {
+                $section->addText(
+                    (string) config('brand_wheel.cover_competitor_unreadable_notice'),
+                    ['size' => 9, 'italic' => true],
+                    ['alignment' => Jc::CENTER],
+                );
+            }
         }
 
         $section->addText($viewModel->generatedAtLabel, [], ['alignment' => Jc::CENTER]);
@@ -117,7 +128,7 @@ class WordReportGenerator
      * (引用符は『』を使う ―― ユーザー指定の「絶対に消してはいけない文言」
      * 原文どおり、2026-08-04)。
      */
-    private function addBrandWheelFrameworkIntroSection(PhpWord $phpWord): void
+    private function addBrandWheelFrameworkIntroSection(PhpWord $phpWord, ReportViewModel $viewModel): void
     {
         $section = $phpWord->addSection();
         $section->addTitle('採用ブランドの捉え方 ―― ブランド・ホイール', 1);
@@ -164,9 +175,13 @@ class WordReportGenerator
         $section->addText(
             '本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています。',
         );
+        // 依頼Q-1(2026-08-25): PDF版(lead-pdf.blade.php)と同じ出し分け
+        // (config('brand_wheel.crawl_disabled_scope_notice')/
+        // crawl_enabled_scope_notice、依頼者確定文言)。
         $section->addText(
-            '本分析は、ご提供いただいた採用ページ・トップページの記述を対象としており、サイト全体や他の関連ページを'.
-            '自動的に巡回して分析するものではありません。',
+            $viewModel->crawlSiteEnabled
+                ? (string) config('brand_wheel.crawl_enabled_scope_notice')
+                : (string) config('brand_wheel.crawl_disabled_scope_notice'),
             ['size' => 9.5, 'color' => '6B6767'],
         );
 
@@ -449,19 +464,14 @@ class WordReportGenerator
                     $section->addText('比較サイトの記述：「'.$item['competitor_evidence'].'」');
                 }
 
-                // 2026-08-18追加: 具体的に追加すべき情報/中長期施策(PDF版と同内容、
-                // 旧「改善のご提案」単一パラグラフを置き換え)。
-                if (count($viewModel->improvementRecommendedContents) > 0) {
-                    $section->addTextBreak(1);
-                    $section->addText('具体的に追加すべき情報', ['bold' => true, 'size' => 10]);
-                    foreach ($viewModel->improvementRecommendedContents as $content) {
-                        $section->addText('・'.$content, ['size' => 9.5]);
-                    }
-                }
-
-                // 2026-08-19: 「中長期的には：」の1行から、Quick Win系
-                // (具体的に追加すべき情報)と明確に分離した見出し付きブロック
-                // へ格上げ(依頼者指定、PDF版の.diffboxと同内容)。
+                // 2026-08-19: 「中長期的には：」の1行から、独立した見出し付き
+                // ブロックへ格上げ(依頼者指定、PDF版の.diffboxと同内容)。
+                // 依頼Q-2(2026-08-25): 「具体的に追加すべき情報」の箇条書き
+                // (旧$viewModel->improvementRecommendedContents)は廃止した ――
+                // 上のカード(sub_element_recommendationsの文面)と実質同じ
+                // 内容を繰り返しており、「1ページ1推奨」の妨げになっていた
+                // (依頼者指定、PDF版と同内容)。フィールド自体は変更していない、
+                // 表示しないだけ。
                 if ($viewModel->improvementMidTermAction !== null) {
                     $section->addTextBreak(1);
                     $section->addText('中長期の差別化ポイント', ['bold' => true, 'size' => 9.5, 'color' => '2C7F96']);
@@ -484,14 +494,24 @@ class WordReportGenerator
         // (lead-pdf.blade.php、@elseif ($viewModel->improvementFocusSelfOnly))
         // と同内容。「比較サイトが無いため、領域ごとの比較はご用意できません。」
         // の1行だけでページの大半が空白になり、営業資料として成立しないという
-        // 指摘(ユーザー)への対応。競合の実データを使わず、自社の「－」「△」
-        // 項目(BrandWheelImprovementFocusComposer::composeSelfOnly())だけで
-        // 構成する。
-        $selectedLabelSelf = self::GROUP_LABELS[$focusSelfOnly['selected_group']] ?? $focusSelfOnly['selected_group'];
-        $section->addText(
-            "3つの領域のうち、サイトの記述から読み取れた項目が最も少なかったのは「{$selectedLabelSelf}」でした。".
-            'この領域から、候補者が知りたがる項目を'.count($focusSelfOnly['items']).'件挙げます。',
-        );
+        // 指摘(ユーザー)への対応。棒グラフ(groups)は常にBrandWheelImprovement
+        // FocusComposer::composeSelfOnly()の決定的な規則で選定した数値のまま
+        // (無改修)。
+        //
+        // 依頼Q-2(2026-08-25): PDF版と同じ出し分け。改善提案AIが
+        // focus_sub_element_keysで有効な項目を挙げていれば3枚のカードはAI
+        // 由来に差し替わり($focusSelfOnly['items_source'] === 'ai')、
+        // 「最も少なかったのは〜」の一文(規則側の主張)は出さない ――
+        // 棒グラフに数値は残るため情報は失われない。AI未生成/失敗/有効な
+        // 項目0件のときは従来どおり規則由来の一文+カード('rule')のまま。
+        $focusSelfOnlyItemsSource = $focusSelfOnly['items_source'] ?? 'rule';
+        if ($focusSelfOnlyItemsSource === 'rule') {
+            $selectedLabelSelf = self::GROUP_LABELS[$focusSelfOnly['selected_group']] ?? $focusSelfOnly['selected_group'];
+            $section->addText(
+                "3つの領域のうち、サイトの記述から読み取れた項目が最も少なかったのは「{$selectedLabelSelf}」でした。".
+                'この領域から、候補者が知りたがる項目を'.count($focusSelfOnly['items']).'件挙げます。',
+            );
+        }
 
         $section->addTextBreak(1);
         foreach ($focusSelfOnly['groups'] as $group) {
@@ -511,14 +531,6 @@ class WordReportGenerator
             $section->addText(($i + 1).'. '.$item['sub_name'], ['bold' => true]);
             $section->addText($item['recommendation'], ['size' => 9, 'color' => '6B6767']);
             $section->addText($this->selfOnlyReasonLabel($item['self_reason']), ['size' => 8, 'color' => '9A9A9A']);
-        }
-
-        if (count($viewModel->improvementRecommendedContents) > 0) {
-            $section->addTextBreak(1);
-            $section->addText('具体的に追加すべき情報', ['bold' => true, 'size' => 10]);
-            foreach ($viewModel->improvementRecommendedContents as $content) {
-                $section->addText('・'.$content, ['size' => 9.5]);
-            }
         }
 
         if ($viewModel->improvementMidTermAction !== null) {

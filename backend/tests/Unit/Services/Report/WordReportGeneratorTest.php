@@ -83,6 +83,7 @@ class WordReportGeneratorTest extends TestCase
             'improvementRecommendedContents' => [],
             'improvementMidTermAction' => null,
             'selfLowContentNotice' => null,
+            'crawlSiteEnabled' => false,
         ];
         $defaults['improvementFocusSelfOnly'] = app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($defaults['subElementComparison']);
 
@@ -304,6 +305,31 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString('読み取れなかった項目は、その魅力が『無い』という意味ではありません。', $documentXml);
     }
 
+    /**
+     * 依頼Q-1: PDF版と同じ出し分け。crawl_site=falseでは従来どおりの文言。
+     */
+    public function test_intro_section_shows_the_crawl_disabled_scope_notice_by_default(): void
+    {
+        $documentXml = $this->generate($this->viewModel(['crawlSiteEnabled' => false]));
+
+        $this->assertStringContainsString((string) config('brand_wheel.crawl_disabled_scope_notice'), $documentXml);
+        $this->assertStringNotContainsString((string) config('brand_wheel.crawl_enabled_scope_notice'), $documentXml);
+    }
+
+    /**
+     * 依頼Q-1最重要: crawl_site=trueでは「巡回していない」という事実と
+     * 異なる文言を出さず、巡回ありの文言に切り替わること。PDFだけでなく
+     * Word版にも同じ対応を入れること(依頼者指定)。
+     */
+    public function test_intro_section_shows_the_crawl_enabled_scope_notice_when_crawl_site_is_enabled(): void
+    {
+        $documentXml = $this->generate($this->viewModel(['crawlSiteEnabled' => true]));
+
+        $this->assertStringContainsString((string) config('brand_wheel.crawl_enabled_scope_notice'), $documentXml);
+        $this->assertStringNotContainsString((string) config('brand_wheel.crawl_disabled_scope_notice'), $documentXml);
+        $this->assertStringNotContainsString('50ページ', $documentXml);
+    }
+
     // ------------------------------------------------------------------
     // 競合サイトの分析結果(2026-08-08新設)。
     // ------------------------------------------------------------------
@@ -346,6 +372,32 @@ class WordReportGeneratorTest extends TestCase
 
         $this->assertStringNotContainsString('競合サイトの分析結果', $documentXml);
         $this->assertStringNotContainsString('サイトから十分な文章を読み取れなかったため', $documentXml);
+    }
+
+    /**
+     * 依頼O-2/P-3(2026-08-25): PDF版と同じ注記をWord版の表紙にも入れる
+     * (依頼者指定 ―― PDFだけ直してWordが残る、という状態にしない)。
+     */
+    public function test_cover_section_shows_the_url_and_a_notice_when_the_competitor_is_not_readable(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel([
+            'brandWheelCompetitor' => $this->wheel([
+                'status' => 'insufficient_input',
+                'status_message' => 'サイトから十分な文章を読み取れなかったため、この項目の分析は行っていません。',
+            ]),
+            'competitorTotalMatched' => 0,
+            'competitorTotalMax' => 0,
+        ]));
+
+        $this->assertStringContainsString('比較サイト: https://competitor.example.com', $documentXml);
+        $this->assertStringContainsString(config('brand_wheel.cover_competitor_unreadable_notice'), $documentXml);
+    }
+
+    public function test_cover_section_omits_the_notice_when_the_competitor_is_readable(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel());
+
+        $this->assertStringNotContainsString(config('brand_wheel.cover_competitor_unreadable_notice'), $documentXml);
     }
 
     // ------------------------------------------------------------------
@@ -522,6 +574,26 @@ class WordReportGeneratorTest extends TestCase
     }
 
     /**
+     * 依頼Q-2(2026-08-25): improvementFocusSelfOnly['items_source']が
+     * 'ai'のとき、カードはitems(改善提案AI由来)をそのまま表示し、規則側の
+     * 主張である「最も少なかったのは〜」の一文は出さないこと(PDF版と同内容)。
+     */
+    public function test_improvement_section_shows_ai_sourced_self_only_cards_without_the_rule_sentence(): void
+    {
+        $ruleFocus = $this->viewModel()->improvementFocusSelfOnly;
+        $aiFocus = $ruleFocus;
+        $aiFocus['items_source'] = 'ai';
+        $aiFocus['items'] = [
+            ['axis_name' => '経営スタイル', 'sub_name' => '重視する価値', 'definition' => '組織として大切にしている価値観や行動指針についての記述。', 'recommendation' => 'AIが選んだ提案文です。', 'self_reason' => 'none'],
+        ];
+
+        $documentXml = $this->generate($this->viewModel(['improvementFocusSelfOnly' => $aiFocus]));
+
+        $this->assertStringContainsString('AIが選んだ提案文です。', $documentXml);
+        $this->assertStringNotContainsString('サイトの記述から読み取れた項目が最も少なかったのは', $documentXml);
+    }
+
+    /**
      * 自社24項目すべてが○の場合、composeSelfOnly()はnullを返し、このセクション
      * 自体を丸ごと省略する(見出しだけの空セクションを作らない、2026-08-10)。
      */
@@ -623,25 +695,27 @@ class WordReportGeneratorTest extends TestCase
     }
 
     /**
-     * 2026-08-18: 旧「改善のご提案」単一パラグラフから、理由/具体的に追加す
-     * べき情報/中長期の差別化ポイントの3ブロック構成へ変更(依頼者指定、
-     * PDF版と同内容)。
+     * 2026-08-18: 旧「改善のご提案」単一パラグラフから、理由/中長期の差別化
+     * ポイントのブロック構成へ変更(依頼者指定、PDF版と同内容)。
      * 2026-08-19: 「中長期的には：」の1行を、「中長期の差別化ポイント」と
      * いう独立した見出し付きブロックへ格上げ(依頼者指定、PDF版の.diffboxと
      * 同内容)。
+     * 依頼Q-2(2026-08-25): 「具体的に追加すべき情報」の箇条書きは廃止した
+     * (カードと内容が重複するため、PDF版と同内容)。
      */
-    public function test_improvement_section_shows_reason_recommended_contents_and_differentiation_point_when_available(): void
+    public function test_improvement_section_shows_reason_and_differentiation_point_when_available(): void
     {
         $documentXml = $this->generate($this->comparisonViewModel());
 
         $this->assertStringContainsString('理由：', $documentXml);
         $this->assertStringContainsString('就業環境は競合が2件読み取れているのに対し自社は0件で、候補者が働くイメージを持ちにくい状態です。', $documentXml);
-        $this->assertStringContainsString('具体的に追加すべき情報', $documentXml);
-        $this->assertStringContainsString('入社数年目の社員の1日の過ごし方', $documentXml);
-        $this->assertStringContainsString('部署間の関わり方が分かるエピソード', $documentXml);
         $this->assertStringContainsString('中長期の差別化ポイント', $documentXml);
         $this->assertStringNotContainsString('中長期的には：', $documentXml);
         $this->assertStringContainsString('部署横断プロジェクトの事例をシリーズ化することも検討できます。', $documentXml);
+        // 依頼Q-2: comparisonViewModel()のfixtureはimprovementRecommendedContentsに
+        // 値を持つが、「具体的に追加すべき情報」ブロック自体はもう出ない。
+        $this->assertStringNotContainsString('具体的に追加すべき情報', $documentXml);
+        $this->assertStringNotContainsString('入社数年目の社員の1日の過ごし方', $documentXml);
     }
 
     /**

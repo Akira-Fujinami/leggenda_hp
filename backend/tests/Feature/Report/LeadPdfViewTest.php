@@ -122,6 +122,7 @@ class LeadPdfViewTest extends TestCase
             'improvementRecommendedContents' => [],
             'improvementMidTermAction' => null,
             'selfLowContentNotice' => null,
+            'crawlSiteEnabled' => false,
         ];
         $defaults['improvementFocusSelfOnly'] = app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($defaults['subElementComparison']);
 
@@ -211,6 +212,34 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringNotContainsString('比較サイト:', $html);
     }
 
+    /**
+     * 依頼O-2/P-3(2026-08-25): 競合サイトのURLはあるが分析が成立しなかった
+     * ($competitorReadable=false)場合、表紙は比較サイトのURLを案内し続ける
+     * のに本文(3・5ページ)には比較サイトの列が一切無いという不一致が
+     * あった。URLは残したまま、理由の注記を添える(案B、依頼者確定)。
+     */
+    public function test_cover_page_shows_the_url_and_a_notice_when_the_competitor_is_not_readable(): void
+    {
+        $html = $this->render($this->comparisonViewModel([
+            'brandWheelCompetitor' => $this->wheel([
+                'status' => 'insufficient_input',
+                'status_message' => 'サイトから十分な文章を読み取れなかったため、この項目の分析は行っていません。',
+            ]),
+            'competitorTotalMatched' => 0,
+            'competitorTotalMax' => 0,
+        ]));
+
+        $this->assertStringContainsString('比較サイト: https://competitor.example.com', $html);
+        $this->assertStringContainsString(config('brand_wheel.cover_competitor_unreadable_notice'), $html);
+    }
+
+    public function test_cover_page_omits_the_notice_when_the_competitor_is_readable(): void
+    {
+        $html = $this->render($this->comparisonViewModel());
+
+        $this->assertStringNotContainsString(config('brand_wheel.cover_competitor_unreadable_notice'), $html);
+    }
+
     public function test_cover_page_shows_the_partial_caveat_when_the_analysis_is_partial(): void
     {
         $html = $this->render($this->viewModel(['isPartial' => true]));
@@ -265,6 +294,33 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('仕事の魅力', $html);
         $this->assertStringNotContainsString('青／会社の魅力', $html);
         $this->assertStringNotContainsString('赤／仕事の魅力', $html);
+    }
+
+    /**
+     * 依頼Q-1: crawl_site=falseの診断では、従来どおり「サイト全体や他の
+     * 関連ページを自動的に巡回して分析するものではありません」という
+     * 文言のまま(実際に巡回していないので正しい)。
+     */
+    public function test_intro_page_shows_the_crawl_disabled_scope_notice_by_default(): void
+    {
+        $html = $this->render($this->viewModel(['crawlSiteEnabled' => false]));
+
+        $this->assertStringContainsString((string) config('brand_wheel.crawl_disabled_scope_notice'), $html);
+        $this->assertStringNotContainsString((string) config('brand_wheel.crawl_enabled_scope_notice'), $html);
+    }
+
+    /**
+     * 依頼Q-1最重要: crawl_site=trueの診断(レポート35、実際に50ページを
+     * 巡回)では、「巡回していない」という事実と異なる文言を出さず、
+     * 巡回ありの文言に切り替わること。ページ数上限等の設定値は書かない。
+     */
+    public function test_intro_page_shows_the_crawl_enabled_scope_notice_when_crawl_site_is_enabled(): void
+    {
+        $html = $this->render($this->viewModel(['crawlSiteEnabled' => true]));
+
+        $this->assertStringContainsString((string) config('brand_wheel.crawl_enabled_scope_notice'), $html);
+        $this->assertStringNotContainsString((string) config('brand_wheel.crawl_disabled_scope_notice'), $html);
+        $this->assertStringNotContainsString('50ページ', $html);
     }
 
     // ------------------------------------------------------------------
@@ -897,6 +953,32 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringNotContainsString('比較サイトとの差', $pageHtml);
     }
 
+    /**
+     * 依頼Q-2(2026-08-25): improvementFocusSelfOnly['items_source']が
+     * 'ai'のとき、カードはitemsの内容(改善提案AI由来)をそのまま表示し、
+     * 規則側の主張である「最も少なかったのは〜」の一文は出さないこと
+     * (ReportViewModelBuilder::buildAiSelfOnlyFocusItems()が組み立てる形と
+     * 同じ構造をここでは直接fixtureとして与える)。
+     */
+    public function test_improvement_page_shows_ai_sourced_self_only_cards_without_the_rule_sentence(): void
+    {
+        $ruleFocus = $this->viewModel()->improvementFocusSelfOnly;
+        $aiFocus = $ruleFocus;
+        $aiFocus['items_source'] = 'ai';
+        $aiFocus['items'] = [
+            ['axis_name' => '経営スタイル', 'sub_name' => '重視する価値', 'definition' => '組織として大切にしている価値観や行動指針についての記述。', 'recommendation' => 'AIが選んだ提案文です。', 'self_reason' => 'none'],
+        ];
+
+        $html = $this->render($this->viewModel(['improvementFocusSelfOnly' => $aiFocus]));
+
+        $start = mb_strpos($html, '改善提案');
+        $this->assertNotFalse($start);
+        $pageHtml = mb_substr($html, $start);
+
+        $this->assertStringContainsString('AIが選んだ提案文です。', $pageHtml);
+        $this->assertStringNotContainsString('サイトの記述から読み取れた項目が最も少なかったのは', $pageHtml);
+    }
+
     public function test_improvement_page_self_only_cards_distinguish_none_from_label_only(): void
     {
         // will_activity(company_appeal)に「－」1件(social_contribution)+
@@ -1123,37 +1205,38 @@ class LeadPdfViewTest extends TestCase
 
     /**
      * 2026-08-18: 旧「改善のご提案」単一パラグラフ(improvementRecommendation)を
-     * 廃止し、理由/具体的に追加すべき情報/中長期の差別化ポイントの3ブロックへ
-     * 分解した(依頼者指定 ―― 結論だけでなく、なぜ・何を・いつまでにが追える
-     * 構成にする)。
+     * 廃止し、理由/中長期の差別化ポイントのブロックへ分解した(依頼者指定 ――
+     * 結論だけでなく、なぜ・何を・いつまでにが追える構成にする)。
      * 2026-08-19: 「中長期的には：」の1行を、「中長期の差別化ポイント」という
      * 独立した見出し付きボックス(.diffbox)へ格上げした(依頼者指定 ――
      * 「差を埋める提案」と「差別化提案」を役割として明確に分けるため)。
+     * 依頼Q-2(2026-08-25): 「具体的に追加すべき情報」の箇条書きは廃止した
+     * (カードと内容が重複し、1ページに複数の推奨が並んで見えるため)。
+     * improvementRecommendedContentsに値があっても出さないことを確認する。
      */
-    public function test_improvement_page_shows_reason_recommended_contents_and_differentiation_point_when_available(): void
+    public function test_improvement_page_shows_reason_and_differentiation_point_when_available(): void
     {
         $html = $this->render($this->comparisonViewModel());
 
         $this->assertStringContainsString('理由：', $html);
         $this->assertStringContainsString('就業環境は競合が2件読み取れているのに対し自社は0件で、候補者が働くイメージを持ちにくい状態です。', $html);
-        $this->assertStringContainsString('具体的に追加すべき情報', $html);
-        $this->assertStringContainsString('入社数年目の社員の1日の過ごし方', $html);
-        $this->assertStringContainsString('部署間の関わり方が分かるエピソード', $html);
         $this->assertStringContainsString('中長期の差別化ポイント', $html);
         $this->assertStringNotContainsString('中長期的には：', $html);
         $this->assertStringContainsString('部署横断プロジェクトの事例をシリーズ化することも検討できます。', $html);
+        // 依頼Q-2: comparisonViewModel()のfixtureはimprovementRecommendedContentsに
+        // 値を持つが、「具体的に追加すべき情報」ブロック自体はもう出ない。
+        $this->assertStringNotContainsString('具体的に追加すべき情報', $html);
+        $this->assertStringNotContainsString('入社数年目の社員の1日の過ごし方', $html);
     }
 
     public function test_improvement_page_omits_each_ai_block_independently_when_unavailable(): void
     {
         $html = $this->render($this->comparisonViewModel([
             'improvementReason' => null,
-            'improvementRecommendedContents' => [],
             'improvementMidTermAction' => null,
         ]));
 
         $this->assertStringNotContainsString('理由：', $html);
-        $this->assertStringNotContainsString('具体的に追加すべき情報', $html);
         $this->assertStringNotContainsString('中長期の差別化ポイント', $html);
     }
 }

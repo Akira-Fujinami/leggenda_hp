@@ -86,6 +86,7 @@ class PdfReportGeneratorTest extends TestCase
             improvementRecommendedContents: ['入社数年目の社員の1日の過ごし方'],
             improvementMidTermAction: '中長期的には、部署横断プロジェクトの事例をシリーズ化することも検討できます。',
             selfLowContentNotice: null,
+            crawlSiteEnabled: false,
         );
     }
 

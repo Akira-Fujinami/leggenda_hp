@@ -98,6 +98,34 @@ class ReportViewModelBuilderTest extends TestCase
         $this->assertIsArray($viewModel->brandWheelSelf);
     }
 
+    /**
+     * 依頼Q-1: ReportViewModel::$crawlSiteEnabledはAnalysis.crawl_siteを
+     * そのまま複製する。
+     */
+    public function test_crawl_site_enabled_reflects_the_analysis_crawl_site_flag(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $user = User::factory()->create()->id;
+
+        // Website.is_primaryはproject単位で高々1件のため、2つのAnalysisを
+        // 別々のProjectに分ける(1つのProjectを使い回すと一意制約違反になる)。
+        $crawlingProject = new Project(['name' => 'テスト(巡回あり)']);
+        $crawlingProject->user_id = $user;
+        $crawlingProject->lead_session_id = $leadSession->id;
+        $crawlingProject->save();
+        $crawlingAnalysis = Analysis::factory()->create(['project_id' => $crawlingProject->id, 'status' => AnalysisStatus::Completed, 'crawl_site' => true]);
+        $this->makeWebsiteAnalysis($crawlingAnalysis, isPrimary: true);
+        $this->assertTrue(app(ReportViewModelBuilder::class)->build($crawlingAnalysis, $leadSession)->crawlSiteEnabled);
+
+        $nonCrawlingProject = new Project(['name' => 'テスト(巡回なし)']);
+        $nonCrawlingProject->user_id = $user;
+        $nonCrawlingProject->lead_session_id = $leadSession->id;
+        $nonCrawlingProject->save();
+        $nonCrawlingAnalysis = Analysis::factory()->create(['project_id' => $nonCrawlingProject->id, 'status' => AnalysisStatus::Completed, 'crawl_site' => false]);
+        $this->makeWebsiteAnalysis($nonCrawlingAnalysis, isPrimary: true);
+        $this->assertFalse(app(ReportViewModelBuilder::class)->build($nonCrawlingAnalysis, $leadSession)->crawlSiteEnabled);
+    }
+
     public function test_brand_wheel_is_composed_for_self_and_competitor_websites(): void
     {
         $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
@@ -496,6 +524,157 @@ class ReportViewModelBuilderTest extends TestCase
             $this->assertArrayNotHasKey('competitor_evidence', $item);
             $this->assertContains($item['self_reason'], ['none', 'label_only']);
         }
+    }
+
+    /**
+     * 依頼Q-2最重要(2026-08-25、レポート35の再現): 自社が閾値以上
+     * (=AIが呼ばれる)かつ競合が無い/不十分なとき、3枚のカードは改善提案AI
+     * (BrandWheelImprovementSuggestion.focus_sub_element_keys)由来に差し替わり、
+     * items_source='ai'になること。規則(composeSelfOnly())が選ぶ領域
+     * (personality/company_distanceグループ、全4件が「－」で最多)と、AIが
+     * 選ぶ領域(company_appealグループのasset軸)が異なっていても、カードは
+     * AI側の選択で統一されること(1ページ1推奨の確認)。
+     */
+    public function test_improvement_focus_self_only_items_come_from_ai_focus_keys_when_self_is_sufficient(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        // 自社matched=6(will_activity4件+asset2件、閾値ちょうど)。
+        // personality軸(会社との距離グループ)は0/4で「－」が最多 ――
+        // 規則(composeSelfOnly())はcompany_distanceグループを選ぶはず。
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => 'a'], ['key' => 'business_expansion', 'evidence' => 'b'],
+                    ['key' => 'project_initiative', 'evidence' => 'c'], ['key' => 'social_contribution', 'evidence' => 'd'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'e'], ['key' => 'competitiveness', 'evidence' => 'f'],
+                ]],
+            ],
+        ]);
+
+        // AIはcompany_appealグループ(asset軸)のscale_influence/office_facilityを
+        // 選ぶ(規則の選択=company_distanceとは異なる領域)。
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'one_point' => 'まずは規模・影響力とオフィス・施設を具体的に紹介することを推奨します。',
+            'reason' => '候補者は働く環境の規模感を知りたいと考えられます。',
+            'focus_sub_element_keys' => ['scale_influence', 'office_facility'],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame(6, $viewModel->selfTotalMatched);
+        $this->assertNotNull($viewModel->improvementFocusSelfOnly);
+        $this->assertSame('ai', $viewModel->improvementFocusSelfOnly['items_source']);
+        $this->assertCount(2, $viewModel->improvementFocusSelfOnly['items']);
+        $subNames = array_column($viewModel->improvementFocusSelfOnly['items'], 'sub_name');
+        $this->assertSame(['規模・影響力', 'オフィス・施設'], $subNames);
+        // 規則が選ぶはずだったcompany_distanceグループの項目(リーダーシップ等)は
+        // カードに出ない ―― 1ページに2つの領域が混ざらないことの確認。
+        $this->assertNotContains('リーダーシップ', $subNames);
+        // groups(棒グラフ)は規則由来のまま(無改修)。
+        $this->assertNotEmpty($viewModel->improvementFocusSelfOnly['groups']);
+    }
+
+    /**
+     * 依頼Q-2: AIが挙げたキーに、既に自社で○(matched)の項目のキーが
+     * 混ざっていた場合、防御的フィルタでそのキーだけを除外すること
+     * (プロンプト側の指示に従わなかった場合の最後の防波堤)。
+     */
+    public function test_improvement_focus_self_only_ai_items_exclude_already_matched_keys(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => 'a'], ['key' => 'business_expansion', 'evidence' => 'b'],
+                    ['key' => 'project_initiative', 'evidence' => 'c'], ['key' => 'social_contribution', 'evidence' => 'd'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'e'], ['key' => 'competitiveness', 'evidence' => 'f'],
+                ]],
+            ],
+        ]);
+
+        // 'purpose'は既に○(matched)。指示違反を模す。
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'one_point' => 'まずはオフィス・施設を具体的に紹介することを推奨します。',
+            'focus_sub_element_keys' => ['purpose', 'office_facility'],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame('ai', $viewModel->improvementFocusSelfOnly['items_source']);
+        $subNames = array_column($viewModel->improvementFocusSelfOnly['items'], 'sub_name');
+        $this->assertSame(['オフィス・施設'], $subNames);
+    }
+
+    /**
+     * 依頼Q-2: 改善提案AIが未生成/失敗、またはfocus_sub_element_keysが
+     * 有効な項目を1件も含まない場合は、従来どおり規則
+     * (composeSelfOnly())由来のitemsにフォールバックすること
+     * (「誤ったカードを出すくらいなら規則由来のほうがマシ」という
+     * 依頼者方針)。
+     */
+    public function test_improvement_focus_self_only_falls_back_to_rule_items_when_ai_suggestion_is_unavailable(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => 'a'], ['key' => 'business_expansion', 'evidence' => 'b'],
+                    ['key' => 'project_initiative', 'evidence' => 'c'], ['key' => 'social_contribution', 'evidence' => 'd'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'e'], ['key' => 'competitiveness', 'evidence' => 'f'],
+                ]],
+            ],
+        ]);
+        // 改善提案AIの行自体を作らない(未生成/生成中を模す)。
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame(6, $viewModel->selfTotalMatched);
+        $this->assertNotNull($viewModel->improvementFocusSelfOnly);
+        $this->assertSame('rule', $viewModel->improvementFocusSelfOnly['items_source']);
+        $this->assertNotEmpty($viewModel->improvementFocusSelfOnly['items']);
     }
 
     /**
@@ -934,8 +1113,10 @@ class ReportViewModelBuilderTest extends TestCase
     }
 
     /**
-     * 修正5: 自社の合計matched件数が閾値未満のとき、件数の近くに添える
-     * 但し書きがViewModelに設定される。閾値以上のときはnull。
+     * 依頼P-2(2026-08-25、依頼Oの続き): matched件数が閾値未満、かつ
+     * 実際の入力文字数(input_char_count)も閾値
+     * (self_low_content_notice_min_chars)未満 ―― 実際に本文が少なかった
+     * ケースなので、(a)の文言(self_low_content_notice)のまま。
      */
     public function test_self_low_content_notice_is_set_only_when_self_is_below_the_sufficiency_threshold(): void
     {
@@ -952,6 +1133,7 @@ class ReportViewModelBuilderTest extends TestCase
             'analysis_id' => $analysis->id,
             'website_analysis_id' => $selfWa->id,
             'status' => 'success',
+            'input_char_count' => 500,
             'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
                 ['key' => 'leadership', 'evidence' => 'a'], ['key' => 'org_structure', 'evidence' => 'b'],
                 ['key' => 'company_character', 'evidence' => 'c'], ['key' => 'core_values', 'evidence' => 'd'],
@@ -962,6 +1144,151 @@ class ReportViewModelBuilderTest extends TestCase
 
         $this->assertSame((string) config('brand_wheel.self_low_content_notice'), $viewModel->selfLowContentNotice);
         $this->assertStringNotContainsString('情報が無い', $viewModel->selfLowContentNotice);
+    }
+
+    /**
+     * 依頼O-1/P-2: input_truncated=trueは「予算上限まで本文があった」ことの
+     * 証拠であり、「本文が少なかった」という但し書きの前提と矛盾する
+     * (レポート34: 本文23,935字→17,945字に切り詰め、matched=5/24で
+     * 但し書きが誤って表示された)。matched件数が閾値未満でも、
+     * input_truncated=trueのときは(a)ではなく(b)
+     * (self_low_content_notice_thin_match、「診断結果そのもの」の文言)を
+     * 出すこと。
+     */
+    public function test_self_low_content_notice_shows_thin_match_wording_when_input_was_truncated(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'input_truncated' => true,
+            'input_char_count' => 17945,
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
+                ['key' => 'leadership', 'evidence' => 'a'], ['key' => 'org_structure', 'evidence' => 'b'],
+                ['key' => 'company_character', 'evidence' => 'c'], ['key' => 'core_values', 'evidence' => 'd'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        // matched=4 < comparison_sufficiency_threshold(6)だが、
+        // input_truncated=trueのため(a)ではなく(b)を出す。
+        $this->assertSame(4, $viewModel->selfTotalMatched);
+        $this->assertSame((string) config('brand_wheel.self_low_content_notice_thin_match'), $viewModel->selfLowContentNotice);
+    }
+
+    /**
+     * 依頼P-2: matched件数が閾値未満だが、input_truncated=falseかつ
+     * input_char_countがself_low_content_notice_min_chars(既定3000)以上
+     * ―― truncationは起きていないが、本文自体は閾値以上あった場合も
+     * 同じく(b)を出すこと(truncated=trueだけが(b)の条件ではない)。
+     */
+    public function test_self_low_content_notice_shows_thin_match_wording_when_char_count_meets_the_threshold_without_truncation(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'input_truncated' => false,
+            'input_char_count' => (int) config('brand_wheel.self_low_content_notice_min_chars'),
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
+                ['key' => 'leadership', 'evidence' => 'a'], ['key' => 'org_structure', 'evidence' => 'b'],
+                ['key' => 'company_character', 'evidence' => 'c'], ['key' => 'core_values', 'evidence' => 'd'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame((string) config('brand_wheel.self_low_content_notice_thin_match'), $viewModel->selfLowContentNotice);
+    }
+
+    /**
+     * 依頼P-2最重要: matched件数が閾値未満で、input_char_countがnull
+     * (旧データ・input組み立て失敗等で判定材料が無い)のときは、(a)(b)
+     * いずれの文言も出さないこと。判定材料が無いときに推測で「本文が
+     * 少なかった」と断定しない(レポート34の誤りの再発防止)。
+     */
+    public function test_self_low_content_notice_is_null_when_char_count_is_unknown(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'input_truncated' => false,
+            'input_char_count' => null,
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
+                ['key' => 'leadership', 'evidence' => 'a'], ['key' => 'org_structure', 'evidence' => 'b'],
+                ['key' => 'company_character', 'evidence' => 'c'], ['key' => 'core_values', 'evidence' => 'd'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame(4, $viewModel->selfTotalMatched);
+        $this->assertNull($viewModel->selfLowContentNotice);
+    }
+
+    /**
+     * 依頼P-2: self_low_content_notice_min_charsをconfigで差し替えたとき、
+     * (a)/(b)の判定がその値に追随すること。
+     */
+    public function test_self_low_content_notice_threshold_follows_config(): void
+    {
+        config(['brand_wheel.self_low_content_notice_min_chars' => 1000]);
+
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        // 変更後の閾値(1000)以上・変更前の既定値(3000)未満 ―― configを
+        // 差し替えていなければ(a)になるはずの文字数で(b)になることを確認する。
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'input_truncated' => false,
+            'input_char_count' => 1500,
+            'axes' => [['axis_key' => 'personality', 'matched_sub_elements' => [
+                ['key' => 'leadership', 'evidence' => 'a'], ['key' => 'org_structure', 'evidence' => 'b'],
+                ['key' => 'company_character', 'evidence' => 'c'], ['key' => 'core_values', 'evidence' => 'd'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame((string) config('brand_wheel.self_low_content_notice_thin_match'), $viewModel->selfLowContentNotice);
     }
 
     public function test_self_low_content_notice_is_null_when_self_meets_the_sufficiency_threshold(): void
@@ -1016,6 +1343,11 @@ class ReportViewModelBuilderTest extends TestCase
             'analysis_id' => $analysis->id,
             'website_analysis_id' => $selfWa->id,
             'status' => 'success',
+            // 依頼P-2: このフィクスチャは実際に本文が薄かったケース
+            // (レポート32、NTTデータ4/24)を再現するため、
+            // self_low_content_notice_min_chars(既定3000)未満の文字数を
+            // 指定し、(a)の文言が出ることを確認する。
+            'input_char_count' => 800,
             'axes' => [
                 ['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => '技術で社会基盤を支える']]],
                 ['axis_key' => 'personality', 'matched_sub_elements' => [['key' => 'core_values', 'evidence' => '挑戦を続ける']]],

@@ -19,7 +19,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'axes', 'core_value_readable', 'core_value_evidence', 'key_message', 'impression',
     'positive_impression', 'negative_impression',
     'quality_dimension_notes', 'cautions',
-    'axis_state_counts', 'is_mock', 'input_hash', 'input_truncated', 'source_pages',
+    'axis_state_counts', 'is_mock', 'input_hash', 'input_truncated', 'input_char_count', 'source_pages',
     'usage_input_tokens', 'usage_output_tokens', 'duration_ms', 'error_code', 'error_message', 'generated_at',
     'staff_notified_at', 'lead_notified_at',
 ])]
@@ -45,6 +45,7 @@ class BrandWheelAnalysisResult extends Model
             'axis_state_counts' => 'array',
             'is_mock' => 'boolean',
             'input_truncated' => 'boolean',
+            'input_char_count' => 'integer',
             'source_pages' => 'array',
             'usage_input_tokens' => 'integer',
             'usage_output_tokens' => 'integer',

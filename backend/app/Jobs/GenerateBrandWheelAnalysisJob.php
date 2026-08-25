@@ -178,6 +178,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'is_mock' => false,
                 'input_hash' => hash('sha256', json_encode($input->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
                 'input_truncated' => $input->inputTruncated,
+                'input_char_count' => $this->inputTotalChars($input),
                 'source_pages' => $input->sourcePages,
                 'usage_input_tokens' => null,
                 'usage_output_tokens' => null,
@@ -203,7 +204,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         try {
             $provider = app(BrandWheelAnalysisProviderFactory::class)->make();
         } catch (BrandWheelAnalysisException $e) {
-            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage()]);
+            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_char_count' => $this->inputTotalChars($input)]);
             $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
@@ -243,6 +244,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'is_mock' => $reusable->is_mock,
                 'input_hash' => $inputHash,
                 'input_truncated' => $input->inputTruncated,
+                'input_char_count' => $this->inputTotalChars($input),
                 'source_pages' => $input->sourcePages,
                 'usage_input_tokens' => 0,
                 'usage_output_tokens' => 0,
@@ -273,7 +275,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 return;
             }
 
-            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_hash' => $inputHash, 'input_truncated' => $input->inputTruncated]);
+            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_hash' => $inputHash, 'input_truncated' => $input->inputTruncated, 'input_char_count' => $this->inputTotalChars($input)]);
             $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
@@ -300,6 +302,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             'is_mock' => $result->isMock,
             'input_hash' => $inputHash,
             'input_truncated' => $input->inputTruncated,
+            'input_char_count' => $this->inputTotalChars($input),
             'source_pages' => $input->sourcePages,
             'usage_input_tokens' => $outcome->usageInputTokens,
             'usage_output_tokens' => $outcome->usageOutputTokens,
@@ -512,10 +515,18 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
      */
     private function isInputInsufficient(BrandWheelAnalysisInput $input): bool
     {
-        $totalChars = mb_strlen($input->recruitPageBodyText) + mb_strlen($input->homepageBodyText);
-        $minChars = (int) config('brand_wheel.insufficient_input_min_total_chars', 200);
+        return $this->inputTotalChars($input) < (int) config('brand_wheel.insufficient_input_min_total_chars', 200);
+    }
 
-        return $totalChars < $minChars;
+    /**
+     * 依頼P-1(2026-08-25): brand_wheel_analysis_results.input_char_countの
+     * 算出式。isInputInsufficient()と同じ値(採用ページ本文+トップページ
+     * 本文の合計文字数)を、意味の異なる2箇所で別々に計算しないよう
+     * ここへ切り出した。
+     */
+    private function inputTotalChars(BrandWheelAnalysisInput $input): int
+    {
+        return mb_strlen($input->recruitPageBodyText) + mb_strlen($input->homepageBodyText);
     }
 
     /**

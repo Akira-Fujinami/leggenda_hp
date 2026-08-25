@@ -88,6 +88,54 @@ class OpenAiBrandWheelImprovementSuggestionProviderTest extends TestCase
         });
     }
 
+    /**
+     * 依頼Q(2026-08-25、v6): v5は断定禁止の推奨表現として「〜可能性が
+     * あります」「〜かもしれません」の2つをほぼ唯一の語尾として提示して
+     * おり、実際の生成文で同じ語尾が1つの提言内で3回連続する事例が
+     * あった(レポート35)。断定禁止そのものの指示は維持したまま、
+     * 語尾のバリエーションを増やし「同じ語尾を繰り返さない」ことを
+     * 明示的に指示していることを確認する。
+     */
+    public function test_prompt_instructs_varying_the_hedging_phrase_instead_of_repeating_it(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        $this->fakeSuccessfulResponse(['one_point' => null, 'recommendation' => null, 'focus_sub_element_keys' => []]);
+
+        (new OpenAiBrandWheelImprovementSuggestionProvider(new BrandWheelImprovementSuggestionResponseParser))->analyze($this->makeInput());
+
+        Http::assertSent(function ($request) {
+            $content = $request->data()['messages'][0]['content'] ?? '';
+
+            return str_contains($content, '同じ語尾を1つの提言内で繰り返さない')
+                && str_contains($content, '〜と考えられます')
+                && str_contains($content, '〜と見込まれます')
+                // 断定してよいという意味ではない、という留保も維持されていること。
+                && str_contains($content, '断定を避けるという趣旨自体は変わりません');
+        });
+    }
+
+    /**
+     * 依頼Q-2(2026-08-25、v7): 改善提案ページのカード(自社単独モード)を
+     * focus_sub_element_keysから直接組み立てるようになったため、
+     * self_unmatched_itemsのみを対象とし、既に○の項目のキーを含めない
+     * ことを明示的に指示していることを確認する。
+     */
+    public function test_prompt_restricts_focus_sub_element_keys_to_self_unmatched_items(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        $this->fakeSuccessfulResponse(['one_point' => null, 'recommendation' => null, 'focus_sub_element_keys' => []]);
+
+        (new OpenAiBrandWheelImprovementSuggestionProvider(new BrandWheelImprovementSuggestionResponseParser))->analyze($this->makeInput());
+
+        Http::assertSent(function ($request) {
+            $content = $request->data()['messages'][0]['content'] ?? '';
+
+            return str_contains($content, '必ずself_unmatched_items(自社に無い項目)の中から選んでください')
+                && str_contains($content, 'self_matched_items')
+                && str_contains($content, 'キーは含めないでください');
+        });
+    }
+
     public function test_analyze_returns_the_parsed_result_and_usage(): void
     {
         config(['services.openai.api_key' => 'test-key']);

@@ -464,6 +464,17 @@
     <p>対象サイト: {{ $viewModel->selfWebsiteUrl }}</p>
     @if ($viewModel->competitorWebsiteUrl)
         <p>比較サイト: {{ $viewModel->competitorWebsiteUrl }}</p>
+        {{--
+            依頼O-2/P-3(2026-08-25): 競合サイトの分析が成立しなかった
+            ($competitorReadable=false)場合、表紙は比較サイトのURLを
+            案内し続けるのに本文(3・5ページ)には比較サイトの列が
+            一切存在しない不一致があった。URL自体は残したまま、理由を
+            添える(案B、依頼者確定)。$competitorReadableの判定ロジック
+            自体は変更しない(既存のまま)。
+        --}}
+        @if (! $competitorReadable)
+            <p style="font-size: 9pt; color: #7a7a7a;">{{ config('brand_wheel.cover_competitor_unreadable_notice') }}</p>
+        @endif
     @endif
     <p>{{ $viewModel->generatedAtLabel }}</p>
     @if ($viewModel->isPartial)
@@ -527,14 +538,19 @@
     <p class="introbody">6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。中心の<b>Core Value(約束する価値)</b>は、その24項目を貫く「この会社が候補者に約束するもの」にあたります。</p>
     {{-- 2026-08-17: 「点数付けではなく、件数の集計です」という件数集計
          フレーミングを弱め、レポートの目的(候補者への伝わり方の分析)を
-         主文にする(依頼者指定#3)。URL分析対象範囲の明記(依頼者指定#5、
-         実装調査で確認: 採用ページ・トップページの記述のみを対象とし、
-         サイト全体の自動巡回は行っていない)もここに追加する。 --}}
+         主文にする(依頼者指定#3)。URL分析対象範囲の明記(依頼者指定#5)も
+         ここに追加する。
+         2026-08-25(依頼Q-1): 依頼L以降、crawl_site=trueの診断では実際に
+         同一サイト内の関連ページを自動巡回するようになったため、「サイト
+         全体の自動巡回は行っていない」は常に正しいわけではなくなった。
+         $viewModel->crawlSiteEnabledで文言を出し分ける
+         (config('brand_wheel.crawl_disabled_scope_notice')/
+         crawl_enabled_scope_notice、依頼者確定文言)。 --}}
     {{-- 2026-08-18: 「この24項目のうち何件が...もあわせて示しています」という
          件数集計の補足説明を削除(依頼者指定 ―― 件数集計資料の印象を強めるため)。
          N/24等の数値表示自体は3・4ページの統計ボックス等に引き続き残す。 --}}
     <p class="introbody">本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています。</p>
-    <p class="introbody" style="font-size: 9.5pt; color: #6B6767;">本分析は、ご提供いただいた採用ページ・トップページの記述を対象としており、サイト全体や他の関連ページを自動的に巡回して分析するものではありません。</p>
+    <p class="introbody" style="font-size: 9.5pt; color: #6B6767;">{{ $viewModel->crawlSiteEnabled ? config('brand_wheel.crawl_enabled_scope_notice') : config('brand_wheel.crawl_disabled_scope_notice') }}</p>
     <p class="introcaution">読み取れなかった項目は、その魅力が『無い』という意味ではありません。サイトにそう書かれていない、というだけです。また、採用ブランドは本来、グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。</p>
 </div>
 
@@ -846,13 +862,10 @@
 
                 {{--
                     2026-08-18: 単一段落の「改善のご提案」(旧recommendation)を、
-                    依頼者指定の構成に合わせて「具体的に追加すべき情報」(箇条書き、
-                    最大3項目)＋「中長期の差別化ポイント」(該当する場合のみ)に
-                    分割した。既存のグループ差バー＋証拠カード(無改修、決定的
-                    ロジック)は「自社と競合の差」の根拠として残し、その下に
-                    結論(具体的に追加すべき情報=今すぐ優先して改善すること)を
-                    続ける構成にする。未生成/失敗時は非表示(既存のバー＋
-                    カードのみで成立する)。
+                    依頼者指定の構成に合わせて理由＋「中長期の差別化ポイント」
+                    (該当する場合のみ)に分割した。既存のグループ差バー＋証拠
+                    カード(無改修、決定的ロジック)は「自社と競合の差」の根拠と
+                    して残す。
 
                     2026-08-19: 「中長期の差別化ポイント」を、単なる末尾の
                     1行(旧.midterm)から、Quick Win系ボックスと明確に分離した
@@ -863,17 +876,14 @@
                     mutually_unmatched_items(自社・競合とも未充足の項目)から
                     AIが選んだ1テーマのみ(OpenAiBrandWheelImprovementSuggestion
                     Provider::buildPrompt()参照、決め打ちのカテゴリではない)。
+
+                    依頼Q-2(2026-08-25): 「具体的に追加すべき情報」の箇条書き
+                    (旧$viewModel->improvementRecommendedContents)は廃止した ――
+                    上のカード(sub_element_recommendationsの文面)と実質同じ
+                    内容を繰り返しており、「1ページ1推奨」の妨げになっていた
+                    (依頼者指定)。フィールド自体(AI生成・DB保存)は変更して
+                    いない、表示しないだけ。
                 --}}
-                @if (count($viewModel->improvementRecommendedContents) > 0)
-                    <div class="recobox">
-                        <p class="t">具体的に追加すべき情報</p>
-                        <ul class="recolist">
-                            @foreach ($viewModel->improvementRecommendedContents as $content)
-                                <li>{{ $content }}</li>
-                            @endforeach
-                        </ul>
-                    </div>
-                @endif
                 @if ($viewModel->improvementMidTermAction)
                     <div class="diffbox">
                         <p class="t">中長期の差別化ポイント</p>
@@ -888,19 +898,36 @@
                 2026-08-10: 競合が無い(または読み取れない)診断向け。
                 「比較サイトが無いため、領域ごとの比較はご用意できません。」の
                 1行だけでページの大半が空白になり、営業資料として成立しない
-                という指摘(ユーザー)への対応。競合の実データを使わず、自社の
-                「－」「△」項目(BrandWheelImprovementFocusComposer::
-                composeSelfOnly()、決定的な規則で選定)だけで構成する。
+                という指摘(ユーザー)への対応。棒グラフ(groups)は常に
+                BrandWheelImprovementFocusComposer::composeSelfOnly()の決定的な
+                規則で選定した数値のまま(無改修)。
                 最終ページの「3〜5社と比較しませんか」への導線として機能させる。
+
+                依頼Q-2(2026-08-25): レポート35で、AI(ワンポイント/理由)と
+                規則(「最も少なかったのは〜」+3枚のカード)が同時に描画され、
+                領域が食い違って見える不具合があった(1ページに2つの推奨が
+                並ぶ状態)。改善提案AIがfocus_sub_element_keysで有効な項目を
+                挙げていれば、3枚のカード(items)はAI由来に差し替わり
+                ($focusSelf['items_source'] === 'ai'、ReportViewModelBuilder::
+                buildAiSelfOnlyFocusItems()参照)、「最も少なかったのは〜」の
+                一文(規則側のselected_groupに基づく主張)は出さない ――
+                棒グラフには実際の数値が残るため、情報は失われない。
+                AI未生成/失敗/有効な項目0件のときは、従来どおり規則由来の
+                一文+カード('rule')のまま(=この分岐の元の挙動)。
+                items_sourceキーが無いViewModel(ReportViewModelBuilderを経由
+                しない単体テストのfixture等)は'rule'扱いにする。
             --}}
             @php
                 $focusSelf = $viewModel->improvementFocusSelfOnly;
+                $focusSelfItemsSource = $focusSelf['items_source'] ?? 'rule';
                 $selectedLabelSelf = $groupBands[$focusSelf['selected_group']]['label'] ?? $focusSelf['selected_group'];
                 $selfOnlyReasonLabel = fn (string $reason) => $reason === 'label_only'
                     ? '（現在、見出し・リンクラベルのみで、具体的な記述は見つかりませんでした）'
                     : '（現在、サイトからは読み取れませんでした）';
             @endphp
-            <p class="rlead">3つの領域のうち、サイトの記述から読み取れた項目が最も少なかったのは「{{ $selectedLabelSelf }}」でした。この領域から、候補者が知りたがる項目を{{ count($focusSelf['items']) }}件挙げます。</p>
+            @if ($focusSelfItemsSource === 'rule')
+                <p class="rlead">3つの領域のうち、サイトの記述から読み取れた項目が最も少なかったのは「{{ $selectedLabelSelf }}」でした。この領域から、候補者が知りたがる項目を{{ count($focusSelf['items']) }}件挙げます。</p>
+            @endif
 
             {{-- 自社のみの3列版(nm/v/bar)。競合が無いため.gapbarの5列版
                  (nm/v/bar/v/bar)は使わず、赤い比較バーは出さない
@@ -937,16 +964,6 @@
                     </tr>
                 </table>
 
-                @if (count($viewModel->improvementRecommendedContents) > 0)
-                    <div class="recobox">
-                        <p class="t">具体的に追加すべき情報</p>
-                        <ul class="recolist">
-                            @foreach ($viewModel->improvementRecommendedContents as $content)
-                                <li>{{ $content }}</li>
-                            @endforeach
-                        </ul>
-                    </div>
-                @endif
                 @if ($viewModel->improvementMidTermAction)
                     <div class="diffbox">
                         <p class="t">中長期の差別化ポイント</p>
