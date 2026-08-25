@@ -787,6 +787,25 @@ class WordReportGeneratorTest extends TestCase
     }
 
     /**
+     * 依頼S(2026-08-26): improvementMidTermActionがnull(パーサ側で
+     * 文字列"null"がnullに変換された結果を含む)のとき、「中長期の
+     * 差別化ポイント」ブロックごと描画されないこと(PDF版と同内容 ――
+     * LeadPdfViewTest::test_improvement_page_omits_each_ai_block_independently_
+     * when_unavailable()参照)。
+     */
+    public function test_improvement_section_omits_the_mid_term_action_block_when_it_is_null(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel([
+            'improvementReason' => null,
+            'improvementMidTermAction' => null,
+        ]));
+
+        $this->assertStringNotContainsString('理由：', $documentXml);
+        $this->assertStringNotContainsString('中長期の差別化ポイント', $documentXml);
+        $this->assertStringNotContainsString('null', $documentXml);
+    }
+
+    /**
      * 修正3(2026-08-25): groupTotals/comparisonOverviewが空配列のとき
      * (ReportViewModelBuilderが自社/競合いずれかの閾値未満で空にする)、
      * Word版も比較結果サマリー自体を出さない(PDF版と同じ挙動)。

@@ -136,6 +136,30 @@ class OpenAiBrandWheelImprovementSuggestionProviderTest extends TestCase
         });
     }
 
+    /**
+     * 依頼S(2026-08-26、v8): v7のJSON Schema例
+     * `"mid_term_action": "string または null"` はnullをクォートで囲んだ
+     * 記法だったため、モデルが文字列"null"(4文字)を返し、レポートに
+     * 「null」がそのまま印字される事故が実物レポート37で発生した。
+     * プロンプトが「文字列"null"ではなくJSONのnullそのものを返す」ことを
+     * 明示していることを確認する。旧クォート記法(`"string または null"`)は
+     * もう含まれないこと。
+     */
+    public function test_prompt_clarifies_that_mid_term_action_null_must_be_json_null_not_the_string_null(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        $this->fakeSuccessfulResponse(['one_point' => null, 'recommendation' => null, 'focus_sub_element_keys' => []]);
+
+        (new OpenAiBrandWheelImprovementSuggestionProvider(new BrandWheelImprovementSuggestionResponseParser))->analyze($this->makeInput());
+
+        Http::assertSent(function ($request) {
+            $content = $request->data()['messages'][0]['content'] ?? '';
+
+            return str_contains($content, '文字列"null"ではなく、JSONのnullそのものを返すこと')
+                && ! str_contains($content, '"string または null"');
+        });
+    }
+
     public function test_analyze_returns_the_parsed_result_and_usage(): void
     {
         config(['services.openai.api_key' => 'test-key']);

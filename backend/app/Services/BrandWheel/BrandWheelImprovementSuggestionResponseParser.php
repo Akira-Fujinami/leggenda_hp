@@ -14,6 +14,11 @@ use App\Services\BrandWheel\Data\BrandWheelImprovementSuggestionResult;
  *   同じ扱い)。recommended_contents/focus_sub_element_keysは項目ごとに独立して
  *   同じチェックを適用する(1件が禁止語を含んでいても他の項目まで巻き添えで
  *   捨てない)。
+ * - 依頼S(2026-08-26): 上記4フィールド+recommended_contentsの各要素は、
+ *   値全体が"null"(大文字小文字を問わない完全一致)の場合もnullとして扱う
+ *   ―― モデルが文字列"null"(4文字)を返し、レポートに「null」がそのまま
+ *   印字される事故が実物レポート37で発生したため
+ *   (parseForbiddenPhraseSafeText()参照)。
  * - focus_sub_element_keys/gap_closing/differentiation_opportunitiesは実在する
  *   24キー(config('brand_wheel.axes')由来)以外を除外する ―― AIが実在しない
  *   項目キーを捏造して言及することを防ぐ。
@@ -76,6 +81,20 @@ class BrandWheelImprovementSuggestionResponseParser
      * 表現)も同じ扱いでチェックする。プロンプト側の指示(条件付き表現を
      * 使わせる)が最初の防波堤、これはAIが指示に従わなかった場合の
      * 最後の防波堤(forbidden_phrasesと同じ二重構成)。
+     *
+     * 依頼S(2026-08-26): 値全体が"null"(大文字小文字を問わない、前後の
+     * 空白を除いた完全一致)の場合もnullとして扱う ―― JSON Schemaは
+     * ['string', 'null']を許可しているが、v7のプロンプト例
+     * `"mid_term_action": "string または null"` がnullをクォートで囲んだ
+     * 記法だったため、モデルが文字列"null"(4文字)を返す事故が実物
+     * レポート37で発生した(v8でプロンプト側の例も修正済み、
+     * OpenAiBrandWheelImprovementSuggestionProvider参照)。この
+     * パーサ側の防御はプロンプト修正後も残す ―― 出力の信用しすぎを
+     * 避ける既存方針(このクラスのdocblock参照)と同じ考え方のため。
+     * 「値全体が一致する場合のみ」判定する ―― 本文中にたまたま"null"と
+     * いう語が含まれる正当な文章(例:「値がnullのままでも問題ありません」
+     * のような技術的な言及)まで捨てないため、str_contains()ではなく
+     * 完全一致で判定する。
      */
     private function parseForbiddenPhraseSafeText(mixed $raw, int $maxChars): ?string
     {
@@ -84,6 +103,11 @@ class BrandWheelImprovementSuggestionResponseParser
         }
 
         $text = trim($raw);
+
+        if (strtolower($text) === 'null') {
+            return null;
+        }
+
         $bannedPhrases = array_merge(
             (array) config('brand_wheel.forbidden_phrases', []),
             (array) config('brand_wheel.assertive_phrases', []),

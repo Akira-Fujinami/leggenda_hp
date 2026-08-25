@@ -141,4 +141,68 @@ class BrandWheelImprovementSuggestionResponseParserTest extends TestCase
         $this->assertNull($result->recommendation);
         $this->assertSame([], $result->focusSubElementKeys);
     }
+
+    /**
+     * 依頼S(2026-08-26): v7のプロンプト例`"mid_term_action": "string または
+     * null"`がnullをクォートで囲んだ記法だったため、モデルが文字列"null"
+     * (4文字)を返し、レポートに「null」がそのまま印字される事故が実物
+     * レポート37で発生した。値全体が"null"(大文字小文字を問わない完全一致)
+     * の場合はPHPのnullとして扱うこと。
+     */
+    public function test_treats_the_literal_string_null_as_php_null(): void
+    {
+        $result = $this->parser()->parse([
+            'one_point' => 'null',
+            'recommendation' => 'NULL',
+            'reason' => 'Null',
+            'mid_term_action' => 'null',
+            'focus_sub_element_keys' => [],
+        ], provider: 'openai', model: null, isMock: false, promptVersion: 'v8');
+
+        $this->assertNull($result->onePoint);
+        $this->assertNull($result->recommendation);
+        $this->assertNull($result->reason);
+        $this->assertNull($result->midTermAction);
+    }
+
+    /**
+     * 依頼S最重要: 前後の空白だけを含む"null"(例: " null "や全角スペース)も
+     * 完全一致として扱う一方、本文の途中に"null"という語がたまたま含まれる
+     * 正当な文章までは絶対に捨てないこと(str_contains()ではなく完全一致で
+     * 判定していることの回帰防止)。
+     */
+    public function test_does_not_null_out_legitimate_text_that_merely_contains_the_word_null(): void
+    {
+        $result = $this->parser()->parse([
+            'one_point' => ' null ',
+            'reason' => 'DBの値がnullのままでも動作に問題はありません。既存のnull許容設計を維持してください。',
+            'focus_sub_element_keys' => [],
+        ], provider: 'openai', model: null, isMock: false, promptVersion: 'v8');
+
+        $this->assertNull($result->onePoint);
+        $this->assertSame(
+            'DBの値がnullのままでも動作に問題はありません。既存のnull許容設計を維持してください。',
+            $result->reason,
+        );
+    }
+
+    /**
+     * 依頼S: recommended_contentsはparseTextList()経由でも同じ
+     * parseForbiddenPhraseSafeText()を通るため、"null"の要素だけが
+     * 除外され、他の正当な要素は残ること。
+     */
+    public function test_recommended_contents_drops_only_the_null_string_elements(): void
+    {
+        $result = $this->parser()->parse([
+            'one_point' => null,
+            'recommendation' => null,
+            'recommended_contents' => ['入社数年目の社員紹介', 'null', 'NULL', '部署間の関わり方が分かるエピソード'],
+            'focus_sub_element_keys' => [],
+        ], provider: 'openai', model: null, isMock: false, promptVersion: 'v8');
+
+        $this->assertSame(
+            ['入社数年目の社員紹介', '部署間の関わり方が分かるエピソード'],
+            $result->recommendedContents,
+        );
+    }
 }

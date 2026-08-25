@@ -94,8 +94,20 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
      * 明示した。呼び出し側でもself_matched(既に○)のキーは念のため
      * 除外する防御的フィルタを追加している(二重の安全策)。出力スキーマ
      * (フィールド名・型)・断定禁止の指示・判定ロジックはv6から無変更。
+     *
+     * v8(2026-08-26、依頼S): mid_term_actionのJSON Schema例が
+     * `"mid_term_action": "string または null"` とnullをクォートで囲んだ
+     * 記法だったため、モデルが文字列"null"(4文字)を返し、レポートに
+     * 「null」がそのまま印字される事故が実物レポート37で発生した。
+     * `"string" または null(文字列"null"ではなく、JSONのnullそのものを
+     * 返すこと)` に書き換え、mid_term_actionの説明文にも同じ注記を追加した。
+     * 出力スキーマ(フィールド名・型)・断定禁止の指示・判定ロジックは
+     * v7から無変更。パーサ側(BrandWheelImprovementSuggestionResponseParser::
+     * parseForbiddenPhraseSafeText())にも同じ問題への対処を別途入れて
+     * あり(値全体が"null"の場合はnull扱い)、プロンプト修正後もその防御は
+     * 残す(出力を全面的には信用しない既存方針のため)。
      */
-    public const string PROMPT_VERSION = 'v7';
+    public const string PROMPT_VERSION = 'v8';
 
     public function __construct(
         private readonly BrandWheelImprovementSuggestionResponseParser $parser,
@@ -323,7 +335,7 @@ TXT;
   "one_point": "string",
   "reason": "string",
   "recommended_contents": ["string"],
-  "mid_term_action": "string または null",
+  "mid_term_action": "string" または null(文字列"null"ではなく、JSONのnullそのものを返すこと),
   "quick_win": true または false,
   "implementation_difficulty": "low" または "medium" または "high",
   "candidate_impact": "low" または "medium" または "high",
@@ -349,8 +361,8 @@ TXT;
   1テーマ(関連項目は最大2件)について、2〜3文で「1.テーマ→2.なぜこのテーマなのか(自社の
   既存の強み・キーメッセージとの接続)→3.どう広げるか(条件付きの可能性)」の順に述べて
   ください。mutually_unmatched_itemsが空、自社の既存強みとの関連性が低い候補しかない、
-  Brand Fitがどれも低い、根拠が弱すぎる ―― のいずれかに該当する場合はnullにしてください
-  (無理に埋めないこと)。「〜を強化することでブランド価値を高めることが可能です」「両社とも
+  Brand Fitがどれも低い、根拠が弱すぎる ―― のいずれかに該当する場合はJSONのnull(文字列
+  "null"ではない)にしてください(無理に埋めないこと)。「〜を強化することでブランド価値を高めることが可能です」「両社とも
   書いていないので差別化できます」のような断定・消極的な理由付けは禁止、「〜との接続性が
   高いテーマです」「実際に該当する取り組みがある場合、〜できる可能性があります」のような
   条件付き表現にしてください。
