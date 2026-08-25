@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['project_id', 'created_by', 'status', 'progress', 'started_at', 'completed_at', 'failed_at', 'error_summary', 'skip_lighthouse', 'skip_screenshots', 'skip_brand_wheel', 'lead_quota_consumed_at'])]
+#[Fillable(['project_id', 'created_by', 'status', 'progress', 'started_at', 'completed_at', 'failed_at', 'error_summary', 'skip_lighthouse', 'skip_screenshots', 'skip_brand_wheel', 'lead_quota_consumed_at', 'crawl_site'])]
 class Analysis extends Model
 {
     /** @use HasFactory<AnalysisFactory> */
@@ -28,6 +28,7 @@ class Analysis extends Model
             'skip_screenshots' => 'boolean',
             'skip_brand_wheel' => 'boolean',
             'lead_quota_consumed_at' => 'datetime',
+            'crawl_site' => 'boolean',
         ];
     }
 

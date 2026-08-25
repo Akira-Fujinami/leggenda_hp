@@ -64,7 +64,7 @@ class FetchSitemapJob extends BaseWebsiteAnalysisJob
         $unknown = ! $exists && $result->httpStatus !== 404;
         $parsed = $exists
             ? app(SitemapParser::class)->parse($result->body)
-            : ['kind' => null, 'url_count' => 0, 'sitemap_count' => 0, 'parse_error' => false, 'truncated' => false];
+            : ['kind' => null, 'url_count' => 0, 'sitemap_count' => 0, 'parse_error' => false, 'truncated' => false, 'urls' => []];
 
         $htmlPath = null;
         if ($exists) {
@@ -93,13 +93,20 @@ class FetchSitemapJob extends BaseWebsiteAnalysisJob
             ],
         );
 
+        // 2026-08-25(依頼C-2): SitemapParser::parse()の戻り値にurls(最大500件)が
+        // 追加されたが、メトリクスのraw_value/evidenceには含めない ――
+        // metric_resultsはスコア算出・監視用であり、URLリストの保存先ではない
+        // (件数が多いサイトでJSONBカラムが不必要に肥大化する)。urlsは
+        // クロールJob側が別途SitemapParserを直接呼んで取得する。
+        $parsedForMetric = collect($parsed)->except('urls')->all();
+
         $this->recordMetric(
             $this->websiteAnalysisId,
             'sitemap_fetched',
             $unknown ? MetricResultStatus::Unavailable : MetricResultStatus::Success,
             normalizedValue: $unknown ? null : $exists,
-            rawValue: ['exists' => $exists, 'http_status' => $result->httpStatus] + $parsed,
-            evidence: ['url' => $sitemapUrl, 'parsed' => $parsed],
+            rawValue: ['exists' => $exists, 'http_status' => $result->httpStatus] + $parsedForMetric,
+            evidence: ['url' => $sitemapUrl, 'parsed' => $parsedForMetric],
             errorCode: $unknown ? AnalysisErrorCode::HttpError->value : null,
             errorMessage: $unknown ? "sitemap.xmlの取得でHTTP {$result->httpStatus} が返されました。" : null,
             analysisPageId: $page->id,

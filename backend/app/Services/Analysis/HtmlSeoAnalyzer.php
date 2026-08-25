@@ -632,6 +632,24 @@ class HtmlSeoAnalyzer
     }
 
     /**
+     * 依頼E-2(2026-08-25): 与えられたURLが採用ページであるかどうかを、
+     * analyzeBusinessLinks()内で使っていた判定(RECRUIT_EXACT_PATH_SEGMENTS/
+     * RECRUIT_SUBDOMAIN_PREFIXES/hostHasRecruitLabelToken()の組み合わせ)と
+     * 完全に同じロジックで判定する。元々analyzeBusinessLinks()に private に
+     * インライン展開されていたものをpublicメソッドへ切り出しただけで、
+     * 判定内容・定数の中身は一切変更していない(BrandWheelAnalysisInputFactoryが
+     * クロールページを採用クラスタ/トップページクラスタへ分類する用途で再利用する)。
+     */
+    public function isRecruitPageUrl(string $pageUrl): bool
+    {
+        $pageHost = strtolower((string) parse_url($pageUrl, PHP_URL_HOST));
+
+        return $this->segmentsMatchAny($this->pathSegments($pageUrl), self::RECRUIT_EXACT_PATH_SEGMENTS)
+            || $this->startsWithAny($pageHost, self::RECRUIT_SUBDOMAIN_PREFIXES)
+            || $this->hostHasRecruitLabelToken($pageHost);
+    }
+
+    /**
      * 営業・信頼性に関わる代表的なページ(料金/FAQ/導入事例/会社概要/
      * プライバシーポリシー/採用情報)へのリンクをキーワードベースで検出する。
      * href・リンクテキスト・aria-label・titleのいずれかにキーワードが
@@ -661,9 +679,7 @@ class HtmlSeoAnalyzer
         // カヤック採用ページで再現)か、同じく採用ページらしい別セクションへの
         // リンク(例: 障がい者採用ページ)をより優先シグナル数が高いという理由で
         // 誤って採用ページとして選んでしまう(実データ: 味の素で再現)。
-        $pageIsRecruitPage = $this->segmentsMatchAny($this->pathSegments($pageUrl), self::RECRUIT_EXACT_PATH_SEGMENTS)
-            || $this->startsWithAny($pageHost, self::RECRUIT_SUBDOMAIN_PREFIXES)
-            || $this->hostHasRecruitLabelToken($pageHost);
+        $pageIsRecruitPage = $this->isRecruitPageUrl($pageUrl);
 
         $nodes = $xpath->query('//a[@href]');
         $detected = array_fill_keys(array_keys($categories), null);

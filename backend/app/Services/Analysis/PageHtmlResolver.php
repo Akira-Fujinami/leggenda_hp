@@ -2,6 +2,7 @@
 
 namespace App\Services\Analysis;
 
+use App\Models\AnalysisCrawledPage;
 use App\Models\AnalysisPage;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -30,9 +31,14 @@ class PageHtmlResolver
     public const SOURCE_STATIC = 'static';
 
     /**
+     * 依頼E-1(2026-08-25): AnalysisCrawledPage(クロールで新規発見したページ)も
+     * 同じrendered_html_path/raw_html_path優先順位で解決できるよう型を広げた。
+     * AnalysisCrawledPageにはpage_type属性が無いため、診断ログ(下記)のみ
+     * page_typeの有無で出し分ける ―― 優先順位のロジック自体は完全に共通のまま。
+     *
      * @return ?array{path: string, source: self::SOURCE_*} 読めるHTMLが無ければnull
      */
-    public function resolve(?AnalysisPage $page): ?array
+    public function resolve(AnalysisPage|AnalysisCrawledPage|null $page): ?array
     {
         $disk = Storage::disk('analysis');
 
@@ -60,7 +66,7 @@ class PageHtmlResolver
             Log::warning('PageHtmlResolver: recorded HTML path(s) exist in DB but no file is readable on disk', [
                 'analysis_page_id' => $page->id,
                 'website_analysis_id' => $page->website_analysis_id,
-                'page_type' => $page->page_type->value,
+                'page_type' => $page instanceof AnalysisPage ? $page->page_type->value : 'crawled_page',
                 'hostname' => gethostname(),
                 'rendered_html_path' => $page->rendered_html_path,
                 'raw_html_path' => $page->raw_html_path,

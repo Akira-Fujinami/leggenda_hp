@@ -10,6 +10,7 @@ use App\Enums\PageType;
 use App\Jobs\Analysis\AnalyzeHtmlSeoJob;
 use App\Jobs\Analysis\AnalyzeRecruitPageJob;
 use App\Jobs\Analysis\CaptureScreenshotJob;
+use App\Jobs\Analysis\CrawlWebsiteJob;
 use App\Jobs\Analysis\DetectTechnologyJob;
 use App\Jobs\Analysis\FetchExternalSeoDataJob;
 use App\Jobs\Analysis\FetchRecruitPageJob;
@@ -133,10 +134,78 @@ class AnalysisPipeline
      * 相談ボタン(#96)起点のディスパッチは廃止(2026-08-03) ―― 診断実行時に
      * 自社・競合の両方について生成し、相談ボタンは生成済みの結果を読むだけに
      * なる(input_hashによる再利用は既にあるため、二重にAPIを呼ばない)。
+     *
+     * 2026-08-25追加(依頼C-7、依頼D-1で内部構造を変更): Analysis.
+     * crawl_site=trueの場合、GenerateBrandWheelAnalysisJobを直接起動せず、
+     * CrawlWebsiteJobを先に起動する ―― クロール完了前にGenerateBrandWheel
+     * AnalysisJobが走り、空/途中までのanalysis_crawled_pagesを読んで薄い
+     * 結果を出す競合を防ぐため(RenderPageJobより先にレンダリング後HTMLを
+     * 読んでしまう競合が過去に本番で確認された、2026-08-04と同じ形の不具合)。
+     *
+     * 依頼D-1: 本番のRenderは単一キューワーカーが全キューを直列処理する
+     * 構成のため、長時間の単一ジョブが他の全ジョブを止めてしまう
+     * (依頼者指摘)。CrawlWebsiteJob(seed専用)→CrawlWebsitePageJob
+     * (1ジョブ=1ページの連鎖)→(条件付きレンダリング対象があれば)
+     * RenderCrawledPageJob(1ジョブ=1ページの連鎖)という短いジョブの
+     * 連鎖に分割した。実際のBrandWheelAnalysisResult作成・
+     * GenerateBrandWheelAnalysisJob起動はdispatchBrandWheelAnalysisAfterCrawl()に
+     * 切り出し、この連鎖のいずれかの終端(正常終了・上限打ち切り・
+     * failed()いずれも)から呼ばれる。複数の終端経路がありうるため、
+     * dispatchBrandWheelAnalysisAfterCrawl()自体に冪等ガード(依頼D-2、
+     * website_analyses.brand_wheel_dispatched_at)を持たせてあり、
+     * 二重に起動されることはない。crawl_site=false(既定)の場合は
+     * これまでどおり即座にdispatchBrandWheelAnalysisAfterCrawl()を呼ぶため、
+     * 既存のリード向け自己申告フロー等の挙動は一切変わらない。
      */
     public function dispatchBrandWheelAnalysisIfDue(int $analysisId, int $websiteAnalysisId): void
     {
-        if (Analysis::find($analysisId)?->skip_brand_wheel === true) {
+        $analysis = Analysis::find($analysisId);
+
+        if ($analysis?->skip_brand_wheel === true) {
+            return;
+        }
+
+        if ($analysis?->crawl_site === true) {
+            CrawlWebsiteJob::dispatch($analysisId, $websiteAnalysisId)->onQueue('analysis');
+
+            return;
+        }
+
+        $this->dispatchBrandWheelAnalysisAfterCrawl($analysisId, $websiteAnalysisId);
+    }
+
+    /**
+     * BrandWheelAnalysisResult作成・GenerateBrandWheelAnalysisJob起動の
+     * 実体。crawl_site=falseの場合はdispatchBrandWheelAnalysisIfDue()から
+     * 即座に、crawl_site=trueの場合はCrawlWebsiteJobの終端から呼ばれる
+     * (依頼C-7、呼び出し元はこの2箇所のみでどちらか一方しか実行されない)。
+     */
+    /**
+     * 2026-08-25追加(依頼D-2): CrawlWebsiteJob/CrawlWebsitePageJob/
+     * RenderCrawledPageJobの終端(正常終了・上限打ち切り・failed())の
+     * いずれからも呼ばれうるため、二重に起動されないことを保証する ――
+     * website_analyses.brand_wheel_dispatched_atへの「nullの行だけを対象に
+     * した条件付きUPDATE」で一度だけ勝者を決める
+     * (Analysis.lead_quota_consumed_atと同じ方式)。crawl_site=falseの
+     * 通常経路(RenderPageJobから1回だけ呼ばれる)にも同じガードがかかるが、
+     * 元々1回しか呼ばれないため実質no-opの安全網に留まる。
+     *
+     * RunBrandWheelAnalysisCommand(--force再実行)はこのメソッドを経由せず
+     * BrandWheelAnalysisResultを直接createするため、このガードの対象外
+     * (#99の複数回測定は従来どおり可能)。DBレベルの一意制約は意図的に
+     * 追加していない ―― brand_wheel_analysis_resultsは同一website_analysis_id
+     * に複数行を持ちうる設計(--force再実行での比較用)であり、一意制約を
+     * 張るとその機能を壊すため。
+     */
+    public function dispatchBrandWheelAnalysisAfterCrawl(int $analysisId, int $websiteAnalysisId): void
+    {
+        $updated = WebsiteAnalysis::query()
+            ->whereKey($websiteAnalysisId)
+            ->whereNull('brand_wheel_dispatched_at')
+            ->update(['brand_wheel_dispatched_at' => now()]);
+
+        if ($updated === 0) {
+            // 既に起動済み(このwebsite_analysis_idに対する2回目以降の終端呼び出し)。
             return;
         }
 

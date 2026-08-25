@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
     'analysis_id', 'website_id', 'status', 'progress', 'started_at', 'completed_at',
-    'error_summary', 'http_status', 'final_url', 'response_time_ms',
+    'error_summary', 'http_status', 'final_url', 'response_time_ms', 'brand_wheel_dispatched_at',
 ])]
 class WebsiteAnalysis extends Model
 {
@@ -27,6 +27,7 @@ class WebsiteAnalysis extends Model
             'progress' => 'integer',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
+            'brand_wheel_dispatched_at' => 'datetime',
         ];
     }
 
@@ -60,6 +61,14 @@ class WebsiteAnalysis extends Model
     public function pages(): HasMany
     {
         return $this->hasMany(AnalysisPage::class);
+    }
+
+    /**
+     * @return HasMany<AnalysisCrawledPage, $this>
+     */
+    public function crawledPages(): HasMany
+    {
+        return $this->hasMany(AnalysisCrawledPage::class);
     }
 
     /**

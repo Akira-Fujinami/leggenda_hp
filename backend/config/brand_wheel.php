@@ -772,4 +772,75 @@ return [
         '「サイトの記述からこの軸に該当する内容が読み取れるか」です。'.
         'この区別を書かないと、AIが「実例のような見出しが書かれていないから'.
         '読み取れない」と過度に厳しく判定します。',
+
+    /*
+    |----------------------------------------------------------------
+    | サイト全ページ巡回(依頼C・Phase 1、2026-08-25追加)
+    |----------------------------------------------------------------
+    | Analysis.crawl_site=trueの診断でのみ有効(既定false、管理画面から
+    | 明示的にオプトインした診断だけが対象 ―― リード向け自己申告フロー
+    | (frontend/src/features/lead/)の挙動は一切変わらない)。
+    | CrawlWebsiteJob(app/Jobs/Analysis/CrawlWebsiteJob.php)が使う。
+    | 管理画面起点で時間がかかってよい前提のため、既定値は網羅性寄り。
+    */
+    'crawl_max_pages' => (int) env('BRAND_WHEEL_CRAWL_MAX_PAGES', 50),
+    'crawl_max_depth' => (int) env('BRAND_WHEEL_CRAWL_MAX_DEPTH', 3),
+
+    // 2026-08-25(依頼C-5): 設計案が挙げたsame_registrable_domain(eTLD+1、
+    // 登録可能ドメイン単位)は不採用。Public Suffix Listのライブラリが
+    // このリポジトリに無く(composer.json/app/を検索して0件)、文字列操作で
+    // eTLD+1を求めると`example.co.jp`が`co.jp`全体と同一スコープに
+    // 誤判定され、無関係な他社サイトへクロールが漏れ出す(日本の採用サイトは
+    // .co.jp/.or.jp/.ne.jp/.ac.jpを避けて通れない)。'exact_host'のみを
+    // Phase 1で実装する ―― CrawlWebsiteJobは、診断で既に判明している
+    // ホスト(トップページ・採用ページそれぞれのfinal_urlのホスト)だけを
+    // 許可リストとして使い、リンク先がそれ以外のホストなら辿らない。
+    // 値は将来PSLライブラリを導入した場合の拡張余地として残すが、
+    // 'exact_host'以外の値を渡してもPhase 1の実装は無視する(実装しない)。
+    'crawl_domain_scope' => env('BRAND_WHEEL_CRAWL_DOMAIN_SCOPE', 'exact_host'),
+
+    // 0は不可。config読み込み時に下限(0.5秒)でガードする。
+    'crawl_request_interval_seconds' => max(0.5, (float) env('BRAND_WHEEL_CRAWL_REQUEST_INTERVAL_SECONDS', 1.0)),
+
+    // 管理画面起点のため網羅性優先で長め(15分)。CrawlWebsiteJob::$timeoutは
+    // この値+60秒のマージンを持つ ―― キューワーカーの--timeoutより
+    // ジョブ自身の$timeoutが優先される(Illuminate\Queue\Worker::
+    // timeoutForJob()参照)ため、ワーカー側の既定値(devの'analysis'キュー=
+    // 300秒、本番Render=600秒)を上回っていても問題にならないことを確認済み。
+    'crawl_total_timeout_seconds' => (int) env('BRAND_WHEEL_CRAWL_TOTAL_TIMEOUT_SECONDS', 900),
+
+    // 採用ブランドの判断材料にならないパスの除外(fnmatch形式のパターン)。
+    'crawl_excluded_path_patterns' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env(
+            'BRAND_WHEEL_CRAWL_EXCLUDED_PATH_PATTERNS',
+            '*/news/*,*/ir/*,*/press/*,*.pdf,*.jpg,*.jpeg,*.png,*.gif,*.svg,*.zip',
+        )),
+    ))),
+
+    // クロール結果(HTML保存分)の合計容量上限。診断1件(1サイト分)あたり。
+    // SafeHttpFetcherのmax_response_bytes(1リクエストあたりの上限、
+    // config('analysis.http.max_response_bytes'))とは別の、累積上限。
+    'crawl_max_total_storage_bytes' => (int) env('BRAND_WHEEL_CRAWL_MAX_TOTAL_STORAGE_BYTES', 52428800), // 50MB
+
+    /*
+    |----------------------------------------------------------------
+    | 条件付きレンダリング(依頼D-4、2026-08-25追加)
+    |----------------------------------------------------------------
+    | 巡回で取得した各ページのうち、静的本文が乏しいページだけを上限付きで
+    | レンダリングする(全ページの無条件レンダリングは行わない)。
+    |
+    | crawl_render_candidate_min_charsは、この判定専用の閾値であり、
+    | insufficient_input_min_total_chars(自社サイト全体の入力充足判定、
+    | 用途が異なる)とは意図的に別キーにしてある。
+    */
+    'crawl_render_candidate_min_chars' => (int) env('BRAND_WHEEL_CRAWL_RENDER_CANDIDATE_MIN_CHARS', 200),
+
+    // レンダリング候補の上位何件までを実際にレンダリングするか。深さが
+    // 浅い順に選ぶ(depth ASC) ―― 浅いページほどseed(トップページ・採用
+    // ページ)から直接リンクされている一次情報である可能性が高く、深い
+    // ページほど詳細ページ・末端ページである可能性が高いため、限られた
+    // レンダリング予算(Chromiumの起動コスト、過去のOOMの経緯を踏まえ)を
+    // 優先的に一次情報の救済に充てる、という考え方による。
+    'crawl_render_candidate_max_count' => (int) env('BRAND_WHEEL_CRAWL_RENDER_CANDIDATE_MAX_COUNT', 10),
 ];
