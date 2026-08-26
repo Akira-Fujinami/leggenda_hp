@@ -1494,6 +1494,220 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
         $this->assertSame(0, $websiteAnalysis->fresh()->progress);
     }
 
+    // ------------------------------------------------------------------
+    // 依頼U: AIのレート制限で診断を失敗として確定させないための
+    // job-level(queue経由)リトライ($tries/$backoff/retryUntil/ログ)。
+    // ------------------------------------------------------------------
+
+    /**
+     * 依頼U-1: Retry-Afterヘッダが無いとき、試行回数が進むごとに
+     * バックオフが段階的に伸びる(30 → 90 → 180)こと、4回目以降は
+     * 配列の最後の値(180)を繰り返すこと(Laravel自身のWorker::
+     * calculateBackoff()と同じ規則)を確認する。job_triesを5へ上げて、
+     * 4回目の試行でもまだreleaseされる($tries未到達)ようにしている。
+     */
+    public function test_retry_backoff_increases_with_each_attempt_and_repeats_the_last_value(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 5,
+            'services.brand_wheel_ai.job_backoff_seconds' => [30, 90, 180],
+        ]);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429)]);
+
+        foreach ([1 => 30, 2 => 90, 3 => 180, 4 => 180] as $attempt => $expectedDelay) {
+            $websiteAnalysis = $this->makeFreshWebsiteAnalysisWithSufficientContent();
+            $record = BrandWheelAnalysisResult::factory()->create([
+                'analysis_id' => $websiteAnalysis->analysis_id, 'website_analysis_id' => $websiteAnalysis->id, 'status' => 'pending',
+            ]);
+
+            $job = (new GenerateBrandWheelAnalysisJob($record->id))->withFakeQueueInteractions();
+            $job->job->attempts = $attempt;
+            $job->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+            $job->assertReleased($expectedDelay);
+            $this->assertSame('pending', $record->fresh()->status, "attempt={$attempt}");
+        }
+    }
+
+    /**
+     * 依頼U-1: OpenAIのRetry-Afterヘッダが返っている場合、backoff設定より
+     * その値が優先される(現在の$e->retryAfterSeconds ?? $this->backoff[0]の
+     * 「??」の左側、依頼者指定の既存挙動を維持)。
+     */
+    public function test_retry_after_header_takes_priority_over_configured_backoff(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 5,
+            'services.brand_wheel_ai.job_backoff_seconds' => [30, 90, 180],
+        ]);
+        // 1回目の試行なら本来30秒のはずだが、Retry-Afterヘッダ(45秒)が
+        // 優先されることを確認する。
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429, ['Retry-After' => '45'])]);
+
+        $websiteAnalysis = $this->makeFreshWebsiteAnalysisWithSufficientContent();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id, 'website_analysis_id' => $websiteAnalysis->id, 'status' => 'pending',
+        ]);
+
+        $job = (new GenerateBrandWheelAnalysisJob($record->id))->withFakeQueueInteractions();
+        $job->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $job->assertReleased(45);
+    }
+
+    /**
+     * 依頼U-1: $triesに達したら、まだ429(isRetryable)であってもrelease()
+     * せずerrorで確定させる(現在の`$this->attempts() < $this->tries`の
+     * 条件が偽になる経路)。
+     */
+    public function test_finalizes_as_error_once_tries_are_exhausted_even_for_a_retryable_error(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 2,
+        ]);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429)]);
+
+        $websiteAnalysis = $this->makeFreshWebsiteAnalysisWithSufficientContent();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id, 'website_analysis_id' => $websiteAnalysis->id, 'status' => 'pending',
+        ]);
+
+        $job = (new GenerateBrandWheelAnalysisJob($record->id))->withFakeQueueInteractions();
+        $job->job->attempts = 2;
+        $job->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $job->assertNotReleased();
+        $this->assertSame('error', $record->fresh()->status);
+        $this->assertSame('AI_RATE_LIMITED', $record->fresh()->error_code);
+    }
+
+    /**
+     * 依頼U-1: $tries/$backoffがconfig('services.brand_wheel_ai.job_tries'/
+     * 'job_backoff_seconds')から実際に反映されること(再デプロイ無しで
+     * 調整できることの確認、依頼者指定)。
+     */
+    public function test_tries_and_backoff_are_driven_by_config(): void
+    {
+        config([
+            'services.brand_wheel_ai.job_tries' => 7,
+            'services.brand_wheel_ai.job_backoff_seconds' => [10, 20],
+        ]);
+
+        $job = new GenerateBrandWheelAnalysisJob(1);
+
+        $this->assertSame(7, $job->tries);
+        $this->assertSame([10, 20], $job->backoff);
+    }
+
+    /**
+     * 依頼U-2: retryUntil()がconfig('services.brand_wheel_ai.
+     * job_retry_until_minutes')から算出した時刻を返すこと
+     * (stale_analysis_after_minutes(30分)より明確に短い値であることの
+     * 確認も兼ねる)。
+     */
+    public function test_retry_until_reflects_the_configured_minutes(): void
+    {
+        config(['services.brand_wheel_ai.job_retry_until_minutes' => 12]);
+
+        $job = new GenerateBrandWheelAnalysisJob(1);
+        $now = now();
+
+        $this->assertEqualsWithDelta(
+            $now->clone()->addMinutes(12)->getTimestamp(),
+            $job->retryUntil()->getTimestamp(),
+            2,
+        );
+        $this->assertLessThan(
+            (int) config('lead.stale_analysis_after_minutes') * 60,
+            $job->retryUntil()->getTimestamp() - $now->getTimestamp(),
+        );
+    }
+
+    /**
+     * 依頼U-3: リトライをスケジュールする際に、analysis_id/
+     * website_analysis_id/試行回数/error_code/実際の待ち秒数/その由来
+     * (Retry-Afterヘッダかbackoffか)を含む構造化ログが1行出ること。
+     * 本文・プロンプト・APIキーの類が一切含まれないことも確認する。
+     */
+    public function test_logs_a_structured_line_when_a_retry_is_scheduled_without_leaking_body_or_api_key(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429)]);
+
+        Log::spy();
+
+        $websiteAnalysis = $this->makeFreshWebsiteAnalysisWithSufficientContent();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id, 'website_analysis_id' => $websiteAnalysis->id, 'status' => 'pending',
+        ]);
+
+        $job = (new GenerateBrandWheelAnalysisJob($record->id))->withFakeQueueInteractions();
+        $job->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message, array $context) use ($websiteAnalysis) {
+                $encoded = json_encode($context);
+
+                return $message === 'Brand wheel AI call hit a retryable failure; scheduling a retry'
+                    && $context['analysis_id'] === $websiteAnalysis->analysis_id
+                    && $context['website_analysis_id'] === $websiteAnalysis->id
+                    && $context['attempt'] === 1
+                    && $context['max_tries'] === (int) config('services.brand_wheel_ai.job_tries')
+                    && $context['error_code'] === 'AI_RATE_LIMITED'
+                    && $context['wait_seconds'] === 30
+                    && $context['wait_source'] === 'backoff'
+                    && ! str_contains($encoded, 'test-key')
+                    && ! str_contains(mb_strtolower($encoded), 'レート制限に達しました');
+            })
+            ->once();
+    }
+
+    /**
+     * 依頼U-3: $triesを使い切って最終的にerror確定する際は、単発失敗とは
+     * 別に「リトライを使い切った」ことが分かる警告ログを1行出す
+     * (依頼者指摘: 現在のログからは1回で諦めたのか粘ったのか区別できない)。
+     */
+    public function test_logs_a_distinct_warning_when_retries_are_exhausted(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 2,
+        ]);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429)]);
+
+        Log::spy();
+
+        $websiteAnalysis = $this->makeFreshWebsiteAnalysisWithSufficientContent();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id, 'website_analysis_id' => $websiteAnalysis->id, 'status' => 'pending',
+        ]);
+
+        $job = (new GenerateBrandWheelAnalysisJob($record->id))->withFakeQueueInteractions();
+        $job->job->attempts = 2;
+        $job->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context) use ($websiteAnalysis) {
+                $encoded = json_encode($context);
+
+                return $message === 'Brand wheel AI call failed after exhausting all retries'
+                    && $context['analysis_id'] === $websiteAnalysis->analysis_id
+                    && $context['website_analysis_id'] === $websiteAnalysis->id
+                    && $context['attempt'] === 2
+                    && $context['max_tries'] === 2
+                    && $context['error_code'] === 'AI_RATE_LIMITED'
+                    && ! str_contains($encoded, 'test-key');
+            })
+            ->once();
+    }
+
     /**
      * 同一(analysis_id, website_analysis_id)に対してこのJobが2回
      * (例: キューの再配送)実行されても、2回目はmarkRunning()が既に終端の

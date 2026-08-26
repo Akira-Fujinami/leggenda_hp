@@ -446,13 +446,15 @@ PROMPT;
             }
 
             if ($response->status() === 429) {
+                // 依頼U(2026-08-26)で判明したheader()の空文字列問題の修正
+                // (OpenAiBrandWheelAnalysisProvider::analyze()の同箇所参照)。
                 $retryAfter = $response->header('Retry-After');
 
                 throw new BrandWheelAnalysisException(
                     'AI_RATE_LIMITED',
                     'OpenAI APIのレート制限に達しました。',
                     isRetryable: true,
-                    retryAfterSeconds: $retryAfter !== null ? (int) $retryAfter : null,
+                    retryAfterSeconds: $retryAfter !== '' ? (int) $retryAfter : null,
                 );
             }
 

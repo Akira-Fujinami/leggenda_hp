@@ -363,13 +363,21 @@ PROMPT;
             }
 
             if ($response->status() === 429) {
+                // 依頼U(2026-08-26)で判明: Illuminate\Http\Client\Response::
+                // header()はPSR-7のgetHeaderLine()を使うため、ヘッダが
+                // 存在しない場合でもnullではなく空文字列''を返す
+                // (実HTTPレスポンス・Http::fake()いずれも同じ)。そのため
+                // 従来の`$retryAfter !== null`は常にtrueになり、Retry-After
+                // ヘッダが無いケースで(int) '' = 0が「優先すべき値」として
+                // ジョブへ渡り、バックオフ無しの即時再試行を招いていた
+                // (依頼Uのテストでbackoff段階化を検証中に発見)。
                 $retryAfter = $response->header('Retry-After');
 
                 throw new BrandWheelAnalysisException(
                     'AI_RATE_LIMITED',
                     'OpenAI APIのレート制限に達しました。',
                     isRetryable: true,
-                    retryAfterSeconds: $retryAfter !== null ? (int) $retryAfter : null,
+                    retryAfterSeconds: $retryAfter !== '' ? (int) $retryAfter : null,
                 );
             }
 

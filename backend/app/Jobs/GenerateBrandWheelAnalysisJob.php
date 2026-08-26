@@ -6,6 +6,7 @@ use App\Enums\AnalysisErrorCode;
 use App\Enums\JobType;
 use App\Enums\PageType;
 use App\Jobs\Analysis\Concerns\ClassifiesJobFailureExceptions;
+use App\Jobs\Analysis\Concerns\LogsAiRetryAttempts;
 use App\Models\Analysis;
 use App\Models\AnalysisJob as AnalysisJobRecord;
 use App\Models\AnalysisPage;
@@ -62,14 +63,14 @@ use Illuminate\Support\Facades\Storage;
  */
 class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
 {
-    use ClassifiesJobFailureExceptions, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use ClassifiesJobFailureExceptions, Dispatchable, InteractsWithQueue, LogsAiRetryAttempts, Queueable, SerializesModels;
 
-    public $tries = 2;
+    public $tries;
 
     public $timeout;
 
-    /** @var int|array<int, int> */
-    public $backoff = [30];
+    /** @var list<int> */
+    public $backoff;
 
     public $uniqueFor;
 
@@ -87,6 +88,44 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         // (ロックが先に切れると、二重押下ではなく単発の遅延実行だけで
         // 重複起動してしまうため)。
         $this->uniqueFor = $this->timeout * 3;
+
+        // 依頼U(2026-08-26): $tries/$backoffはconfig+env経由で調整できる
+        // ようにする(再デプロイ無しで「もう少し粘らせたい/諦めさせたい」を
+        // 変更できるようにするため、依頼者指定)。docker/scripts/
+        // backend-entrypoint.render.shのQUEUE_WORKER_TRIES(--tries、
+        // ワーカー側の既定値)より、ここで設定するジョブ自身の$triesが
+        // 優先される(Illuminate\Queue\Worker::markJobAsFailedIfAlreadyExceeds
+        // MaxAttempts()が`$job->maxTries() ?? $maxTries`という順で解決する
+        // ため。$job->maxTries()はこのジョブの$tries、$maxTriesはワーカーの
+        // --triesであり、$job->maxTries()がnullでない限りそちらが勝つ)。
+        $this->tries = (int) config('services.brand_wheel_ai.job_tries', 4);
+        $this->backoff = (array) config('services.brand_wheel_ai.job_backoff_seconds', [30, 90, 180]);
+    }
+
+    /**
+     * 依頼U-2(2026-08-26): 最初の試行から一定時間を過ぎたら、$triesに
+     * 余裕があってもそれ以上再試行せずerrorで確定させる。config('lead.
+     * stale_analysis_after_minutes')(30分、Analysis.statusがRunningのまま
+     * 滞留する上限)より明確に短くしてある ―― これが無いと、レート制限が
+     * 続いた場合に診断がstale判定の枠を長時間占有し続ける。
+     *
+     * retryUntil()と$triesの関係(Illuminate\Queue\Worker::
+     * markJobAsFailedIfAlreadyExceedsMaxAttempts()参照): retryUntil()が
+     * 非nullを返す場合、Laravelのワーカーはジョブを次に取り出す前に必ず
+     * この期限を確認し、期限を過ぎていれば$triesの残り回数に関わらず
+     * 即座に失敗させる(このジョブのhandle()すら呼ばれず、代わりに
+     * failed()がMaxAttemptsExceededExceptionと共に呼ばれる ――
+     * ClassifiesJobFailureExceptionsトレイトが既にこの例外型を
+     * AnalysisErrorCode::MaxAttemptsExceededへ分類済み)。期限内であれば
+     * $triesの回数制限がそのまま働く。すなわち「retryUntil()と$tries、
+     * どちらか先に達したほうで打ち切られる」ことになる ―― ただし
+     * retryUntil()が期限切れの場合はLaravel自身のこの仕組みが、$triesが
+     * 先に尽きた場合はhandle()内の`$this->attempts() < $this->tries`の
+     * 自前チェックが、それぞれ別の経路で打ち切る。
+     */
+    public function retryUntil(): \DateTimeInterface
+    {
+        return now()->addMinutes((int) config('services.brand_wheel_ai.job_retry_until_minutes', 10));
     }
 
     public function uniqueId(): string
@@ -266,13 +305,27 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             $outcome = $provider->analyze($input);
         } catch (BrandWheelAnalysisException $e) {
             if ($e->isRetryable && $this->attempts() < $this->tries && $this->job !== null) {
+                $waitFromRetryAfterHeader = $e->retryAfterSeconds !== null;
+                $waitSeconds = $e->retryAfterSeconds ?? $this->resolveBackoffSeconds($this->backoff);
+
+                $this->logAiRetryScheduled($analysisId, $websiteAnalysisId, $e, $waitSeconds, $waitFromRetryAfterHeader);
+
                 $record->update(['status' => 'pending']);
-                $this->release($e->retryAfterSeconds ?? $this->backoff[0]);
+                $this->release($waitSeconds);
 
                 // リトライ対象: まだ結果が確定していないため、markCompleted/
                 // markFailed・進捗カスケードのいずれも呼ばない
                 // (BaseWebsiteAnalysisJobのrelease()経路と同じ扱い)。
                 return;
+            }
+
+            if ($e->isRetryable) {
+                // 依頼U-3: $triesを使い切った(またはretryUntil()の期限切れで
+                // このhandle()自体が呼ばれなかった場合はfailed()側、
+                // ClassifiesJobFailureExceptions参照)ことが分かるログを残す
+                // ―― 1回で諦めたのか粘ったのかが既存のログだけでは区別
+                // できなかったため(依頼者指摘)。
+                $this->logAiRetriesExhausted($analysisId, $websiteAnalysisId, $e);
             }
 
             $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_hash' => $inputHash, 'input_truncated' => $input->inputTruncated, 'input_char_count' => $this->inputTotalChars($input)]);
@@ -451,7 +504,9 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
      * attempts_used側で別途かける、依頼者指定)。
      *
      * GenerateBrandWheelAnalysisJobはAI呼び出しのレート制限等でリトライ
-     * (最大2回)されることがあり、そのたびにこのメソッドも再実行される。
+     * (依頼U、2026-08-26): 最大試行回数はconfig('services.brand_wheel_ai.
+     * job_tries')で調整可能、既定4回)されることがあり、そのたびにこの
+     * メソッドも再実行される。
      * Analysis.lead_quota_consumed_at への「nullの行だけを対象にした条件付き
      * UPDATE」で一度だけ勝者を決めることで、二重消費を防ぐ
      * (LeadSessionService::recordConsultationRequested()と同じ方式)。

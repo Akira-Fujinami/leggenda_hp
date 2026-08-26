@@ -99,6 +99,41 @@ return [
         // (2026-07-30の指摘。既存のOpenAiAnalysisProvider(スコアリング要約用)の
         // temperature=0.2はそのままで良い ―― あちらは判定システムではない)。
         'temperature' => (float) env('BRAND_WHEEL_AI_TEMPERATURE', 0.0),
+
+        // 依頼U(2026-08-26): レート制限(429)等でrelease()により再試行する
+        // job-level(queue経由)のリトライ回数・バックオフ・時間上限。
+        // 上のmax_retriesとは別物 ―― あちらは1回のジョブ試行内でのHTTP
+        // レベルの再送(408/504・接続エラー、OpenAiBrandWheelAnalysisProvider::
+        // request()参照)、こちらはジョブ全体をqueueへ戻して後で再実行する
+        // 回数。5件同時実行時にOpenAIのレート制限へ当たっても「失敗」では
+        // なく「少し遅い」で済ませるための設定(依頼T調査結果: 5件同時で
+        // 短時間に約12万トークン相当のAI呼び出しが集中しうる。依頼Fの実測
+        // では約3万トークンでレート制限に到達している)。
+        // GenerateBrandWheelAnalysisJob/GenerateBrandWheelImprovementSuggestion
+        // Jobの両方が参照する(同じ方針を適用、依頼者指定)。
+        //
+        // 初期値の根拠: [30, 90, 180]は現状の30秒固定から段階的に伸ばす
+        // (Laravel自身のWorker::calculateBackoff()と同じ「配列の最後の値を
+        // 以降の試行で繰り返す」規則)。tries=4・backoffの累計待ち時間は
+        // 30+90+180=300秒(5分)で、job_retry_until_minutes(既定10分)・
+        // config('lead.stale_analysis_after_minutes')(30分)のいずれにも
+        // 十分な余裕を残す。実際の待ち時間はOpenAIのRetry-Afterヘッダが
+        // 優先されるため、これより短いことも長いこともある。
+        'job_tries' => (int) env('BRAND_WHEEL_AI_JOB_TRIES', 4),
+        // カンマ区切りの環境変数からPHP配列へ変換する
+        // (config('brand_wheel.crawl_excluded_path_patterns')と同じ方式)。
+        // 空・不正な値しか無い場合は[30]にフォールバックする。
+        'job_backoff_seconds' => array_map('intval', array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('BRAND_WHEEL_AI_JOB_BACKOFF_SECONDS', '30,90,180')),
+        )))) ?: [30],
+        // retryUntil()の時間上限(分)。config('lead.stale_analysis_after_minutes')
+        // (30分)より明確に短くすること ―― これが無いと、レート制限が
+        // 続いた場合に診断がstale判定の枠(LeadAnalysisController::
+        // isCongested()等)を長時間占有し続ける(依頼者指定)。job_tries×job_backoff_
+        // secondsの累計より余裕を持たせつつ、stale判定の1/3以下に収める
+        // 目安として10分とした。
+        'job_retry_until_minutes' => (int) env('BRAND_WHEEL_AI_JOB_RETRY_UNTIL_MINUTES', 10),
     ],
 
     'semrush' => [

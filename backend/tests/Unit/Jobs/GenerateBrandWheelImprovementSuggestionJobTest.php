@@ -15,6 +15,8 @@ use App\Services\BrandWheel\BrandWheelImprovementSuggestionInputFactory;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
 use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 /**
@@ -249,5 +251,165 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
         $this->assertSame('mock', $suggestion->provider);
         $this->assertTrue($suggestion->is_mock);
         $this->assertNotNull($suggestion->one_point);
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼U: GenerateBrandWheelAnalysisJobTestと同じ方針
+    // (job-level $tries/$backoff/retryUntil/ログ)。この改善提案Jobには
+    // website_analysis_idカラムが無いため、ログのそのフィールドは常にnull
+    // になる点だけが差分(GenerateBrandWheelAnalysisJob.php docblock参照)。
+    // ------------------------------------------------------------------
+
+    public function test_retry_backoff_increases_with_each_attempt_and_repeats_the_last_value(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 5,
+            'services.brand_wheel_ai.job_backoff_seconds' => [30, 90, 180],
+        ]);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429)]);
+
+        foreach ([1 => 30, 2 => 90, 3 => 180, 4 => 180] as $attempt => $expectedDelay) {
+            $suggestion = $this->makeSuggestion(withCompetitor: true, selfMatchedCount: 6, competitorMatchedCount: 6);
+
+            $job = (new GenerateBrandWheelImprovementSuggestionJob($suggestion->id))->withFakeQueueInteractions();
+            $job->job->attempts = $attempt;
+            $this->handle($job);
+
+            $job->assertReleased($expectedDelay);
+            $this->assertSame('pending', $suggestion->fresh()->status, "attempt={$attempt}");
+        }
+    }
+
+    public function test_retry_after_header_takes_priority_over_configured_backoff(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 5,
+            'services.brand_wheel_ai.job_backoff_seconds' => [30, 90, 180],
+        ]);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429, ['Retry-After' => '45'])]);
+
+        $suggestion = $this->makeSuggestion(withCompetitor: true, selfMatchedCount: 6, competitorMatchedCount: 6);
+
+        $job = (new GenerateBrandWheelImprovementSuggestionJob($suggestion->id))->withFakeQueueInteractions();
+        $this->handle($job);
+
+        $job->assertReleased(45);
+    }
+
+    public function test_finalizes_as_error_once_tries_are_exhausted_even_for_a_retryable_error(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 2,
+        ]);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429)]);
+
+        $suggestion = $this->makeSuggestion(withCompetitor: true, selfMatchedCount: 6, competitorMatchedCount: 6);
+
+        $job = (new GenerateBrandWheelImprovementSuggestionJob($suggestion->id))->withFakeQueueInteractions();
+        $job->job->attempts = 2;
+        $this->handle($job);
+
+        $job->assertNotReleased();
+        $this->assertSame('error', $suggestion->fresh()->status);
+        $this->assertSame('AI_RATE_LIMITED', $suggestion->fresh()->error_code);
+    }
+
+    public function test_tries_and_backoff_are_driven_by_config(): void
+    {
+        config([
+            'services.brand_wheel_ai.job_tries' => 7,
+            'services.brand_wheel_ai.job_backoff_seconds' => [10, 20],
+        ]);
+
+        $job = new GenerateBrandWheelImprovementSuggestionJob(1);
+
+        $this->assertSame(7, $job->tries);
+        $this->assertSame([10, 20], $job->backoff);
+    }
+
+    public function test_retry_until_reflects_the_configured_minutes(): void
+    {
+        config(['services.brand_wheel_ai.job_retry_until_minutes' => 12]);
+
+        $job = new GenerateBrandWheelImprovementSuggestionJob(1);
+        $now = now();
+
+        $this->assertEqualsWithDelta(
+            $now->clone()->addMinutes(12)->getTimestamp(),
+            $job->retryUntil()->getTimestamp(),
+            2,
+        );
+        $this->assertLessThan(
+            (int) config('lead.stale_analysis_after_minutes') * 60,
+            $job->retryUntil()->getTimestamp() - $now->getTimestamp(),
+        );
+    }
+
+    public function test_logs_a_structured_line_when_a_retry_is_scheduled_without_leaking_body_or_api_key(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429)]);
+
+        $suggestion = $this->makeSuggestion(withCompetitor: true, selfMatchedCount: 6, competitorMatchedCount: 6);
+
+        Log::spy();
+
+        $job = (new GenerateBrandWheelImprovementSuggestionJob($suggestion->id))->withFakeQueueInteractions();
+        $this->handle($job);
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message, array $context) use ($suggestion) {
+                $encoded = json_encode($context);
+
+                return $message === 'Brand wheel AI call hit a retryable failure; scheduling a retry'
+                    && $context['analysis_id'] === $suggestion->analysis_id
+                    && $context['website_analysis_id'] === null
+                    && $context['attempt'] === 1
+                    && $context['max_tries'] === (int) config('services.brand_wheel_ai.job_tries')
+                    && $context['error_code'] === 'AI_RATE_LIMITED'
+                    && $context['wait_seconds'] === 30
+                    && $context['wait_source'] === 'backoff'
+                    && ! str_contains($encoded, 'test-key')
+                    && ! str_contains(mb_strtolower($encoded), 'レート制限に達しました');
+            })
+            ->once();
+    }
+
+    public function test_logs_a_distinct_warning_when_retries_are_exhausted(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 2,
+        ]);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429)]);
+
+        $suggestion = $this->makeSuggestion(withCompetitor: true, selfMatchedCount: 6, competitorMatchedCount: 6);
+
+        Log::spy();
+
+        $job = (new GenerateBrandWheelImprovementSuggestionJob($suggestion->id))->withFakeQueueInteractions();
+        $job->job->attempts = 2;
+        $this->handle($job);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context) use ($suggestion) {
+                $encoded = json_encode($context);
+
+                return $message === 'Brand wheel AI call failed after exhausting all retries'
+                    && $context['analysis_id'] === $suggestion->analysis_id
+                    && $context['website_analysis_id'] === null
+                    && $context['attempt'] === 2
+                    && $context['max_tries'] === 2
+                    && $context['error_code'] === 'AI_RATE_LIMITED'
+                    && ! str_contains($encoded, 'test-key');
+            })
+            ->once();
     }
 }

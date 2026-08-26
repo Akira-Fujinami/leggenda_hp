@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Analysis\Concerns\LogsAiRetryAttempts;
 use App\Models\Analysis;
 use App\Models\BrandWheelImprovementSuggestion;
 use App\Models\WebsiteAnalysis;
@@ -37,14 +38,14 @@ use Illuminate\Queue\SerializesModels;
  */
 class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, LogsAiRetryAttempts, Queueable, SerializesModels;
 
-    public $tries = 2;
+    public $tries;
 
     public $timeout;
 
-    /** @var int|array<int, int> */
-    public $backoff = [30];
+    /** @var list<int> */
+    public $backoff;
 
     public $uniqueFor;
 
@@ -53,6 +54,20 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
     ) {
         $this->timeout = ((int) config('services.brand_wheel_ai.timeout', 60)) + 30;
         $this->uniqueFor = $this->timeout * 3;
+
+        // 依頼U(2026-08-26): GenerateBrandWheelAnalysisJobと同じ方針
+        // ($tries/$backoff/retryUntilの根拠は同クラスのdocblock参照)。
+        $this->tries = (int) config('services.brand_wheel_ai.job_tries', 4);
+        $this->backoff = (array) config('services.brand_wheel_ai.job_backoff_seconds', [30, 90, 180]);
+    }
+
+    /**
+     * 依頼U-2(2026-08-26): GenerateBrandWheelAnalysisJob::retryUntil()と
+     * 同じ方針(詳細な根拠・Laravelのretryとの関係はそちらのdocblock参照)。
+     */
+    public function retryUntil(): \DateTimeInterface
+    {
+        return now()->addMinutes((int) config('services.brand_wheel_ai.job_retry_until_minutes', 10));
     }
 
     public function uniqueId(): string
@@ -193,10 +208,23 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
             $outcome = $provider->analyze($input);
         } catch (BrandWheelAnalysisException $e) {
             if ($e->isRetryable && $this->attempts() < $this->tries && $this->job !== null) {
+                $waitFromRetryAfterHeader = $e->retryAfterSeconds !== null;
+                $waitSeconds = $e->retryAfterSeconds ?? $this->resolveBackoffSeconds($this->backoff);
+
+                // website_analysis_idは存在しない(この改善提案はAnalysis単位
+                // ―― 自社×競合の比較単位の成果物、クラスdocblock参照)ため
+                // 常にnullで渡す(GenerateBrandWheelAnalysisJobとログの
+                // フィールド構成を揃えるため)。
+                $this->logAiRetryScheduled($suggestion->analysis_id, null, $e, $waitSeconds, $waitFromRetryAfterHeader);
+
                 $suggestion->update(['status' => 'pending']);
-                $this->release($e->retryAfterSeconds ?? $this->backoff[0]);
+                $this->release($waitSeconds);
 
                 return;
+            }
+
+            if ($e->isRetryable) {
+                $this->logAiRetriesExhausted($suggestion->analysis_id, null, $e);
             }
 
             $suggestion->update(['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage()]);
