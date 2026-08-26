@@ -366,18 +366,29 @@ PROMPT;
                 // 依頼U(2026-08-26)で判明: Illuminate\Http\Client\Response::
                 // header()はPSR-7のgetHeaderLine()を使うため、ヘッダが
                 // 存在しない場合でもnullではなく空文字列''を返す
-                // (実HTTPレスポンス・Http::fake()いずれも同じ)。そのため
-                // 従来の`$retryAfter !== null`は常にtrueになり、Retry-After
-                // ヘッダが無いケースで(int) '' = 0が「優先すべき値」として
-                // ジョブへ渡り、バックオフ無しの即時再試行を招いていた
-                // (依頼Uのテストでbackoff段階化を検証中に発見)。
+                // (実HTTPレスポンス・Http::fake()いずれも同じ)。
+                //
+                // 依頼V-1(2026-08-26): 上の空文字列対応だけでは不十分だった。
+                // RFC 9110上、Retry-Afterは秒数だけでなくHTTP-date形式も
+                // 許容されており、(int) 'Wed, 21 Oct 2015 07:28:00 GMT'は0に
+                // なる。仲介プロキシが`Retry-After: 0`を返す場合も同様。
+                // いずれも依頼Uで塞いだ「ヘッダ無し→0」とまったく同じ
+                // 即時再試行(release(0))を招く。ここでは「1以上の整数として
+                // 解釈できる場合のみ」採用し、それ以外(空文字・非数値・
+                // 0以下・HTTP-date)はnullを返してjob側のbackoffへ
+                // フォールバックさせる。HTTP-dateを秒数へ変換する実装は
+                // 意図的にしない(OpenAIは秒数で返すため、日付パースは
+                // 不要な失敗経路を増やすだけ、依頼者指定)。
                 $retryAfter = $response->header('Retry-After');
+                $retryAfterSeconds = ctype_digit($retryAfter) && (int) $retryAfter >= 1
+                    ? (int) $retryAfter
+                    : null;
 
                 throw new BrandWheelAnalysisException(
                     'AI_RATE_LIMITED',
                     'OpenAI APIのレート制限に達しました。',
                     isRetryable: true,
-                    retryAfterSeconds: $retryAfter !== '' ? (int) $retryAfter : null,
+                    retryAfterSeconds: $retryAfterSeconds,
                 );
             }
 

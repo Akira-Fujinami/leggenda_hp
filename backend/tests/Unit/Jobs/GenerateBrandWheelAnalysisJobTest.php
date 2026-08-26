@@ -29,6 +29,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class GenerateBrandWheelAnalysisJobTest extends TestCase
@@ -1560,6 +1561,96 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
     }
 
     /**
+     * 依頼V-1: Retry-Afterヘッダが「1以上の整数」として解釈できない場合
+     * (空文字・0・非数値・HTTP-date形式)は、いずれもbackoffへフォール
+     * バックすること(依頼Uで塞いだ「ヘッダ無し→0」と同じ即時再試行に
+     * 戻らないことの確認)。
+     *
+     * @return iterable<string, array{string}>
+     */
+    public static function invalidRetryAfterHeaderValuesProvider(): iterable
+    {
+        yield 'zero' => ['0'];
+        yield 'non_numeric' => ['abc'];
+        yield 'negative' => ['-5'];
+        yield 'http_date' => ['Wed, 21 Oct 2015 07:28:00 GMT'];
+    }
+
+    #[DataProvider('invalidRetryAfterHeaderValuesProvider')]
+    public function test_retry_after_header_falls_back_to_backoff_when_not_a_positive_integer(string $headerValue): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 5,
+            'services.brand_wheel_ai.job_backoff_seconds' => [30, 90, 180],
+        ]);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429, ['Retry-After' => $headerValue])]);
+
+        $websiteAnalysis = $this->makeFreshWebsiteAnalysisWithSufficientContent();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id, 'website_analysis_id' => $websiteAnalysis->id, 'status' => 'pending',
+        ]);
+
+        $job = (new GenerateBrandWheelAnalysisJob($record->id))->withFakeQueueInteractions();
+        $job->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        // release(0)にならないこと ―― 1回目の試行なのでbackoff[0]=30が使われる。
+        $job->assertReleased(30);
+    }
+
+    /**
+     * 依頼V-1: Retry-Afterヘッダの値が大きすぎる場合、
+     * job_retry_after_max_seconds(既定180)で頭打ちになること
+     * (retryUntil()の上限を超えて待ち時間が丸ごと無駄になることを防ぐ)。
+     */
+    public function test_retry_after_header_is_capped_at_the_configured_maximum(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 5,
+            'services.brand_wheel_ai.job_retry_after_max_seconds' => 180,
+        ]);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429, ['Retry-After' => '100000'])]);
+
+        $websiteAnalysis = $this->makeFreshWebsiteAnalysisWithSufficientContent();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id, 'website_analysis_id' => $websiteAnalysis->id, 'status' => 'pending',
+        ]);
+
+        $job = (new GenerateBrandWheelAnalysisJob($record->id))->withFakeQueueInteractions();
+        $job->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $job->assertReleased(180);
+    }
+
+    /**
+     * 依頼V-1: job_retry_after_max_secondsをconfigで差し替えたとき、
+     * 頭打ちの値がそれに追随すること。
+     */
+    public function test_retry_after_cap_is_driven_by_config(): void
+    {
+        config([
+            'services.brand_wheel_ai.provider' => 'openai',
+            'services.openai.api_key' => 'test-key',
+            'services.brand_wheel_ai.job_tries' => 5,
+            'services.brand_wheel_ai.job_retry_after_max_seconds' => 50,
+        ]);
+        Http::fake(['api.openai.com/*' => Http::response(['error' => 'rate limited'], 429, ['Retry-After' => '100000'])]);
+
+        $websiteAnalysis = $this->makeFreshWebsiteAnalysisWithSufficientContent();
+        $record = BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $websiteAnalysis->analysis_id, 'website_analysis_id' => $websiteAnalysis->id, 'status' => 'pending',
+        ]);
+
+        $job = (new GenerateBrandWheelAnalysisJob($record->id))->withFakeQueueInteractions();
+        $job->handle(app(BrandWheelAnalysisInputFactory::class), app(AnalysisPipeline::class));
+
+        $job->assertReleased(50);
+    }
+
+    /**
      * 依頼U-1: $triesに達したら、まだ429(isRetryable)であってもrelease()
      * せずerrorで確定させる(現在の`$this->attempts() < $this->tries`の
      * 条件が偽になる経路)。
@@ -1627,6 +1718,49 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
             (int) config('lead.stale_analysis_after_minutes') * 60,
             $job->retryUntil()->getTimestamp() - $now->getTimestamp(),
         );
+    }
+
+    /**
+     * 依頼V-3: uniqueForはretryUntil()の時間窓(job_retry_until_minutes)を
+     * 覆っていること。ShouldBeUniqueのロックはrelease()を挟んでも保持
+     * され続けるがTTLは最初の取得時から固定のため、uniqueForがretryUntil
+     * より短いと、リトライ待ちの最中にロックが切れる恐れがある(Laravel
+     * ソースでの確認結果はコンストラクタのコメント参照)。
+     */
+    public function test_unique_for_covers_the_full_retry_until_window(): void
+    {
+        config(['services.brand_wheel_ai.job_retry_until_minutes' => 10, 'services.brand_wheel_ai.timeout' => 60]);
+
+        $job = new GenerateBrandWheelAnalysisJob(1);
+
+        $this->assertGreaterThanOrEqual(10 * 60 + $job->timeout, $job->uniqueFor);
+    }
+
+    /**
+     * 依頼V-3: job_retry_until_minutesを変更したとき、uniqueForが
+     * 自動的に追随すること(数値をハードコードしていないことの確認)。
+     */
+    public function test_unique_for_follows_configured_retry_until_minutes(): void
+    {
+        config(['services.brand_wheel_ai.job_retry_until_minutes' => 20, 'services.brand_wheel_ai.timeout' => 60]);
+
+        $job = new GenerateBrandWheelAnalysisJob(1);
+
+        $this->assertSame(20 * 60 + $job->timeout, $job->uniqueFor);
+    }
+
+    /**
+     * 依頼V-3: job_retry_until_minutesが極端に小さくても、既存の不変条件
+     * (ロック期間はJobのタイムアウトより確実に長く保つ)は壊れないこと。
+     */
+    public function test_unique_for_still_exceeds_timeout_even_with_a_tiny_retry_until_window(): void
+    {
+        config(['services.brand_wheel_ai.job_retry_until_minutes' => 0, 'services.brand_wheel_ai.timeout' => 60]);
+
+        $job = new GenerateBrandWheelAnalysisJob(1);
+
+        $this->assertGreaterThan($job->timeout, $job->uniqueFor);
+        $this->assertSame($job->timeout * 3, $job->uniqueFor);
     }
 
     /**

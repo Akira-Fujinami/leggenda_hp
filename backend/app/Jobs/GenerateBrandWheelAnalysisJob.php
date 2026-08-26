@@ -87,7 +87,31 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         // ShouldBeUniqueのロック期間はJobのタイムアウトより確実に長く保つ
         // (ロックが先に切れると、二重押下ではなく単発の遅延実行だけで
         // 重複起動してしまうため)。
-        $this->uniqueFor = $this->timeout * 3;
+        //
+        // 依頼V-3(2026-08-26)で判明: このロックはrelease()を挟んでも
+        // 保持され続ける(Illuminate\Queue\CallQueuedHandler::call()の
+        // `if (! $job->isReleased() && ! $this->commandShouldBeUniqueUntilProcessing($command))`
+        // ―― このJobは`ShouldBeUniqueUntilProcessing`ではなくただの
+        // `ShouldBeUnique`なので、release()された(=$job->isReleased()が
+        // true)場合はensureUniqueJobLockIsReleased()が呼ばれず、ロックは
+        // 解放されないまま次の試行を待つ)。一方でTTL自体は最初の取得時
+        // (Illuminate\Foundation\Bus\PendingDispatch::shouldDispatch()が
+        // 呼ぶIlluminate\Bus\UniqueLock::acquire()、ディスパッチ時に1回だけ)
+        // から数えられ、release()のたびに延長されることはない
+        // (Illuminate\Bus\UniqueLock::acquire()は`$cache->lock($key, $uniqueFor)`
+        // で固定TTLのロックを取るだけで、再取得のような処理は無い)。
+        // したがって、リトライを重ねている最中にuniqueForがretryUntil()の
+        // 時間窓より先に切れると、ロックが消えた隙に同じ
+        // brandWheelAnalysisResultIdが再ディスパッチされ(管理画面からの
+        // 再実行等)、まだキュー内で再試行待ちの元のJobと二重に走る恐れが
+        // ある。timeout*3(旧: 270秒)はjob_retry_until_minutes(既定10分=
+        // 600秒)より短く、この懸念が実在するため、retryUntil()の時間窓
+        // 全体(+最後の試行1回分のtimeout)も覆うようmax()で底上げする。
+        // job_retry_until_minutesが変わっても自動で追随する。
+        $this->uniqueFor = max(
+            $this->timeout * 3,
+            ((int) config('services.brand_wheel_ai.job_retry_until_minutes', 10)) * 60 + $this->timeout,
+        );
 
         // 依頼U(2026-08-26): $tries/$backoffはconfig+env経由で調整できる
         // ようにする(再デプロイ無しで「もう少し粘らせたい/諦めさせたい」を
@@ -305,8 +329,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             $outcome = $provider->analyze($input);
         } catch (BrandWheelAnalysisException $e) {
             if ($e->isRetryable && $this->attempts() < $this->tries && $this->job !== null) {
-                $waitFromRetryAfterHeader = $e->retryAfterSeconds !== null;
-                $waitSeconds = $e->retryAfterSeconds ?? $this->resolveBackoffSeconds($this->backoff);
+                [$waitSeconds, $waitFromRetryAfterHeader] = $this->resolveWaitSeconds($e);
 
                 $this->logAiRetryScheduled($analysisId, $websiteAnalysisId, $e, $waitSeconds, $waitFromRetryAfterHeader);
 

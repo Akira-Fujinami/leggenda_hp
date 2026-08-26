@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Analysis\Concerns\ClassifiesJobFailureExceptions;
 use App\Jobs\Analysis\Concerns\LogsAiRetryAttempts;
 use App\Models\Analysis;
 use App\Models\BrandWheelImprovementSuggestion;
@@ -38,7 +39,7 @@ use Illuminate\Queue\SerializesModels;
  */
 class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, LogsAiRetryAttempts, Queueable, SerializesModels;
+    use ClassifiesJobFailureExceptions, Dispatchable, InteractsWithQueue, LogsAiRetryAttempts, Queueable, SerializesModels;
 
     public $tries;
 
@@ -53,7 +54,15 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
         public readonly int $suggestionId,
     ) {
         $this->timeout = ((int) config('services.brand_wheel_ai.timeout', 60)) + 30;
-        $this->uniqueFor = $this->timeout * 3;
+        // 依頼V-3(2026-08-26): GenerateBrandWheelAnalysisJobと同じ方針
+        // (ShouldBeUniqueのロックがrelease()を挟んでも保持され続ける一方、
+        // TTLは最初の取得時から固定で延長されないため、リトライ窓
+        // 全体を覆う必要がある。根拠・Laravelソースの該当箇所は同クラスの
+        // コンストラクタのコメント参照)。
+        $this->uniqueFor = max(
+            $this->timeout * 3,
+            ((int) config('services.brand_wheel_ai.job_retry_until_minutes', 10)) * 60 + $this->timeout,
+        );
 
         // 依頼U(2026-08-26): GenerateBrandWheelAnalysisJobと同じ方針
         // ($tries/$backoff/retryUntilの根拠は同クラスのdocblock参照)。
@@ -208,8 +217,7 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
             $outcome = $provider->analyze($input);
         } catch (BrandWheelAnalysisException $e) {
             if ($e->isRetryable && $this->attempts() < $this->tries && $this->job !== null) {
-                $waitFromRetryAfterHeader = $e->retryAfterSeconds !== null;
-                $waitSeconds = $e->retryAfterSeconds ?? $this->resolveBackoffSeconds($this->backoff);
+                [$waitSeconds, $waitFromRetryAfterHeader] = $this->resolveWaitSeconds($e);
 
                 // website_analysis_idは存在しない(この改善提案はAnalysis単位
                 // ―― 自社×競合の比較単位の成果物、クラスdocblock参照)ため
@@ -262,13 +270,29 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
         ]);
     }
 
+    /**
+     * 依頼V-2(2026-08-26): 以前は常に固定文字列
+     * 'BRAND_WHEEL_IMPROVEMENT_SUGGESTION_JOB_FAILED'を記録していたため、
+     * レート制限で粘った末の失敗(MaxAttemptsExceededException)も初回の
+     * 想定外エラーも区別できなかった(依頼者指摘)。GenerateBrandWheelAnalysisJob::
+     * failed()と同じClassifiesJobFailureExceptionsで分類する
+     * (このtraitはAnalysisJob/BrandWheelAnalysisResult等の特定モデルに
+     * 依存しない汎用ロジックのため、そのまま流用できることを確認済み)。
+     * このJobはAnalysisPipeline/AnalysisJobの進捗管理に参加しない設計
+     * (クラスdocblock参照)のため、markFailed()/cascadeProgress()に
+     * 相当する処理は追加しない。
+     */
     public function failed(?\Throwable $exception): void
     {
         $suggestion = BrandWheelImprovementSuggestion::find($this->suggestionId);
 
+        [$errorCode] = $this->classifyJobFailureException($exception);
+
+        $this->logJobFailedInFailedHandler($suggestion?->analysis_id, null, $errorCode);
+
         $suggestion?->update([
             'status' => 'error',
-            'error_code' => 'BRAND_WHEEL_IMPROVEMENT_SUGGESTION_JOB_FAILED',
+            'error_code' => $errorCode->value,
             'error_message' => $exception?->getMessage(),
         ]);
     }

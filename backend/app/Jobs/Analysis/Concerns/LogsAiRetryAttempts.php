@@ -2,6 +2,7 @@
 
 namespace App\Jobs\Analysis\Concerns;
 
+use App\Enums\AnalysisErrorCode;
 use App\Services\BrandWheel\BrandWheelAnalysisException;
 use Illuminate\Support\Facades\Log;
 
@@ -37,6 +38,33 @@ trait LogsAiRetryAttempts
         $index = $this->attempts() - 1;
 
         return (int) ($backoff[$index] ?? $backoff[array_key_last($backoff)]);
+    }
+
+    /**
+     * 依頼V-1(2026-08-26): release()に実際に渡す待ち秒数と、その由来
+     * (Retry-Afterヘッダかbackoffか)を1箇所で決める。
+     *
+     * Retry-Afterヘッダの値(OpenAiBrandWheelAnalysisProvider::request()等で
+     * 「1以上の整数として解釈できた場合のみ」nullでなくなる、依頼V-1参照)を
+     * 無条件に信用すると、極端に大きい値がretryUntil()の上限(既定10分)を
+     * 超え、release()した待ち時間がまるごと無駄になる ―― キューから
+     * 取り出された瞬間に期限切れでerror確定するため、その間Analysisは
+     * stale判定の枠を無意味に占有し続ける。job_retry_after_max_seconds
+     * (既定180秒)で上限を設け、それを超える値は上限で頭打ちにする。
+     * backoff由来の値には適用しない(既に[30,90,180]という設計上の
+     * 上限に収まっているため)。
+     *
+     * @return array{0: int, 1: bool} [待ち秒数, Retry-Afterヘッダ由来か]
+     */
+    private function resolveWaitSeconds(BrandWheelAnalysisException $e): array
+    {
+        if ($e->retryAfterSeconds !== null) {
+            $cap = (int) config('services.brand_wheel_ai.job_retry_after_max_seconds', 180);
+
+            return [min($e->retryAfterSeconds, $cap), true];
+        }
+
+        return [$this->resolveBackoffSeconds($this->backoff), false];
     }
 
     /**
@@ -77,6 +105,30 @@ trait LogsAiRetryAttempts
             'attempt' => $this->attempts(),
             'max_tries' => $this->tries,
             'error_code' => $e->errorCode,
+        ]);
+    }
+
+    /**
+     * 依頼V-2(2026-08-26): failed()(Laravelのキュー基盤がJobを終了させた
+     * 経路 ―― retryUntil()の期限切れ・timeout超過等でhandle()内のtry/catchを
+     * 経由しない場合)でも、logAiRetriesExhausted()と同じ書式で「何回目の
+     * 試行で終わったか」を記録する。GenerateBrandWheelImprovementSuggestionJob
+     * はhandle()経由でしかこの情報を残せていなかった(依頼者指摘: レート制限で
+     * 粘った末の失敗も初回失敗も同じ固定文字列になり区別できなかった)。
+     * $e->errorCode(string)ではなくAnalysisErrorCode(enum、
+     * ClassifiesJobFailureExceptionsの分類結果)を受け取る点がlogAiRetries
+     * Exhausted()と異なる ―― failed()はBrandWheelAnalysisException以外
+     * (MaxAttemptsExceededException・TimeoutExceededException・想定外の例外)
+     * も受け取りうるため。
+     */
+    private function logJobFailedInFailedHandler(?int $analysisId, ?int $websiteAnalysisId, AnalysisErrorCode $errorCode): void
+    {
+        Log::warning('Brand wheel AI job failed via the queue-level failed() handler', [
+            'analysis_id' => $analysisId,
+            'website_analysis_id' => $websiteAnalysisId,
+            'attempt' => $this->attempts(),
+            'max_tries' => $this->tries,
+            'error_code' => $errorCode->value,
         ]);
     }
 }

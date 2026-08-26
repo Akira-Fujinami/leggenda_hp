@@ -134,6 +134,19 @@ return [
         // secondsの累計より余裕を持たせつつ、stale判定の1/3以下に収める
         // 目安として10分とした。
         'job_retry_until_minutes' => (int) env('BRAND_WHEEL_AI_JOB_RETRY_UNTIL_MINUTES', 10),
+
+        // 依頼V-1(2026-08-26): OpenAIのRetry-Afterヘッダの値を無条件に
+        // 信用すると、極端に大きい値(仲介プロキシ等が返す想定外の応答)が
+        // retryUntil()(既定10分=600秒)を超え、release()した待ち時間が
+        // 丸ごと無駄になる ―― キューから取り出された瞬間に期限切れで
+        // error確定するため、その間Analysisはstale判定の枠(isCongested())を
+        // 無意味に占有し続ける。この上限はRetry-After由来の待ち時間にのみ
+        // 適用し、job_backoff_secondsには適用しない(既にその配列自体が
+        // 上限相当の値になるよう設計されているため)。初期値180秒は
+        // job_backoff_secondsの末尾(最終的に繰り返される値)と揃え、
+        // 「Retry-Afterを信用した場合でも、自前のbackoffの最大値より
+        // 待たせない」という一貫した上限にした。
+        'job_retry_after_max_seconds' => (int) env('BRAND_WHEEL_AI_JOB_RETRY_AFTER_MAX_SECONDS', 180),
     ],
 
     'semrush' => [
