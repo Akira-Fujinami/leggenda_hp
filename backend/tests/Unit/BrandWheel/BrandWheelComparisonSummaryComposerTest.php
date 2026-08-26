@@ -207,7 +207,7 @@ class BrandWheelComparisonSummaryComposerTest extends TestCase
 
         $this->assertContains('自社は6 / 24項目、競合は6 / 24項目の情報が確認できました。', $overview);
         $this->assertContains('「会社の魅力」は自社・競合とも同程度の情報量でした。', $overview);
-        $this->assertContains('特に「会社との距離」で競合の情報量が自社を上回りました。', $overview);
-        $this->assertContains('特に「仕事の魅力」で自社の情報量が競合を上回りました。', $overview);
+        $this->assertContains('「会社との距離」は競合の情報量が自社を上回りました。', $overview);
+        $this->assertContains('「仕事の魅力」は自社の情報量が競合を上回りました。', $overview);
     }
 }
