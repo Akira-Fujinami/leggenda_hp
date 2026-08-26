@@ -497,11 +497,15 @@ class WordReportGenerator
 
         $focus = $viewModel->improvementFocus;
         if ($focus !== null) {
-            $selectedLabel = self::GROUP_LABELS[$focus['selected_group']] ?? $focus['selected_group'];
-            $section->addText(
-                "3つの領域のうち、比較サイトとの差(比較サイト件数－自社件数)が最も大きかったのは「{$selectedLabel}」でした。".
-                'この領域から、比較サイトの記述にあり御社のサイトには無い項目を'.count($focus['items']).'件挙げます。',
-            );
+            // 依頼X-1〜X-4(2026-08-26、レポート42): 従来ここに直書きしていた
+            // 文言(選ばれた領域名・件数)は、自社が3領域すべてで競合を上回る
+            // ケースで「項目を0件挙げます。」「差が最も大きかったのは実際は
+            // 自社優位の領域」という事実に反する出力になっていた
+            // (PDF版・lead-pdf.blade.phpの同箇所コメント参照)。
+            // BrandWheelImprovementFocusComposer::compose()側で候補の有無・
+            // 差の符号に応じた文言を組み立てるようにしたため、ここでは
+            // $focus['lead_text']をそのまま出すだけでよい。
+            $section->addText($focus['lead_text']);
 
             $section->addTextBreak(1);
             foreach ($focus['groups'] as $group) {
@@ -509,10 +513,9 @@ class WordReportGenerator
                 $section->addText("{$label}：自社 {$group['self_count']} / {$group['max_count']}　比較 {$group['competitor_count']} / {$group['max_count']}");
             }
 
-            if ($focus['items'] === []) {
-                $section->addTextBreak(1);
-                $section->addText('該当する項目はありませんでした');
-            } else {
+            // 依頼X-2: 候補が0件のときの「該当する項目はありませんでした」は
+            // 廃止した(PDF版と同内容 ―― lead_textが既に状況を説明している)。
+            if ($focus['items'] !== []) {
                 foreach ($focus['items'] as $i => $item) {
                     $section->addTextBreak(1);
                     $section->addText(($i + 1).'. '.$item['sub_name'], ['bold' => true]);

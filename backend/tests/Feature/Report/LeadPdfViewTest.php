@@ -993,6 +993,53 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringNotContainsString('なお、これらを『サイトに書き足す』ことで解決するとは限りません', $html);
     }
 
+    /**
+     * 依頼X-1〜X-4(2026-08-26、レポート42): 自社が全領域で競合を上回り、
+     * 候補項目(競合にあり自社に無い項目)が1件も無いとき、「0件挙げます」も
+     * 「該当する項目はありませんでした」も出さず、状況を正しく説明する
+     * lead_textを出す。ページ自体も消えない。
+     */
+    public function test_improvement_page_shows_the_no_candidate_message_and_does_not_disappear_when_self_leads_every_group(): void
+    {
+        $selfAxes = [
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 4, 'max_count' => 4, 'matched_sub_elements' => [
+                ['key' => 'purpose', 'name' => 'パーパス'], ['key' => 'business_expansion', 'name' => '展開事業・商品'],
+                ['key' => 'project_initiative', 'name' => 'PJ・新たな取組'], ['key' => 'social_contribution', 'name' => '社会貢献活動'],
+            ], 'label_only_sub_elements' => []],
+        ];
+        $competitorAxes = [
+            // 競合がmatchした2件は、いずれも自社もmatchしている
+            // (=候補(competitor_matched && !self_matched)が0件になる)。
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 2, 'max_count' => 4, 'matched_sub_elements' => [
+                ['key' => 'purpose', 'name' => 'パーパス'], ['key' => 'business_expansion', 'name' => '展開事業・商品'],
+            ], 'label_only_sub_elements' => []],
+        ];
+
+        $comparisonComposer = app(BrandWheelSubElementComparisonComposer::class);
+        $subElementComparison = $comparisonComposer->compose($selfAxes, $competitorAxes);
+        $groupTotals = $comparisonComposer->groupTotals($subElementComparison);
+        $improvementFocus = app(BrandWheelImprovementFocusComposer::class)->compose($subElementComparison, []);
+
+        $this->assertSame([], $improvementFocus['items']);
+
+        $html = $this->render($this->comparisonViewModel([
+            'brandWheelSelf' => $this->wheel(['axes' => $selfAxes]),
+            'brandWheelCompetitor' => $this->wheel(['axes' => $competitorAxes]),
+            'subElementComparison' => $subElementComparison,
+            'groupTotals' => $groupTotals,
+            'improvementFocus' => $improvementFocus,
+            'improvementOnePoint' => $improvementFocus['lead_text'],
+            'improvementReason' => null,
+        ]));
+
+        $this->assertStringContainsString((string) config('brand_wheel.improvement_focus_templates.no_candidate_self_ahead'), $html);
+        $this->assertStringNotContainsString('0件挙げます', $html);
+        $this->assertStringNotContainsString('該当する項目はありませんでした', $html);
+        // ページ自体は消えない(棒グラフは残る)。
+        $this->assertStringContainsString('改善提案', $html);
+        $this->assertStringContainsString('会社の魅力', $html);
+    }
+
     public function test_improvement_page_shows_the_selected_group_and_competitor_evidence_for_its_items(): void
     {
         $html = $this->render($this->comparisonViewModel());

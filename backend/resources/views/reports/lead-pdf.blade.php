@@ -855,7 +855,6 @@
         @if ($viewModel->improvementFocus)
             @php
                 $focus = $viewModel->improvementFocus;
-                $selectedLabel = $groupBands[$focus['selected_group']]['label'] ?? $focus['selected_group'];
             @endphp
             {{--
                 2026-08-04: 文言修正。旧文言「候補者が比較サイト側でしか情報を
@@ -872,8 +871,20 @@
                 言い回しに変更する。件数バー自体はREADME「グループごとの
                 自社／競合件数バーを出し、差が最大の領域を特定する」の指定
                 通り残す(バーを別指標に変える案は取らない)。
+
+                依頼X-1〜X-4(2026-08-26、レポート42): 自社が3領域すべてで
+                競合を上回るとき、上記の選定ロジックが「候補項目(競合にあり
+                自社に無い項目)が1件も無い領域」を選び、「項目を0件挙げます。」
+                「差が最も大きかったのは『X』でした」(実際は自社優位で事実に
+                反する)という2つの不具合が同時に起きた。文言の組み立て自体を
+                BrandWheelImprovementFocusComposer::compose()側
+                (config('brand_wheel.improvement_focus_templates')参照)へ
+                移し、候補の有無・差の符号に応じて出し分けるようにしたため、
+                ここでは$focus['lead_text']を無条件に出すだけでよい
+                (「0件挙げます」を含む文言は候補が1件以上ある場合の
+                テンプレートにしか登場しないため、構造的に出しえない)。
             --}}
-            <p class="rlead">3つの領域のうち、比較サイトとの差(比較サイト件数－自社件数)が最も大きかったのは「{{ $selectedLabel }}」でした。この領域から、比較サイトの記述にあり御社のサイトには無い項目を{{ count($focus['items']) }}件挙げます。</p>
+            <p class="rlead">{{ $focus['lead_text'] }}</p>
 
             {{-- 2026-08-04: table-layout:autoにする理由はページ3のstatrowと
                  同じ(CSS側コメント参照)。この表は5列(nm/v/bar/v/bar)が
@@ -897,9 +908,15 @@
                 @endforeach
             </table>
 
-            @if (count($focus['items']) === 0)
-                <p class="gnone" style="margin-top: 3mm;">該当する項目はありませんでした</p>
-            @else
+            {{--
+                依頼X-2(2026-08-26): 候補が0件のときの「該当する項目は
+                ありませんでした」という宙に浮いた一行は廃止した。
+                $focus['lead_text']が既に状況を説明する文言(no_candidate_
+                self_ahead等)を出しているため、追加の説明は不要 ――
+                カード・中長期の差別化ポイント・末尾の一文は、候補が
+                1件以上あるとき(=$focus['items']が空でないとき)のみ出す。
+            --}}
+            @if (count($focus['items']) > 0)
                 {{-- table-layout:autoにしない理由 ―― この列にはcompetitor_evidence
                      (比較サイトの実際の抜粋、長文になりうる)が入るため、autoにすると
                      列幅がページ右端を超える危険がある。列幅は全列88.3mmで

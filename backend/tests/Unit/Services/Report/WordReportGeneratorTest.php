@@ -581,6 +581,48 @@ class WordReportGeneratorTest extends TestCase
     }
 
     /**
+     * 依頼X-1〜X-4(2026-08-26、レポート42): PDF版と同内容
+     * (LeadPdfViewTest::test_improvement_page_shows_the_no_candidate_message_and_does_not_disappear_when_self_leads_every_group参照)。
+     */
+    public function test_improvement_section_shows_the_no_candidate_message_and_does_not_disappear_when_self_leads_every_group(): void
+    {
+        $selfAxes = [
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 4, 'max_count' => 4, 'matched_sub_elements' => [
+                ['key' => 'purpose', 'name' => 'パーパス'], ['key' => 'business_expansion', 'name' => '展開事業・商品'],
+                ['key' => 'project_initiative', 'name' => 'PJ・新たな取組'], ['key' => 'social_contribution', 'name' => '社会貢献活動'],
+            ], 'label_only_sub_elements' => []],
+        ];
+        $competitorAxes = [
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 2, 'max_count' => 4, 'matched_sub_elements' => [
+                ['key' => 'purpose', 'name' => 'パーパス'], ['key' => 'business_expansion', 'name' => '展開事業・商品'],
+            ], 'label_only_sub_elements' => []],
+        ];
+
+        $comparisonComposer = app(BrandWheelSubElementComparisonComposer::class);
+        $subElementComparison = $comparisonComposer->compose($selfAxes, $competitorAxes);
+        $groupTotals = $comparisonComposer->groupTotals($subElementComparison);
+        $improvementFocus = app(BrandWheelImprovementFocusComposer::class)->compose($subElementComparison, []);
+
+        $this->assertSame([], $improvementFocus['items']);
+
+        $documentXml = $this->generate($this->comparisonViewModel([
+            'brandWheelSelf' => $this->wheel(['axes' => $selfAxes]),
+            'brandWheelCompetitor' => $this->wheel(['axes' => $competitorAxes]),
+            'subElementComparison' => $subElementComparison,
+            'groupTotals' => $groupTotals,
+            'improvementFocus' => $improvementFocus,
+            'improvementOnePoint' => $improvementFocus['lead_text'],
+            'improvementReason' => null,
+        ]));
+
+        $this->assertStringContainsString((string) config('brand_wheel.improvement_focus_templates.no_candidate_self_ahead'), $documentXml);
+        $this->assertStringNotContainsString('0件挙げます', $documentXml);
+        $this->assertStringNotContainsString('該当する項目はありませんでした', $documentXml);
+        $this->assertStringContainsString('改善提案', $documentXml);
+        $this->assertStringContainsString('会社の魅力', $documentXml);
+    }
+
+    /**
      * 2026-08-25(修正: 所見→提案): カードの本文は判定用の定義文
      * (sub_element_definitions)ではなく、行動を促す提案文
      * (config('brand_wheel.axes.*.sub_element_recommendations'))を表示する。

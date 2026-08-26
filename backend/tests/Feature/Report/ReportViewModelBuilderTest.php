@@ -958,6 +958,130 @@ class ReportViewModelBuilderTest extends TestCase
     }
 
     // ------------------------------------------------------------------
+    // 依頼W-2(2026-08-26、B案): 競合ありの経路(improvementFocusが非null)
+    // では、AIのone_point/reasonではなく$improvementFocusから決定的に
+    // 組み立てた文言に差し替える。
+    // ------------------------------------------------------------------
+
+    /**
+     * 候補(competitor_matched && !self_matched)が1件以上あるとき、
+     * ワンポイントはAIのone_pointではなく$improvementFocus['items'][0]
+     * (カード1枚目と同じ項目)から組み立てた文になり、理由(AI生成)は
+     * 非表示になる。
+     */
+    public function test_improvement_one_point_is_replaced_with_a_deterministic_recommendation_when_competitor_focus_has_items(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                ['key' => 'purpose', 'evidence' => 'x1'], ['key' => 'business_expansion', 'evidence' => 'x2'],
+                ['key' => 'project_initiative', 'evidence' => 'x3'], ['key' => 'social_contribution', 'evidence' => 'x4'],
+                ['key' => 'core_values', 'evidence' => 'x5'], ['key' => 'atmosphere', 'evidence' => 'x6'],
+            ]]],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'relationship', 'matched_sub_elements' => [
+                ['key' => 'colleagues', 'evidence' => 'y1'], ['key' => 'atmosphere', 'evidence' => 'y2'],
+                ['key' => 'physical_freedom', 'evidence' => 'y3'], ['key' => 'mental_freedom', 'evidence' => 'y4'],
+                ['key' => 'core_values', 'evidence' => 'y5'], ['key' => 'leadership', 'evidence' => 'y6'],
+            ]]],
+        ]);
+        // AIのone_point/reasonは、実際に選ばれる項目とは無関係な文言にしておく
+        // ―― 差し替わっていることを確認するため。
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'one_point' => 'AIが生成した無関係な推奨文。',
+            'reason' => 'AIが生成した無関係な理由。',
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->improvementFocus);
+        $this->assertNotEmpty($viewModel->improvementFocus['items']);
+        $this->assertSame(
+            sprintf(
+                (string) config('brand_wheel.improvement_focus_templates.one_point_recommend_item'),
+                $viewModel->improvementFocus['items'][0]['sub_name'],
+            ),
+            $viewModel->improvementOnePoint,
+        );
+        $this->assertNull($viewModel->improvementReason);
+        $this->assertStringNotContainsString('AIが生成した', (string) $viewModel->improvementOnePoint);
+    }
+
+    /**
+     * 依頼X-2/W-2: 自社が3領域すべてで競合を上回り、候補項目が1件も無い
+     * とき(レポート42相当)、ワンポイントは$improvementFocus['lead_text']
+     * (「まずは『X』を追加することを推奨します」が成立しないため)をそのまま
+     * 使う。ページ自体は消えない($improvementFocusが非null)。
+     */
+    public function test_improvement_one_point_falls_back_to_the_lead_text_when_competitor_focus_has_no_candidate(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        // 自社が確実に競合を上回るようにする(自社は全24項目、競合は
+        // そのうち一部のみ) ―― どの領域にも「競合にあり自社に無い」項目が
+        // 無い状態を作る。
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => collect(config('brand_wheel.axes'))->map(fn (array $axis, string $axisKey) => [
+                'axis_key' => $axisKey,
+                'matched_sub_elements' => collect($axis['sub_elements'])->keys()->map(fn (string $subKey) => ['key' => $subKey, 'evidence' => "{$axisKey}-{$subKey}"])->all(),
+            ])->values()->all(),
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                ['key' => 'purpose', 'evidence' => 'y1'], ['key' => 'business_expansion', 'evidence' => 'y2'],
+                ['key' => 'project_initiative', 'evidence' => 'y3'], ['key' => 'social_contribution', 'evidence' => 'y4'],
+                ['key' => 'brand_recognition', 'evidence' => 'y5'], ['key' => 'competitiveness', 'evidence' => 'y6'],
+            ]]],
+        ]);
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'one_point' => 'AIが生成した無関係な推奨文。',
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->improvementFocus);
+        $this->assertSame([], $viewModel->improvementFocus['items']);
+        $this->assertSame($viewModel->improvementFocus['lead_text'], $viewModel->improvementOnePoint);
+        $this->assertNull($viewModel->improvementReason);
+        $this->assertStringNotContainsString('AIが生成した', (string) $viewModel->improvementOnePoint);
+        $this->assertStringNotContainsString('0件', (string) $viewModel->improvementOnePoint);
+    }
+
+    // ------------------------------------------------------------------
     // 2026-08-25追加: 診断レポートを商談で使える状態にする(修正1〜3・5)。
     // 自社/競合いずれかの合計matched件数がconfig('brand_wheel.
     // comparison_sufficiency_threshold')(既定6)未満のとき、比較に基づく

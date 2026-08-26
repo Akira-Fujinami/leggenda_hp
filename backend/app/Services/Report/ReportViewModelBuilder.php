@@ -221,6 +221,41 @@ class ReportViewModelBuilder
             )
             : null;
 
+        // 依頼W-2(2026-08-26、B案採用): 競合ありの経路(improvementFocusが
+        // 非null)では、AIが生成したone_point/reasonではなく$improvementFocus
+        // (決定的な規則、数値・引用の根拠と必ず一致する)から組み立てた文言に
+        // 差し替える。依頼Qで競合なしの経路をAI主にしたのとは逆の方針だが、
+        // 「競合ありページの価値は競合と比べて何が足りないかを数値と引用で
+        // 示すこと」という依頼者判断による(競合なしの経路
+        // improvementFocusSelfOnlyは変更しない)。
+        //
+        // 依頼X(2026-08-26、レポート42)との実装順序: 本ロジックはX-1〜X-4の
+        // 修正(compose()がitems=[]でも非nullを返し、lead_textを組み立てる
+        // ように変更済み)を前提にする ―― X→W-2の順で実装した。X-1修正前は
+        // 「自社が全領域で競合を上回る」ケースでcompose()の選定がそもそも
+        // 事実に反する領域を指しており、B案の決定的なワンポイントも同じ
+        // 誤りを引き継いでしまうため、先にXを修正してからB案を実装する
+        // 必要があった。
+        //
+        // 候補(competitor_matched && !self_matched)が1件以上あれば
+        // items[0](3枚のカードの1枚目、gap_positive/gap_non_positiveの
+        // 文言が参照する項目と同一)を主語にした推奨文を使う。候補が0件の
+        // ときは「まずは『X』を追加することを推奨します」という形の文が
+        // 成立しないため(依頼者指摘)、新たに文言を起こさずlead_text
+        // (no_candidate_self_ahead等、直下の説明文と同一)をそのまま
+        // ワンポイントにも使う ―― ワンポイントと直下の説明文が完全に一致し
+        // 冗長にはなるが、2つの独立した文言が将来ズレて再び矛盾する
+        // (依頼W-2発端の不具合そのもの)リスクを構造的に無くすことを優先した。
+        if ($improvementFocus !== null) {
+            $improvementOnePoint = $improvementFocus['items'] !== []
+                ? sprintf(
+                    (string) config('brand_wheel.improvement_focus_templates.one_point_recommend_item'),
+                    $improvementFocus['items'][0]['sub_name'],
+                )
+                : $improvementFocus['lead_text'];
+            $improvementReason = null;
+        }
+
         // 2026-08-10: 競合が無い(または読み取れない)診断向けの改善提案
         // (ユーザー指示 ―― 「比較サイトが無いため、領域ごとの比較はご用意
         // できません。」の1行だけでページの大半が空白になる問題への対応)。

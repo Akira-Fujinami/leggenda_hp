@@ -11,16 +11,32 @@ use Illuminate\Support\Facades\Log;
  * 「【3】決定的な規則が必要な箇所」)。
  *
  * 【グループ選定規則】3グループ(company_appeal/company_distance/job_appeal)
- * それぞれについて「競合の該当件数の合計 - 自社の該当件数の合計」を計算し、
- * 最大のグループを選ぶ。同点の場合はconfig('brand_wheel.group_labels')の
- * 並び順で先に来るグループを選ぶ(config順=決定的な規則。実行のたびに
- * 順序が変わるAIの出力順や配列のキー順に依存させない)。
+ * のうち「候補項目(競合にはあり自社には無い項目)が1件以上ある」グループに
+ * 限定し、その中で「競合の該当件数の合計 - 自社の該当件数の合計」が最大の
+ * グループを選ぶ。同点の場合はconfig('brand_wheel.group_labels')の並び順で
+ * 先に来るグループを選ぶ(config順=決定的な規則。実行のたびに順序が変わる
+ * AIの出力順や配列のキー順に依存させない)。
+ *
+ * 依頼X-1(2026-08-26、レポート42): 従来は件数差だけで選んでいたため、
+ * 自社が3領域すべてで競合を上回る(差が全て負)ケースで、候補が1件も無い
+ * 領域が同点の走査順で選ばれ、候補が1件ある別の領域が捨てられる不具合が
+ * あった。候補の有無を選定条件に加えることで解消する。候補項目が1件も
+ * 無い領域を選定対象から除くだけで、候補項目そのものの判定条件
+ * (competitor_matched && !self_matched)・同点規則は変更しない。
+ * 候補項目がどの領域にも無い場合は、除外前の全領域を対象に同じ規則で
+ * 選ぶ(この場合itemsは空になる。呼び出し側でページを消さない判断に
+ * 使えるよう、この場合もnullではなく非nullを返す ―― 下記@returnの
+ * 「nullは~」の条件を参照)。
  *
  * 【3項目選定規則】選ばれたグループに属する下位要素のうち「競合にはあり、
  * 自社には無い」もの(BrandWheelSubElementComparisonComposerの出力順、
  * つまりconfig('brand_wheel.axes')の並び順)を先頭から最大3件選ぶ。3件に
  * 満たない場合はそのまま少ない件数で成立させ、他グループから補充しない
  * (グループ差の主張と選定項目のグループを一致させ続けるため)。
+ *
+ * 【lead_textの組み立て】config('brand_wheel.improvement_focus_templates')
+ * 参照。候補の有無・選ばれた領域の差(gap)の符号によって使うテンプレートを
+ * 切り替える(詳細は同configのコメント)。
  */
 class BrandWheelImprovementFocusComposer
 {
@@ -38,7 +54,7 @@ class BrandWheelImprovementFocusComposer
     /**
      * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, recommendation: string, self_matched: bool, competitor_matched: bool}>  $comparisonItems  BrandWheelSubElementComparisonComposer::compose()の戻り値
      * @param  array<string, array<string, string>>  $competitorEvidenceByAxisAndSubKey  (axis_key => (sub_key => evidence))。選ばれた項目の分だけ実際に使う ―― 比較サイトの本文をこのページの目的以外に広く露出させないため、呼び出し側もこの用途専用に組み立てたものを渡すこと
-     * @return array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, recommendation: string, competitor_evidence: ?string}>}|null nullは項目が1件も無い場合(呼び出し側でこのページ自体を出さない判断に使う)
+     * @return array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, recommendation: string, competitor_evidence: ?string}>, lead_text: string}|null nullは$comparisonItems自体が空の場合のみ。候補項目(競合にあり自社に無い項目)がどの領域にも無い場合はitems=[]の非nullを返す(依頼X-2、呼び出し側でページを消さない判断に使う)
      */
     public function compose(array $comparisonItems, array $competitorEvidenceByAxisAndSubKey): ?array
     {
@@ -50,6 +66,7 @@ class BrandWheelImprovementFocusComposer
         $groupLabels = (array) config('brand_wheel.group_labels', []);
 
         $groups = [];
+        $candidateCounts = [];
         foreach ($groupOrder as $groupKey) {
             $itemsInGroup = array_values(array_filter($comparisonItems, fn (array $i) => $i['group'] === $groupKey));
 
@@ -60,12 +77,23 @@ class BrandWheelImprovementFocusComposer
                 'competitor_count' => count(array_filter($itemsInGroup, fn (array $i) => $i['competitor_matched'])),
                 'max_count' => count($itemsInGroup),
             ];
+
+            $candidateCounts[$groupKey] = count(array_filter(
+                $itemsInGroup,
+                fn (array $i) => $i['competitor_matched'] && ! $i['self_matched'],
+            ));
         }
 
-        $selectedGroupKey = $groupOrder[0] ?? null;
+        // 依頼X-1: 候補が1件以上ある領域に限定する。どの領域にも候補が無い
+        // 場合は元の全領域を対象にする(この場合はどれを選んでも$itemsは
+        // 空になるため、選定結果はlead_text/表示に影響しない)。
+        $eligibleGroupKeys = array_values(array_filter($groupOrder, fn (string $g) => $candidateCounts[$g] > 0));
+        $selectionPool = $eligibleGroupKeys !== [] ? $eligibleGroupKeys : $groupOrder;
+
+        $selectedGroupKey = $selectionPool[0] ?? null;
         $selectedGap = null;
 
-        foreach ($groupOrder as $groupKey) {
+        foreach ($selectionPool as $groupKey) {
             $gap = $groups[$groupKey]['competitor_count'] - $groups[$groupKey]['self_count'];
 
             // `>`(以上ではない)で比較することで、同点のときはforeachの走査順
@@ -94,7 +122,47 @@ class BrandWheelImprovementFocusComposer
             'selected_group' => (string) $selectedGroupKey,
             'groups' => array_values($groups),
             'items' => $items,
+            'lead_text' => $this->composeLeadText($groups, $items, (string) $selectedGroupKey, (int) $selectedGap),
         ];
+    }
+
+    /**
+     * 依頼X-2/X-3(2026-08-26): config('brand_wheel.improvement_focus_templates')
+     * (同configのコメントに各分岐の根拠を記載)から、状況に応じた1文を組み立てる。
+     * 「%d件挙げます」のような件数を含む文言は、候補が1件以上ある場合の
+     * テンプレート(gap_positive/gap_non_positive)にしか登場しないため、
+     * 呼び出し側の条件分岐に関わらず「0件挙げます」を構造的に出しえない。
+     *
+     * @param  array<string, array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>  $groups
+     * @param  list<array{axis_name: string, sub_name: string, definition: string, recommendation: string, competitor_evidence: ?string}>  $items
+     */
+    private function composeLeadText(array $groups, array $items, string $selectedGroupKey, int $selectedGap): string
+    {
+        $templates = (array) config('brand_wheel.improvement_focus_templates', []);
+
+        if ($items !== []) {
+            return $selectedGap >= 1
+                ? sprintf((string) ($templates['gap_positive'] ?? ''), $groups[$selectedGroupKey]['label'], count($items))
+                : sprintf((string) ($templates['gap_non_positive'] ?? ''), count($items));
+        }
+
+        // 候補が1件も無い場合。candidate_count(group)===0は「競合が
+        // matchした項目は自社も必ずmatchしている」ことを意味するため、
+        // self_count(group)>=competitor_count(group)が全領域で数学的に
+        // 保証される ―― つまりこの分岐に来る場合、必ずno_candidate_self_
+        // aheadの前提(3領域とも自社が同等以上)が成り立つ。no_candidate_
+        // mixedは、この前提が何らかの理由で破れた場合の安全策として
+        // 依頼者指定により残すもので、現在のロジックでは到達しない
+        // (依頼Xの報告で数学的根拠を示した上で確認済み)。
+        $allSelfAheadOrEqual = true;
+        foreach ($groups as $group) {
+            if ($group['competitor_count'] > $group['self_count']) {
+                $allSelfAheadOrEqual = false;
+                break;
+            }
+        }
+
+        return (string) ($templates[$allSelfAheadOrEqual ? 'no_candidate_self_ahead' : 'no_candidate_mixed'] ?? '');
     }
 
     /**
