@@ -23,4 +23,12 @@ su -s /bin/sh www-data -c '
 # 検証が失敗した場合、上のsuブロックが非0で終了し、set -eによりこのexecには
 # 到達しない(=queue:work等の実プロセスは一切起動しない)。
 
+# 依頼Y-1(2026-08-26): memory_limitをenvで調整できるようにする
+# (backend-entrypoint.render.shと同じ方針・同じ根拠、詳細はそちらのコメント
+# 参照)。このentrypointはphp-fpmとqueue:work双方から起動されうるため、
+# ここで書けば両方に効く。
+PHP_MEMORY_LIMIT="${PHP_MEMORY_LIMIT:-512M}"
+printf 'memory_limit = %s\n' "$PHP_MEMORY_LIMIT" > /usr/local/etc/php/conf.d/zz-runtime-memory-limit.ini
+echo "[backend-entrypoint] PHP memory_limit set to ${PHP_MEMORY_LIMIT}" >&2
+
 exec "$@"

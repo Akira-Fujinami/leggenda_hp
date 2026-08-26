@@ -70,12 +70,41 @@ class GenerateLeadReportJob implements ShouldBeUnique, ShouldQueue
 
         $viewModel = $viewModelBuilder->build($analysis, $leadSession);
 
+        // 依頼Y-1(2026-08-26): dompdf/PhpWordが実際にどれだけメモリを
+        // 使っているかを継続的に観測する(memory_limitの値を勘で決めないため。
+        // 5件同時実行時にPDF生成ジョブが同時に立ち上がりコンテナがOOM
+        // Killされた事故の再発防止)。memory_reset_peak_usage()(PHP 8.2+)で
+        // 各フォーマットの生成直前にピークをリセットすることで、直前の
+        // ViewModel組み立てやもう一方のフォーマットの分を含まない、
+        // フォーマット単体のピークを記録できる。
+        memory_reset_peak_usage();
+        $memoryBeforeDocx = memory_get_usage(true);
         $docxSucceeded = $this->generateFormat(ReportFormat::Docx, fn () => $wordGenerator->generate($viewModel), $viewModel);
+        $this->logPeakMemoryUsage(ReportFormat::Docx, $memoryBeforeDocx);
+
+        memory_reset_peak_usage();
+        $memoryBeforePdf = memory_get_usage(true);
         $pdfSucceeded = $this->generateFormat(ReportFormat::Pdf, fn () => $pdfGenerator->generate($viewModel), $viewModel);
+        $this->logPeakMemoryUsage(ReportFormat::Pdf, $memoryBeforePdf);
 
         if (! $docxSucceeded || ! $pdfSucceeded) {
             throw new RuntimeException("レポート生成に失敗した形式があります(analysis_id={$this->analysisId})");
         }
+    }
+
+    /**
+     * 依頼Y-1: 本文・プロンプト・APIキー・顧客情報は一切含めない(数値のみ)。
+     * このログは恒久的に残す(依頼者指定 ―― 5件同時実行後も実際の消費量を
+     * 継続的に見たいため)。
+     */
+    private function logPeakMemoryUsage(ReportFormat $format, int $memoryBeforeBytes): void
+    {
+        Log::info('Lead report generation peak memory usage', [
+            'analysis_id' => $this->analysisId,
+            'format' => $format->value,
+            'memory_before_bytes' => $memoryBeforeBytes,
+            'memory_peak_bytes' => memory_get_peak_usage(true),
+        ]);
     }
 
     /**

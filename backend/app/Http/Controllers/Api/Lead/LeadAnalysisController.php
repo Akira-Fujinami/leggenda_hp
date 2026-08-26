@@ -13,7 +13,6 @@ use App\Models\LeadSession;
 use App\Models\MetricDefinition;
 use App\Models\Project;
 use App\Models\Report;
-use App\Models\WebsiteAnalysis;
 use App\Exceptions\Analysis\AnalysisException;
 use App\Services\Analysis\AnalysisService;
 use App\Services\Analysis\SafeHttpFetcher;
@@ -24,6 +23,7 @@ use App\Services\BrandWheel\BrandWheelReportEligibility;
 use App\Services\Lead\LeadNotificationService;
 use App\Services\Lead\LeadPerspectiveComposer;
 use App\Services\Lead\LeadRecommendationComposer;
+use App\Services\Lead\LeadReportDispatchService;
 use App\Services\Lead\LeadScoreCalculator;
 use App\Services\Lead\LeadCompanyResolver;
 use App\Services\Lead\LeadSessionService;
@@ -59,6 +59,7 @@ class LeadAnalysisController extends Controller
         private readonly BrandWheelComparisonSummaryComposer $brandWheelSummaryComposer,
         private readonly BrandWheelCompletionNotifier $brandWheelNotifier,
         private readonly SafeHttpFetcher $safeHttpFetcher,
+        private readonly LeadReportDispatchService $reportDispatch,
     ) {}
 
     /**
@@ -498,22 +499,41 @@ class LeadAnalysisController extends Controller
             return;
         }
 
-        $selfResult = $this->selfBrandWheelResult($analysis);
+        $selfResult = $this->reportDispatch->selfBrandWheelResult($analysis);
         $reportable = app(BrandWheelReportEligibility::class)->isReportable($selfResult);
 
+        if ($reportable) {
+            // 依頼Y-3(2026-08-26): Report行作成+GenerateLeadReportJob起動の
+            // 実装はLeadReportDispatchServiceへ集約した(FinalizeAnalysisJobの
+            // 終端処理からも同じ実装を呼び、診断完了と同時にレポート生成を
+            // 起動できるようにするため)。通常はそちら側が既にReport行を
+            // 作成済み(=このメソッド冒頭のexists()チェックで早期returnする)
+            // ため、ここに到達するのはパイプライン側の起動が何らかの理由で
+            // 走らなかった場合の安全網としてのみ(判定条件・Report行作成の
+            // 実装内容は無改修、呼び出し方のみ変更)。
+            $this->reportDispatch->createPendingReportsAndDispatch($analysis);
+
+            return;
+        }
+
+        // reportable=falseの場合のReport行作成(Skipped)・見送り通知は、
+        // 生トークンを必要とする通知メールの都合上、引き続きここ
+        // (リードのポーリングリクエスト経由)でのみ行う
+        // (LeadReportDispatchServiceのdocblock参照、依頼Y-3で意図的に
+        // パイプライン側からは呼ばないことにした)。
         try {
             foreach ([ReportFormat::Docx, ReportFormat::Pdf] as $format) {
                 Report::query()->create([
                     'analysis_id' => $analysis->id,
                     'format' => $format->value,
                     'storage_path' => '',
-                    'status' => $reportable ? ReportGenerationStatus::Pending->value : ReportGenerationStatus::Skipped->value,
-                    'error_message' => $reportable ? null : '自社サイトのブランド・ホイール分析がレポートに値する結果を持たなかったため、生成を見送りました。',
+                    'status' => ReportGenerationStatus::Skipped->value,
+                    'error_message' => '自社サイトのブランド・ホイール分析がレポートに値する結果を持たなかったため、生成を見送りました。',
                 ]);
             }
         } catch (QueryException $e) {
             // 想定しているのは(analysis_id, format)の一意制約違反(23505、
-            // 457行目のexists()チェックと後続のcreate()の間で別プロセスが
+            // 上のexists()チェックと後続のcreate()の間で別プロセスが
             // 先にReportを作成した場合)のみ。それ以外(カラム欠落等の本当の
             // スキーマ不一致)を同じ握りつぶしに含めると、8月の障害同様に
             // 無言で通過してしまう(2026-08-24修正)。ここは進捗/結果ポーリング
@@ -527,12 +547,6 @@ class LeadAnalysisController extends Controller
                     'exception_message' => $e->getMessage(),
                 ]);
             }
-
-            return;
-        }
-
-        if ($reportable) {
-            GenerateLeadReportJob::dispatch($analysis->id)->onQueue('reports');
 
             return;
         }
@@ -585,28 +599,6 @@ class LeadAnalysisController extends Controller
     private function adminAnalysisUrl(int $analysisId): string
     {
         return route('admin.analyses.show', $analysisId);
-    }
-
-    /**
-     * 自社サイト(is_primary=true)の最新BrandWheelAnalysisResultを取得する。
-     * GenerateBrandWheelAnalysisJob::maybeConsumeLeadQuota()と同じ「自社
-     * サイトのみを見る」スコープ(競合サイト側の結果は一切影響させない)。
-     */
-    private function selfBrandWheelResult(Analysis $analysis): ?BrandWheelAnalysisResult
-    {
-        $selfWebsiteAnalysis = WebsiteAnalysis::query()
-            ->where('analysis_id', $analysis->id)
-            ->whereHas('website', fn ($q) => $q->where('is_primary', true))
-            ->first();
-
-        if ($selfWebsiteAnalysis === null) {
-            return null;
-        }
-
-        return BrandWheelAnalysisResult::query()
-            ->where('website_analysis_id', $selfWebsiteAnalysis->id)
-            ->latest('id')
-            ->first();
     }
 
     /**

@@ -9,6 +9,7 @@ use App\Models\Analysis;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStatusResolver;
+use App\Services\Lead\LeadReportDispatchService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -72,6 +73,29 @@ class FinalizeAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'progress' => 100,
                 'completed_at' => now(),
             ]);
+
+            // 依頼Y-3(2026-08-26): 診断がcompleted/partialに到達した時点で
+            // レポート生成を起動する(従来はフロントの結果ポーリングが
+            // 初めて叩かれたときにしか起動しておらず、構造上「結果画面に
+            // 遷移した時点では必ず未生成」だった)。判定条件(reportable判定・
+            // Report行の重複作成防止)はLeadReportDispatchServiceへ集約済みで
+            // 無改修 ―― LeadAnalysisController::maybeDispatchReportGeneration()
+            // からも同じ実装を呼ぶ。
+            //
+            // この呼び出し自体の失敗が、このJob本来の責務(Analysisの集計)を
+            // 失敗扱いにしないよう、独立したtry/catchで囲む
+            // (下のcatchに巻き込むとAnalysisErrorCode::UnknownErrorとして
+            // 「分析の集計中に予期しないエラー」と誤って記録されてしまう ――
+            // 集計自体は成功しているため)。
+            try {
+                app(LeadReportDispatchService::class)->dispatchIfReportable($analysis);
+            } catch (\Throwable $e) {
+                report($e);
+                Log::warning('Failed to dispatch lead report generation from FinalizeAnalysisJob', [
+                    'analysis_id' => $this->analysisId,
+                    'exception_class' => get_class($e),
+                ]);
+            }
 
             $pipeline->markCompleted($record);
         } catch (\Throwable $e) {

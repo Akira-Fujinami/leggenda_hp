@@ -16,6 +16,7 @@ use App\Services\Report\ReportViewModelBuilder;
 use App\Services\Report\WordReportGenerator;
 use Database\Seeders\CategoryDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -111,5 +112,37 @@ class GenerateLeadReportJobTest extends TestCase
         );
 
         $this->assertSame(0, Report::count());
+    }
+
+    /**
+     * 依頼Y-1(2026-08-26): dompdf/PhpWordの実際のピークメモリを、PDF/Wordを
+     * 分けて構造化ログに残す。本文・プロンプト・APIキー・顧客情報を含まない
+     * こと(数値フィールドのみであること)も確認する。
+     */
+    public function test_it_logs_peak_memory_usage_separately_for_docx_and_pdf(): void
+    {
+        $analysis = $this->makeLeadAnalysis();
+
+        Log::spy();
+
+        (new GenerateLeadReportJob($analysis->id))->handle(
+            app(ReportViewModelBuilder::class),
+            app(WordReportGenerator::class),
+            app(PdfReportGenerator::class),
+        );
+
+        foreach (['docx', 'pdf'] as $format) {
+            Log::shouldHaveReceived('info')
+                ->withArgs(function (string $message, array $context) use ($analysis, $format) {
+                    return $message === 'Lead report generation peak memory usage'
+                        && $context['analysis_id'] === $analysis->id
+                        && $context['format'] === $format
+                        && is_int($context['memory_before_bytes'])
+                        && is_int($context['memory_peak_bytes'])
+                        && $context['memory_peak_bytes'] > 0
+                        && array_keys($context) === ['analysis_id', 'format', 'memory_before_bytes', 'memory_peak_bytes'];
+                })
+                ->once();
+        }
     }
 }

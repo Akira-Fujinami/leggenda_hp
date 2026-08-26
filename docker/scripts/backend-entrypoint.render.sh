@@ -63,6 +63,26 @@ envsubst '${PORT}' < /etc/nginx/templates/default.conf.template > /etc/nginx/con
 nginx -t
 
 # ---------------------------------------------------------------------------
+# PHPのmemory_limit (依頼Y-1、2026-08-26)。
+#
+# docker/php/php.ini(ビルド時にzz-app.iniとしてイメージへ焼き込まれる、
+# 既定512M)はphp-fpm・CLI(キューワーカー)の両方に効くが、値を変えるたびに
+# イメージの再ビルド・デプロイが必要になる。5件同時のリード診断完了直後、
+# PDF生成ジョブが複数本同時に立ち上がりコンテナがOOM Killされた事故
+# (2026-08-26本番)の再発防止として、実測ベースで再デプロイ無しに調整
+# できるようにする(依頼A/U/Vと同じ「env化して再デプロイを不要にする」方針)。
+#
+# /usr/local/etc/php/conf.d/ はphp-fpm・CLIどちらのSAPIも同じディレクトリを
+# 読む(`php --ini`/`php-fpm -i`のどちらも"Scan for additional .ini files in"が
+# 同一パスであることを確認済み ―― SAPIごとに分かれていないビルドのため)。
+# ここに1ファイル書けば両方に反映される。ファイル名をzz-app.ini(既定512M
+# 固定)よりアルファベット順で後に読ませることで、そちらのmemory_limitを
+# 上書きする(未設定時も同じ512Mを書き込むため、挙動は従来と完全に同一)。
+PHP_MEMORY_LIMIT="${PHP_MEMORY_LIMIT:-512M}"
+printf 'memory_limit = %s\n' "$PHP_MEMORY_LIMIT" > /usr/local/etc/php/conf.d/zz-runtime-memory-limit.ini
+echo "[render-entrypoint] PHP memory_limit set to ${PHP_MEMORY_LIMIT} (applies to php-fpm and CLI/queue workers)" >&2
+
+# ---------------------------------------------------------------------------
 # Queue worker設定 (すべてRender環境変数で上書き可能。値はRender側の
 # ダッシュボードで設定するオペレーター管理下の値のみを想定しており、
 # 外部入力やSecretそのものは含まれないためログにも出力してよい)。
