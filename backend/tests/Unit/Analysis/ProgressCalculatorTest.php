@@ -169,4 +169,16 @@ class ProgressCalculatorTest extends TestCase
     {
         $this->assertSame(0, $this->calculator->forAnalysis(collect()));
     }
+
+    /**
+     * 依頼AB-0(2026-08-27): 管理者起点の多社比較(自社1+競合5、計6サイト)
+     * でも、単純平均のため分母固定の前提が無く100%に収束することを確認する。
+     */
+    public function test_analysis_progress_converges_to_100_with_six_websites(): void
+    {
+        $websiteAnalyses = collect(array_fill(0, 6, null))
+            ->map(fn () => WebsiteAnalysis::factory()->make(['progress' => 100]));
+
+        $this->assertSame(100, $this->calculator->forAnalysis($websiteAnalyses));
+    }
 }

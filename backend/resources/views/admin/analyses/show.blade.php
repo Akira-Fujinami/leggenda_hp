@@ -5,11 +5,36 @@
 @section('content')
 @php
     $selfWebsite = $analysis->project?->websites?->firstWhere('is_primary', true);
-    $competitorWebsite = $analysis->project?->websites?->firstWhere('is_primary', false);
+    // 依頼AB(2026-08-27): 競合が複数(管理者起点の比較)の場合に備え、
+    // display_order順で全件取得する(旧: firstWhereで1件目のみだった)。
+    $competitorWebsites = $analysis->project?->websites?->where('is_primary', false)->values() ?? collect();
 @endphp
 <h2>診断詳細 #{{ $analysis->id }}</h2>
 
 <p><a href="{{ route('admin.companies.show', $analysis->project?->lead_company_id, false) }}">&larr; {{ $analysis->project?->leadCompany?->company_name ?? '企業詳細' }}へ戻る</a></p>
+
+{{-- 依頼AB-2: 比較↔起点の相互リンク。サイト数からの暗黙の判別はせず、
+     source_analysis_id/comparisonsの有無で明示的に判断する。 --}}
+@if ($analysis->source_analysis_id)
+    <p class="empty">
+        この比較は、無料診断
+        <a href="{{ route('admin.analyses.show', $analysis->source_analysis_id, false) }}">#{{ $analysis->source_analysis_id }}</a>
+        から作成されました。
+    </p>
+@endif
+@if ($analysis->comparisons->isNotEmpty())
+    <p class="empty">
+        この診断から作成した比較:
+        @foreach ($analysis->comparisons as $comparison)
+            <a href="{{ route('admin.analyses.show', $comparison->id, false) }}">#{{ $comparison->id }}</a>{{ ! $loop->last ? '、' : '' }}
+        @endforeach
+    </p>
+@endif
+@if (! $analysis->source_analysis_id)
+    <p>
+        <a href="{{ route('admin.analyses.compare.create', $analysis->id, false) }}" class="btn">3〜5社で比較する</a>
+    </p>
+@endif
 
 <div class="info-grid">
     <div class="item">
@@ -25,8 +50,16 @@
         <div class="value">{{ $selfWebsite?->url ?? '—' }}</div>
     </div>
     <div class="item">
-        <div class="label">比較URL</div>
-        <div class="value">{{ $competitorWebsite?->url ?? '—' }}</div>
+        {{-- 依頼AB: 競合が2件以上(管理者起点の比較)の場合は件数をラベルに
+             出し、URLを列挙する。競合1件(通常の無料診断)の場合は従来どおり。 --}}
+        <div class="label">比較URL{{ $competitorWebsites->count() > 1 ? '('.$competitorWebsites->count().'件)' : '' }}</div>
+        <div class="value">
+            @forelse ($competitorWebsites as $competitorWebsite)
+                {{ $competitorWebsite->url }}@if (! $loop->last)<br>@endif
+            @empty
+                —
+            @endforelse
+        </div>
     </div>
     {{-- 2026-08-24追加: 「消費済みなのにレポートが渡っていない」を営業が
          見分けるための表示(依頼者指定)。レポートがSkipped(見送り)なら
@@ -104,6 +137,13 @@
                         <span class="badge status-{{ $report->status->value }}">
                             {{ $reportStatusLabels[$report->status->value] ?? $report->status->value }}
                         </span>
+                        {{-- 依頼AC(2026-08-27): 比較Analysis(source_analysis_idが
+                             非null)のpdfレポートは多社比較レポート。既存の
+                             リード向けdownloadReport()(トークン認証)とは別の
+                             admin.auth配下の専用エンドポイントからダウンロードする。 --}}
+                        @if ($analysis->source_analysis_id && $report->format->value === 'pdf' && $report->status->value === 'completed')
+                            <a href="{{ route('admin.analyses.comparison-report.download', $analysis->id, false) }}" style="margin-left: 8px;">ダウンロード</a>
+                        @endif
                     </td>
                 </tr>
             @empty

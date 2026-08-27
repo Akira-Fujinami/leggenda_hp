@@ -3,8 +3,10 @@
 namespace App\Jobs\Analysis;
 
 use App\Enums\AnalysisErrorCode;
+use App\Enums\AnalysisStatus;
 use App\Enums\JobType;
 use App\Jobs\Analysis\Concerns\LogsJobFailures;
+use App\Jobs\Report\GenerateAdminComparisonReportJob;
 use App\Models\Analysis;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
@@ -95,6 +97,25 @@ class FinalizeAnalysisJob implements ShouldBeUnique, ShouldQueue
                     'analysis_id' => $this->analysisId,
                     'exception_class' => get_class($e),
                 ]);
+            }
+
+            // 依頼AC(2026-08-27): 管理者起点の多社比較(source_analysis_idが
+            // 非null)がcompleted/partialに到達した時点で、多社比較レポート
+            // (PDFのみ)の生成を起動する。上のLeadReportDispatchServiceとは
+            // 完全に独立した経路 ―― 比較Analysisはlead_session_idを持たない
+            // ためLeadReportDispatchService側は素通りする(dispatchIfReportable()
+            // 参照)。同じ理由(このJob本来の責務を失敗扱いにしない)で
+            // 独立したtry/catchに包む。
+            if ($analysis->source_analysis_id !== null && in_array($status, [AnalysisStatus::Completed, AnalysisStatus::Partial], true)) {
+                try {
+                    GenerateAdminComparisonReportJob::dispatch($analysis->id);
+                } catch (\Throwable $e) {
+                    report($e);
+                    Log::warning('Failed to dispatch admin comparison report generation from FinalizeAnalysisJob', [
+                        'analysis_id' => $this->analysisId,
+                        'exception_class' => get_class($e),
+                    ]);
+                }
             }
 
             $pipeline->markCompleted($record);

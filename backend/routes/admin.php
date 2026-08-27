@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\AnalysisController;
 use App\Http\Controllers\Admin\AuthController;
 use App\Http\Controllers\Admin\CompanyController;
+use App\Http\Controllers\Admin\ComparisonController;
 use App\Http\Controllers\Admin\DashboardController;
 use Illuminate\Support\Facades\Route;
 
@@ -35,5 +36,17 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::get('/analyses', [AnalysisController::class, 'index'])->name('analyses.index');
         Route::get('/analyses/{analysis}', [AnalysisController::class, 'show'])->name('analyses.show');
         Route::patch('/analyses/{analysis}/force-terminate', [AnalysisController::class, 'forceTerminate'])->name('analyses.force-terminate');
+        // 依頼AC(2026-08-27): 多社比較レポート(PDFのみ)のダウンロード。
+        // admin.auth(共有アカウント)配下のため、リード向けdownloadReport()
+        // のようなオーナーシップ検証は不要(既存のanalyses.show等と同じ、
+        // 管理者は任意のAnalysisにアクセスできる前提)。
+        Route::get('/analyses/{analysis}/comparison-report', [AnalysisController::class, 'downloadComparisonReport'])->name('analyses.comparison-report.download');
+
+        // 依頼AB(2026-08-27): 無料診断を起点に、自社+競合3〜5社の比較を
+        // 実行する。起点は既存の無料診断詳細画面のみ(独立した起票フォームは
+        // 作らない、依頼者指定)ため、URLも/admin/analyses/{analysis}/compare
+        // という「この診断から派生する」形にする。
+        Route::get('/analyses/{analysis}/compare', [ComparisonController::class, 'create'])->name('analyses.compare.create');
+        Route::post('/analyses/{analysis}/compare', [ComparisonController::class, 'store'])->name('analyses.compare.store');
     });
 });

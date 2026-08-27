@@ -185,4 +185,38 @@ class BrandWheelRadarSvgBuilderTest extends TestCase
         $this->assertSame('#3A3FC0', BrandWheelRadarSvgBuilder::selfColor());
         $this->assertSame('#E95446', BrandWheelRadarSvgBuilder::competitorColor());
     }
+
+    /**
+     * 依頼AC(2026-08-27追加): $secondaryDashedの既定値はfalseで、既存の
+     * リード向けレポート(競合を実線で描く既存呼び出し)の出力を一切変えない。
+     */
+    public function test_secondary_series_is_solid_by_default(): void
+    {
+        $axes = [
+            $this->axis('will_activity', '活動的魅力', 3, 4),
+            $this->axis('asset', '資産的魅力', 2, 4),
+            $this->axis('personality', '経営スタイル', 1, 4),
+        ];
+
+        $svg = $this->builder->build($axes, $axes);
+
+        $this->assertStringNotContainsString('stroke-dasharray', $svg);
+    }
+
+    /**
+     * 依頼AC-4(2026-08-27追加): 多社比較レポートの「競合N社平均」を破線で
+     * 描くためのオプション。
+     */
+    public function test_secondary_series_can_be_drawn_dashed(): void
+    {
+        $axes = [
+            $this->axis('will_activity', '活動的魅力', 3, 4),
+            $this->axis('asset', '資産的魅力', 2, 4),
+            $this->axis('personality', '経営スタイル', 1, 4),
+        ];
+
+        $svg = $this->builder->build($axes, $axes, BrandWheelRadarSvgBuilder::selfColor(), null, secondaryDashed: true);
+
+        $this->assertStringContainsString('stroke-dasharray="6,4"', $svg);
+    }
 }

@@ -56,8 +56,9 @@ class BrandWheelRadarSvgBuilder
      * @param  ?list<array{key: string, name: string, matched_count: int, max_count: int}>  $secondaryAxes  重ねて描く2系列目。無ければnull(ここでは判定しない、呼び出し側の責務)
      * @param  string  $primaryColor  $axesの描画色。既定は自社色(#3A3FC0) ―― 競合単独ページで呼ぶ場合はCOMPETITOR_COLORを渡す(2026-08-08、競合単独図でも自社色で描かれてしまう不具合の修正)
      * @param  ?string  $secondaryColor  $secondaryAxesの描画色。nullなら競合色(#E95446)
+     * @param  bool  $secondaryDashed  依頼AC(2026-08-27追加)。多社比較レポートで、自社(実線)に対し「競合N社平均」を破線で重ねるための表示オプション。既定falseは従来どおりの実線 ―― リード向けレポート(既存の呼び出し)は一切このパラメータを渡さないため出力は無変更。
      */
-    public function build(array $axes, ?array $secondaryAxes = null, string $primaryColor = self::SELF_COLOR, ?string $secondaryColor = null): string
+    public function build(array $axes, ?array $secondaryAxes = null, string $primaryColor = self::SELF_COLOR, ?string $secondaryColor = null, bool $secondaryDashed = false): string
     {
         $count = count($axes);
         $secondaryColor ??= self::COMPETITOR_COLOR;
@@ -76,7 +77,7 @@ class BrandWheelRadarSvgBuilder
         $svg .= $this->series($axes, $primaryColor);
 
         if ($secondaryAxes !== null) {
-            $svg .= $this->series($secondaryAxes, $secondaryColor);
+            $svg .= $this->series($secondaryAxes, $secondaryColor, $secondaryDashed);
         }
 
         $svg .= $this->labels($axes, $count);
@@ -130,7 +131,7 @@ class BrandWheelRadarSvgBuilder
     /**
      * @param  list<array{matched_count: int, max_count: int}>  $axes
      */
-    private function series(array $axes, string $color): string
+    private function series(array $axes, string $color, bool $dashed = false): string
     {
         $count = count($axes);
         $points = [];
@@ -156,10 +157,11 @@ class BrandWheelRadarSvgBuilder
         }
 
         $polygon = implode(' ', array_map(fn (array $p) => sprintf('%.2f,%.2f', $p['x'], $p['y']), $points));
+        $dashAttribute = $dashed ? ' stroke-dasharray="6,4"' : '';
 
         return sprintf(
-            '<polygon points="%s" fill="%s" fill-opacity="0.16" stroke="%s" stroke-width="2" stroke-linejoin="round" />',
-            $polygon, $color, $color,
+            '<polygon points="%s" fill="%s" fill-opacity="0.16" stroke="%s" stroke-width="2" stroke-linejoin="round"%s />',
+            $polygon, $color, $color, $dashAttribute,
         ).$dots;
     }
 

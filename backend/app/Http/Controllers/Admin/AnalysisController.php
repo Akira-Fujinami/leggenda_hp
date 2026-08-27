@@ -3,13 +3,18 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\AnalysisStatus;
+use App\Enums\ReportFormat;
+use App\Enums\ReportGenerationStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
+use App\Models\Report;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * ナビゲーション「診断管理」(依頼#21)。診断企業(LeadCompany)を軸にした
@@ -46,7 +51,7 @@ class AnalysisController extends Controller
     {
         abort_unless($analysis->project?->lead_company_id !== null, 404);
 
-        $analysis->load(['project.leadCompany', 'project.websites', 'websiteAnalyses.website', 'reports']);
+        $analysis->load(['project.leadCompany', 'project.websites', 'websiteAnalyses.website', 'reports', 'sourceAnalysis', 'comparisons']);
 
         $brandWheelResults = BrandWheelAnalysisResult::query()
             ->where('analysis_id', $analysis->id)
@@ -90,5 +95,28 @@ class AnalysisController extends Controller
         ]);
 
         return back()->with('status', '診断を強制終了しました。');
+    }
+
+    /**
+     * 依頼AC(2026-08-27): 多社比較レポート(PDFのみ)のダウンロード。
+     * admin.auth配下(共有アカウント)のため、リード向けdownloadReport()の
+     * ようなオーナーシップ検証は不要 ―― 比較Analysis以外(source_analysis_id
+     * がnull)からのアクセスは404にする(このエンドポイントの対象外)。
+     */
+    public function downloadComparisonReport(Analysis $analysis): StreamedResponse
+    {
+        abort_if($analysis->source_analysis_id === null, 404);
+
+        $report = Report::query()
+            ->where('analysis_id', $analysis->id)
+            ->where('format', ReportFormat::Pdf->value)
+            ->first();
+
+        abort_if($report === null || $report->status !== ReportGenerationStatus::Completed, 404, 'レポートはまだ準備できていません。');
+        abort_unless(Storage::disk('analysis')->exists($report->storage_path), 404);
+
+        return Storage::disk('analysis')->download($report->storage_path, "多社比較レポート_{$analysis->id}.pdf", [
+            'Content-Type' => ReportFormat::Pdf->contentType(),
+        ]);
     }
 }

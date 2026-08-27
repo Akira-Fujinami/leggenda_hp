@@ -40,6 +40,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | 管理者起点の多社比較(依頼AB、2026-08-27追加)
+    |--------------------------------------------------------------------------
+    | 管理画面から、無料診断を起点に自社+競合3〜5社で実行する比較機能
+    | (App\Services\Admin\AdminComparisonService)。件数の上下限を再デプロイ
+    | 無しで調整できるようにする(依頼A/U/V等と同じ方針)。管理者専用の機能で
+    | あり、config('lead.max_websites')(既定2、リード向け)とは独立。
+    | max_websites_per_analysis(既定5)より競合数+自社1件の合計が大きくなる
+    | ことがあるため、AdminComparisonServiceはAnalysisService::start()へ
+    | 明示的にmax_websitesを渡す(config('analysis.max_websites_per_analysis')の
+    | 既定に頼らない)。
+    */
+    'admin_comparison' => [
+        'min_competitors' => (int) env('ADMIN_COMPARISON_MIN_COMPETITORS', 3),
+        'max_competitors' => (int) env('ADMIN_COMPARISON_MAX_COMPETITORS', 5),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | 外部SEOデータ (Semrush等)
     |--------------------------------------------------------------------------
     | 'mock': 開発環境向けの決定論的な擬似データ (is_mock=trueで返す)。

@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['project_id', 'created_by', 'status', 'progress', 'started_at', 'completed_at', 'failed_at', 'error_summary', 'skip_lighthouse', 'skip_screenshots', 'skip_brand_wheel', 'lead_quota_consumed_at', 'crawl_site'])]
+#[Fillable(['project_id', 'source_analysis_id', 'created_by', 'status', 'progress', 'started_at', 'completed_at', 'failed_at', 'error_summary', 'skip_lighthouse', 'skip_screenshots', 'skip_brand_wheel', 'lead_quota_consumed_at', 'crawl_site'])]
 class Analysis extends Model
 {
     /** @use HasFactory<AnalysisFactory> */
@@ -38,6 +38,28 @@ class Analysis extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /**
+     * 依頼AB-2(2026-08-27): この診断が管理者起点の多社比較である場合、
+     * 起点となった無料診断。通常の無料診断・比較でない診断は常にnull。
+     *
+     * @return BelongsTo<Analysis, $this>
+     */
+    public function sourceAnalysis(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'source_analysis_id');
+    }
+
+    /**
+     * 依頼AB-2(2026-08-27): この診断(無料診断)を起点に作られた、
+     * 管理者起点の多社比較の一覧(逆参照)。通常は0件。
+     *
+     * @return HasMany<Analysis, $this>
+     */
+    public function comparisons(): HasMany
+    {
+        return $this->hasMany(self::class, 'source_analysis_id');
     }
 
     /**

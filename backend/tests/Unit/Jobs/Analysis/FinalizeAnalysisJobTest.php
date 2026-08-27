@@ -5,9 +5,11 @@ namespace Tests\Unit\Jobs\Analysis;
 use App\Enums\AnalysisStatus;
 use App\Enums\WebsiteAnalysisStatus;
 use App\Jobs\Analysis\FinalizeAnalysisJob;
+use App\Jobs\Report\GenerateAdminComparisonReportJob;
 use App\Jobs\Report\GenerateLeadReportJob;
 use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
+use App\Models\LeadCompany;
 use App\Models\LeadSession;
 use App\Models\Project;
 use App\Models\Report;
@@ -152,5 +154,76 @@ class FinalizeAnalysisJobTest extends TestCase
 
         Queue::assertPushed(GenerateLeadReportJob::class, 1);
         $this->assertSame(2, Report::where('analysis_id', $analysis->id)->count());
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼AC(2026-08-27): 管理者起点の多社比較(source_analysis_idが非null)
+    // がcompleted/partialに到達したときの、GenerateAdminComparisonReportJob
+    // ディスパッチ。
+    // ------------------------------------------------------------------
+
+    private function makeComparisonAnalysis(WebsiteAnalysisStatus $selfStatus = WebsiteAnalysisStatus::Completed): Analysis
+    {
+        $company = LeadCompany::factory()->create();
+        $sourceProject = new Project(['name' => '起点']);
+        $sourceProject->user_id = User::factory()->create()->id;
+        $sourceProject->lead_company_id = $company->id;
+        $sourceProject->save();
+        $sourceAnalysis = Analysis::factory()->create(['project_id' => $sourceProject->id, 'status' => AnalysisStatus::Completed]);
+
+        $project = new Project(['name' => '比較']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_company_id = $company->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create([
+            'project_id' => $project->id,
+            'status' => AnalysisStatus::Running,
+            'source_analysis_id' => $sourceAnalysis->id,
+        ]);
+        $website = Website::factory()->create(['project_id' => $project->id, 'is_primary' => true]);
+        WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id, 'status' => $selfStatus]);
+
+        return $analysis;
+    }
+
+    public function test_it_dispatches_admin_comparison_report_generation_for_a_completed_comparison_analysis(): void
+    {
+        Queue::fake([GenerateAdminComparisonReportJob::class, GenerateLeadReportJob::class]);
+        $analysis = $this->makeComparisonAnalysis();
+
+        (new FinalizeAnalysisJob($analysis->id))->handle(app(AnalysisPipeline::class));
+
+        $this->assertSame(AnalysisStatus::Completed, $analysis->fresh()->status);
+        Queue::assertPushed(GenerateAdminComparisonReportJob::class, 1);
+        // 比較Analysis(lead_session_idを持たないProject)からはリード向け
+        // レポートは一切起動しない ―― 完全に別経路であることの確認。
+        Queue::assertNotPushed(GenerateLeadReportJob::class);
+    }
+
+    public function test_it_also_dispatches_admin_comparison_report_for_a_partial_comparison_analysis(): void
+    {
+        Queue::fake([GenerateAdminComparisonReportJob::class]);
+        $analysis = $this->makeComparisonAnalysis(WebsiteAnalysisStatus::Partial);
+
+        (new FinalizeAnalysisJob($analysis->id))->handle(app(AnalysisPipeline::class));
+
+        $this->assertSame(AnalysisStatus::Partial, $analysis->fresh()->status);
+        Queue::assertPushed(GenerateAdminComparisonReportJob::class, 1);
+    }
+
+    /**
+     * 通常のリード診断(source_analysis_idがnull)からは、多社比較レポートの
+     * Jobは一切起動しない。
+     */
+    public function test_it_does_not_dispatch_admin_comparison_report_for_a_regular_lead_analysis(): void
+    {
+        Queue::fake([GenerateAdminComparisonReportJob::class, GenerateLeadReportJob::class]);
+        $analysis = $this->makeLeadAnalysis();
+        $this->makeReportableSelfBrandWheelResult($analysis);
+
+        (new FinalizeAnalysisJob($analysis->id))->handle(app(AnalysisPipeline::class));
+
+        Queue::assertNotPushed(GenerateAdminComparisonReportJob::class);
     }
 }

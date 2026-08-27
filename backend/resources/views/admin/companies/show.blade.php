@@ -59,7 +59,10 @@
             @php
                 $websites = $analysis->project?->websites ?? collect();
                 $selfWebsite = $websites->firstWhere('is_primary', true);
-                $competitorWebsite = $websites->firstWhere('is_primary', false);
+                // 依頼AB(2026-08-27): 競合が複数(管理者起点の比較)の場合に
+                // 備え、display_order順で全件取得する(旧: firstWhereで
+                // 1件目のみだった)。
+                $competitorWebsites = $websites->where('is_primary', false)->values();
                 $pdfReport = $analysis->reports->firstWhere('format', 'pdf');
                 $duration = $analysis->started_at && $analysis->completed_at
                     ? $analysis->started_at->diff($analysis->completed_at)
@@ -73,11 +76,22 @@
                 <div class="date">
                     {{ $analysis->created_at->format('Y/n/j H:i') }}
                     <span class="badge status-{{ $analysis->status->value }}">{{ $analysis->status->value }}</span>
+                    {{-- 依頼AB-2: 無料診断と比較を一覧で見分けられるようにする
+                         (source_analysis_idの有無で明示的に判断、サイト数からの
+                         推測はしない)。 --}}
+                    @if ($analysis->source_analysis_id)
+                        <span class="badge">比較(#{{ $analysis->source_analysis_id }}から作成)</span>
+                    @endif
                 </div>
                 <dl>
                     <dt>自社</dt><dd>{{ $selfWebsite?->url ?? '—' }}</dd>
-                    @if ($competitorWebsite)
-                        <dt>比較</dt><dd>{{ $competitorWebsite->url }}</dd>
+                    @if ($competitorWebsites->isNotEmpty())
+                        <dt>比較{{ $competitorWebsites->count() > 1 ? '('.$competitorWebsites->count().'件)' : '' }}</dt>
+                        <dd>
+                            @foreach ($competitorWebsites as $competitorWebsite)
+                                {{ $competitorWebsite->url }}@if (! $loop->last)<br>@endif
+                            @endforeach
+                        </dd>
                     @endif
                     <dt>所要時間</dt><dd>{{ $duration ? $duration->format('%i分%s秒') : '—' }}</dd>
                     <dt>Brand Wheel</dt><dd>{{ $brandWheelSummary }}</dd>
