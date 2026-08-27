@@ -435,14 +435,25 @@ class WordReportGenerator
 
         $section = $phpWord->addSection();
         $section->addTitle('○と判定した根拠', 1);
-        $section->addText((string) config('brand_wheel.evidence_page_intro'), ['size' => 9, 'color' => '6B6767']);
+        // 依頼AA(2026-08-27): PDF版と同じ出し分け(このレポート内に日本語訳が
+        // 1件でもあるときだけ「(日本語訳を併記しています)」付きの説明文)。
+        $intro = $viewModel->hasQuoteTranslations
+            ? (string) config('brand_wheel.evidence_page_intro_with_translation')
+            : (string) config('brand_wheel.evidence_page_intro');
+        $section->addText($intro, ['size' => 9, 'color' => '6B6767']);
 
+        $translationLabel = (string) config('brand_wheel.quote_translation_label');
         foreach ($viewModel->selfEvidenceByAxis as $axisGroup) {
             $section->addTextBreak(1);
             $section->addText($axisGroup['axis_name'], ['bold' => true, 'size' => 11.5, 'color' => '1D2088']);
             foreach ($axisGroup['items'] as $item) {
                 $section->addText($item['sub_name'], ['bold' => true, 'size' => 9.5]);
                 $section->addText('「'.$item['evidence'].'」', ['size' => 9]);
+                // 依頼AA: 原文が主・訳が従であることが分かるよう、PDF版の
+                // .quote-translationと同じ考え方(小さく・控えめに)。
+                if (! empty($item['evidence_translation'])) {
+                    $section->addText($translationLabel.'：'.$item['evidence_translation'], ['size' => 8, 'color' => '8A8A8A']);
+                }
             }
         }
     }
@@ -522,6 +533,13 @@ class WordReportGenerator
                     $section->addText($item['recommendation'], ['size' => 9, 'color' => '6B6767']);
                     $section->addText('（現在、サイトからは読み取れませんでした）', ['size' => 8, 'color' => '9A9A9A']);
                     $section->addText('比較サイトの記述：「'.$item['competitor_evidence'].'」');
+                    // 依頼AA(2026-08-27): PDF版の.cmp-translationと同内容。
+                    if (! empty($item['competitor_evidence_translation'])) {
+                        $section->addText(
+                            ((string) config('brand_wheel.quote_translation_label')).'：'.$item['competitor_evidence_translation'],
+                            ['size' => 8, 'color' => '8A8A8A'],
+                        );
+                    }
                 }
 
                 // 2026-08-19: 「中長期的には：」の1行から、独立した見出し付き

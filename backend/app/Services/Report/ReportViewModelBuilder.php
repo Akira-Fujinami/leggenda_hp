@@ -13,6 +13,7 @@ use App\Services\BrandWheel\BrandWheelEvidenceLookupBuilder;
 use App\Services\BrandWheel\BrandWheelHexagonRenderer;
 use App\Services\BrandWheel\BrandWheelImprovementFocusComposer;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
+use App\Services\BrandWheel\BrandWheelQuoteTranslator;
 use App\Services\BrandWheel\BrandWheelRadarSvgBuilder;
 use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
 use App\Services\BrandWheel\BrandWheelTextTruncator;
@@ -60,6 +61,9 @@ class ReportViewModelBuilder
         // 自社/競合それぞれの合計matched件数が、比較・個別提案の根拠として
         // 十分な情報量かどうかの判定(2026-08-25追加、修正1〜3・5)。
         private readonly BrandWheelComparisonSufficiency $comparisonSufficiency,
+        // 依頼AA(2026-08-27): 日本語でない引用への日本語訳併記(1レポート
+        // 1回のバッチ翻訳)。
+        private readonly BrandWheelQuoteTranslator $quoteTranslator,
     ) {}
 
     public function build(Analysis $analysis, LeadSession $leadSession): ReportViewModel
@@ -315,6 +319,57 @@ class ReportViewModelBuilder
             $selfBrandWheelRecord->input_char_count ?? null,
         );
 
+        // 依頼AA(2026-08-27): レポート内で「サイト上の原文をそのまま表示
+        // している箇所」(sub_elements.*.evidence・competitor_evidence、
+        // 依頼AA-1で洗い出した全箇所)のうち、日本語でない引用に日本語訳を
+        // 併記する。1レポート1回のバッチ翻訳にまとめるため、両方の表示
+        // 箇所から翻訳対象(重複除去済み)を先に集め、1回だけ
+        // BrandWheelQuoteTranslator::translate()を呼ぶ(引用ごとに呼ばない、
+        // 依頼者指定)。日本語の引用しか無ければ$translationCandidatesは
+        // 空になり、translate()はAI呼び出し自体を行わない
+        // (BrandWheelQuoteTranslator::translate()のガード参照)。
+        $translationCandidates = [];
+        foreach ($selfEvidenceByAxis as $axisGroup) {
+            foreach ($axisGroup['items'] as $item) {
+                if (! BrandWheelQuoteTranslator::isJapanese($item['evidence'])) {
+                    $translationCandidates[$item['evidence']] = true;
+                }
+            }
+        }
+        if ($improvementFocus !== null) {
+            foreach ($improvementFocus['items'] as $item) {
+                $evidence = $item['competitor_evidence'] ?? null;
+                if ($evidence !== null && ! BrandWheelQuoteTranslator::isJapanese($evidence)) {
+                    $translationCandidates[$evidence] = true;
+                }
+            }
+        }
+
+        // 失敗時は空配列(BrandWheelQuoteTranslator::translate()が例外を
+        // 投げないため、ここでのtry/catchは不要 ―― 原文のみでレポートを
+        // 完成させる、依頼者指定の必須要件)。
+        $quoteTranslations = $this->quoteTranslator->translate(array_keys($translationCandidates));
+
+        $selfEvidenceByAxis = array_map(function (array $axisGroup) use ($quoteTranslations) {
+            $axisGroup['items'] = array_map(
+                fn (array $item) => $item + ['evidence_translation' => $quoteTranslations[$item['evidence']] ?? null],
+                $axisGroup['items'],
+            );
+
+            return $axisGroup;
+        }, $selfEvidenceByAxis);
+
+        if ($improvementFocus !== null) {
+            $improvementFocus['items'] = array_map(function (array $item) use ($quoteTranslations) {
+                $evidence = $item['competitor_evidence'] ?? null;
+                $item['competitor_evidence_translation'] = $evidence !== null ? ($quoteTranslations[$evidence] ?? null) : null;
+
+                return $item;
+            }, $improvementFocus['items']);
+        }
+
+        $hasQuoteTranslations = $quoteTranslations !== [];
+
         return new ReportViewModel(
             companyDisplayName: $this->nameFormatter->format($leadSession->company_name),
             generatedAtLabel: sprintf('%d年%d月%d日', now()->year, now()->month, now()->day),
@@ -346,6 +401,7 @@ class ReportViewModelBuilder
             selfLowContentNotice: $selfLowContentNotice,
             crawlSiteEnabled: $analysis->crawl_site === true,
             selfEvidenceByAxis: $selfEvidenceByAxis,
+            hasQuoteTranslations: $hasQuoteTranslations,
         );
     }
 

@@ -555,6 +555,66 @@ class WordReportGeneratorTest extends TestCase
     }
 
     // ------------------------------------------------------------------
+    // 依頼AA(2026-08-27): 日本語でない引用への日本語訳併記(PDF版と同内容)。
+    // ------------------------------------------------------------------
+
+    public function test_evidence_section_shows_the_translation_and_switches_the_intro_text(): void
+    {
+        $documentXml = $this->generate($this->viewModel([
+            'selfEvidenceByAxis' => [
+                ['axis_name' => '活動的魅力', 'items' => [
+                    ['sub_name' => 'パーパス', 'evidence' => 'We contribute to a better society.', 'evidence_translation' => 'より良い社会に貢献します。'],
+                ]],
+            ],
+            'hasQuoteTranslations' => true,
+        ]));
+
+        $this->assertStringContainsString('「We contribute to a better society.」', $documentXml);
+        $this->assertStringContainsString((string) config('brand_wheel.quote_translation_label'), $documentXml);
+        $this->assertStringContainsString('より良い社会に貢献します。', $documentXml);
+        $this->assertStringContainsString((string) config('brand_wheel.evidence_page_intro_with_translation'), $documentXml);
+        $this->assertStringNotContainsString((string) config('brand_wheel.evidence_page_intro'), $documentXml);
+    }
+
+    public function test_evidence_section_keeps_the_original_intro_text_when_there_are_no_translations(): void
+    {
+        $documentXml = $this->generate($this->viewModel([
+            'selfEvidenceByAxis' => [
+                ['axis_name' => '活動的魅力', 'items' => [
+                    ['sub_name' => 'パーパス', 'evidence' => '弊社は地域社会への貢献を第一に考えています。'],
+                ]],
+            ],
+            'hasQuoteTranslations' => false,
+        ]));
+
+        $this->assertStringContainsString((string) config('brand_wheel.evidence_page_intro'), $documentXml);
+        $this->assertStringNotContainsString('日本語訳を併記しています', $documentXml);
+    }
+
+    public function test_improvement_section_shows_the_translation_below_the_competitor_evidence(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel([
+            'improvementFocus' => [
+                'selected_group' => 'company_distance',
+                'groups' => [
+                    ['group' => 'company_appeal', 'label' => '会社の魅力', 'self_count' => 1, 'competitor_count' => 1, 'max_count' => 4],
+                    ['group' => 'company_distance', 'label' => '会社との距離', 'self_count' => 0, 'competitor_count' => 1, 'max_count' => 4],
+                    ['group' => 'job_appeal', 'label' => '仕事の魅力', 'self_count' => 0, 'competitor_count' => 0, 'max_count' => 0],
+                ],
+                'items' => [
+                    ['axis_name' => '就業環境', 'sub_name' => '同僚・先輩像', 'definition' => 'テスト定義', 'recommendation' => 'テスト提案文', 'competitor_evidence' => 'Meet our diverse team.', 'competitor_evidence_translation' => '多様なチームをご紹介します。'],
+                ],
+                'lead_text' => 'テスト用の一文。',
+            ],
+            'hasQuoteTranslations' => true,
+        ]));
+
+        $this->assertStringContainsString('「Meet our diverse team.」', $documentXml);
+        $this->assertStringContainsString((string) config('brand_wheel.quote_translation_label'), $documentXml);
+        $this->assertStringContainsString('多様なチームをご紹介します。', $documentXml);
+    }
+
+    // ------------------------------------------------------------------
     // 改善提案。
     // ------------------------------------------------------------------
 

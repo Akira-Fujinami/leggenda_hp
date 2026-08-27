@@ -1776,4 +1776,172 @@ class ReportViewModelBuilderTest extends TestCase
         $evidence2 = $viewModel2->selfEvidenceByAxis[0]['items'][0]['evidence'];
         $this->assertSame(str_repeat('あ', 20).'…', $evidence2);
     }
+
+    // ------------------------------------------------------------------
+    // 依頼AA(2026-08-27): 日本語でない引用への日本語訳併記。
+    // ------------------------------------------------------------------
+
+    /**
+     * 英語の引用には訳が付き、日本語の引用には付かないこと。原文
+     * (evidence自体)は一切変わらないこと。
+     */
+    public function test_self_evidence_translation_is_attached_only_for_non_japanese_quotes(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                ['key' => 'purpose', 'evidence' => 'We contribute to building a better society.'],
+                ['key' => 'business_expansion', 'evidence' => '地域社会への貢献を大切にしています。'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $items = collect($viewModel->selfEvidenceByAxis[0]['items'])->keyBy('evidence');
+
+        $english = $items['We contribute to building a better society.'];
+        $this->assertSame('We contribute to building a better society.', $english['evidence']);
+        $this->assertNotNull($english['evidence_translation']);
+
+        $japanese = $items['地域社会への貢献を大切にしています。'];
+        $this->assertSame('地域社会への貢献を大切にしています。', $japanese['evidence']);
+        $this->assertNull($japanese['evidence_translation']);
+
+        $this->assertTrue($viewModel->hasQuoteTranslations);
+    }
+
+    /**
+     * 依頼AA-2の必須要件: 引用がすべて日本語のレポートでは、AI呼び出しが
+     * 一切発生しないこと(services.brand_wheel_ai.providerをopenaiにして、
+     * 実際にHTTPリクエストが送られないことを確認する)。
+     */
+    public function test_no_ai_call_is_made_when_all_quotes_are_japanese(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        \Illuminate\Support\Facades\Http::fake();
+
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                ['key' => 'purpose', 'evidence' => '地域社会への貢献を大切にしています。'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertFalse($viewModel->hasQuoteTranslations);
+        $this->assertNull($viewModel->selfEvidenceByAxis[0]['items'][0]['evidence_translation']);
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    /**
+     * 競合サイトの引用(改善提案ページ)にも同じ方針が適用されること
+     * (依頼AA-1: 洗い出した全箇所に一貫して適用する)。
+     */
+    public function test_competitor_evidence_translation_is_attached_for_non_japanese_quotes(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [['key' => 'purpose', 'evidence' => '自社の抜粋']]]],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'relationship', 'matched_sub_elements' => [
+                    ['key' => 'colleagues', 'evidence' => 'Meet our diverse team members from around the world.'],
+                    ['key' => 'atmosphere', 'evidence' => '雰囲気についての競合サイトの抜粋'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'y1'], ['key' => 'competitiveness', 'evidence' => 'y2'],
+                ]],
+                ['axis_key' => 'financial_benefit', 'matched_sub_elements' => [
+                    ['key' => 'salary_level', 'evidence' => 'y3'], ['key' => 'benefits', 'evidence' => 'y4'],
+                ]],
+            ],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->improvementFocus);
+        $items = collect($viewModel->improvementFocus['items'])->keyBy('competitor_evidence');
+
+        $english = $items['Meet our diverse team members from around the world.'];
+        $this->assertSame('Meet our diverse team members from around the world.', $english['competitor_evidence']);
+        $this->assertNotNull($english['competitor_evidence_translation']);
+
+        $japanese = $items['雰囲気についての競合サイトの抜粋'];
+        $this->assertNull($japanese['competitor_evidence_translation']);
+
+        $this->assertTrue($viewModel->hasQuoteTranslations);
+    }
+
+    /**
+     * 依頼AA-3の必須要件(最重要): 翻訳の呼び出しが失敗しても、レポートの
+     * 生成そのものは成功し、原文だけが表示されること。
+     */
+    public function test_report_building_succeeds_with_original_text_only_when_translation_fails(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        \Illuminate\Support\Facades\Http::fake(['api.openai.com/*' => \Illuminate\Support\Facades\Http::response(['error' => 'boom'], 500)]);
+
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                ['key' => 'purpose', 'evidence' => 'We contribute to building a better society.'],
+            ]]],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertSame('We contribute to building a better society.', $viewModel->selfEvidenceByAxis[0]['items'][0]['evidence']);
+        $this->assertNull($viewModel->selfEvidenceByAxis[0]['items'][0]['evidence_translation']);
+        $this->assertFalse($viewModel->hasQuoteTranslations);
+    }
 }

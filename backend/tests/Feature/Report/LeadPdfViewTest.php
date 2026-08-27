@@ -958,6 +958,114 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('採用 &amp; 育成', $html);
     }
 
+    // ------------------------------------------------------------------
+    // 依頼AA(2026-08-27): 日本語でない引用への日本語訳併記。
+    // ------------------------------------------------------------------
+
+    /**
+     * 訳が付いた引用は、原文の直下にラベル付きで表示され、
+     * 冒頭の説明文が「(日本語訳を併記しています)」付きに差し替わること。
+     */
+    public function test_evidence_page_shows_the_translation_below_the_quote_and_switches_the_intro_text(): void
+    {
+        $html = $this->render($this->viewModel([
+            'selfEvidenceByAxis' => [
+                ['axis_name' => '活動的魅力', 'items' => [
+                    ['sub_name' => 'パーパス', 'evidence' => 'We contribute to a better society.', 'evidence_translation' => 'より良い社会に貢献します。'],
+                ]],
+            ],
+            'hasQuoteTranslations' => true,
+        ]));
+
+        $this->assertStringContainsString('「We contribute to a better society.」', $html);
+        $this->assertStringContainsString((string) config('brand_wheel.quote_translation_label'), $html);
+        $this->assertStringContainsString('より良い社会に貢献します。', $html);
+        $this->assertStringContainsString((string) config('brand_wheel.evidence_page_intro_with_translation'), $html);
+        $this->assertStringNotContainsString((string) config('brand_wheel.evidence_page_intro'), $html);
+    }
+
+    /**
+     * 訳が1件も無いレポートでは、現行の説明文のままであること
+     * (「併記しています」と書かない)。
+     */
+    public function test_evidence_page_keeps_the_original_intro_text_when_there_are_no_translations(): void
+    {
+        $html = $this->render($this->viewModel([
+            'selfEvidenceByAxis' => [
+                ['axis_name' => '活動的魅力', 'items' => [
+                    ['sub_name' => 'パーパス', 'evidence' => '弊社は地域社会への貢献を第一に考えています。'],
+                ]],
+            ],
+            'hasQuoteTranslations' => false,
+        ]));
+
+        $this->assertStringContainsString((string) config('brand_wheel.evidence_page_intro'), $html);
+        $this->assertStringNotContainsString('日本語訳を併記しています', $html);
+    }
+
+    /**
+     * 訳が無い項目(evidence_translationがnull)では、ラベル・訳が一切
+     * 出ないこと(空のラベルだけが残る状態を作らない)。
+     */
+    public function test_evidence_page_omits_the_translation_label_when_there_is_no_translation(): void
+    {
+        $html = $this->render($this->viewModel([
+            'selfEvidenceByAxis' => [
+                ['axis_name' => '活動的魅力', 'items' => [
+                    ['sub_name' => 'パーパス', 'evidence' => '弊社は地域社会への貢献を第一に考えています。', 'evidence_translation' => null],
+                ]],
+            ],
+        ]));
+
+        $this->assertStringNotContainsString((string) config('brand_wheel.quote_translation_label'), $html);
+    }
+
+    /**
+     * 訳のテキストにも<script>や&が含まれる場合、HTMLエスケープされること。
+     */
+    public function test_evidence_page_escapes_html_in_the_translation(): void
+    {
+        $html = $this->render($this->viewModel([
+            'selfEvidenceByAxis' => [
+                ['axis_name' => '活動的魅力', 'items' => [
+                    ['sub_name' => 'パーパス', 'evidence' => 'Our purpose', 'evidence_translation' => '<script>alert(1)</script>採用 & 育成'],
+                ]],
+            ],
+            'hasQuoteTranslations' => true,
+        ]));
+
+        $this->assertStringNotContainsString('<script>alert(1)</script>', $html);
+        $this->assertStringContainsString('&lt;script&gt;', $html);
+        $this->assertStringContainsString('採用 &amp; 育成', $html);
+    }
+
+    /**
+     * 改善提案ページの競合引用カードにも同じ体裁(ラベル付きの訳)が
+     * 適用されること(依頼AA-1: 洗い出した全箇所に一貫して適用する)。
+     */
+    public function test_improvement_page_shows_the_translation_below_the_competitor_evidence(): void
+    {
+        $html = $this->render($this->comparisonViewModel([
+            'improvementFocus' => [
+                'selected_group' => 'company_distance',
+                'groups' => [
+                    ['group' => 'company_appeal', 'label' => '会社の魅力', 'self_count' => 1, 'competitor_count' => 1, 'max_count' => 4],
+                    ['group' => 'company_distance', 'label' => '会社との距離', 'self_count' => 0, 'competitor_count' => 1, 'max_count' => 4],
+                    ['group' => 'job_appeal', 'label' => '仕事の魅力', 'self_count' => 0, 'competitor_count' => 0, 'max_count' => 0],
+                ],
+                'items' => [
+                    ['axis_name' => '就業環境', 'sub_name' => '同僚・先輩像', 'definition' => 'テスト定義', 'recommendation' => 'テスト提案文', 'competitor_evidence' => 'Meet our diverse team.', 'competitor_evidence_translation' => '多様なチームをご紹介します。'],
+                ],
+                'lead_text' => 'テスト用の一文。',
+            ],
+            'hasQuoteTranslations' => true,
+        ]));
+
+        $this->assertStringContainsString('「Meet our diverse team.」', $html);
+        $this->assertStringContainsString((string) config('brand_wheel.quote_translation_label'), $html);
+        $this->assertStringContainsString('多様なチームをご紹介します。', $html);
+    }
+
     /**
      * 依頼R: 「○と判定した根拠」ページが追加された分、既存ページの数は
      * 変わらず合計だけ+1されること(既存ページのレイアウトは変更していない)。

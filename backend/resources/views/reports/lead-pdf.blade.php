@@ -324,6 +324,11 @@
     .evidenceitem { width: 265mm; margin: 0 0 2mm; page-break-inside: avoid; }
     .evidenceitem .subname { font-size: 9.5pt; font-weight: bold; margin: 0 0 0.5mm; }
     .evidenceitem .quote { font-size: 9pt; line-height: 1.3; margin: 0; border-left: 3px solid #3A3FC0; padding-left: 2.5mm; color: #393636; }
+    {{-- 依頼AA(2026-08-27): 引用(原文)の直下に日本語訳を併記する。原文が
+         主・訳が従であることが見た目で分かるよう、原文(.quote、9pt)より
+         小さいフォント・控えめな色にし、原文の左罫線(border-left)は付けない
+         (「原文の続き」ではなく別要素であることを区別する)。 --}}
+    .evidenceitem .quote-translation { font-size: 8pt; line-height: 1.3; margin: 0.5mm 0 0; padding-left: 2.5mm; color: #8A8A8A; }
 
     {{-- 「改善提案」ページ。 --}}
     {{-- widthを明示する理由は.lead1と同じ(2026-08-04、CSS冒頭のh2コメント参照)。 --}}
@@ -381,6 +386,9 @@
          「小さく、控えめに」)。 --}}
     .rcard .own { font-size: 8pt; color: #9A9A9A; margin: 0 0 1mm; }
     .rcard .cmp { font-size: 9pt; line-height: 1.3; margin: 0; border-left: 3px solid #E95446; padding-left: 2.5mm; }
+    {{-- 依頼AA(2026-08-27): .evidenceitem .quote-translationと同じ考え方
+         (原文が主・訳が従)。カード幅が狭いため、原文(.cmp)よりさらに小さく。 --}}
+    .rcard .cmp-translation { font-size: 8pt; line-height: 1.3; margin: 0.5mm 0 0; padding-left: 2.5mm; color: #8A8A8A; }
     .rcell { width: 88.3mm; padding: 0 2mm 2mm 0; vertical-align: top; }
 
     {{--
@@ -782,7 +790,10 @@
 <div class="page">
     <h2>○と判定した根拠</h2>
     <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
-    <p class="evidenceintro">{{ config('brand_wheel.evidence_page_intro') }}</p>
+    {{-- 依頼AA(2026-08-27): このレポート内に日本語訳が1件でもあるときだけ
+         「(日本語訳を併記しています)」付きの説明文に差し替える。1件も
+         無ければ既存の文言のまま(訳が無いのに「併記しています」と書かない)。 --}}
+    <p class="evidenceintro">{{ $viewModel->hasQuoteTranslations ? config('brand_wheel.evidence_page_intro_with_translation') : config('brand_wheel.evidence_page_intro') }}</p>
 
     @foreach ($viewModel->selfEvidenceByAxis as $axisGroup)
         <div class="evidenceaxis">
@@ -791,6 +802,9 @@
                 <div class="evidenceitem">
                     <p class="subname">{{ $item['sub_name'] }}</p>
                     <p class="quote">「{{ $item['evidence'] }}」</p>
+                    @if (! empty($item['evidence_translation']))
+                        <p class="quote-translation">{{ config('brand_wheel.quote_translation_label') }}：{{ $item['evidence_translation'] }}</p>
+                    @endif
                 </div>
             @endforeach
         </div>
@@ -932,6 +946,9 @@
                                     <p class="own">（現在、サイトからは読み取れませんでした）</p>
                                     <p class="lb">比較サイトの記述</p>
                                     <p class="cmp">「{{ $item['competitor_evidence'] }}」</p>
+                                    @if (! empty($item['competitor_evidence_translation']))
+                                        <p class="cmp-translation">{{ config('brand_wheel.quote_translation_label') }}：{{ $item['competitor_evidence_translation'] }}</p>
+                                    @endif
                                 </div>
                             </td>
                         @endforeach
