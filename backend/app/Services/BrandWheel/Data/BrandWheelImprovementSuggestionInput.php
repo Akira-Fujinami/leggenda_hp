@@ -43,7 +43,7 @@ readonly class BrandWheelImprovementSuggestionInput
      * @param  ?string  $selfKeyMessage  自社のキーメッセージ(BrandWheelLeadResponseComposer::compose()のkey_message、検証済み)
      * @param  ?string  $selfPositiveImpression  自社のポジティブな印象(同composerのpositive_impression、検証済み)
      * @param  ?string  $selfCoreValueEvidence  自社のCore Value根拠(BrandWheelAnalysisResult.core_value_evidence、core_value_readable=trueのときのみ非null。原文照合済み)
-     * @param  list<array{axis_name: string, sub_name: string}>  $focusItemsForReason  依頼AF-2(2026-08-27追加)。BrandWheelImprovementFocusComposer::compose()が決定的に選んだ、改善提案ページに実際に表示される項目(最大3件)。AIはこの項目「についてのみ」理由(focus_items_reason)を書く ―― 項目の選定自体はAIに委ねない(数値で決め、AIは言語化のみ担当する、依頼者指定)。競合が無い/閾値未満/候補が0件のときは空配列。
+     * @param  list<array{axis_name: string, sub_name: string, type: string}>  $focusItemsForReason  依頼AF-2(2026-08-27追加)。BrandWheelImprovementFocusComposer::compose()が決定的に選んだ、改善提案ページに実際に表示される項目(最大3件)。AIはこの項目「についてのみ」理由(focus_items_reason)を書く ―― 項目の選定自体はAIに委ねない(数値で決め、AIは言語化のみ担当する、依頼者指定)。競合が無い/閾値未満/候補が0件のときは空配列。typeは依頼AH-3(2026-08-28)追加。'catch_up'(①追いつく、競合にあり自社に無い)または'breakout'(②抜け出す、競合にも自社にも無い) ―― AIが理由をこの違いに沿って書き分けられるようにする。
      */
     public function __construct(
         public array $selfMatchedItems,

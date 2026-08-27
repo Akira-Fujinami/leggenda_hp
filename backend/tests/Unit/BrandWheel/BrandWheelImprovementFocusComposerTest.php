@@ -186,6 +186,11 @@ class BrandWheelImprovementFocusComposerTest extends TestCase
      * あるのはcompany_distanceの1件(精神的自由度)のみ。差だけで選ぶと同点の
      * 走査順でcompany_appealが選ばれてしまうが、候補がある領域に限定すると
      * company_distanceが選ばれる。
+     *
+     * 依頼AH-1(2026-08-28): ①(mental_freedom)だけでは3件に満たないため、
+     * ②(競合にも自社にも無い項目、a7/a8)が$comparisonItemsの並び順で
+     * 補われ、合計3件になる ―― ②はselectedGroupKey(company_distance)に
+     * 限定されない(a7/a8はcompany_appeal所属)。
      */
     public function test_selects_the_group_with_a_candidate_even_when_its_gap_is_not_the_largest(): void
     {
@@ -222,8 +227,12 @@ class BrandWheelImprovementFocusComposerTest extends TestCase
         $result = $this->composer->compose($items, []);
 
         $this->assertSame('company_distance', $result['selected_group']);
-        $this->assertCount(1, $result['items']);
+        $this->assertCount(3, $result['items']);
         $this->assertSame('mental_freedom_name', $result['items'][0]['sub_name']);
+        $this->assertSame('catch_up', $result['items'][0]['type']);
+        $this->assertSame(['a7_name', 'a8_name'], [$result['items'][1]['sub_name'], $result['items'][2]['sub_name']]);
+        $this->assertSame('breakout', $result['items'][1]['type']);
+        $this->assertSame('breakout', $result['items'][2]['type']);
     }
 
     /**
@@ -259,7 +268,10 @@ class BrandWheelImprovementFocusComposerTest extends TestCase
             $this->item('d4', 'company_distance', 'mental_freedom', false, true),
             $this->item('d5', 'company_distance', 'd5', true, false),
             $this->item('d6', 'company_distance', 'd6', true, false),
-            $this->item('d7', 'company_distance', 'd7', false, false),
+            // 依頼AH-1: self=trueにして②(競合にも自社にも無い項目)候補から
+            // 除外する ―― ①だけの純粋なケースを検証したいテストのため、
+            // d7がbreakoutとして補われて2件になるのを防ぐ。
+            $this->item('d7', 'company_distance', 'd7', true, false),
             $this->item('a1', 'company_appeal', 'a1', true, true),
             $this->item('j1', 'job_appeal', 'j1', true, true),
         ];
@@ -274,21 +286,27 @@ class BrandWheelImprovementFocusComposerTest extends TestCase
     }
 
     /**
-     * 依頼X-1/X-2: どの領域にも候補項目が無い場合(自社が全領域で競合以上)、
+     * 依頼X-1/X-2: どの領域にも候補項目(①)が無い場合(自社が全領域で競合以上)、
      * nullではなくitems=[]の非nullを返す(呼び出し側でページを消さない
      * 判断に使う)。candidate_count(group)===0は数学的にself_count(group)
      * >=competitor_count(group)を含意するため、no_candidate_self_ahead
      * テンプレートが使われる。
+     *
+     * 依頼AH-1(2026-08-28): items=[]になるのは①②とも0件のときのみ
+     * (=自社の全項目が○のとき、クラスdocblockの数学的根拠を参照)。
+     * この入力は自社が全項目self_matched=trueのため、②(!competitor_matched
+     * && !self_matched)の候補も存在せず、依頼Xの挙動は変わらない。
      */
     public function test_returns_a_non_null_result_with_empty_items_when_no_group_has_a_candidate(): void
     {
         $items = [
-            // どのグループも「競合にあり自社に無い」項目が無い。
+            // どのグループも「競合にあり自社に無い」項目(①)が無く、自社が
+            // 全項目matchedのため②(競合にも自社にも無い項目)も無い。
             $this->item('a1', 'company_appeal', 'a1', true, true),
             $this->item('a2', 'company_appeal', 'a2', true, false),
             $this->item('d1', 'company_distance', 'd1', true, true),
             $this->item('j1', 'job_appeal', 'j1', true, true),
-            $this->item('j2', 'job_appeal', 'j2', false, false),
+            $this->item('j2', 'job_appeal', 'j2', true, false),
         ];
 
         $result = $this->composer->compose($items, []);
@@ -302,5 +320,156 @@ class BrandWheelImprovementFocusComposerTest extends TestCase
         // 「0件挙げます」のような件数を含む文言(gap_positive/gap_non_positive)は
         // 使われないこと。
         $this->assertStringNotContainsString('0件', $result['lead_text']);
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼AH-1(2026-08-28、レポート50): 改善提案のカードを2種類にする。
+    // ①「追いつく」(competitor_matched && !self_matched、無改修)に加え、
+    // ②「抜け出す」(!competitor_matched && !self_matched)で不足分を補う。
+    // ------------------------------------------------------------------
+
+    /**
+     * ①が3件以上あるとき、②は出さない(合計の最大枚数は3枚のまま)。
+     */
+    public function test_breakout_items_are_not_added_when_catch_up_alone_already_fills_three_slots(): void
+    {
+        $items = [
+            $this->item('personality', 'company_distance', 'leadership', false, true), // ①
+            $this->item('personality', 'company_distance', 'org_structure', false, true), // ①
+            $this->item('personality', 'company_distance', 'company_character', false, true), // ①
+            $this->item('personality', 'company_distance', 'core_values', false, false), // ②候補(選ばれないはず)
+        ];
+
+        $result = $this->composer->compose($items, []);
+
+        $this->assertCount(3, $result['items']);
+        $this->assertSame(['catch_up', 'catch_up', 'catch_up'], array_column($result['items'], 'type'));
+        $this->assertNotContains('core_values_name', array_column($result['items'], 'sub_name'));
+    }
+
+    /**
+     * レポート50相当: ①が1件のとき、②で2枚補われ、合計3枚になる。
+     * ②はselectedGroupKeyに限定されない(自社が伝えていない項目すべてが
+     * 供給源になる、依頼者指定の狙い)。
+     */
+    public function test_breakout_items_fill_the_remaining_slots_when_catch_up_has_only_one_item(): void
+    {
+        $items = [
+            $this->item('personality', 'company_distance', 'leadership', false, true), // ①(1件)
+            $this->item('personality', 'company_distance', 'org_structure', true, true), // 両方該当、対象外
+            $this->item('will_activity', 'company_appeal', 'purpose', false, false), // ②候補
+            $this->item('emotional_benefit', 'job_appeal', 'pride', false, false), // ②候補
+            $this->item('emotional_benefit', 'job_appeal', 'talkable', false, false), // ②候補(4件目、選ばれない)
+        ];
+
+        $result = $this->composer->compose($items, []);
+
+        $this->assertCount(3, $result['items']);
+        $this->assertSame('catch_up', $result['items'][0]['type']);
+        $this->assertSame('leadership_name', $result['items'][0]['sub_name']);
+        $this->assertSame('breakout', $result['items'][1]['type']);
+        $this->assertSame('purpose_name', $result['items'][1]['sub_name']);
+        $this->assertSame('breakout', $result['items'][2]['type']);
+        $this->assertSame('pride_name', $result['items'][2]['sub_name']);
+    }
+
+    /**
+     * ①が0件で②が3件以上あるとき、②だけで3枚になる。
+     */
+    public function test_breakout_items_alone_fill_all_three_slots_when_there_are_no_catch_up_items(): void
+    {
+        $items = [
+            $this->item('will_activity', 'company_appeal', 'purpose', false, false),
+            $this->item('will_activity', 'company_appeal', 'business_expansion', false, false),
+            $this->item('personality', 'company_distance', 'leadership', false, false),
+            $this->item('personality', 'company_distance', 'org_structure', true, false), // 自社matched、対象外
+        ];
+
+        $result = $this->composer->compose($items, []);
+
+        $this->assertCount(3, $result['items']);
+        $this->assertSame(['breakout', 'breakout', 'breakout'], array_column($result['items'], 'type'));
+        $this->assertSame(['purpose_name', 'business_expansion_name', 'leadership_name'], array_column($result['items'], 'sub_name'));
+    }
+
+    /**
+     * ②のcompetitor_evidenceは常にnull(比較サイトにも記述が無いため引用が
+     * 存在しない)。①は従来どおりevidenceが付く。
+     */
+    public function test_breakout_items_never_have_competitor_evidence(): void
+    {
+        $items = [
+            $this->item('personality', 'company_distance', 'leadership', false, true),
+            $this->item('will_activity', 'company_appeal', 'purpose', false, false),
+        ];
+
+        $result = $this->composer->compose($items, [
+            'personality' => ['leadership' => '経営陣は現場から意見を吸い上げています。'],
+        ]);
+
+        $byName = collect($result['items'])->keyBy('sub_name');
+        $this->assertSame('経営陣は現場から意見を吸い上げています。', $byName['leadership_name']['competitor_evidence']);
+        $this->assertNull($byName['purpose_name']['competitor_evidence']);
+    }
+
+    /**
+     * ②の並び順は$comparisonItemsの並び順(=config('brand_wheel.axes')の
+     * 並び順、sub_element_definitionsの定義順と同じ)を使う ―― 同じ入力なら
+     * 必ず同じ順序になる決定的な規則であることを、渡す順序を変えても結果が
+     * 変わらないことで確認する。
+     */
+    public function test_breakout_item_order_is_deterministic_and_follows_the_comparison_items_order(): void
+    {
+        $items = [
+            $this->item('will_activity', 'company_appeal', 'purpose', false, false),
+            $this->item('personality', 'company_distance', 'leadership', false, false),
+            $this->item('emotional_benefit', 'job_appeal', 'pride', false, false),
+        ];
+
+        $result1 = $this->composer->compose($items, []);
+        $result2 = $this->composer->compose($items, []);
+
+        $expectedOrder = ['purpose_name', 'leadership_name', 'pride_name'];
+        $this->assertSame($expectedOrder, array_column($result1['items'], 'sub_name'));
+        $this->assertSame($expectedOrder, array_column($result2['items'], 'sub_name'));
+    }
+
+    /**
+     * ②を1件でも含む場合、①のみを前提にした「比較サイトの記述にあり」
+     * 「この領域から」という主張(gap_positive/gap_non_positive)は使わず、
+     * 位置・出典を主張しないitems_include_breakoutを使う。
+     */
+    public function test_lead_text_uses_the_breakout_template_when_items_include_a_breakout_item(): void
+    {
+        $items = [
+            $this->item('personality', 'company_distance', 'leadership', false, true), // ①
+            $this->item('will_activity', 'company_appeal', 'purpose', false, false), // ②
+        ];
+
+        $result = $this->composer->compose($items, []);
+
+        $this->assertSame(
+            sprintf((string) config('brand_wheel.improvement_focus_templates.items_include_breakout'), 2),
+            $result['lead_text'],
+        );
+        $this->assertStringNotContainsString('比較サイトの記述にあり', $result['lead_text']);
+    }
+
+    /**
+     * ①が0件で②のみのときも、items_include_breakoutを使う(gap_positive/
+     * gap_non_positiveは使わない)。
+     */
+    public function test_lead_text_uses_the_breakout_template_when_there_are_only_breakout_items(): void
+    {
+        $items = [
+            $this->item('will_activity', 'company_appeal', 'purpose', false, false),
+        ];
+
+        $result = $this->composer->compose($items, []);
+
+        $this->assertSame(
+            sprintf((string) config('brand_wheel.improvement_focus_templates.items_include_breakout'), 1),
+            $result['lead_text'],
+        );
     }
 }

@@ -152,8 +152,20 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
      * 空配列の場合はfocus_items_reasonをnullにする指示を明示。断定禁止・
      * 文体・出力言語ルールは新フィールドにもそのまま適用する。既存の
      * one_point/reason/mid_term_action等、他フィールドの仕様はv10から無変更。
+     *
+     * v12(2026-08-28、依頼AH-3): 「改善提案のカードを2種類にする」(依頼AH-1)
+     * に伴い、data.focus_items_for_reasonの各要素にtype('catch_up'|
+     * 'breakout')が追加された(BrandWheelImprovementFocusComposer::compose()、
+     * GenerateBrandWheelImprovementSuggestionJob参照)。①catch_up(競合には
+     * あり、自社に無い項目、従来から表示していたもの)と②breakout(競合にも
+     * 自社にも無い項目、依頼AH-1で新設)は性格が異なるため、focus_items_reason
+     * にその違いを反映させる指示を追加した(①「競合が既に伝えている」ため
+     * 遅れを取っている、②「まだ誰も伝えていない」ため先に言えば差がつく)。
+     * 項目の選定は引き続きPHP側(決定的な規則、無改修)に一元化されており、
+     * AIはtypeに応じた理由の書き分けのみを担う。断定禁止・文体(語尾の
+     * 反復禁止を含む)・出力言語・スキーマ(フィールド名・型)はv11から無変更。
      */
-    public const string PROMPT_VERSION = 'v11';
+    public const string PROMPT_VERSION = 'v12';
 
     public function __construct(
         private readonly BrandWheelImprovementSuggestionResponseParser $parser,
@@ -393,6 +405,18 @@ focus_items_for_reasonに含まれない項目に言及したりすることは�
 focus_items_for_reasonが空配列の場合は、focus_items_reasonをJSONのnull
 (文字列"null"ではない)にしてください(無理に書かないこと)。
 
+各要素のtypeは、その項目の性格を示します。理由を書く際にこの違いを反映させて
+ください:
+- type="catch_up"(①追いつく): 競合サイトには記述があり、自社サイトには無い
+  項目です。競合が既に伝えている情報のため、御社は情報発信で遅れを取っている
+  状態です。
+- type="breakout"(②抜け出す): 競合サイトにも自社サイトにも記述が無い項目です。
+  「両社とも書いていないので差別化できます」のような断定・消極的な理由付けは
+  禁止ですが、まだどちらも伝えていない情報のため、先に伝えることで候補者への
+  訴求で差がつく可能性がある、という前向きな観点で書いてください。
+複数の項目が混在する場合は、それぞれの性格の違いに触れながら1つの理由文として
+まとめてください(catch_up/breakoutで別々の理由文に分けなくてよい)。
+
 TXT;
 
         $schema = <<<TXT
@@ -448,8 +472,9 @@ TXT;
   (自社に既にある項目)のキーは含めないでください。one_point/reasonで最優先として言及した項目を
   筆頭に置き、関連する他の項目があれば続けてください。
 - focus_items_reason: 最大3文で、data.focus_items_for_reasonに列挙された項目(だけ)について、
-  なぜ最優先で改善すべきかを説明してください。競合との比較・候補者への影響の観点を、実際の
-  データに基づいて具体的に書き、【断定禁止】の指示に従い条件付き表現にしてください。複数文に
+  なぜ最優先で改善すべきかを説明してください。各項目のtype(catch_up/breakout)に応じて
+  【focus_items_reasonについて】の指示どおり理由の観点を書き分け、実際のデータに基づいて
+  具体的に書き、【断定禁止】の指示に従い条件付き表現にしてください。複数文に
   わたるため、【文章の書き方】の指示どおり同じ語尾を2回以上繰り返さないよう、文ごとに表現を
   変えてください。focus_items_for_reasonが空配列の場合はJSONのnull(文字列"null"ではない)に
   してください。

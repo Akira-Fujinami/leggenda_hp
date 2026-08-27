@@ -152,7 +152,7 @@ class ReportSummaryComposerTest extends TestCase
 
         $summary = $this->composer()->composeOverallSummary($score, recommendationCount: 0, displayCompanyName: '様');
 
-        $this->assertStringNotContainsString('次のページ', $summary);
+        $this->assertStringNotContainsString('具体的な改善提案', $summary);
     }
 
     public function test_summary_includes_the_recommendation_pointer_when_recommendations_exist(): void
@@ -161,7 +161,9 @@ class ReportSummaryComposerTest extends TestCase
 
         $summary = $this->composer()->composeOverallSummary($score, recommendationCount: 3, displayCompanyName: '様');
 
-        $this->assertStringContainsString('次のページ', $summary);
+        $this->assertStringContainsString('具体的な改善提案', $summary);
+        // 依頼AG-2(2026-08-27): ページの相対位置に言及しないこと。
+        $this->assertStringNotContainsString('次のページ', $summary);
     }
 
     public function test_summary_mentions_only_the_weak_category_when_no_category_is_strong(): void

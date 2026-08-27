@@ -602,7 +602,7 @@ class WordReportGeneratorTest extends TestCase
                     ['group' => 'job_appeal', 'label' => '仕事の魅力', 'self_count' => 0, 'competitor_count' => 0, 'max_count' => 0],
                 ],
                 'items' => [
-                    ['axis_name' => '就業環境', 'sub_name' => '同僚・先輩像', 'definition' => 'テスト定義', 'recommendation' => 'テスト提案文', 'competitor_evidence' => 'Meet our diverse team.', 'competitor_evidence_translation' => '多様なチームをご紹介します。'],
+                    ['type' => 'catch_up', 'axis_name' => '就業環境', 'sub_name' => '同僚・先輩像', 'definition' => 'テスト定義', 'recommendation' => 'テスト提案文', 'competitor_evidence' => 'Meet our diverse team.', 'competitor_evidence_translation' => '多様なチームをご紹介します。'],
                 ],
                 'lead_text' => 'テスト用の一文。',
             ],
@@ -646,12 +646,17 @@ class WordReportGeneratorTest extends TestCase
      */
     public function test_improvement_section_shows_the_no_candidate_message_and_does_not_disappear_when_self_leads_every_group(): void
     {
-        $selfAxes = [
-            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 4, 'max_count' => 4, 'matched_sub_elements' => [
-                ['key' => 'purpose', 'name' => 'パーパス'], ['key' => 'business_expansion', 'name' => '展開事業・商品'],
-                ['key' => 'project_initiative', 'name' => 'PJ・新たな取組'], ['key' => 'social_contribution', 'name' => '社会貢献活動'],
-            ], 'label_only_sub_elements' => []],
-        ];
+        // 依頼AH-1(2026-08-28): PDF版と同じ理由で、自社を24項目すべて○に
+        // 修正した(LeadPdfViewTestの同名テストのコメント参照)。
+        $selfAxes = collect(config('brand_wheel.axes'))->map(fn (array $axis, string $axisKey) => [
+            'key' => $axisKey,
+            'group' => $axis['group'],
+            'name' => $axis['name_ja'],
+            'matched_count' => count($axis['sub_elements']),
+            'max_count' => count($axis['sub_elements']),
+            'matched_sub_elements' => collect($axis['sub_elements'])->map(fn (string $name, string $key) => ['key' => $key, 'name' => $name])->values()->all(),
+            'label_only_sub_elements' => [],
+        ])->values()->all();
         $competitorAxes = [
             ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 2, 'max_count' => 4, 'matched_sub_elements' => [
                 ['key' => 'purpose', 'name' => 'パーパス'], ['key' => 'business_expansion', 'name' => '展開事業・商品'],

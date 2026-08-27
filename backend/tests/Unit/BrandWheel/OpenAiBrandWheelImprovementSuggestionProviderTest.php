@@ -10,7 +10,7 @@ use Tests\TestCase;
 
 class OpenAiBrandWheelImprovementSuggestionProviderTest extends TestCase
 {
-    private function makeInput(bool $hasCompetitor = true): BrandWheelImprovementSuggestionInput
+    private function makeInput(bool $hasCompetitor = true, array $focusItemsForReason = []): BrandWheelImprovementSuggestionInput
     {
         return new BrandWheelImprovementSuggestionInput(
             selfMatchedItems: [['axis_name' => '活動的魅力', 'sub_name' => 'パーパス', 'evidence' => '地域社会への貢献']],
@@ -25,6 +25,7 @@ class OpenAiBrandWheelImprovementSuggestionProviderTest extends TestCase
             selfKeyMessage: '地域社会に貢献するという理念を掲げています。',
             selfPositiveImpression: '地域貢献への姿勢が伝わる印象です。',
             selfCoreValueEvidence: null,
+            focusItemsForReason: $focusItemsForReason,
         );
     }
 
@@ -109,9 +110,36 @@ class OpenAiBrandWheelImprovementSuggestionProviderTest extends TestCase
         });
     }
 
-    public function test_prompt_version_is_v11(): void
+    public function test_prompt_version_is_v12(): void
     {
-        $this->assertSame('v11', OpenAiBrandWheelImprovementSuggestionProvider::PROMPT_VERSION);
+        $this->assertSame('v12', OpenAiBrandWheelImprovementSuggestionProvider::PROMPT_VERSION);
+    }
+
+    /**
+     * 依頼AH-3(2026-08-28、v12): data.focus_items_for_reasonの各要素のtype
+     * ('catch_up'|'breakout')に応じて理由の観点を書き分ける指示が
+     * プロンプトに含まれること。
+     */
+    public function test_prompt_explains_the_catch_up_and_breakout_distinction_for_focus_items_reason(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        $this->fakeSuccessfulResponse(['one_point' => null, 'recommendation' => null, 'focus_sub_element_keys' => []]);
+
+        (new OpenAiBrandWheelImprovementSuggestionProvider(new BrandWheelImprovementSuggestionResponseParser))->analyze($this->makeInput(
+            focusItemsForReason: [['axis_name' => '就業環境', 'sub_name' => '同僚・先輩像', 'type' => 'catch_up']],
+        ));
+
+        Http::assertSent(function ($request) {
+            $content = $request->data()['messages'][0]['content'] ?? '';
+
+            // 指示文にcatch_up/breakoutの違いが説明されていること。
+            return str_contains($content, 'type="catch_up"')
+                && str_contains($content, 'type="breakout"')
+                // 実際に渡したfocus_items_for_reasonのtype/sub_nameがdata内に
+                // 埋め込まれていること(AIへ実データとして渡っていることの確認)。
+                && str_contains($content, '"type":"catch_up"')
+                && str_contains($content, '同僚・先輩像');
+        });
     }
 
     /**

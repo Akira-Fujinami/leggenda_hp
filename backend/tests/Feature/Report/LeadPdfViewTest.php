@@ -1054,7 +1054,7 @@ class LeadPdfViewTest extends TestCase
                     ['group' => 'job_appeal', 'label' => '仕事の魅力', 'self_count' => 0, 'competitor_count' => 0, 'max_count' => 0],
                 ],
                 'items' => [
-                    ['axis_name' => '就業環境', 'sub_name' => '同僚・先輩像', 'definition' => 'テスト定義', 'recommendation' => 'テスト提案文', 'competitor_evidence' => 'Meet our diverse team.', 'competitor_evidence_translation' => '多様なチームをご紹介します。'],
+                    ['type' => 'catch_up', 'axis_name' => '就業環境', 'sub_name' => '同僚・先輩像', 'definition' => 'テスト定義', 'recommendation' => 'テスト提案文', 'competitor_evidence' => 'Meet our diverse team.', 'competitor_evidence_translation' => '多様なチームをご紹介します。'],
                 ],
                 'lead_text' => 'テスト用の一文。',
             ],
@@ -1106,15 +1106,26 @@ class LeadPdfViewTest extends TestCase
      * 候補項目(競合にあり自社に無い項目)が1件も無いとき、「0件挙げます」も
      * 「該当する項目はありませんでした」も出さず、状況を正しく説明する
      * lead_textを出す。ページ自体も消えない。
+     *
+     * 依頼AH-1(2026-08-28): items=[]になるのは①②とも0件(=自社の24項目
+     * すべてが○)のときのみ(クラスdocblockの数学的根拠を参照)。旧フィクスチャ
+     * (will_activityのみ4/4、他23項目は未言及=self/competitorとも未充足)は
+     * 「自社は特定の1軸のみ強い」を意図していたが、他23項目が②(競合にも
+     * 自社にも無い項目)の候補になってしまい、この試験の意図(自社が全領域で
+     * 優位)を正しく表せていなかった。自社を24項目すべて○にし、真に
+     * items=[]になる入力に修正する。
      */
     public function test_improvement_page_shows_the_no_candidate_message_and_does_not_disappear_when_self_leads_every_group(): void
     {
-        $selfAxes = [
-            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 4, 'max_count' => 4, 'matched_sub_elements' => [
-                ['key' => 'purpose', 'name' => 'パーパス'], ['key' => 'business_expansion', 'name' => '展開事業・商品'],
-                ['key' => 'project_initiative', 'name' => 'PJ・新たな取組'], ['key' => 'social_contribution', 'name' => '社会貢献活動'],
-            ], 'label_only_sub_elements' => []],
-        ];
+        $selfAxes = collect(config('brand_wheel.axes'))->map(fn (array $axis, string $axisKey) => [
+            'key' => $axisKey,
+            'group' => $axis['group'],
+            'name' => $axis['name_ja'],
+            'matched_count' => count($axis['sub_elements']),
+            'max_count' => count($axis['sub_elements']),
+            'matched_sub_elements' => collect($axis['sub_elements'])->map(fn (string $name, string $key) => ['key' => $key, 'name' => $name])->values()->all(),
+            'label_only_sub_elements' => [],
+        ])->values()->all();
         $competitorAxes = [
             // 競合がmatchした2件は、いずれも自社もmatchしている
             // (=候補(competitor_matched && !self_matched)が0件になる)。

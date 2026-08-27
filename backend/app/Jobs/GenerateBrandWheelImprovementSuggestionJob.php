@@ -202,8 +202,15 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
         $improvementFocus = $hasSufficientCompetitor
             ? $improvementFocusComposer->compose($comparisonItems, $evidenceLookupBuilder->build($competitorRecord))
             : null;
+        // 依頼AH-3(2026-08-28): item['type']('catch_up'|'breakout')もAIへ
+        // 渡す ―― ①②で理由の書き分け(競合が既に伝えている/まだ誰も伝えて
+        // いない)ができるようにするため(OpenAiBrandWheelImprovementSuggestion
+        // Provider::buildPrompt()参照)。項目の選定自体は引き続きこの
+        // BrandWheelImprovementFocusComposer(AH-1で改修、無改修のまま
+        // ここから呼ぶ)に一元化されており、ReportViewModelBuilderが表示時に
+        // 独立に計算する結果と必ず一致する(同じcompose()呼び出しのため)。
         $focusItemsForReason = array_map(
-            fn (array $item) => ['axis_name' => $item['axis_name'], 'sub_name' => $item['sub_name']],
+            fn (array $item) => ['axis_name' => $item['axis_name'], 'sub_name' => $item['sub_name'], 'type' => $item['type']],
             $improvementFocus['items'] ?? [],
         );
 

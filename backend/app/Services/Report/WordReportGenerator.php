@@ -527,18 +527,28 @@ class WordReportGenerator
             // 依頼X-2: 候補が0件のときの「該当する項目はありませんでした」は
             // 廃止した(PDF版と同内容 ―― lead_textが既に状況を説明している)。
             if ($focus['items'] !== []) {
+                // 依頼AH-2(2026-08-28): PDF版と同内容。①「追いつく」
+                // (catch_up)/②「抜け出す」(breakout)をラベルで区別し、
+                // ②には引用ブロック(比較サイトの記述)を出さない(比較サイトに
+                // も記述が無いため引用するものが存在しない)。
                 foreach ($focus['items'] as $i => $item) {
                     $section->addTextBreak(1);
                     $section->addText(($i + 1).'. '.$item['sub_name'], ['bold' => true]);
+                    $section->addText(
+                        (string) config('brand_wheel.improvement_card_type_labels.'.$item['type']),
+                        ['size' => 8, 'bold' => true, 'color' => $item['type'] === 'catch_up' ? 'E95446' : '2C7F96'],
+                    );
                     $section->addText($item['recommendation'], ['size' => 9, 'color' => '6B6767']);
                     $section->addText('（現在、サイトからは読み取れませんでした）', ['size' => 8, 'color' => '9A9A9A']);
-                    $section->addText('比較サイトの記述：「'.$item['competitor_evidence'].'」');
-                    // 依頼AA(2026-08-27): PDF版の.cmp-translationと同内容。
-                    if (! empty($item['competitor_evidence_translation'])) {
-                        $section->addText(
-                            ((string) config('brand_wheel.quote_translation_label')).'：'.$item['competitor_evidence_translation'],
-                            ['size' => 8, 'color' => '8A8A8A'],
-                        );
+                    if ($item['type'] === 'catch_up') {
+                        $section->addText('比較サイトの記述：「'.$item['competitor_evidence'].'」');
+                        // 依頼AA(2026-08-27): PDF版の.cmp-translationと同内容。
+                        if (! empty($item['competitor_evidence_translation'])) {
+                            $section->addText(
+                                ((string) config('brand_wheel.quote_translation_label')).'：'.$item['competitor_evidence_translation'],
+                                ['size' => 8, 'color' => '8A8A8A'],
+                            );
+                        }
                     }
                 }
 

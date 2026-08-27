@@ -11,11 +11,12 @@ use Illuminate\Support\Facades\Log;
  * 「【3】決定的な規則が必要な箇所」)。
  *
  * 【グループ選定規則】3グループ(company_appeal/company_distance/job_appeal)
- * のうち「候補項目(競合にはあり自社には無い項目)が1件以上ある」グループに
- * 限定し、その中で「競合の該当件数の合計 - 自社の該当件数の合計」が最大の
- * グループを選ぶ。同点の場合はconfig('brand_wheel.group_labels')の並び順で
- * 先に来るグループを選ぶ(config順=決定的な規則。実行のたびに順序が変わる
- * AIの出力順や配列のキー順に依存させない)。
+ * のうち「候補項目(競合にはあり自社には無い項目、下記①)が1件以上ある」
+ * グループに限定し、その中で「競合の該当件数の合計 - 自社の該当件数の合計」が
+ * 最大のグループを選ぶ。同点の場合はconfig('brand_wheel.group_labels')の
+ * 並び順で先に来るグループを選ぶ(config順=決定的な規則。実行のたびに順序が
+ * 変わるAIの出力順や配列のキー順に依存させない)。この選定規則自体は依頼AH-1
+ * (2026-08-28)でも無改修。
  *
  * 依頼X-1(2026-08-26、レポート42): 従来は件数差だけで選んでいたため、
  * 自社が3領域すべてで競合を上回る(差が全て負)ケースで、候補が1件も無い
@@ -28,19 +29,42 @@ use Illuminate\Support\Facades\Log;
  * 使えるよう、この場合もnullではなく非nullを返す ―― 下記@returnの
  * 「nullは~」の条件を参照)。
  *
- * 【3項目選定規則】選ばれたグループに属する下位要素のうち「競合にはあり、
- * 自社には無い」もの(BrandWheelSubElementComparisonComposerの出力順、
- * つまりconfig('brand_wheel.axes')の並び順)を先頭から最大3件選ぶ。3件に
- * 満たない場合はそのまま少ない件数で成立させ、他グループから補充しない
- * (グループ差の主張と選定項目のグループを一致させ続けるため)。
+ * 【3項目選定規則(依頼AH-1、2026-08-28: カードを2種類にする)】
+ * ①「追いつく」候補(competitor_matched && !self_matched、選ばれたグループに
+ * 限定)を、$comparisonItemsの並び順(=config('brand_wheel.axes')の並び順)で
+ * 先頭から最大3件選ぶ ―― ここまでは依頼X以前からの規則で無改修(グループ差の
+ * 主張と選定項目のグループを一致させ続けるため、他グループから補充しない)。
+ *
+ * ①だけで3件に満たない場合、②「抜け出す」候補(!competitor_matched &&
+ * !self_matched、自社が「－」の項目のうち競合にも記述が無いもの)で不足分を
+ * 補う。②は①と異なり選ばれたグループに限定しない ―― 自社が競合に対して
+ * 優位なグループほど①の供給が細るため(依頼AH「事実」参照: 自社が強いほど
+ * ページが薄くなる)、供給源を「自社が伝えていない項目すべて」に広げることが
+ * 本依頼の狙い。②の並び順は$comparisonItemsの並び順(=config('brand_wheel.
+ * axes.*.sub_element_definitions')の定義順)をそのまま使う ―― 同じ入力なら
+ * 必ず同じ順序になる決定的な規則。合計の最大枚数(3件)は変更しない。
+ *
+ * ①②とも0件のとき(=自社の24項目すべてが○のときのみ数学的に起こりうる、
+ * 下記composeLeadText()のdocblock参照)は、依頼Xで入れた「該当なし」の文言
+ * (no_candidate_self_ahead/no_candidate_mixed)のまま変更しない。
  *
  * 【lead_textの組み立て】config('brand_wheel.improvement_focus_templates')
- * 参照。候補の有無・選ばれた領域の差(gap)の符号によって使うテンプレートを
- * 切り替える(詳細は同configのコメント)。
+ * 参照。②を1件でも含む場合は、①のみを前提にした「比較サイトの記述にあり」
+ * という主張が②には成り立たないため、位置・出典を主張しない汎用文言
+ * (items_include_breakout)に切り替える。①のみの場合は候補の有無・選ばれた
+ * 領域の差(gap)の符号によって使うテンプレートを切り替える(依頼X以前からの
+ * 挙動、無変更)。
  */
 class BrandWheelImprovementFocusComposer
 {
     private const MAX_ITEMS = 3;
+
+    // 依頼AH-1(2026-08-28): カードの種類。①「追いつく」(競合にあり自社に
+    // 無い)/②「抜け出す」(競合にも自社にも無い)。config('brand_wheel.
+    // improvement_card_type_labels')のキーと1対1で対応する。
+    private const TYPE_CATCH_UP = 'catch_up';
+
+    private const TYPE_BREAKOUT = 'breakout';
 
     // 2026-08-10: 110→60に縮小。カードのheight固定を廃止しauto(内容に追従)に
     // した後も、3枚とも上限文字数に近い引用が並ぶ実データ(実測)で
@@ -54,7 +78,7 @@ class BrandWheelImprovementFocusComposer
     /**
      * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, recommendation: string, self_matched: bool, competitor_matched: bool}>  $comparisonItems  BrandWheelSubElementComparisonComposer::compose()の戻り値
      * @param  array<string, array<string, string>>  $competitorEvidenceByAxisAndSubKey  (axis_key => (sub_key => evidence))。選ばれた項目の分だけ実際に使う ―― 比較サイトの本文をこのページの目的以外に広く露出させないため、呼び出し側もこの用途専用に組み立てたものを渡すこと
-     * @return array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>, items: list<array{axis_name: string, sub_name: string, definition: string, recommendation: string, competitor_evidence: ?string}>, lead_text: string}|null nullは$comparisonItems自体が空の場合のみ。候補項目(競合にあり自社に無い項目)がどの領域にも無い場合はitems=[]の非nullを返す(依頼X-2、呼び出し側でページを消さない判断に使う)
+     * @return array{selected_group: string, groups: list<array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>, items: list<array{type: string, axis_name: string, sub_name: string, definition: string, recommendation: string, competitor_evidence: ?string}>, lead_text: string}|null nullは$comparisonItems自体が空の場合のみ。①②とも0件(依頼AH-1)の場合はitems=[]の非nullを返す(依頼X-2、呼び出し側でページを消さない判断に使う)
      */
     public function compose(array $comparisonItems, array $competitorEvidenceByAxisAndSubKey): ?array
     {
@@ -85,7 +109,7 @@ class BrandWheelImprovementFocusComposer
         }
 
         // 依頼X-1: 候補が1件以上ある領域に限定する。どの領域にも候補が無い
-        // 場合は元の全領域を対象にする(この場合はどれを選んでも$itemsは
+        // 場合は元の全領域を対象にする(この場合はどれを選んでも①のitemsは
         // 空になるため、選定結果はlead_text/表示に影響しない)。
         $eligibleGroupKeys = array_values(array_filter($groupOrder, fn (string $g) => $candidateCounts[$g] > 0));
         $selectionPool = $eligibleGroupKeys !== [] ? $eligibleGroupKeys : $groupOrder;
@@ -105,18 +129,45 @@ class BrandWheelImprovementFocusComposer
             }
         }
 
-        $candidateItems = array_values(array_filter(
+        // ①「追いつく」: 選ばれたグループに限定(依頼X以前からの規則、無改修)。
+        $catchUpCandidates = array_values(array_filter(
             $comparisonItems,
             fn (array $i) => $i['group'] === $selectedGroupKey && $i['competitor_matched'] && ! $i['self_matched'],
         ));
 
-        $items = array_map(fn (array $i) => [
+        $catchUpItems = array_map(fn (array $i) => [
+            'type' => self::TYPE_CATCH_UP,
             'axis_name' => $i['axis_name'],
             'sub_name' => $i['sub_name'],
             'definition' => $i['definition'],
             'recommendation' => $i['recommendation'],
             'competitor_evidence' => $this->capEvidence($competitorEvidenceByAxisAndSubKey[$i['axis_key']][$i['sub_key']] ?? null),
-        ], array_slice($candidateItems, 0, self::MAX_ITEMS));
+        ], array_slice($catchUpCandidates, 0, self::MAX_ITEMS));
+
+        // 依頼AH-1(2026-08-28): ②「抜け出す」で不足分を補う。①と異なり
+        // selectedGroupKeyに限定しない(供給源を「自社が伝えていない項目
+        // すべて」に広げるのが狙いのため)。$comparisonItemsの並び順を
+        // そのまま使うことで、同じ入力なら必ず同じ順序になる決定的な規則を
+        // 保つ。②に競合の引用は存在しないため、competitor_evidenceは常にnull。
+        $remainingSlots = self::MAX_ITEMS - count($catchUpItems);
+        $breakoutItems = [];
+        if ($remainingSlots > 0) {
+            $breakoutCandidates = array_values(array_filter(
+                $comparisonItems,
+                fn (array $i) => ! $i['competitor_matched'] && ! $i['self_matched'],
+            ));
+
+            $breakoutItems = array_map(fn (array $i) => [
+                'type' => self::TYPE_BREAKOUT,
+                'axis_name' => $i['axis_name'],
+                'sub_name' => $i['sub_name'],
+                'definition' => $i['definition'],
+                'recommendation' => $i['recommendation'],
+                'competitor_evidence' => null,
+            ], array_slice($breakoutCandidates, 0, $remainingSlots));
+        }
+
+        $items = array_merge($catchUpItems, $breakoutItems);
 
         return [
             'selected_group' => (string) $selectedGroupKey,
@@ -130,30 +181,49 @@ class BrandWheelImprovementFocusComposer
      * 依頼X-2/X-3(2026-08-26): config('brand_wheel.improvement_focus_templates')
      * (同configのコメントに各分岐の根拠を記載)から、状況に応じた1文を組み立てる。
      * 「%d件挙げます」のような件数を含む文言は、候補が1件以上ある場合の
-     * テンプレート(gap_positive/gap_non_positive)にしか登場しないため、
-     * 呼び出し側の条件分岐に関わらず「0件挙げます」を構造的に出しえない。
+     * テンプレート(gap_positive/gap_non_positive/items_include_breakout)に
+     * しか登場しないため、呼び出し側の条件分岐に関わらず「0件挙げます」を
+     * 構造的に出しえない。
+     *
+     * 依頼AH-1(2026-08-28): $itemsに②(breakout)が1件でも含まれる場合、
+     * gap_positive/gap_non_positiveの「比較サイトの記述にあり」という主張は
+     * ②には成り立たない(②はどちらのサイトにも記述が無い項目のため)。また
+     * ②はselectedGroupKeyに限定されないため、gap_positiveの「この領域から」
+     * という主張も成り立つ保証が無い。この場合は位置・出典を主張しない
+     * items_include_breakoutに切り替える(①のみのときの文言はgap_positive/
+     * gap_non_positiveのまま無変更)。
      *
      * @param  array<string, array{group: string, label: string, self_count: int, competitor_count: int, max_count: int}>  $groups
-     * @param  list<array{axis_name: string, sub_name: string, definition: string, recommendation: string, competitor_evidence: ?string}>  $items
+     * @param  list<array{type: string, axis_name: string, sub_name: string, definition: string, recommendation: string, competitor_evidence: ?string}>  $items
      */
     private function composeLeadText(array $groups, array $items, string $selectedGroupKey, int $selectedGap): string
     {
         $templates = (array) config('brand_wheel.improvement_focus_templates', []);
 
         if ($items !== []) {
+            $hasBreakout = collect($items)->contains(fn (array $i) => $i['type'] === self::TYPE_BREAKOUT);
+
+            if ($hasBreakout) {
+                return sprintf((string) ($templates['items_include_breakout'] ?? ''), count($items));
+            }
+
             return $selectedGap >= 1
                 ? sprintf((string) ($templates['gap_positive'] ?? ''), $groups[$selectedGroupKey]['label'], count($items))
                 : sprintf((string) ($templates['gap_non_positive'] ?? ''), count($items));
         }
 
-        // 候補が1件も無い場合。candidate_count(group)===0は「競合が
-        // matchした項目は自社も必ずmatchしている」ことを意味するため、
-        // self_count(group)>=competitor_count(group)が全領域で数学的に
-        // 保証される ―― つまりこの分岐に来る場合、必ずno_candidate_self_
-        // aheadの前提(3領域とも自社が同等以上)が成り立つ。no_candidate_
-        // mixedは、この前提が何らかの理由で破れた場合の安全策として
-        // 依頼者指定により残すもので、現在のロジックでは到達しない
-        // (依頼Xの報告で数学的根拠を示した上で確認済み)。
+        // ①②とも1件も無い場合。①のcandidate_count(group)===0(全領域)は
+        // 「競合がmatchした項目は自社も必ずmatchしている」ことを意味し、②の
+        // candidate_count===0(全領域)は「自社がmatchしていない項目は競合が
+        // 必ずmatchしている」ことを意味する。この2つが両方成り立つのは、
+        // 全24項目でself_matched===trueの場合(=自社が全項目○)のときのみ
+        // (依頼AH-1の数学的根拠、クラスdocblock参照)。したがってこの分岐に
+        // 来る場合、必ずself_count(group)>=competitor_count(group)が全領域で
+        // 成り立ち、no_candidate_self_aheadの前提(3領域とも自社が同等以上)が
+        // 成り立つ。no_candidate_mixedは、この前提が何らかの理由で破れた場合の
+        // 安全策として依頼者指定により残すもので、現在のロジックでは到達しない
+        // (依頼Xの報告で数学的根拠を示した上で確認済み、依頼AH-1でも同様に
+        // 再確認済み)。
         $allSelfAheadOrEqual = true;
         foreach ($groups as $group) {
             if ($group['competitor_count'] > $group['self_count']) {

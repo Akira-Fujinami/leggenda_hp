@@ -388,6 +388,12 @@
     --}}
     .rcard { border: 1px solid #E0E0E0; padding: 1.8mm 3mm; }
     .rcard .no { font-size: 9pt; color: #fff; background: #1D2088; padding: 0.6mm 2.2mm; }
+    {{-- 依頼AH-2(2026-08-28): ①「追いつく」/②「抜け出す」の見た目の区別。
+         ①は競合の引用(.cmp)と同じ赤系、②は中長期の差別化ポイント(.diffbox)
+         と同じ青緑系にして、レポート内の色の意味を統一する。 --}}
+    .rcard .ctype { display: inline-block; font-size: 7.5pt; padding: 0.5mm 2mm; margin-left: 1.5mm; border-radius: 1mm; }
+    .rcard .ctype-catch_up { color: #E95446; background: #FDEDEB; }
+    .rcard .ctype-breakout { color: #2C7F96; background: #E8F3F5; }
     .rcard .nm { font-size: 11.5pt; font-weight: bold; margin: 0.8mm 0 0.6mm; }
     .rcard .q { font-size: 9pt; color: #6B6767; margin: 0 0 1mm; line-height: 1.25; }
     .rcard .lb { font-size: 8.5pt; color: #8A8A8A; margin: 0 0 0.5mm; }
@@ -947,17 +953,34 @@
                      等しいので、fixedのままで安全に収まることを確認済み。 --}}
                 <table style="width: 265mm; margin-top: 2mm;">
                     <tr>
+                        {{--
+                            依頼AH-2(2026-08-28): カードを①「追いつく」
+                            (catch_up、競合にあり自社に無い)と②「抜け出す」
+                            (breakout、競合にも自社にも無い)の2種類に分け、
+                            見た目で区別する(営業が説明を使い分けられる
+                            ように)。ラベル文言はconfig('brand_wheel.
+                            improvement_card_type_labels')に置く(Blade直書き
+                            にしない、依頼者指定)。②は比較サイトにも記述が
+                            無いため引用するものが存在しない ―― 引用ボックス
+                            (.lb/.cmp/.cmp-translation)ごと出さない(空の
+                            引用枠を作らない、依頼Xの「該当する項目は
+                            ありませんでした」が宙に浮いた件と同じ轍を踏まない)。
+                            見出し・推奨文・現状注記は①と同じ形のまま。
+                        --}}
                         @foreach ($focus['items'] as $i => $item)
                             <td class="rcell">
                                 <div class="rcard">
                                     <span class="no">{{ $i + 1 }}</span>
+                                    <span class="ctype ctype-{{ $item['type'] }}">{{ config('brand_wheel.improvement_card_type_labels.'.$item['type']) }}</span>
                                     <p class="nm">{{ $item['sub_name'] }}</p>
                                     <p class="q">{{ $item['recommendation'] }}</p>
                                     <p class="own">（現在、サイトからは読み取れませんでした）</p>
-                                    <p class="lb">比較サイトの記述</p>
-                                    <p class="cmp">「{{ $item['competitor_evidence'] }}」</p>
-                                    @if (! empty($item['competitor_evidence_translation']))
-                                        <p class="cmp-translation">{{ config('brand_wheel.quote_translation_label') }}：{{ $item['competitor_evidence_translation'] }}</p>
+                                    @if ($item['type'] === 'catch_up')
+                                        <p class="lb">比較サイトの記述</p>
+                                        <p class="cmp">「{{ $item['competitor_evidence'] }}」</p>
+                                        @if (! empty($item['competitor_evidence_translation']))
+                                            <p class="cmp-translation">{{ config('brand_wheel.quote_translation_label') }}：{{ $item['competitor_evidence_translation'] }}</p>
+                                        @endif
                                     @endif
                                 </div>
                             </td>

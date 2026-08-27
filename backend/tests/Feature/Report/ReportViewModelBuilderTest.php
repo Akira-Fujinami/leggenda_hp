@@ -728,7 +728,9 @@ class ReportViewModelBuilderTest extends TestCase
 
         $this->assertNotNull($viewModel->improvementFocus);
         $this->assertSame('company_distance', $viewModel->improvementFocus['selected_group']);
-        $this->assertCount(2, $viewModel->improvementFocus['items']);
+        // 依頼AH-1(2026-08-28): ①(colleagues/atmosphere)は2件のみのため、
+        // ②(競合にも自社にも無い項目)が1件補われ、合計3件になる。
+        $this->assertCount(3, $viewModel->improvementFocus['items']);
         $evidences = array_column($viewModel->improvementFocus['items'], 'competitor_evidence');
         $this->assertContains('同僚についての競合サイトの抜粋', $evidences);
         $this->assertContains('雰囲気についての競合サイトの抜粋', $evidences);
@@ -799,17 +801,26 @@ class ReportViewModelBuilderTest extends TestCase
     {
         [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
 
+        // 依頼AH-1(2026-08-28): このフィクスチャは①(colleagues/atmosphere)が
+        // 2件のみのため、②(競合にも自社にも無い項目)が1件補われ、実際に
+        // 表示されるカードは3件(colleagues/atmosphere/leadership)になる。
+        // 生成時点の選定(focus_items_reason_sub_names)もAH-1の新しい選定結果に
+        // 揃えないと一致チェックが失敗する(依頼AH-3、この一致チェック自体は
+        // 依頼AF-2の安全網のまま無改修)。
         BrandWheelImprovementSuggestion::factory()->create([
             'analysis_id' => $analysis->id,
             'status' => 'success',
             'focus_items_reason' => '同僚・先輩像と職場の雰囲気は、候補者が働くイメージを持つうえで重要な情報です。',
-            'focus_items_reason_sub_names' => ['同僚・先輩像', '職場の雰囲気'],
+            'focus_items_reason_sub_names' => ['同僚・先輩像', '職場の雰囲気', 'リーダーシップ'],
         ]);
 
         $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
 
         $this->assertNotNull($viewModel->improvementFocus);
-        $this->assertSame(['同僚・先輩像', '職場の雰囲気'], array_column($viewModel->improvementFocus['items'], 'sub_name'));
+        $this->assertSame(['同僚・先輩像', '職場の雰囲気', 'リーダーシップ'], array_column($viewModel->improvementFocus['items'], 'sub_name'));
+        $this->assertSame('catch_up', $viewModel->improvementFocus['items'][0]['type']);
+        $this->assertSame('catch_up', $viewModel->improvementFocus['items'][1]['type']);
+        $this->assertSame('breakout', $viewModel->improvementFocus['items'][2]['type']);
         $this->assertSame('同僚・先輩像と職場の雰囲気は、候補者が働くイメージを持つうえで重要な情報です。', $viewModel->improvementReason);
     }
 
@@ -925,11 +936,14 @@ class ReportViewModelBuilderTest extends TestCase
     {
         [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
 
+        // 依頼AH-1: このフィクスチャは②が1件補われ3件になるため、一致
+        // チェックのため生成時点の選定にも「リーダーシップ」を含める
+        // (上のtest_improvement_reason_is_shown_...と同じ理由)。
         BrandWheelImprovementSuggestion::factory()->create([
             'analysis_id' => $analysis->id,
             'status' => 'success',
             'focus_items_reason' => '同僚・先輩像と職場の雰囲気は、候補者が働くイメージを持つうえで重要な情報です。',
-            'focus_items_reason_sub_names' => ['同僚・先輩像', '職場の雰囲気'],
+            'focus_items_reason_sub_names' => ['同僚・先輩像', '職場の雰囲気', 'リーダーシップ'],
             'mid_term_action' => null,
         ]);
 

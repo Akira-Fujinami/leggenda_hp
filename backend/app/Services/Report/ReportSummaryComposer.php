@@ -83,7 +83,10 @@ class ReportSummaryComposer
         $sentences[] = $this->composeHighlightSentence($highlight);
 
         if ($recommendationCount > 0) {
-            $sentences[] = '具体的な改善提案は次のページをご覧ください。';
+            // 依頼AG-2(2026-08-27): 「次のページ」という相対位置表現を削除
+            // (依頼AEと同じ考え方)。このクラス自体は現在どのController/Job
+            // からも呼ばれていない未使用コードだが、文言の是正のみ行う。
+            $sentences[] = '具体的な改善提案をご覧ください。';
         }
 
         return implode('', array_filter($sentences, fn ($s) => $s !== null && $s !== ''));

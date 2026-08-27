@@ -119,4 +119,44 @@ class AnalysisController extends Controller
             'Content-Type' => ReportFormat::Pdf->contentType(),
         ]);
     }
+
+    /**
+     * 依頼AG-1(2026-08-27): 無料診断のレポート(PDF/Word)のダウンロード。
+     * 管理者は自分で発行したレポートを取得し直す手段が無かった
+     * (lead_sessionsはtoken_hashのみを保存しており、管理者側から生トークンを
+     * 復元してリード向けURLを組み立てることはできない・すべきでない ――
+     * この設計自体は変更しない)。admin.auth配下のため、リード向け
+     * downloadReport()のようなオーナーシップ検証は不要
+     * (downloadComparisonReport()と同じ方針)。
+     *
+     * 多社比較(source_analysis_idが非null)は対象外 ―― 既存の
+     * downloadComparisonReport()/comparison-report専用リンクのまま変更しない
+     * (このメソッドで404にすることで、同じPDFが2つの異なる導線から
+     * 別ファイル名で配信されるような紛らわしい重複を避ける)。
+     *
+     * ダウンロード時のファイル名は、リード向けdownloadReport()
+     * (LeadAnalysisController)と完全に同じ「診断レポート.拡張子」にする ――
+     * 管理者と顧客が同じファイル名で会話できるようにする(依頼者指定)。
+     */
+    public function downloadLeadReport(Analysis $analysis, string $format): StreamedResponse
+    {
+        abort_if($analysis->source_analysis_id !== null, 404);
+
+        $formatEnum = ReportFormat::tryFrom($format);
+        abort_if($formatEnum === null, 404);
+
+        $report = Report::query()
+            ->where('analysis_id', $analysis->id)
+            ->where('format', $formatEnum->value)
+            ->first();
+
+        abort_if($report === null || $report->status !== ReportGenerationStatus::Completed, 404);
+        abort_unless(Storage::disk('analysis')->exists($report->storage_path), 404);
+
+        $filename = '診断レポート.'.$formatEnum->fileExtension();
+
+        return Storage::disk('analysis')->download($report->storage_path, $filename, [
+            'Content-Type' => $formatEnum->contentType(),
+        ]);
+    }
 }

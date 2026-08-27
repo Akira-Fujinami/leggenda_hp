@@ -307,6 +307,73 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
     }
 
     /**
+     * 依頼AH-3(2026-08-28): ①(競合にあり自社に無い項目)が3件に満たない
+     * ケースでは、②(競合にも自社にも無い項目)が補われた状態で
+     * focus_items_reason_sub_namesが保存されること ―― 生成時点の選定
+     * (このJob)と表示時の選定(ReportViewModelBuilder)が同じ
+     * BrandWheelImprovementFocusComposer::compose()を呼ぶため、AH-1の
+     * 新しい選定結果(①+②)がそのまま一致チェックの対象になることを確認する。
+     */
+    public function test_persists_breakout_items_in_the_matching_sub_names_when_catch_up_alone_is_insufficient(): void
+    {
+        $project = Project::factory()->create();
+        $selfWebsite = Website::factory()->for($project)->create(['is_primary' => true]);
+        $competitorWebsite = Website::factory()->for($project)->create(['is_primary' => false]);
+        $analysis = Analysis::factory()->for($project)->create();
+        $selfWa = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $selfWebsite->id]);
+        $competitorWa = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $competitorWebsite->id]);
+
+        // 自社はwill_activity全4件+asset.scale_influence/office_facility
+        // (合計6件、閾値ちょうど)。競合はwill_activity全4件(自社と重複、
+        // ①にならない)+asset.scale_influence(自社と重複)+personality.
+        // leadership(自社に無い、①候補はこれ1件だけ)の合計6件(閾値以上、
+        // AIへ競合データが渡る条件を満たす)。asset.brand_recognition/
+        // competitiveness・personalityの残り3項目・relationship等は自社・
+        // 競合とも未充足のため②候補として豊富に残る。
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => 'a'], ['key' => 'business_expansion', 'evidence' => 'b'],
+                    ['key' => 'project_initiative', 'evidence' => 'c'], ['key' => 'social_contribution', 'evidence' => 'd'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'scale_influence', 'evidence' => 'e'], ['key' => 'office_facility', 'evidence' => 'f'],
+                ]],
+            ],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => 'g'], ['key' => 'business_expansion', 'evidence' => 'h'],
+                    ['key' => 'project_initiative', 'evidence' => 'i'], ['key' => 'social_contribution', 'evidence' => 'j'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'scale_influence', 'evidence' => 'k'],
+                ]],
+                ['axis_key' => 'personality', 'matched_sub_elements' => [
+                    ['key' => 'leadership', 'evidence' => '経営陣についての競合の抜粋'],
+                ]],
+            ],
+        ]);
+        $suggestion = BrandWheelImprovementSuggestion::factory()->create(['analysis_id' => $analysis->id, 'status' => 'pending']);
+
+        $this->handle(new GenerateBrandWheelImprovementSuggestionJob($suggestion->id));
+
+        $suggestion->refresh();
+
+        $this->assertSame('success', $suggestion->status);
+        // ①(リーダーシップ)1件 + ②(知名度・評判/競争力・独自性)2件で
+        // 合計3件になる(compose()のAH-1挙動)。
+        $this->assertSame(['リーダーシップ', '知名度・評判', '競争力・独自性'], $suggestion->focus_items_reason_sub_names);
+    }
+
+    /**
      * 自社・競合とも閾値以上のときは、従来どおりAIが呼ばれ結果が保存される
      * (回帰防止)。
      */

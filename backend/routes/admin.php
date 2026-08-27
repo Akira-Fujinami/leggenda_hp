@@ -42,6 +42,11 @@ Route::prefix('admin')->name('admin.')->group(function () {
         // のようなオーナーシップ検証は不要(既存のanalyses.show等と同じ、
         // 管理者は任意のAnalysisにアクセスできる前提)。
         Route::get('/analyses/{analysis}/comparison-report', [AnalysisController::class, 'downloadComparisonReport'])->name('analyses.comparison-report.download');
+        // 依頼AG-1(2026-08-27): 無料診断のレポート(PDF/Word)のダウンロード。
+        // 多社比較(source_analysis_idが非null)は上のcomparison-report専用
+        // エンドポイントのまま変更しない ―― こちらはsource_analysis_idが
+        // nullの通常の無料診断のみを対象にする(コントローラ側で404にする)。
+        Route::get('/analyses/{analysis}/report/{format}', [AnalysisController::class, 'downloadLeadReport'])->name('analyses.lead-report.download');
 
         // 依頼AD-1(2026-08-27): 診断への既存資料(フォーマット未確定)の
         // アップロード・ダウンロード・削除。admin.auth配下のみ ――

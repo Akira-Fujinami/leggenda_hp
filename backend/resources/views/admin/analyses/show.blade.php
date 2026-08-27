@@ -143,6 +143,12 @@
                              admin.auth配下の専用エンドポイントからダウンロードする。 --}}
                         @if ($analysis->source_analysis_id && $report->format->value === 'pdf' && $report->status->value === 'completed')
                             <a href="{{ route('admin.analyses.comparison-report.download', $analysis->id, false) }}" style="margin-left: 8px;">ダウンロード</a>
+                        @elseif (! $analysis->source_analysis_id && $report->status->value === 'completed')
+                            {{-- 依頼AG-1(2026-08-27): 無料診断(比較でない)の
+                                 レポートは、管理者が生トークンを持たないため
+                                 リード向けURLを組み立てられない。admin.auth
+                                 配下の専用エンドポイントからダウンロードする。 --}}
+                            <a href="{{ route('admin.analyses.lead-report.download', [$analysis->id, $report->format->value], false) }}" style="margin-left: 8px;">ダウンロード</a>
                         @endif
                     </td>
                 </tr>
