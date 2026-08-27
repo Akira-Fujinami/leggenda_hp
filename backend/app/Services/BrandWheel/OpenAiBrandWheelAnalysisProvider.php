@@ -90,8 +90,24 @@ class OpenAiBrandWheelAnalysisProvider implements BrandWheelAnalysisProvider
      * 印象を与える可能性があります」のような条件付き表現を明示的に指示する。
      * 出力構造が変わるため、v7以前の結果はinput_hashの再利用対象から
      * 自動的に外れる。
+     *
+     * v9(2026-08-27、依頼Z-1): 英語中心のサイト(マネーフォワード・メルカリ
+     * 等)を診断すると、key_message/positive_impression/negative_impression
+     * 等のAI自身が書く文章が英語になり、日本語の営業資料として提出できない
+     * 事故が実物レポート44・47で発生した(2026-08-26の5件同時実行で観測)。
+     * 「AIが自分の言葉で書くフィールド」(key_message/impression/
+     * positive_impression/negative_impression/quality_notes/cautions)には
+     * 出力言語を日本語に固定する指示を追加する。「原文からの引用フィールド」
+     * (sub_elements.*.evidence/core_value.evidence)は翻訳禁止のまま
+     * (依頼R「引用は原文のままです」の前提を壊さない ―― 翻訳すると原文照合の
+     * 検証を通らなくなる)。判定基準・評価方針・トーンに関わる記述は一切
+     * 変更していない、追加したのは言語指定の1ブロックのみ。出力構造(JSON
+     * Schema)自体は変更していないが、v8までの結果と生成文の言語という
+     * 意味で結果の性質が変わるため、バージョンを上げてinput_hashの再利用
+     * 対象から外す(既存データの書き換え・削除は行わない、再判定時に自然に
+     * 新しいキャッシュとして積み上がる)。
      */
-    public const string PROMPT_VERSION = 'v8';
+    public const string PROMPT_VERSION = 'v9';
 
     public function __construct(
         private readonly BrandWheelAnalysisResponseParser $parser,
@@ -200,6 +216,23 @@ TXT;
 
 TXT;
 
+        // 依頼Z-1(2026-08-27): 「AIが自分の言葉で書くフィールド」にのみ
+        // 適用する言語指定。「原文からの引用フィールド」(evidence)は
+        // ここでの対象に含めない ―― 翻訳すると原文照合の検証を通らなくなり、
+        // 依頼Rで確定した「引用は原文のままです」という説明が嘘になる。
+        $languageNote = <<<TXT
+
+【出力言語(必ず守ること)】
+key_message・impression・positive_impression・negative_impression・
+quality_notesの各項目・cautionsは、サイトの記述が英語であっても、必ず日本語で
+書いてください(このレポートは日本語の営業資料として使われます)。
+一方、sub_elementsの各evidence・core_valueのevidenceは原文からの引用であり、
+翻訳せず、サイトに実在する文字列のまま(英語であれば英語のまま)出力して
+ください ―― 引用は原文と完全に一致している必要があり、翻訳すると原文照合の
+検証を通らなくなります。
+
+TXT;
+
         $schema = <<<TXT
 {
   "sub_elements": {
@@ -262,7 +295,7 @@ TXT;
 
 【データ(採用ページ/トップページから抽出済みのテキスト。生HTMLではありません)】
 {$facts}
-
+{$languageNote}
 以下のJSON Schemaに厳密に従うJSONオブジェクトのみを出力してください(説明文や前後のテキストは一切不要):
 {$schema}
 PROMPT;

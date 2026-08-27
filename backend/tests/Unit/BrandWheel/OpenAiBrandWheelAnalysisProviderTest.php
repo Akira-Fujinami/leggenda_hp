@@ -80,6 +80,53 @@ class OpenAiBrandWheelAnalysisProviderTest extends TestCase
         });
     }
 
+    /**
+     * 依頼Z-1(2026-08-27): 英語中心のサイトを診断すると、AIが自分の言葉で
+     * 書くフィールド(key_message等)が英語になり、日本語の営業資料として
+     * 提出できない事故が実物レポート44・47で発生した。プロンプトに
+     * 「生成文は日本語で書く」指示が含まれ、かつ「evidence(引用)は
+     * 原文のまま(翻訳しない)」という区別が明示されていることを確認する
+     * (引用を翻訳禁止にする指示が無いと、AIが誤って引用まで訳しかねない)。
+     */
+    public function test_prompt_instructs_japanese_output_for_generated_fields_but_not_for_quotes(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+
+        Http::fake([
+            'api.openai.com/*' => Http::response([
+                'choices' => [['message' => ['content' => json_encode([
+                    'sub_elements' => $this->completeSubElements(),
+                    'core_value' => ['readable' => false, 'evidence' => null],
+                    'key_message' => null,
+                    'impression' => [],
+                    'quality_notes' => [],
+                    'cautions' => [],
+                ])]]],
+                'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1],
+            ], 200),
+        ]);
+
+        $provider = new OpenAiBrandWheelAnalysisProvider(new BrandWheelAnalysisResponseParser);
+        $provider->analyze($this->makeInput());
+
+        Http::assertSent(function ($request) {
+            $content = $request->data()['messages'][0]['content'] ?? '';
+
+            return str_contains($content, '必ず日本語で')
+                && str_contains($content, 'key_message')
+                && str_contains($content, 'positive_impression')
+                && str_contains($content, 'negative_impression')
+                && str_contains($content, 'evidenceは原文からの引用であり、')
+                && str_contains($content, '翻訳せず')
+                && str_contains($content, '翻訳すると原文照合の');
+        });
+    }
+
+    public function test_prompt_version_is_v9(): void
+    {
+        $this->assertSame('v9', OpenAiBrandWheelAnalysisProvider::PROMPT_VERSION);
+    }
+
     public function test_model_and_prompt_version_are_available_before_calling_analyze(): void
     {
         config(['services.openai.model' => 'gpt-test-model']);

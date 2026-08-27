@@ -89,6 +89,32 @@ class OpenAiBrandWheelImprovementSuggestionProviderTest extends TestCase
     }
 
     /**
+     * 依頼Z-1(2026-08-27): OpenAiBrandWheelAnalysisProviderのv9と同時対応。
+     * このProviderの出力フィールドはすべて生成文(引用フィールドは無い)ため、
+     * 出力を日本語に固定する指示が含まれることだけを確認する。
+     */
+    public function test_prompt_instructs_japanese_output(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        $this->fakeSuccessfulResponse(['one_point' => null, 'recommendation' => null, 'focus_sub_element_keys' => []]);
+
+        (new OpenAiBrandWheelImprovementSuggestionProvider(new BrandWheelImprovementSuggestionResponseParser))->analyze($this->makeInput());
+
+        Http::assertSent(function ($request) {
+            $content = $request->data()['messages'][0]['content'] ?? '';
+
+            return str_contains($content, '必ず日本語で書いてください')
+                && str_contains($content, 'one_point')
+                && str_contains($content, 'reason');
+        });
+    }
+
+    public function test_prompt_version_is_v9(): void
+    {
+        $this->assertSame('v9', OpenAiBrandWheelImprovementSuggestionProvider::PROMPT_VERSION);
+    }
+
+    /**
      * 依頼Q(2026-08-25、v6): v5は断定禁止の推奨表現として「〜可能性が
      * あります」「〜かもしれません」の2つをほぼ唯一の語尾として提示して
      * おり、実際の生成文で同じ語尾が1つの提言内で3回連続する事例が

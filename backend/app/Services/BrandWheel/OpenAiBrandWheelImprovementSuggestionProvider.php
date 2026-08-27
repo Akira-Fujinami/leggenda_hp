@@ -106,8 +106,16 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
      * parseForbiddenPhraseSafeText())にも同じ問題への対処を別途入れて
      * あり(値全体が"null"の場合はnull扱い)、プロンプト修正後もその防御は
      * 残す(出力を全面的には信用しない既存方針のため)。
+     *
+     * v9(2026-08-27、依頼Z-1、OpenAiBrandWheelAnalysisProviderのv9と同時
+     * 対応): 英語中心のサイトを診断すると、one_point/reason等のAI自身が
+     * 書く文章が英語になる事故が判定AI側で確認された(実物レポート44・47)。
+     * このProviderの出力フィールドはすべて生成文で引用フィールドが無いため
+     * (competitor_evidenceは別途PHP側で組み立てる、このAIの出力ではない)、
+     * 出力言語を日本語に固定する指示を追加した。断定禁止・文体・判定ロジック・
+     * 出力スキーマはv8から無変更。
      */
-    public const string PROMPT_VERSION = 'v8';
+    public const string PROMPT_VERSION = 'v9';
 
     public function __construct(
         private readonly BrandWheelImprovementSuggestionResponseParser $parser,
@@ -383,6 +391,23 @@ TXT;
   筆頭に置き、関連する他の項目があれば続けてください。
 TXT;
 
+        // 依頼Z-1(2026-08-27): このProviderの出力フィールド
+        // (one_point/reason/recommended_contents/mid_term_action/
+        // gap_closing/differentiation_opportunities/recommendation)は
+        // すべてAI自身が書く生成文であり、原文からの引用フィールドは無い
+        // (competitor_evidenceはBrandWheelImprovementFocusComposerが別途
+        // 組み立てる、このAIの出力ではない)。入力(self/competitor_evidence
+        // 等)に英語の抜粋が含まれていても、出力は日本語で書かせる。
+        $languageNote = <<<TXT
+
+【出力言語(必ず守ること)】
+one_point・reason・recommended_contents・mid_term_action・gap_closing・
+differentiation_opportunities・recommendationは、入力データ(evidence等)に
+英語の記述が含まれていても、必ず日本語で書いてください(このレポートは
+日本語の営業資料として使われます)。
+
+TXT;
+
         return <<<PROMPT
 {$readerNote}{$writingStyleNote}
 {$reasoningSteps}
@@ -392,7 +417,7 @@ TXT;
 
 【データ(自社/競合の下位要素ごとの該当有無・実行難易度・グループ別優劣。すべてPHP側で事前検証済みの事実)】
 {$facts}
-
+{$languageNote}
 以下のJSON Schemaに厳密に従うJSONオブジェクトのみを出力してください(説明文や前後のテキストは一切不要):
 {$schema}
 PROMPT;
