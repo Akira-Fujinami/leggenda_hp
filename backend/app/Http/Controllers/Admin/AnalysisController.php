@@ -51,7 +51,7 @@ class AnalysisController extends Controller
     {
         abort_unless($analysis->project?->lead_company_id !== null, 404);
 
-        $analysis->load(['project.leadCompany', 'project.websites', 'websiteAnalyses.website', 'reports', 'sourceAnalysis', 'comparisons']);
+        $analysis->load(['project.leadCompany', 'project.websites', 'websiteAnalyses.website', 'reports', 'sourceAnalysis', 'comparisons', 'attachments']);
 
         $brandWheelResults = BrandWheelAnalysisResult::query()
             ->where('analysis_id', $analysis->id)

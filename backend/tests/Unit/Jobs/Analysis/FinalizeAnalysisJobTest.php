@@ -196,6 +196,10 @@ class FinalizeAnalysisJobTest extends TestCase
 
         $this->assertSame(AnalysisStatus::Completed, $analysis->fresh()->status);
         Queue::assertPushed(GenerateAdminComparisonReportJob::class, 1);
+        // 依頼AE(2026-08-27): このJobにキュー指定が一切無く、ワーカーが
+        // 監視しない`default`キューへ積まれて永久に実行されなかった事故の
+        // 再発確認。`reports`キューに載ることを明示的に検証する。
+        Queue::assertPushedOn('reports', GenerateAdminComparisonReportJob::class);
         // 比較Analysis(lead_session_idを持たないProject)からはリード向け
         // レポートは一切起動しない ―― 完全に別経路であることの確認。
         Queue::assertNotPushed(GenerateLeadReportJob::class);

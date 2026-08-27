@@ -93,4 +93,17 @@ class Analysis extends Model
     {
         return $this->hasMany(Report::class);
     }
+
+    /**
+     * 依頼AD-1(2026-08-27): 商談相手ごとの既存資料。現時点ではアプリ層で
+     * 1件に制限している(AnalysisAttachmentServiceのdocblock参照)が、
+     * リレーション自体はhasManyのまま(将来複数件に対応する場合の
+     * マイグレーション不要のため)。
+     *
+     * @return HasMany<AnalysisAttachment, $this>
+     */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(AnalysisAttachment::class);
+    }
 }

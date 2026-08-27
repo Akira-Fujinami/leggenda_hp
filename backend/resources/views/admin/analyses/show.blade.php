@@ -152,4 +152,63 @@
         </tbody>
     </table>
 </div>
+
+{{--
+    依頼AD-1(2026-08-27): 商談相手ごとの既存資料(フォーマット未確定)。
+    無料診断・多社比較のどちらでも表示する(区別しない)。現時点では1診断
+    1件に制限している(AnalysisAttachmentServiceのdocblock参照) ―― 既に
+    1件ある状態でアップロードすると、既存の1件を自動的に差し替える。
+--}}
+<div class="card">
+    <h3>既存資料</h3>
+    @if ($analysis->attachments->isEmpty())
+        <p class="empty">アップロードされた資料はありません。</p>
+    @else
+        <table class="list">
+            <thead><tr><th>ファイル名</th><th>サイズ</th><th>アップロード日時</th><th></th></tr></thead>
+            <tbody>
+                @foreach ($analysis->attachments as $attachment)
+                    <tr>
+                        <td>{{ $attachment->original_filename }}</td>
+                        <td>{{ number_format($attachment->size_bytes / 1024, 1) }}KB</td>
+                        <td>{{ $attachment->created_at->format('Y/n/j H:i') }}</td>
+                        <td>
+                            <a href="{{ route('admin.analyses.attachment.download', [$analysis->id, $attachment->id], false) }}">ダウンロード</a>
+                            <form
+                                method="POST"
+                                action="{{ route('admin.analyses.attachment.destroy', [$analysis->id, $attachment->id], false) }}"
+                                style="display: inline; margin-left: 8px;"
+                                onsubmit="return confirm('この資料を削除します。よろしいですか?');"
+                            >
+                                @csrf
+                                @method('DELETE')
+                                <button type="submit" class="btn secondary">削除</button>
+                            </form>
+                        </td>
+                    </tr>
+                @endforeach
+            </tbody>
+        </table>
+    @endif
+
+    <form
+        method="POST"
+        action="{{ route('admin.analyses.attachment.store', $analysis->id, false) }}"
+        enctype="multipart/form-data"
+        style="margin-top: 14px;"
+    >
+        @csrf
+        <input type="file" name="file" required>
+        <button type="submit" class="btn" style="margin-left: 8px;">
+            {{ $analysis->attachments->isEmpty() ? 'アップロード' : '差し替える' }}
+        </button>
+        <p class="empty" style="margin-top: 8px;">
+            許可される形式: {{ implode(' / ', config('analysis_attachment.allowed_extensions')) }}
+            (最大{{ number_format(config('analysis_attachment.max_file_size_bytes') / 1024 / 1024, 0) }}MB)
+        </p>
+        @error('file')
+            <p style="color: #c0392b; font-size: 13px;">{{ $message }}</p>
+        @enderror
+    </form>
+</div>
 @endsection

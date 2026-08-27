@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\AnalysisAttachmentController;
 use App\Http\Controllers\Admin\AnalysisController;
 use App\Http\Controllers\Admin\AuthController;
 use App\Http\Controllers\Admin\CompanyController;
@@ -41,6 +42,13 @@ Route::prefix('admin')->name('admin.')->group(function () {
         // のようなオーナーシップ検証は不要(既存のanalyses.show等と同じ、
         // 管理者は任意のAnalysisにアクセスできる前提)。
         Route::get('/analyses/{analysis}/comparison-report', [AnalysisController::class, 'downloadComparisonReport'])->name('analyses.comparison-report.download');
+
+        // 依頼AD-1(2026-08-27): 診断への既存資料(フォーマット未確定)の
+        // アップロード・ダウンロード・削除。admin.auth配下のみ ――
+        // リード向けの公開エンドポイントは追加しない(依頼者の必須要件)。
+        Route::post('/analyses/{analysis}/attachment', [AnalysisAttachmentController::class, 'store'])->name('analyses.attachment.store');
+        Route::get('/analyses/{analysis}/attachment/{attachment}', [AnalysisAttachmentController::class, 'download'])->name('analyses.attachment.download');
+        Route::delete('/analyses/{analysis}/attachment/{attachment}', [AnalysisAttachmentController::class, 'destroy'])->name('analyses.attachment.destroy');
 
         // 依頼AB(2026-08-27): 無料診断を起点に、自社+競合3〜5社の比較を
         // 実行する。起点は既存の無料診断詳細画面のみ(独立した起票フォームは

@@ -73,6 +73,19 @@ class GenerateAdminComparisonReportJobTest extends TestCase
         return $analysis;
     }
 
+    /**
+     * 依頼AE(2026-08-27): このJobにキュー指定が一切無く、ワーカーが監視
+     * しない`default`キューへ積まれて永久に実行されなかった事故の再発防止。
+     * ->dispatch()を経由しない生成でもqueueが'reports'になっていることを
+     * 確認する(コンストラクタで$this->onQueue('reports')を呼んでいるため)。
+     */
+    public function test_the_job_declares_the_reports_queue_on_construction(): void
+    {
+        $job = new GenerateAdminComparisonReportJob(1);
+
+        $this->assertSame('reports', $job->queue);
+    }
+
     public function test_it_generates_the_pdf_and_stores_it(): void
     {
         $analysis = $this->makeComparisonAnalysis();

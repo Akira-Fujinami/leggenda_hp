@@ -41,7 +41,29 @@ class GenerateAdminComparisonReportJob implements ShouldBeUnique, ShouldQueue
 
     public $uniqueFor = 600;
 
-    public function __construct(public readonly int $analysisId) {}
+    /**
+     * 依頼AE(2026-08-27): 初回実行時、このJobにキュー指定が一切無かった
+     * ため`default`キュー(ワーカーの監視対象`analysis, external-api,
+     * analysis-heavy, ai, reports, notifications`に含まれない)へ積まれ、
+     * 永久に実行されなかった事故の再発防止。既存の慣習(ディスパッチ側で
+     * ->onQueue()を明示する、tests/Unit/Jobs/ShouldQueueJobsDeclareQueueTest
+     * 参照)はディスパッチ元を1箇所でも書き漏らすと同じ事故を再現するため、
+     * このJobクラス自身にも既定のキューを持たせる(こちらを主の対策とする)。
+     * リード向けのGenerateLeadReportJobと同じ「レポート生成」という性質の
+     * ため、同じ`reports`キューに合わせる。
+     *
+     * public $queue = 'reports'; という単純なプロパティ宣言では、
+     * Illuminate\Bus\Queueableトレイトが既に定義している(既定値null、
+     * 型無し)$queueプロパティと「定義が異なり互換性が無い」というPHPの
+     * 致命的エラーになる(トレイトのプロパティをクラス側で異なる既定値に
+     * 上書き宣言することはできない、実機で確認済み)。トレイトが提供する
+     * onQueue()(実体は$this->queueへの代入)をコンストラクタで呼ぶことで、
+     * プロパティの再宣言を避けつつ同じ効果を得る。
+     */
+    public function __construct(public readonly int $analysisId)
+    {
+        $this->onQueue('reports');
+    }
 
     public function uniqueId(): string
     {

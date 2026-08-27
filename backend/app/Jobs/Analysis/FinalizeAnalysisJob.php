@@ -108,7 +108,14 @@ class FinalizeAnalysisJob implements ShouldBeUnique, ShouldQueue
             // 独立したtry/catchに包む。
             if ($analysis->source_analysis_id !== null && in_array($status, [AnalysisStatus::Completed, AnalysisStatus::Partial], true)) {
                 try {
-                    GenerateAdminComparisonReportJob::dispatch($analysis->id);
+                    // 依頼AE(2026-08-27): GenerateAdminComparisonReportJobの
+                    // クラス既定(public $queue = 'reports')と同じ値を、
+                    // 既存26箇所の書き方(ディスパッチ側でonQueueを明示する
+                    // 慣習)に合わせてここでも明示する。クラス既定と重複するが、
+                    // 「このJobを見ればここでどのキューに積まれるか分かる」
+                    // という既存の一貫性を保つための冗長な多重防御であり、
+                    // 実際に積まれるキューはこれまでと変わらない。
+                    GenerateAdminComparisonReportJob::dispatch($analysis->id)->onQueue('reports');
                 } catch (\Throwable $e) {
                     report($e);
                     Log::warning('Failed to dispatch admin comparison report generation from FinalizeAnalysisJob', [
