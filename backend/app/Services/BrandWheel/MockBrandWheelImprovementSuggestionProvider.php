@@ -46,6 +46,9 @@ class MockBrandWheelImprovementSuggestionProvider implements BrandWheelImproveme
             model: null,
             isMock: true,
             promptVersion: null,
+            focusItemsReason: $input->focusItemsForReason !== []
+                ? '[デモデータ] モックプロバイダのため理由はありません。'
+                : null,
         );
 
         return new BrandWheelImprovementSuggestionOutcome($result, usageInputTokens: null, usageOutputTokens: null);

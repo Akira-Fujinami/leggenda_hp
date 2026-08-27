@@ -156,6 +156,7 @@ class BrandWheelImprovementSuggestionResponseParserTest extends TestCase
             'recommendation' => 'NULL',
             'reason' => 'Null',
             'mid_term_action' => 'null',
+            'focus_items_reason' => 'null',
             'focus_sub_element_keys' => [],
         ], provider: 'openai', model: null, isMock: false, promptVersion: 'v8');
 
@@ -163,6 +164,32 @@ class BrandWheelImprovementSuggestionResponseParserTest extends TestCase
         $this->assertNull($result->recommendation);
         $this->assertNull($result->reason);
         $this->assertNull($result->midTermAction);
+        $this->assertNull($result->focusItemsReason);
+    }
+
+    /**
+     * 依頼AF-2(2026-08-27): focus_items_reason(BrandWheelImprovementFocus
+     * Composerが選んだ項目についてAIが書いた理由)も、既存のreason等と
+     * 同じparseForbiddenPhraseSafeText()を通ることを確認する(禁止語・
+     * 文字列"null"の扱いが同じであること)。
+     */
+    public function test_parses_focus_items_reason(): void
+    {
+        $result = $this->parser()->parse([
+            'focus_items_reason' => '組織構造と職場の雰囲気は、候補者が働くイメージを持つうえで重要な情報です。',
+            'focus_sub_element_keys' => [],
+        ], provider: 'openai', model: 'gpt-4o', isMock: false, promptVersion: 'v11');
+
+        $this->assertSame('組織構造と職場の雰囲気は、候補者が働くイメージを持つうえで重要な情報です。', $result->focusItemsReason);
+    }
+
+    public function test_focus_items_reason_is_null_when_missing(): void
+    {
+        $result = $this->parser()->parse([
+            'focus_sub_element_keys' => [],
+        ], provider: 'openai', model: 'gpt-4o', isMock: false, promptVersion: 'v11');
+
+        $this->assertNull($result->focusItemsReason);
     }
 
     /**

@@ -250,6 +250,9 @@ class ReportViewModelBuilder
         // ワンポイントにも使う ―― ワンポイントと直下の説明文が完全に一致し
         // 冗長にはなるが、2つの独立した文言が将来ズレて再び矛盾する
         // (依頼W-2発端の不具合そのもの)リスクを構造的に無くすことを優先した。
+        //
+        // 依頼AF-3: 自社単独ページ(改善提案SelfOnly)では対象外(既定null)。
+        $improvementFallbackNote = null;
         if ($improvementFocus !== null) {
             $improvementOnePoint = $improvementFocus['items'] !== []
                 ? sprintf(
@@ -257,7 +260,35 @@ class ReportViewModelBuilder
                     $improvementFocus['items'][0]['sub_name'],
                 )
                 : $improvementFocus['lead_text'];
-            $improvementReason = null;
+
+            // 依頼AF-2(2026-08-27): 依頼W-2で消したまま埋め戻していなかった
+            // 「理由」の復活。GenerateBrandWheelImprovementSuggestionJobが
+            // 生成時点で同じBrandWheelImprovementFocusComposer::compose()を
+            // 呼び、AIには「その項目についてのみ」理由(focus_items_reason)を
+            // 書かせている(項目の選定はAI依存にしない、依頼者指定)。ここでは
+            // 生成時点で選ばれていた項目(focus_items_reason_sub_names)と、
+            // いま実際にカードとして表示する項目($improvementFocus['items'])の
+            // sub_nameが完全一致する場合のみ理由を表示する ―― 一致しない
+            // (AIの生成失敗でnullのまま、または何らかの理由で選定結果が
+            // ずれた)場合は理由のブロックを出さないだけにする(依頼AA-3と
+            // 同じ「失敗してもレポート生成自体は失敗させない」方針)。
+            $currentFocusSubNames = array_column($improvementFocus['items'], 'sub_name');
+            $storedFocusSubNames = (array) ($improvementSuggestion?->focus_items_reason_sub_names ?? []);
+            $improvementReason = $currentFocusSubNames !== [] && $currentFocusSubNames === $storedFocusSubNames
+                ? $improvementSuggestion?->focus_items_reason
+                : null;
+
+            // 依頼AF-3(2026-08-27、依頼者承認済み): 「理由」と「中長期の
+            // 差別化ポイント」が両方ともnull(AIの生成に失敗した場合等)の
+            // 場合、ページの下半分が白紙のままにならないよう代替文言を
+            // 表示する。新しい主張・数値は一切作らず、既存の24項目対比表
+            // (次ページ)への橋渡しのみを行う。候補が0件(items===[])の
+            // ときは対象外 ―― その場合は$focus['lead_text']
+            // (no_candidate_self_ahead等)が既に「自社が優位」という状況を
+            // 説明済みで、この文言を重ねると冗長になるため。
+            $improvementFallbackNote = $improvementFocus['items'] !== [] && $improvementReason === null && $improvementMidTermAction === null
+                ? (string) config('brand_wheel.improvement_focus_templates.no_reason_and_mid_term_fallback')
+                : null;
         }
 
         // 2026-08-10: 競合が無い(または読み取れない)診断向けの改善提案
@@ -402,6 +433,7 @@ class ReportViewModelBuilder
             crawlSiteEnabled: $analysis->crawl_site === true,
             selfEvidenceByAxis: $selfEvidenceByAxis,
             hasQuoteTranslations: $hasQuoteTranslations,
+            improvementFallbackNote: $improvementFallbackNote,
         );
     }
 

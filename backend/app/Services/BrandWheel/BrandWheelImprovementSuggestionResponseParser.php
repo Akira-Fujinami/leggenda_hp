@@ -42,6 +42,9 @@ class BrandWheelImprovementSuggestionResponseParser
 
     private const MID_TERM_ACTION_MAX_CHARS = 120;
 
+    // 依頼AF-2(2026-08-27): reasonと同じ性質の自由記述(3文程度)のため同じ上限。
+    private const FOCUS_ITEMS_REASON_MAX_CHARS = 200;
+
     /**
      * @var list<string>
      */
@@ -72,6 +75,7 @@ class BrandWheelImprovementSuggestionResponseParser
             model: $model,
             isMock: $isMock,
             promptVersion: $promptVersion,
+            focusItemsReason: $this->parseForbiddenPhraseSafeText($raw['focus_items_reason'] ?? null, self::FOCUS_ITEMS_REASON_MAX_CHARS),
         );
     }
 

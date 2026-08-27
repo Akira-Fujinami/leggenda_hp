@@ -40,6 +40,7 @@ class BrandWheelImprovementSuggestionInputFactory
         ?string $selfKeyMessage = null,
         ?string $selfPositiveImpression = null,
         ?string $selfCoreValueEvidence = null,
+        array $focusItemsForReason = [],
     ): BrandWheelImprovementSuggestionInput {
         $difficultyLabels = (array) config('brand_wheel.execution_difficulty_labels', []);
 
@@ -117,6 +118,7 @@ class BrandWheelImprovementSuggestionInputFactory
             selfKeyMessage: $this->capText($selfKeyMessage, self::KEY_MESSAGE_MAX_CHARS_FOR_PROMPT),
             selfPositiveImpression: $selfPositiveImpression,
             selfCoreValueEvidence: $this->capText($selfCoreValueEvidence, self::EVIDENCE_MAX_CHARS_FOR_PROMPT),
+            focusItemsForReason: $focusItemsForReason,
         );
     }
 

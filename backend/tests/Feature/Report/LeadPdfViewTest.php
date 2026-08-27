@@ -1508,5 +1508,46 @@ class LeadPdfViewTest extends TestCase
 
         $this->assertStringNotContainsString('理由：', $html);
         $this->assertStringNotContainsString('中長期の差別化ポイント', $html);
+        // improvementFallbackNoteを明示的に渡していない(既定null)ため、
+        // 代替文言も出ない ―― ReportViewModelBuilderが実際に計算する値を
+        // このテストが代替しているわけではないことの確認。
+        $this->assertStringNotContainsString((string) config('brand_wheel.improvement_focus_templates.no_reason_and_mid_term_fallback'), $html);
+    }
+
+    /**
+     * 依頼AF-3(2026-08-27、依頼者承認済み): 「理由」「中長期の差別化
+     * ポイント」が両方とも無い(AIの生成に失敗した場合等)とき、ページの
+     * 下半分が白紙のままにならないよう代替文言を表示する。
+     */
+    public function test_improvement_page_shows_the_fallback_note_when_reason_and_mid_term_action_are_both_unavailable(): void
+    {
+        $fallbackText = (string) config('brand_wheel.improvement_focus_templates.no_reason_and_mid_term_fallback');
+
+        $html = $this->render($this->comparisonViewModel([
+            'improvementReason' => null,
+            'improvementMidTermAction' => null,
+            'improvementFallbackNote' => $fallbackText,
+        ]));
+
+        $this->assertStringNotContainsString('理由：', $html);
+        $this->assertStringNotContainsString('中長期の差別化ポイント', $html);
+        $this->assertStringContainsString($fallbackText, $html);
+    }
+
+    /**
+     * mid_term_actionが実際にある場合は、代替文言と同時に出ない
+     * (相互排他)。ReportViewModelBuilder側で既に排他的に計算しているが、
+     * Blade側の@elseifが正しく機能していることも確認する。
+     */
+    public function test_improvement_page_never_shows_both_mid_term_action_and_the_fallback_note(): void
+    {
+        $fallbackText = (string) config('brand_wheel.improvement_focus_templates.no_reason_and_mid_term_fallback');
+
+        $html = $this->render($this->comparisonViewModel([
+            'improvementFallbackNote' => $fallbackText,
+        ]));
+
+        $this->assertStringContainsString('中長期の差別化ポイント', $html);
+        $this->assertStringNotContainsString($fallbackText, $html);
     }
 }

@@ -114,8 +114,46 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
      * (competitor_evidenceは別途PHP側で組み立てる、このAIの出力ではない)、
      * 出力言語を日本語に固定する指示を追加した。断定禁止・文体・判定ロジック・
      * 出力スキーマはv8から無変更。
+     *
+     * v10(2026-08-27、依頼AF-1): mid_term_action(中長期の差別化ポイント)が
+     * 本番直近10件すべてでnullだった不具合の原因調査・修正。生の応答(パーサを
+     * 通す前)を実際にAPIへ問い合わせて確認した結果、mutually_unmatched_items
+     * が空でない(候補が複数ある)ケース・自社のkey_message/core_value_evidence
+     * と明確に一致するテーマが存在するケースでも、AIは一貫してnullを返して
+     * いた(材料不足でもパーサの問題でもなく、プロンプトが原因と特定)。
+     * v9までの【差別化を選ばない/nullにする条件】が
+     * 「mutually_unmatched_itemsが空である」に加えて「自社の既存強みとの
+     * 関連性が低い候補しかない」「Brand Fitがどの候補も低い」「根拠が弱すぎる」
+     * という3つの主観的な条件を並べていたため、AIがこれらを口実に
+     * ほぼ常にnullへ逃げていたと判断した(同一の好条件データを与えた検証で、
+     * この3条件を削り「mutually_unmatched_itemsが空の場合のみnull、それ以外は
+     * 必ず1件選ぶ」という単一の客観条件に絞ったところ、複数回の再実行で
+     * 一貫して値が返ることを確認した一方、mutually_unmatched_itemsを実際に
+     * 空にした場合は引き続き正しくnullを返すことも確認済み)。この変更に
+     * 伴い、STEP11の記述・schemaのmid_term_action説明文も同じ単一条件に
+     * 揃えた。断定禁止・文体・出力言語・スキーマ(フィールド名・型)は
+     * v9から無変更。
+     *
+     * v11(2026-08-27、依頼AF-2): 「理由」の復活。依頼W-2で競合ありの
+     * ワンポイントを数値由来(BrandWheelImprovementFocusComposerが選んだ項目)
+     * に差し替えた際、reasonをnullにして非表示にした(ReportViewModelBuilder:260)。
+     * これはreasonがAI自身の選定(focus_sub_element_keys等)に基づいており、
+     * 数値由来のワンポイントとは別の項目について書かれてしまう矛盾を防ぐ
+     * ためだったが、埋め戻さなかったため改善提案ページの下半分が白いままに
+     * なっていた。項目の選定はPHP側(BrandWheelImprovementFocusComposer、
+     * 決定的な規則、無改修)に一元化したまま、新しい出力フィールド
+     * focus_items_reasonを追加し、AIには「data.focus_items_for_reason
+     * (呼び出し側がcompose()の結果から渡す、実際にカードとして表示される
+     * 項目)についてのみ理由を書く」役割だけを与える ―― 依頼Zで却下した
+     * 「ワンポイント自体を数値で決めてAIに言語化させる」案とは異なり、
+     * こちらは推奨の中身(one_point/gap_closing等、既存のまま無改修)には
+     * 触れない付随的な説明文であり、生成に失敗してもそのブロックを
+     * 出さないだけで済む(依頼AA-3と同じ方針)。focus_items_for_reasonが
+     * 空配列の場合はfocus_items_reasonをnullにする指示を明示。断定禁止・
+     * 文体・出力言語ルールは新フィールドにもそのまま適用する。既存の
+     * one_point/reason/mid_term_action等、他フィールドの仕様はv10から無変更。
      */
-    public const string PROMPT_VERSION = 'v9';
+    public const string PROMPT_VERSION = 'v11';
 
     public function __construct(
         private readonly BrandWheelImprovementSuggestionResponseParser $parser,
@@ -294,12 +332,11 @@ STEP3: 以下の3軸で各候補の優先度を考える(いずれも断定で�
 STEP4: 3軸を総合し、自社らしさと最も接続するテーマを1つだけ選ぶ。関連する項目であれば
   最大2件までまとめて1つのテーマにしてよいが、複数の独立したテーマを同時に提案しないこと。
 
-【差別化を選ばない/nullにする条件】次のいずれかに該当する場合は、無理にテーマを作らず
-mid_term_actionをnullにしてください(「とにかく何か1つ出す」仕様にしないこと):
-- mutually_unmatched_itemsが空である
-- 自社の既存強み(self_confirmed_items/self_key_message等)との関連性が低い候補しかない
-- Brand Fitがどの候補も低いと判断される
-- 根拠が弱すぎる
+【差別化を選ばない/nullにする唯一の条件】mutually_unmatched_itemsが空配列の場合のみ、
+mid_term_actionをnullにしてください。それ以外の場合(mutually_unmatched_itemsに1件以上
+候補がある場合)は、STEP1〜4の評価をもとに最も自社らしさと接続する候補を1つ選び、
+必ずmid_term_actionを埋めてください。「関連性が低いから」「根拠が弱いから」という理由で
+nullにすることは禁止します ―― 候補の中から相対的に最も良いものを選ぶのがあなたの役割です。
 
 mid_term_actionの文章は、以下の3要素を2〜3文で自然につなげてください(依頼者指定の構成):
 1. テーマ(1つだけ、下位要素名で明示する)
@@ -329,13 +366,33 @@ TXT;
     文脈(self_confirmed_items/self_category_scores/self_key_message/
     self_positive_impression/self_core_value_evidence)を突き合わせ、Brand Fit/
     Candidate Relevance/Evidence Expandabilityの3軸で評価したうえで、中長期の
-    差別化ポイントを1テーマ(関連項目は最大2件)選ぶ。関連性が低い候補しかなければ
-    無理に選ばない
+    差別化ポイントを1テーマ(関連項目は最大2件)選ぶ。mutually_unmatched_itemsが
+    空でない限り、必ず1テーマを選ぶこと(関連性や根拠の強弱を理由に選ばないことは不可)
 12. 差分の大きさ×候補者への影響×実行難易度×Quick Win性を総合し、最初に着手すべき1つを選ぶ
 
 {$competitorNote}
 
 {$gapDifferentiationNote}
+TXT;
+
+        // 依頼AF-2(2026-08-27): 「理由」の復活。依頼W-2でreasonを非表示に
+        // したのは、ワンポイントが数値由来(BrandWheelImprovementFocusComposerが
+        // 選んだ項目)に差し替わったのに、reasonはAIが自身で選んだ別の項目に
+        // ついて書かれたままで矛盾していたため。項目の選定はPHP側(決定的な
+        // 規則)に一元化したまま、AIには「なぜその項目なのか」の言語化のみを
+        // 担わせることで矛盾を再発させずに埋め戻す(依頼者指定: 数値で項目を
+        // 決め、AIは言語化だけを担う)。
+        $focusItemsReasonNote = <<<TXT
+
+【focus_items_reasonについて(最重要: 項目の選定はしないこと)】
+data.focus_items_for_reasonには、件数比較のロジックによって既に選定済みの項目
+(改善提案ページに実際に表示されるカードの項目、最大3件)が入っています。
+あなたの役割は、この項目「について」なぜ最優先で改善すべきかの理由を書くこと
+だけです。one_point/gap_closing等のように、あなた自身が別の項目を選び直したり、
+focus_items_for_reasonに含まれない項目に言及したりすることは禁止です。
+focus_items_for_reasonが空配列の場合は、focus_items_reasonをJSONのnull
+(文字列"null"ではない)にしてください(無理に書かないこと)。
+
 TXT;
 
         $schema = <<<TXT
@@ -350,7 +407,8 @@ TXT;
   "gap_closing": ["string"],
   "differentiation_opportunities": ["string"],
   "recommendation": "string",
-  "focus_sub_element_keys": ["string"]
+  "focus_sub_element_keys": ["string"],
+  "focus_items_reason": "string" または null(文字列"null"ではなく、JSONのnullそのものを返すこと)
 }
 
 - one_point: 1文で、最優先で着手すべきアクションを一言で言い切ってください(例:「まずは
@@ -368,12 +426,12 @@ TXT;
 - mid_term_action: 「中長期の差別化ポイント」です。【差別化テーマの選定手順】に従って選んだ
   1テーマ(関連項目は最大2件)について、2〜3文で「1.テーマ→2.なぜこのテーマなのか(自社の
   既存の強み・キーメッセージとの接続)→3.どう広げるか(条件付きの可能性)」の順に述べて
-  ください。mutually_unmatched_itemsが空、自社の既存強みとの関連性が低い候補しかない、
-  Brand Fitがどれも低い、根拠が弱すぎる ―― のいずれかに該当する場合はJSONのnull(文字列
-  "null"ではない)にしてください(無理に埋めないこと)。「〜を強化することでブランド価値を高めることが可能です」「両社とも
-  書いていないので差別化できます」のような断定・消極的な理由付けは禁止、「〜との接続性が
-  高いテーマです」「実際に該当する取り組みがある場合、〜できる可能性があります」のような
-  条件付き表現にしてください。
+  ください。mutually_unmatched_itemsが空配列の場合のみJSONのnull(文字列"null"ではない)に
+  してください。1件でも候補があれば、関連性や根拠の強弱を理由にnullへ逃げず、相対的に
+  最も良い候補を必ず選んでください。「〜を強化することでブランド価値を高めることが可能です」
+  「両社とも書いていないので差別化できます」のような断定・消極的な理由付けは禁止、「〜との
+  接続性が高いテーマです」「実際に該当する取り組みがある場合、〜できる可能性があります」の
+  ような条件付き表現にしてください。
 - quick_win: one_pointで挙げた最優先施策が、既存の社内情報から比較的着手しやすい
   可能性があると判断できる場合はtrue、社員インタビューや他部署の協力等が必要になる
   可能性があり時間がかかると考えられる場合はfalseにしてください(断定ではなく推定)。
@@ -389,6 +447,12 @@ TXT;
   配列で。必ずself_unmatched_items(自社に無い項目)の中から選んでください。self_matched_items
   (自社に既にある項目)のキーは含めないでください。one_point/reasonで最優先として言及した項目を
   筆頭に置き、関連する他の項目があれば続けてください。
+- focus_items_reason: 最大3文で、data.focus_items_for_reasonに列挙された項目(だけ)について、
+  なぜ最優先で改善すべきかを説明してください。競合との比較・候補者への影響の観点を、実際の
+  データに基づいて具体的に書き、【断定禁止】の指示に従い条件付き表現にしてください。複数文に
+  わたるため、【文章の書き方】の指示どおり同じ語尾を2回以上繰り返さないよう、文ごとに表現を
+  変えてください。focus_items_for_reasonが空配列の場合はJSONのnull(文字列"null"ではない)に
+  してください。
 TXT;
 
         // 依頼Z-1(2026-08-27): このProviderの出力フィールド
@@ -402,9 +466,9 @@ TXT;
 
 【出力言語(必ず守ること)】
 one_point・reason・recommended_contents・mid_term_action・gap_closing・
-differentiation_opportunities・recommendationは、入力データ(evidence等)に
-英語の記述が含まれていても、必ず日本語で書いてください(このレポートは
-日本語の営業資料として使われます)。
+differentiation_opportunities・recommendation・focus_items_reasonは、入力データ
+(evidence等)に英語の記述が含まれていても、必ず日本語で書いてください(この
+レポートは日本語の営業資料として使われます)。
 
 TXT;
 
@@ -414,6 +478,7 @@ TXT;
 {$forbiddenNote}
 
 {$genericBanNote}
+{$focusItemsReasonNote}
 
 【データ(自社/競合の下位要素ごとの該当有無・実行難易度・グループ別優劣。すべてPHP側で事前検証済みの事実)】
 {$facts}
@@ -526,11 +591,12 @@ PROMPT;
                 'differentiation_opportunities' => ['type' => 'array', 'items' => ['type' => 'string']],
                 'recommendation' => ['type' => ['string', 'null']],
                 'focus_sub_element_keys' => ['type' => 'array', 'items' => ['type' => 'string']],
+                'focus_items_reason' => ['type' => ['string', 'null']],
             ],
             'required' => [
                 'one_point', 'reason', 'recommended_contents', 'mid_term_action', 'quick_win',
                 'implementation_difficulty', 'candidate_impact', 'gap_closing', 'differentiation_opportunities',
-                'recommendation', 'focus_sub_element_keys',
+                'recommendation', 'focus_sub_element_keys', 'focus_items_reason',
             ],
             'additionalProperties' => false,
         ];

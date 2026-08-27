@@ -362,6 +362,16 @@
     .diffbox { width: 265mm; border-left: 4px solid #2C7F96; background: #F5F5F5; padding: 1.4mm 4mm; margin: 1mm 0 0; page-break-inside: avoid; }
     .diffbox .t { font-size: 9.5pt; font-weight: bold; margin: 0 0 1mm; color: #2C7F96; }
     .diffbox p { font-size: 9pt; line-height: 1.3; margin: 0; }
+    {{--
+        依頼AF-3(2026-08-27、依頼者承認済み): 「理由」「中長期の差別化
+        ポイント」が両方とも無いときの代替文言。新しい主張を追加するもの
+        ではなく次ページへの橋渡しのみのため、.diffbox/.recobox(色付きの
+        左ボーダー、見出し付き)ほど強調せず、罫線のみの控えめな箱にする。
+        余白調整(依頼者承認)として、直前の証拠カードとの間を.diffboxより
+        広めに取り、ページ下部の余白が目立ちにくいようにする。
+    --}}
+    .fallbacknote { width: 257mm; border: 1px solid #E0E0E0; padding: 2.2mm 4mm; margin: 4mm 0 0; text-align: center; page-break-inside: avoid; }
+    .fallbacknote p { font-size: 9pt; color: #6B6767; line-height: 1.3; margin: 0; }
     .gapbar td { padding: 0 0 0.8mm; font-size: 9pt; vertical-align: middle; }
     .gapbar .nm { width: 34mm; }
     .gapbar .bar { height: 4.3mm; display: block; }
@@ -983,6 +993,23 @@
                     <div class="diffbox">
                         <p class="t">中長期の差別化ポイント</p>
                         <p>{{ $viewModel->improvementMidTermAction }}</p>
+                    </div>
+                @elseif ($viewModel->improvementFallbackNote)
+                    {{--
+                        依頼AF-3(2026-08-27、依頼者承認済み): 「理由」
+                        (improvementReason)と「中長期の差別化ポイント」
+                        (improvementMidTermAction)が両方とも無いとき
+                        (AIの生成に失敗した場合等)、ページの下半分が
+                        白紙のままにならないよう表示する代替文言。
+                        improvementFallbackNoteは$focus['items']が0件のとき
+                        (自社が優位で候補が無いとき、直上のlead_textが既に
+                        説明済み)は常にnullのため、ここに到達するのは
+                        カードが表示されている場合のみ(ReportViewModelBuilder
+                        参照)。自社単独ページ(直後の同種ブロック)は対象外
+                        (improvementFallbackNoteが常にnullのため)。
+                    --}}
+                    <div class="fallbacknote">
+                        <p>{{ $viewModel->improvementFallbackNote }}</p>
                     </div>
                 @endif
 

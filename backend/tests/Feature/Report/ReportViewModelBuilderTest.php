@@ -734,6 +734,212 @@ class ReportViewModelBuilderTest extends TestCase
         $this->assertContains('雰囲気についての競合サイトの抜粋', $evidences);
     }
 
+    /**
+     * @return array{Analysis, LeadSession}
+     */
+    private function makeImprovementFocusFixtureWithColleaguesAndAtmosphere(): array
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            // 依頼AF-3のmid_term_action関連テスト向けに、自社の合計matched
+            // 件数をcomparison_sufficiency_threshold(既定6)以上にする
+            // (will_activity全4件+asset2件=6件)。relationship軸には触れず
+            // company_distanceグループの差(colleagues/atmosphereの選定)には
+            // 影響しない。
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => '自社の抜粋1'], ['key' => 'business_expansion', 'evidence' => '自社の抜粋2'],
+                    ['key' => 'project_initiative', 'evidence' => '自社の抜粋3'], ['key' => 'social_contribution', 'evidence' => '自社の抜粋4'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'scale_influence', 'evidence' => '自社の抜粋5'], ['key' => 'office_facility', 'evidence' => '自社の抜粋6'],
+                ]],
+            ],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'relationship', 'matched_sub_elements' => [
+                    ['key' => 'colleagues', 'evidence' => '同僚についての競合サイトの抜粋'],
+                    ['key' => 'atmosphere', 'evidence' => '雰囲気についての競合サイトの抜粋'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'y1'], ['key' => 'competitiveness', 'evidence' => 'y2'],
+                ]],
+                ['axis_key' => 'financial_benefit', 'matched_sub_elements' => [
+                    ['key' => 'salary_level', 'evidence' => 'y3'], ['key' => 'benefits', 'evidence' => 'y4'],
+                ]],
+            ],
+        ]);
+
+        return [$analysis, $leadSession];
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼AF-2(2026-08-27): 依頼W-2で消えたまま埋め戻していなかった「理由」の
+    // 復活。実際に表示されているカードの項目(improvementFocus['items'])に
+    // 対応した理由のみを表示する。
+    // ------------------------------------------------------------------
+
+    public function test_improvement_reason_is_shown_when_it_matches_the_currently_displayed_focus_items(): void
+    {
+        [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
+
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'focus_items_reason' => '同僚・先輩像と職場の雰囲気は、候補者が働くイメージを持つうえで重要な情報です。',
+            'focus_items_reason_sub_names' => ['同僚・先輩像', '職場の雰囲気'],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->improvementFocus);
+        $this->assertSame(['同僚・先輩像', '職場の雰囲気'], array_column($viewModel->improvementFocus['items'], 'sub_name'));
+        $this->assertSame('同僚・先輩像と職場の雰囲気は、候補者が働くイメージを持つうえで重要な情報です。', $viewModel->improvementReason);
+    }
+
+    /**
+     * 生成時点の選定(focus_items_reason_sub_names)と、いま実際に表示する
+     * カードの項目が一致しない場合は、理由のブロックを出さない
+     * (依頼AA-3と同じ「失敗してもレポート生成自体は失敗させない」方針。
+     * カードの項目と理由の対象が食い違ったまま表示することを防ぐ)。
+     */
+    public function test_improvement_reason_is_hidden_when_stored_sub_names_do_not_match_the_current_focus_items(): void
+    {
+        [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
+
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'focus_items_reason' => '実際には別の項目について書かれた理由です。',
+            'focus_items_reason_sub_names' => ['組織構造'],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->improvementFocus);
+        $this->assertNull($viewModel->improvementReason);
+    }
+
+    /**
+     * 理由の生成に失敗した(focus_items_reasonがnullのまま保存された)場合、
+     * 理由のブロックだけが出ず、レポート自体は正常に完成すること。
+     */
+    public function test_improvement_reason_is_hidden_without_failing_the_report_when_generation_failed(): void
+    {
+        [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
+
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'focus_items_reason' => null,
+            'focus_items_reason_sub_names' => ['同僚・先輩像', '職場の雰囲気'],
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->improvementFocus);
+        $this->assertNull($viewModel->improvementReason);
+        $this->assertNotNull($viewModel->improvementOnePoint);
+    }
+
+    /**
+     * 生成時点でBrandWheelImprovementSuggestion行自体が無い(まだ生成中)場合も、
+     * 理由は出さないだけでレポートは完成する。
+     */
+    public function test_improvement_reason_is_null_when_no_suggestion_row_exists_yet(): void
+    {
+        [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->improvementFocus);
+        $this->assertNull($viewModel->improvementReason);
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼AF-3(2026-08-27、依頼者承認済み): 「理由」「中長期の差別化
+    // ポイント」が両方とも無いときの代替文言。
+    // ------------------------------------------------------------------
+
+    public function test_improvement_fallback_note_is_shown_when_reason_and_mid_term_action_are_both_unavailable(): void
+    {
+        [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
+
+        // 理由(AI生成失敗でnull)・中長期(mutually_unmatched_itemsが空でnull)
+        // の両方が欠けた状態を作る。
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'focus_items_reason' => null,
+            'focus_items_reason_sub_names' => [],
+            'mid_term_action' => null,
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotEmpty($viewModel->improvementFocus['items']);
+        $this->assertNull($viewModel->improvementReason);
+        $this->assertNull($viewModel->improvementMidTermAction);
+        $this->assertSame(
+            (string) config('brand_wheel.improvement_focus_templates.no_reason_and_mid_term_fallback'),
+            $viewModel->improvementFallbackNote,
+        );
+    }
+
+    public function test_improvement_fallback_note_is_null_when_mid_term_action_is_present(): void
+    {
+        [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
+
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'focus_items_reason' => null,
+            'focus_items_reason_sub_names' => [],
+            'mid_term_action' => '中長期的には、社員インタビューの連載化も検討できます。',
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNull($viewModel->improvementReason);
+        $this->assertNotNull($viewModel->improvementMidTermAction);
+        $this->assertNull($viewModel->improvementFallbackNote);
+    }
+
+    public function test_improvement_fallback_note_is_null_when_reason_is_present(): void
+    {
+        [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
+
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'focus_items_reason' => '同僚・先輩像と職場の雰囲気は、候補者が働くイメージを持つうえで重要な情報です。',
+            'focus_items_reason_sub_names' => ['同僚・先輩像', '職場の雰囲気'],
+            'mid_term_action' => null,
+        ]);
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->improvementReason);
+        $this->assertNull($viewModel->improvementMidTermAction);
+        $this->assertNull($viewModel->improvementFallbackNote);
+    }
+
     // ------------------------------------------------------------------
     // 2026-08-17改修分: ポジティブ/ネガティブ印象・比較サマリー・改善提案AI。
     // ------------------------------------------------------------------
@@ -1077,6 +1283,9 @@ class ReportViewModelBuilderTest extends TestCase
         $this->assertSame([], $viewModel->improvementFocus['items']);
         $this->assertSame($viewModel->improvementFocus['lead_text'], $viewModel->improvementOnePoint);
         $this->assertNull($viewModel->improvementReason);
+        // 依頼AF-3: 候補が0件(自社優位)のときは、lead_textが既に状況を
+        // 説明しているため代替文言は出さない(ReportViewModelBuilder参照)。
+        $this->assertNull($viewModel->improvementFallbackNote);
         $this->assertStringNotContainsString('AIが生成した', (string) $viewModel->improvementOnePoint);
         $this->assertStringNotContainsString('0件', (string) $viewModel->improvementOnePoint);
     }

@@ -24,6 +24,7 @@ readonly class BrandWheelImprovementSuggestionResult
      * @param  ?string  $candidateImpact  'low'|'medium'|'high'|null
      * @param  list<string>  $gapClosing  内部分類: 競合にあり自社に無い情報を補う対象の下位要素名(UIラベルとしては出さない)
      * @param  list<string>  $differentiationOpportunities  内部分類: 自社・競合とも手薄で自社が先に充実させれば差別化になる対象の下位要素名(UIラベルとしては出さない)
+     * @param  ?string  $focusItemsReason  依頼AF-2(2026-08-27追加)。BrandWheelImprovementFocusComposer::compose()が選んだ項目(input.focus_items_for_reason)についてのみAIが書いた理由。項目の選定自体はAIに委ねない。候補が0件/AIの生成失敗時はnull。
      */
     public function __construct(
         public ?string $onePoint,
@@ -41,6 +42,7 @@ readonly class BrandWheelImprovementSuggestionResult
         public ?string $model,
         public bool $isMock,
         public ?string $promptVersion,
+        public ?string $focusItemsReason = null,
     ) {}
 
     /**
@@ -64,6 +66,7 @@ readonly class BrandWheelImprovementSuggestionResult
             'model' => $this->model,
             'is_mock' => $this->isMock,
             'prompt_version' => $this->promptVersion,
+            'focus_items_reason' => $this->focusItemsReason,
         ];
     }
 }

@@ -11,6 +11,7 @@ use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelComparisonSufficiency;
 use App\Services\BrandWheel\BrandWheelEvidenceLookupBuilder;
+use App\Services\BrandWheel\BrandWheelImprovementFocusComposer;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionInputFactory;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
 use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
@@ -104,6 +105,7 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
             app(BrandWheelImprovementSuggestionInputFactory::class),
             app(BrandWheelEvidenceLookupBuilder::class),
             app(BrandWheelComparisonSufficiency::class),
+            app(BrandWheelImprovementFocusComposer::class),
         );
     }
 
@@ -176,6 +178,8 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
         $this->assertNull($suggestion->reason);
         $this->assertSame([], $suggestion->recommended_contents);
         $this->assertNull($suggestion->mid_term_action);
+        $this->assertNull($suggestion->focus_items_reason);
+        $this->assertSame([], $suggestion->focus_items_reason_sub_names);
     }
 
     /**
@@ -204,12 +208,14 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
                 ?string $selfKeyMessage = null,
                 ?string $selfPositiveImpression = null,
                 ?string $selfCoreValueEvidence = null,
+                array $focusItemsForReason = [],
             ): \App\Services\BrandWheel\Data\BrandWheelImprovementSuggestionInput {
                 $this->lastHasCompetitor = $hasCompetitor;
 
                 return parent::build(
                     $comparisonItems, $selfEvidenceByAxisAndSubKey, $competitorEvidenceByAxisAndSubKey,
                     $groupTotals, $hasCompetitor, $selfKeyMessage, $selfPositiveImpression, $selfCoreValueEvidence,
+                    $focusItemsForReason,
                 );
             }
         };
@@ -221,6 +227,7 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
             $capturingFactory,
             app(BrandWheelEvidenceLookupBuilder::class),
             app(BrandWheelComparisonSufficiency::class),
+            app(BrandWheelImprovementFocusComposer::class),
         );
 
         $suggestion->refresh();
@@ -234,6 +241,69 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
         // ここではAIへ渡された$hasCompetitorの値そのものを検証すれば十分。
         $this->assertFalse($capturingFactory->lastHasCompetitor);
         $this->assertNotNull($suggestion->one_point);
+    }
+
+    /**
+     * 依頼AF-2(2026-08-27): 改善提案ページに実際に表示されるカードの項目
+     * (BrandWheelImprovementFocusComposer::compose()が選ぶ、competitor_matched
+     * && !self_matchedの項目)を、AIへ渡す前にこのJob自身が計算し、
+     * focus_items_reason_sub_namesとしてDBに保存することを確認する。
+     * MockBrandWheelImprovementSuggestionProviderはfocusItemsForReasonが
+     * 空でない場合のみfocus_items_reasonを埋めるため、両方が連動して
+     * 正しく保存されることも合わせて確認する。
+     */
+    public function test_persists_the_focus_items_reason_and_matching_sub_names_when_the_focus_composer_selects_items(): void
+    {
+        $project = Project::factory()->create();
+        $selfWebsite = Website::factory()->for($project)->create(['is_primary' => true]);
+        $competitorWebsite = Website::factory()->for($project)->create(['is_primary' => false]);
+        $analysis = Analysis::factory()->for($project)->create();
+        $selfWa = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $selfWebsite->id]);
+        $competitorWa = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $competitorWebsite->id]);
+
+        // 自社はwill_activity/assetの6項目、競合はpersonality/relationshipの
+        // 6項目(自社と重複しない) ―― competitor_matched && !self_matchedの
+        // 候補を確実に作る。
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
+                    ['key' => 'purpose', 'evidence' => 'a'], ['key' => 'business_expansion', 'evidence' => 'b'],
+                    ['key' => 'project_initiative', 'evidence' => 'c'], ['key' => 'social_contribution', 'evidence' => 'd'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'e'], ['key' => 'competitiveness', 'evidence' => 'f'],
+                ]],
+            ],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            'axes' => [
+                ['axis_key' => 'personality', 'matched_sub_elements' => [
+                    ['key' => 'leadership', 'evidence' => '組織構造についての競合の抜粋'], ['key' => 'org_structure', 'evidence' => '組織構造についての競合の抜粋'],
+                    ['key' => 'company_character', 'evidence' => 'g'], ['key' => 'core_values', 'evidence' => 'h'],
+                ]],
+                ['axis_key' => 'relationship', 'matched_sub_elements' => [
+                    ['key' => 'colleagues', 'evidence' => 'i'], ['key' => 'atmosphere', 'evidence' => 'j'],
+                ]],
+            ],
+        ]);
+        $suggestion = BrandWheelImprovementSuggestion::factory()->create(['analysis_id' => $analysis->id, 'status' => 'pending']);
+
+        $this->handle(new GenerateBrandWheelImprovementSuggestionJob($suggestion->id));
+
+        $suggestion->refresh();
+
+        $this->assertSame('success', $suggestion->status);
+        $this->assertNotEmpty($suggestion->focus_items_reason_sub_names);
+        $this->assertNotNull($suggestion->focus_items_reason);
+        // モックの理由文はfocusItemsForReasonが空でないときのみ埋まる
+        // (MockBrandWheelImprovementSuggestionProvider参照)。
+        $this->assertStringContainsString('モックプロバイダのため理由はありません', $suggestion->focus_items_reason);
     }
 
     /**

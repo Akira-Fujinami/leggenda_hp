@@ -10,6 +10,7 @@ use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelAnalysisException;
 use App\Services\BrandWheel\BrandWheelComparisonSufficiency;
 use App\Services\BrandWheel\BrandWheelEvidenceLookupBuilder;
+use App\Services\BrandWheel\BrandWheelImprovementFocusComposer;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionInputFactory;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionProviderFactory;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
@@ -90,6 +91,7 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
         BrandWheelImprovementSuggestionInputFactory $inputFactory,
         BrandWheelEvidenceLookupBuilder $evidenceLookupBuilder,
         BrandWheelComparisonSufficiency $comparisonSufficiency,
+        BrandWheelImprovementFocusComposer $improvementFocusComposer,
     ): void {
         $suggestion = BrandWheelImprovementSuggestion::find($this->suggestionId);
 
@@ -160,6 +162,8 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
                 'candidate_impact' => null,
                 'gap_closing' => [],
                 'differentiation_opportunities' => [],
+                'focus_items_reason' => null,
+                'focus_items_reason_sub_names' => [],
                 'is_mock' => false,
                 'input_hash' => null,
                 'usage_input_tokens' => null,
@@ -187,6 +191,22 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
         $comparisonItems = $comparisonComposer->compose((array) $selfWheel['axes'], $competitorReadable ? (array) $competitorWheel['axes'] : []);
         $groupTotals = $competitorReadable ? $comparisonComposer->groupTotals($comparisonItems) : [];
 
+        // 依頼AF-2(2026-08-27): 改善提案ページ(競合あり)に実際に表示される
+        // カードの項目を、ReportViewModelBuilderが後で表示に使うのと同じ
+        // 決定的な規則(BrandWheelImprovementFocusComposer、無改修)で
+        // ここでも計算する ―― 項目の選定はAIに委ねず、AIには「なぜこの項目
+        // なのか」の言語化のみを担わせる(依頼者指定)。$hasSufficientCompetitor
+        // の条件は、ReportViewModelBuilderが$improvementFocusを非nullにする
+        // 条件(selfReadable && competitorReadable && competitorSufficient、
+        // このJob内ではselfReadableは既に確認済み)と一致させている。
+        $improvementFocus = $hasSufficientCompetitor
+            ? $improvementFocusComposer->compose($comparisonItems, $evidenceLookupBuilder->build($competitorRecord))
+            : null;
+        $focusItemsForReason = array_map(
+            fn (array $item) => ['axis_name' => $item['axis_name'], 'sub_name' => $item['sub_name']],
+            $improvementFocus['items'] ?? [],
+        );
+
         $input = $inputFactory->build(
             $comparisonItems,
             $evidenceLookupBuilder->build($selfRecord),
@@ -201,6 +221,7 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
             $selfWheel['key_message'] ?? null,
             $selfWheel['positive_impression'] ?? null,
             $selfRecord?->core_value_readable === true ? $selfRecord->core_value_evidence : null,
+            $focusItemsForReason,
         );
 
         try {
@@ -259,6 +280,8 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
             'candidate_impact' => $result->candidateImpact,
             'gap_closing' => $result->gapClosing,
             'differentiation_opportunities' => $result->differentiationOpportunities,
+            'focus_items_reason' => $result->focusItemsReason,
+            'focus_items_reason_sub_names' => array_column($focusItemsForReason, 'sub_name'),
             'is_mock' => $result->isMock,
             'input_hash' => hash('sha256', json_encode($input->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
             'usage_input_tokens' => $outcome->usageInputTokens,

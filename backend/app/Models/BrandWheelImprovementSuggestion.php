@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'one_point', 'recommendation', 'focus_sub_element_keys', 'is_mock', 'input_hash',
     'reason', 'recommended_contents', 'mid_term_action', 'quick_win',
     'implementation_difficulty', 'candidate_impact', 'gap_closing', 'differentiation_opportunities',
+    'focus_items_reason', 'focus_items_reason_sub_names',
     'usage_input_tokens', 'usage_output_tokens', 'duration_ms', 'error_code', 'error_message', 'generated_at',
 ])]
 class BrandWheelImprovementSuggestion extends Model
@@ -34,6 +35,7 @@ class BrandWheelImprovementSuggestion extends Model
             'recommended_contents' => 'array',
             'gap_closing' => 'array',
             'differentiation_opportunities' => 'array',
+            'focus_items_reason_sub_names' => 'array',
             'quick_win' => 'boolean',
             'is_mock' => 'boolean',
             'usage_input_tokens' => 'integer',

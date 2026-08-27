@@ -109,9 +109,9 @@ class OpenAiBrandWheelImprovementSuggestionProviderTest extends TestCase
         });
     }
 
-    public function test_prompt_version_is_v9(): void
+    public function test_prompt_version_is_v11(): void
     {
-        $this->assertSame('v9', OpenAiBrandWheelImprovementSuggestionProvider::PROMPT_VERSION);
+        $this->assertSame('v11', OpenAiBrandWheelImprovementSuggestionProvider::PROMPT_VERSION);
     }
 
     /**
@@ -461,12 +461,25 @@ class OpenAiBrandWheelImprovementSuggestionProviderTest extends TestCase
     }
 
     /**
+     * 依頼AF-1(2026-08-27、v10): mid_term_actionが本番直近10件すべてnullに
+     * なっていた不具合の修正。実際にAIへ問い合わせ、生の応答(パーサを通す前)を
+     * 確認した結果、mutually_unmatched_itemsが空でなく好条件のデータでも
+     * AIは一貫してnullを返していた ―― 原因はv9までの【差別化を選ばない/
+     * nullにする条件】が「mutually_unmatched_itemsが空である」に加えて
+     * 「自社の既存強みとの関連性が低い候補しかない」「Brand Fitがどの候補も
+     * 低い」「根拠が弱すぎる」という3つの主観的な条件を並べており、AIが
+     * これらを口実にnullへ逃げていたことだった(OpenAiBrandWheelImprovement
+     * SuggestionProviderのv10 docblock参照)。
+     *
      * Case D: mutually_unmatched_itemsは存在するが、自社の強みが全く無い
-     * (selfConfirmedItemNames/selfCategoryScoresが空)状態。無理にテーマを
-     * 選ばずnullを許容する指示がプロンプトに含まれていることを確認する
-     * (「とにかく何か1つ出す」仕様にしないこと、依頼者指定)。
+     * (selfConfirmedItemNames/selfCategoryScoresが空)状態。以前は
+     * このケースでもnullを許容する主観条件がプロンプトに含まれていたが、
+     * v10ではその条件を削除し、「mutually_unmatched_itemsが空の場合のみ
+     * null、それ以外は関連性や根拠の強弱を理由にnullへ逃げず必ず1件選ぶ」
+     * という単一の客観条件のみを指示することを確認する(自社の強みが弱い
+     * ことを理由にnullを許容する文言が含まれないこと)。
      */
-    public function test_case_d_prompt_allows_null_mid_term_action_when_self_has_no_confirmed_strengths(): void
+    public function test_case_d_prompt_requires_choosing_a_theme_even_when_self_has_no_confirmed_strengths(): void
     {
         config(['services.openai.api_key' => 'test-key']);
         $this->fakeSuccessfulResponse(['one_point' => null, 'recommendation' => null, 'focus_sub_element_keys' => []]);
@@ -494,10 +507,12 @@ class OpenAiBrandWheelImprovementSuggestionProviderTest extends TestCase
         Http::assertSent(function ($request) {
             $content = $request->data()['messages'][0]['content'] ?? '';
 
-            return str_contains($content, '無理にテーマを作らず')
-                && str_contains($content, 'mid_term_actionをnullにしてください')
-                && str_contains($content, '関連性が低い候補しかない')
-                && str_contains($content, 'とにかく何か1つ出す');
+            return str_contains($content, '差別化を選ばない/nullにする唯一の条件')
+                && str_contains($content, 'mutually_unmatched_itemsが空配列の場合のみ')
+                && str_contains($content, '必ずmid_term_actionを埋めてください')
+                && str_contains($content, '「関連性が低いから」「根拠が弱いから」という理由で')
+                && ! str_contains($content, 'Brand Fitがどの候補も低いと判断される')
+                && ! str_contains($content, '根拠が弱すぎる');
         });
     }
 
