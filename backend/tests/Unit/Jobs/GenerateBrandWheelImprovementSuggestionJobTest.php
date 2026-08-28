@@ -19,6 +19,7 @@ use App\Services\BrandWheel\BrandWheelEvidenceLookupBuilder;
 use App\Services\BrandWheel\BrandWheelImprovementFocusComposer;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionInputFactory;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
+use App\Services\BrandWheel\BrandWheelReasonBracketNameValidator;
 use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -112,6 +113,7 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
             app(BrandWheelEvidenceLookupBuilder::class),
             app(BrandWheelComparisonSufficiency::class),
             app(BrandWheelImprovementFocusComposer::class),
+            app(BrandWheelReasonBracketNameValidator::class),
         );
     }
 
@@ -234,6 +236,7 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
             app(BrandWheelEvidenceLookupBuilder::class),
             app(BrandWheelComparisonSufficiency::class),
             app(BrandWheelImprovementFocusComposer::class),
+            app(BrandWheelReasonBracketNameValidator::class),
         );
 
         $suggestion->refresh();
@@ -395,6 +398,126 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
         $this->assertSame('mock', $suggestion->provider);
         $this->assertTrue($suggestion->is_mock);
         $this->assertNotNull($suggestion->one_point);
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼AP-1(2026-08-28): focus_items_reason中の『』の中身が24項目・
+    // 6カテゴリ・3領域のいずれの正式名称とも一致しない場合の機械的な検知
+    // (BrandWheelReasonBracketNameValidator)。依頼AF-2/AA-3と同じ方針
+    // (レポート生成自体は失敗させない)でfocus_items_reasonをnull化し、
+    // warningログ(本文は含めない)を出す。
+    // ------------------------------------------------------------------
+
+    private function fakeImprovementSuggestionResponse(?string $focusItemsReason): void
+    {
+        Http::fake(['api.openai.com/*' => Http::response([
+            'choices' => [['message' => ['content' => json_encode([
+                'one_point' => null,
+                'recommendation' => null,
+                'focus_sub_element_keys' => [],
+                'reason' => null,
+                'recommended_contents' => [],
+                'mid_term_action' => null,
+                'quick_win' => null,
+                'implementation_difficulty' => null,
+                'candidate_impact' => null,
+                'gap_closing' => [],
+                'differentiation_opportunities' => [],
+                'focus_items_reason' => $focusItemsReason,
+            ], JSON_UNESCAPED_UNICODE)]]],
+            'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 10],
+        ], 200)]);
+    }
+
+    public function test_hides_the_focus_items_reason_and_logs_a_warning_when_it_references_a_nonexistent_name(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        $this->fakeImprovementSuggestionResponse('御社は既に『事業運営スタイル』を伝えており、組織構造を具体的に示すことで候補者の理解が深まる可能性があります。');
+        Log::spy();
+
+        $suggestion = $this->makeSuggestion(withCompetitor: true, selfMatchedCount: 6, competitorMatchedCount: 6);
+
+        $this->handle(new GenerateBrandWheelImprovementSuggestionJob($suggestion->id));
+
+        $suggestion->refresh();
+
+        $this->assertSame('success', $suggestion->status);
+        $this->assertNull($suggestion->focus_items_reason);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context) use ($suggestion) {
+                return str_contains($message, 'focus_items_reason references a name')
+                    && $context['analysis_id'] === $suggestion->analysis_id
+                    && $context['invalid_names'] === ['事業運営スタイル'];
+            })
+            ->once();
+    }
+
+    /**
+     * 誤検知しないこと ―― 24項目の正式名称だけを含む場合は、そのまま保存
+     * されwarningも出ない。
+     */
+    public function test_keeps_the_focus_items_reason_when_it_only_references_valid_names(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        $this->fakeImprovementSuggestionResponse('御社は既に『リーダーシップ』を伝えており、『組織構造』を明示することで候補者の理解が深まる可能性があります。');
+        Log::spy();
+
+        $suggestion = $this->makeSuggestion(withCompetitor: true, selfMatchedCount: 6, competitorMatchedCount: 6);
+
+        $this->handle(new GenerateBrandWheelImprovementSuggestionJob($suggestion->id));
+
+        $suggestion->refresh();
+
+        $this->assertNotNull($suggestion->focus_items_reason);
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼AP-2(2026-08-28): 切り詰め(BrandWheelTextTruncator::
+    // truncateAtSentenceBoundary())が発生したことを沈黙させない。
+    // ------------------------------------------------------------------
+
+    public function test_logs_a_warning_when_focus_items_reason_is_truncated_at_a_sentence_boundary(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        $sentence = '御社は既に『組織構造』を伝えており、候補者が働き方を具体的にイメージしやすくなる可能性があります。';
+        $longReason = str_repeat($sentence, 5);
+        $this->fakeImprovementSuggestionResponse($longReason);
+        Log::spy();
+
+        $suggestion = $this->makeSuggestion(withCompetitor: true, selfMatchedCount: 6, competitorMatchedCount: 6);
+
+        $this->handle(new GenerateBrandWheelImprovementSuggestionJob($suggestion->id));
+
+        $suggestion->refresh();
+
+        $this->assertLessThan(mb_strlen($longReason), mb_strlen($suggestion->focus_items_reason));
+        $this->assertLessThanOrEqual(200, mb_strlen($suggestion->focus_items_reason));
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context) use ($suggestion, $longReason) {
+                return str_contains($message, 'truncated at a sentence boundary')
+                    && $context['analysis_id'] === $suggestion->analysis_id
+                    && $context['field'] === 'focus_items_reason'
+                    && $context['original_chars'] === mb_strlen($longReason)
+                    && $context['truncated_chars'] === mb_strlen($suggestion->focus_items_reason);
+            })
+            ->once();
+    }
+
+    public function test_does_not_log_a_truncation_warning_when_focus_items_reason_fits_within_the_limit(): void
+    {
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        $this->fakeImprovementSuggestionResponse('御社は既に『組織構造』を伝えており、候補者の理解が深まる可能性があります。');
+        Log::spy();
+
+        $suggestion = $this->makeSuggestion(withCompetitor: true, selfMatchedCount: 6, competitorMatchedCount: 6);
+
+        $this->handle(new GenerateBrandWheelImprovementSuggestionJob($suggestion->id));
+
+        $suggestion->refresh();
+
+        $this->assertNotNull($suggestion->focus_items_reason);
+        Log::shouldNotHaveReceived('warning');
     }
 
     // ------------------------------------------------------------------

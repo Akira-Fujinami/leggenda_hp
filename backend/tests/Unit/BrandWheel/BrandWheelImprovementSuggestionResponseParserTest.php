@@ -232,4 +232,85 @@ class BrandWheelImprovementSuggestionResponseParserTest extends TestCase
             $result->recommendedContents,
         );
     }
+
+    // ------------------------------------------------------------------
+    // 依頼AP-2(2026-08-28): 切り詰め(BrandWheelTextTruncator::
+    // truncateAtSentenceBoundary())が発生したフィールドをtruncatedFieldsに
+    // 記録する(呼び出し元のJobがanalysis_idを添えてwarningログを出すため)。
+    // ------------------------------------------------------------------
+
+    public function test_records_a_truncated_field_when_focus_items_reason_exceeds_the_limit(): void
+    {
+        $sentence = '御社は既に『組織構造』を伝えており、候補者が働き方を具体的にイメージしやすくなる可能性があります。';
+        $longReason = str_repeat($sentence, 5);
+
+        $result = $this->parser()->parse([
+            'one_point' => null,
+            'recommendation' => null,
+            'focus_sub_element_keys' => [],
+            'focus_items_reason' => $longReason,
+        ], provider: 'openai', model: null, isMock: false, promptVersion: 'v14');
+
+        $this->assertLessThan(mb_strlen($longReason), mb_strlen($result->focusItemsReason));
+        $this->assertCount(1, $result->truncatedFields);
+        $this->assertSame('focus_items_reason', $result->truncatedFields[0]['field']);
+        $this->assertSame(mb_strlen($longReason), $result->truncatedFields[0]['original_chars']);
+        $this->assertSame(mb_strlen($result->focusItemsReason), $result->truncatedFields[0]['truncated_chars']);
+    }
+
+    public function test_records_no_truncated_fields_when_nothing_exceeds_the_limit(): void
+    {
+        $result = $this->parser()->parse([
+            'one_point' => 'まずは仕事の魅力から着手しましょう。',
+            'recommendation' => 'まずは仕事の魅力に関する情報を拡充することを推奨します。',
+            'focus_sub_element_keys' => [],
+            'reason' => '短い理由です。',
+            'mid_term_action' => '短い中長期です。',
+            'focus_items_reason' => '短い理由です。',
+        ], provider: 'openai', model: null, isMock: false, promptVersion: 'v14');
+
+        $this->assertSame([], $result->truncatedFields);
+    }
+
+    /**
+     * 複数フィールドが同時に切り詰められた場合、それぞれ個別に記録される
+     * (呼び出し元がフィールドごとに1件ずつwarningログを出すため)。
+     */
+    public function test_records_multiple_truncated_fields_independently(): void
+    {
+        $longSentence = str_repeat('これは長い一文です。', 50);
+
+        $result = $this->parser()->parse([
+            'one_point' => null,
+            'recommendation' => $longSentence,
+            'focus_sub_element_keys' => [],
+            'reason' => $longSentence,
+            'focus_items_reason' => null,
+        ], provider: 'openai', model: null, isMock: false, promptVersion: 'v14');
+
+        $fields = array_column($result->truncatedFields, 'field');
+        $this->assertContains('recommendation', $fields);
+        $this->assertContains('reason', $fields);
+        $this->assertCount(2, $result->truncatedFields);
+    }
+
+    /**
+     * recommended_contents(箇条書き、parseTextList経由)は対象外 ―― 1件が
+     * 短い定型フレーズであり、複数文にまたがる理由付けが丸ごと欠落する
+     * reason等とはリスクの性質が異なると判断したため(依頼AP-2、報告参照)。
+     */
+    public function test_recommended_contents_truncation_is_not_recorded(): void
+    {
+        $longItem = str_repeat('あ', 100);
+
+        $result = $this->parser()->parse([
+            'one_point' => null,
+            'recommendation' => null,
+            'focus_sub_element_keys' => [],
+            'recommended_contents' => [$longItem],
+        ], provider: 'openai', model: null, isMock: false, promptVersion: 'v14');
+
+        $this->assertLessThan(mb_strlen($longItem), mb_strlen($result->recommendedContents[0]));
+        $this->assertSame([], $result->truncatedFields);
+    }
 }

@@ -14,6 +14,7 @@ use App\Services\BrandWheel\BrandWheelImprovementFocusComposer;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionInputFactory;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionProviderFactory;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
+use App\Services\BrandWheel\BrandWheelReasonBracketNameValidator;
 use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
 use App\Services\Lead\LeadReportDispatchService;
 use Illuminate\Bus\Queueable;
@@ -22,6 +23,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Analysis単位(自社×競合の比較単位)で改善提案(page6)のAI提言を生成する。
@@ -93,6 +95,7 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
         BrandWheelEvidenceLookupBuilder $evidenceLookupBuilder,
         BrandWheelComparisonSufficiency $comparisonSufficiency,
         BrandWheelImprovementFocusComposer $improvementFocusComposer,
+        BrandWheelReasonBracketNameValidator $reasonNameValidator,
     ): void {
         $suggestion = BrandWheelImprovementSuggestion::find($this->suggestionId);
 
@@ -122,7 +125,7 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
         // status判定で単に何もしない ―― 診断本体が後で終端に達したときに
         // 改めて起動される、二重生成にはならない)。
         try {
-            $this->handleGeneration($wheelComposer, $comparisonComposer, $inputFactory, $evidenceLookupBuilder, $comparisonSufficiency, $improvementFocusComposer, $suggestion, $analysis);
+            $this->handleGeneration($wheelComposer, $comparisonComposer, $inputFactory, $evidenceLookupBuilder, $comparisonSufficiency, $improvementFocusComposer, $reasonNameValidator, $suggestion, $analysis);
         } finally {
             $analysis->refresh();
             app(LeadReportDispatchService::class)->dispatchIfReportable($analysis);
@@ -142,6 +145,7 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
         BrandWheelEvidenceLookupBuilder $evidenceLookupBuilder,
         BrandWheelComparisonSufficiency $comparisonSufficiency,
         BrandWheelImprovementFocusComposer $improvementFocusComposer,
+        BrandWheelReasonBracketNameValidator $reasonNameValidator,
         BrandWheelImprovementSuggestion $suggestion,
         Analysis $analysis,
     ): void {
@@ -307,6 +311,37 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
         $durationMs = (int) round((microtime(true) - $started) * 1000);
         $result = $outcome->result;
 
+        // 依頼AP-2(2026-08-28): 切り詰め(BrandWheelTextTruncator::
+        // truncateAtSentenceBoundary())が発生したこと自体を沈黙させない。
+        // 文の境界で切るため、超過した最後の1文がまるごと欠落しうる
+        // (依頼AI-3と同じ「沈黙する失敗」の再発防止)。本文は含めない。
+        foreach ($result->truncatedFields as $truncatedField) {
+            Log::warning('Improvement suggestion text was truncated at a sentence boundary; the trailing sentence(s) were dropped', [
+                'analysis_id' => $analysis->id,
+                'field' => $truncatedField['field'],
+                'original_chars' => $truncatedField['original_chars'],
+                'truncated_chars' => $truncatedField['truncated_chars'],
+            ]);
+        }
+
+        // 依頼AP-1(2026-08-28): focus_items_reason中の『』の中身が、24項目・
+        // 6カテゴリ・3領域のいずれの正式名称とも一致しない場合、AIが
+        // axis_name/sub_nameを混ぜて存在しない名前を合成した可能性がある。
+        // 依頼AF-2/AA-3と同じ方針(理由のブロックを出さずレポート生成自体は
+        // 失敗させない)でfocus_items_reasonをnull化し、warningログを1件
+        // 出す(本文は含めない ―― 該当した名前だけを記録する)。
+        $focusItemsReason = $result->focusItemsReason;
+        $invalidBracketedNames = $reasonNameValidator->invalidBracketedNames($focusItemsReason);
+
+        if ($invalidBracketedNames !== []) {
+            Log::warning('Improvement suggestion focus_items_reason references a name that is not one of the 24 sub-elements / 6 categories / 3 groups; hiding the reason', [
+                'analysis_id' => $analysis->id,
+                'invalid_names' => $invalidBracketedNames,
+            ]);
+
+            $focusItemsReason = null;
+        }
+
         $suggestion->update([
             'provider' => $result->provider,
             'model' => $result->model,
@@ -323,7 +358,7 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
             'candidate_impact' => $result->candidateImpact,
             'gap_closing' => $result->gapClosing,
             'differentiation_opportunities' => $result->differentiationOpportunities,
-            'focus_items_reason' => $result->focusItemsReason,
+            'focus_items_reason' => $focusItemsReason,
             'focus_items_reason_sub_names' => array_column($focusItemsForReason, 'sub_name'),
             'is_mock' => $result->isMock,
             'input_hash' => hash('sha256', json_encode($input->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),

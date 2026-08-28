@@ -110,9 +110,82 @@ class OpenAiBrandWheelImprovementSuggestionProviderTest extends TestCase
         });
     }
 
-    public function test_prompt_version_is_v12(): void
+    public function test_prompt_version_is_v14(): void
     {
-        $this->assertSame('v12', OpenAiBrandWheelImprovementSuggestionProvider::PROMPT_VERSION);
+        $this->assertSame('v14', OpenAiBrandWheelImprovementSuggestionProvider::PROMPT_VERSION);
+    }
+
+    /**
+     * 依頼AP-1(2026-08-28、v14): AIがaxis_name(軸名)とsub_name(項目名)を
+     * 混ぜて存在しない名前を合成する事故(依頼AOの検証で「事業運営スタイル」
+     * という存在しない名前が出力された)への対応。項目名は要約・言い換え・
+     * 合成せずsub_nameの値をそのまま使うこと、引用文は『』で囲まないことが
+     * プロンプトに明示されていることを確認する。
+     */
+    public function test_prompt_instructs_using_sub_element_names_verbatim_without_paraphrasing_or_combining(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        $this->fakeSuccessfulResponse(['one_point' => null, 'recommendation' => null, 'focus_sub_element_keys' => []]);
+
+        (new OpenAiBrandWheelImprovementSuggestionProvider(new BrandWheelImprovementSuggestionResponseParser))->analyze($this->makeInput());
+
+        Http::assertSent(function ($request) {
+            $content = $request->data()['messages'][0]['content'] ?? '';
+
+            return str_contains($content, '項目名の書き方')
+                && str_contains($content, '要約・言い換え・合成せずそのまま使って')
+                && str_contains($content, '存在しない名前の合成')
+                && str_contains($content, 'サイトから引用した記述(evidence等)は項目名ではないため');
+        });
+    }
+
+    /**
+     * 依頼AO-1(2026-08-28、v13): 実物レポート54で、focus_items_reasonが
+     * type(catch_up/breakout)のラベル(「競合が既に情報を提供しているため」)を
+     * そのまま言い換えているだけで、選定の理由になっていなかった。ラベルの
+     * 再掲を明示的に禁止し、代わりにself_matched_items等、自社に既にある
+     * 情報との関係で理由を書かせる指示がプロンプトに含まれることを確認する。
+     */
+    public function test_prompt_bans_restating_the_card_label_as_the_reason(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        $this->fakeSuccessfulResponse(['one_point' => null, 'recommendation' => null, 'focus_sub_element_keys' => []]);
+
+        (new OpenAiBrandWheelImprovementSuggestionProvider(new BrandWheelImprovementSuggestionResponseParser))->analyze($this->makeInput(
+            focusItemsForReason: [['axis_name' => '就業環境', 'sub_name' => '同僚・先輩像', 'type' => 'catch_up']],
+        ));
+
+        Http::assertSent(function ($request) {
+            $content = $request->data()['messages'][0]['content'] ?? '';
+
+            return str_contains($content, 'カードのラベルの再掲')
+                && str_contains($content, '競合が既に情報を提供しているため')
+                && str_contains($content, '自社に既にあるものとの関係でこの項目を説明してください')
+                && str_contains($content, 'self_matched_items');
+        });
+    }
+
+    /**
+     * 依頼AO-1(2026-08-28、v13): 3件すべてに均等配分することを要件にせず、
+     * 材料が乏しい項目は無理に埋めなくてよいが、focus_items_for_reason[0]
+     * (one_pointで名指しした項目)には必ず触れることを指示していることを
+     * 確認する。
+     */
+    public function test_prompt_does_not_require_covering_every_focus_item_but_requires_the_first(): void
+    {
+        config(['services.openai.api_key' => 'test-key']);
+        $this->fakeSuccessfulResponse(['one_point' => null, 'recommendation' => null, 'focus_sub_element_keys' => []]);
+
+        (new OpenAiBrandWheelImprovementSuggestionProvider(new BrandWheelImprovementSuggestionResponseParser))->analyze($this->makeInput());
+
+        Http::assertSent(function ($request) {
+            $content = $request->data()['messages'][0]['content'] ?? '';
+
+            return str_contains($content, '均等に1文ずつ割り当てる必要はありません')
+                && str_contains($content, '無理に理由を書かず触れなくて構いません')
+                && str_contains($content, 'focus_items_for_reason[0]')
+                && str_contains($content, '最大3文');
+        });
     }
 
     /**

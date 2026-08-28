@@ -25,6 +25,7 @@ readonly class BrandWheelImprovementSuggestionResult
      * @param  list<string>  $gapClosing  内部分類: 競合にあり自社に無い情報を補う対象の下位要素名(UIラベルとしては出さない)
      * @param  list<string>  $differentiationOpportunities  内部分類: 自社・競合とも手薄で自社が先に充実させれば差別化になる対象の下位要素名(UIラベルとしては出さない)
      * @param  ?string  $focusItemsReason  依頼AF-2(2026-08-27追加)。BrandWheelImprovementFocusComposer::compose()が選んだ項目(input.focus_items_for_reason)についてのみAIが書いた理由。項目の選定自体はAIに委ねない。候補が0件/AIの生成失敗時はnull。
+     * @param  list<array{field: string, original_chars: int, truncated_chars: int}>  $truncatedFields  依頼AP-2(2026-08-28追加)。BrandWheelTextTruncator::truncateAtSentenceBoundary()で実際に切り詰めが発生したフィールドの一覧(本文は含まない)。呼び出し元(GenerateBrandWheelImprovementSuggestionJob)がanalysis_idを添えてwarningログを出すために使う ―― 切り詰めは文の境界で行われるため、最後の1文がまるごと欠落する「沈黙する失敗」になりうる(依頼AI-3と同じ考え方)。
      */
     public function __construct(
         public ?string $onePoint,
@@ -43,6 +44,7 @@ readonly class BrandWheelImprovementSuggestionResult
         public bool $isMock,
         public ?string $promptVersion,
         public ?string $focusItemsReason = null,
+        public array $truncatedFields = [],
     ) {}
 
     /**

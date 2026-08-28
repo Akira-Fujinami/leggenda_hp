@@ -50,6 +50,19 @@ class BrandWheelImprovementSuggestionResponseParser
      */
     private const VALID_LEVELS = ['low', 'medium', 'high'];
 
+    /**
+     * 依頼AP-2(2026-08-28追加)。parse()呼び出し中に発生した切り詰め
+     * (BrandWheelTextTruncator::truncateAtSentenceBoundary()で実際に
+     * 短縮された)フィールドを記録する。parse()の先頭でリセットする
+     * ―― このクラスはリクエストごとに毎回newされるとは限らないため
+     * (呼び出し元のOpenAiBrandWheelImprovementSuggestionProviderは
+     * コンストラクタで受け取ったインスタンスを使い回す)、呼び出し間で
+     * 値が残らないようにする。
+     *
+     * @var list<array{field: string, original_chars: int, truncated_chars: int}>
+     */
+    private array $truncatedFields = [];
+
     public function parse(
         array $raw,
         string $provider,
@@ -57,15 +70,16 @@ class BrandWheelImprovementSuggestionResponseParser
         bool $isMock,
         ?string $promptVersion,
     ): BrandWheelImprovementSuggestionResult {
+        $this->truncatedFields = [];
         $validSubElementKeys = $this->validSubElementKeys();
 
         return new BrandWheelImprovementSuggestionResult(
-            onePoint: $this->parseForbiddenPhraseSafeText($raw['one_point'] ?? null, self::ONE_POINT_MAX_CHARS),
-            recommendation: $this->parseForbiddenPhraseSafeText($raw['recommendation'] ?? null, self::RECOMMENDATION_MAX_CHARS),
+            onePoint: $this->parseForbiddenPhraseSafeText($raw['one_point'] ?? null, self::ONE_POINT_MAX_CHARS, 'one_point'),
+            recommendation: $this->parseForbiddenPhraseSafeText($raw['recommendation'] ?? null, self::RECOMMENDATION_MAX_CHARS, 'recommendation'),
             focusSubElementKeys: $this->parseSubElementKeyList($raw['focus_sub_element_keys'] ?? null, $validSubElementKeys),
-            reason: $this->parseForbiddenPhraseSafeText($raw['reason'] ?? null, self::REASON_MAX_CHARS),
+            reason: $this->parseForbiddenPhraseSafeText($raw['reason'] ?? null, self::REASON_MAX_CHARS, 'reason'),
             recommendedContents: $this->parseTextList($raw['recommended_contents'] ?? null, self::RECOMMENDED_CONTENT_MAX_CHARS, self::RECOMMENDED_CONTENT_MAX_COUNT),
-            midTermAction: $this->parseForbiddenPhraseSafeText($raw['mid_term_action'] ?? null, self::MID_TERM_ACTION_MAX_CHARS),
+            midTermAction: $this->parseForbiddenPhraseSafeText($raw['mid_term_action'] ?? null, self::MID_TERM_ACTION_MAX_CHARS, 'mid_term_action'),
             quickWin: is_bool($raw['quick_win'] ?? null) ? $raw['quick_win'] : null,
             implementationDifficulty: $this->parseLevel($raw['implementation_difficulty'] ?? null),
             candidateImpact: $this->parseLevel($raw['candidate_impact'] ?? null),
@@ -75,7 +89,8 @@ class BrandWheelImprovementSuggestionResponseParser
             model: $model,
             isMock: $isMock,
             promptVersion: $promptVersion,
-            focusItemsReason: $this->parseForbiddenPhraseSafeText($raw['focus_items_reason'] ?? null, self::FOCUS_ITEMS_REASON_MAX_CHARS),
+            focusItemsReason: $this->parseForbiddenPhraseSafeText($raw['focus_items_reason'] ?? null, self::FOCUS_ITEMS_REASON_MAX_CHARS, 'focus_items_reason'),
+            truncatedFields: $this->truncatedFields,
         );
     }
 
@@ -100,7 +115,17 @@ class BrandWheelImprovementSuggestionResponseParser
      * のような技術的な言及)まで捨てないため、str_contains()ではなく
      * 完全一致で判定する。
      */
-    private function parseForbiddenPhraseSafeText(mixed $raw, int $maxChars): ?string
+    /**
+     * 依頼AP-2(2026-08-28): $fieldNameを渡したフィールドについてのみ、
+     * 実際に切り詰めが発生した場合を$this->truncatedFieldsに記録する
+     * (呼び出し元のJobがanalysis_idを添えてwarningログを出すために使う)。
+     * nullのまま(未指定)にすると記録しない ―― recommended_contents
+     * (parseTextList経由、1件45字上限の短い箇条書き)は対象外にしている。
+     * 理由: 複数文にまたがる理由付けが丸ごと欠落するreason/focus_items_reason
+     * 等とはリスクの性質が異なる(短い定型フレーズ1件が削れるだけ)と
+     * 判断したため。
+     */
+    private function parseForbiddenPhraseSafeText(mixed $raw, int $maxChars, ?string $fieldName = null): ?string
     {
         if (! is_string($raw) || trim($raw) === '') {
             return null;
@@ -123,7 +148,22 @@ class BrandWheelImprovementSuggestionResponseParser
             }
         }
 
-        return BrandWheelTextTruncator::truncateAtSentenceBoundary($text, $maxChars);
+        $truncated = BrandWheelTextTruncator::truncateAtSentenceBoundary($text, $maxChars);
+
+        if ($fieldName !== null) {
+            $originalChars = mb_strlen($text);
+            $truncatedChars = mb_strlen($truncated);
+
+            if ($truncatedChars < $originalChars) {
+                $this->truncatedFields[] = [
+                    'field' => $fieldName,
+                    'original_chars' => $originalChars,
+                    'truncated_chars' => $truncatedChars,
+                ];
+            }
+        }
+
+        return $truncated;
     }
 
     /**
