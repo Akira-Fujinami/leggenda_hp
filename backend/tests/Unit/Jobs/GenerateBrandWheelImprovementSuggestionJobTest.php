@@ -2,11 +2,16 @@
 
 namespace Tests\Unit\Jobs;
 
+use App\Enums\AnalysisStatus;
 use App\Jobs\GenerateBrandWheelImprovementSuggestionJob;
+use App\Jobs\Report\GenerateLeadReportJob;
 use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
 use App\Models\BrandWheelImprovementSuggestion;
+use App\Models\LeadSession;
 use App\Models\Project;
+use App\Models\Report;
+use App\Models\User;
 use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelComparisonSufficiency;
@@ -18,6 +23,7 @@ use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -702,5 +708,84 @@ class GenerateBrandWheelImprovementSuggestionJobTest extends TestCase
                     && ! str_contains($encoded, 'too many attempts');
             })
             ->once();
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼AM-1(2026-08-28、本番analysis_id=110): このJobの終端(成功・
+    // 失敗いずれも)で、待たされているかもしれないリード向けレポート生成
+    // (LeadReportDispatchService::dispatchIfReportable())を再確認させる。
+    // ------------------------------------------------------------------
+
+    /**
+     * 診断完了(Analysis.status=Completed)後、改善提案の生成がまだ確定して
+     * いないためレポートが待たされていた状況で、このJobが成功すると
+     * レポート生成(Report行の作成+GenerateLeadReportJobのdispatch)が
+     * 即座に起動されること。
+     */
+    public function test_completing_successfully_triggers_the_waiting_lead_report_generation(): void
+    {
+        Queue::fake([GenerateLeadReportJob::class]);
+
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWebsite = Website::factory()->create(['project_id' => $project->id, 'is_primary' => true]);
+        $selfWa = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $selfWebsite->id]);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => $this->axesWithMatchedCount(6),
+        ]);
+        $suggestion = BrandWheelImprovementSuggestion::factory()->create(['analysis_id' => $analysis->id, 'status' => 'pending']);
+
+        // このJobが走る前は、改善提案が未確定のためレポートはまだ無い。
+        $this->assertSame(0, Report::where('analysis_id', $analysis->id)->count());
+
+        $this->handle(new GenerateBrandWheelImprovementSuggestionJob($suggestion->id));
+
+        $this->assertSame('success', $suggestion->fresh()->status);
+        $this->assertSame(2, Report::where('analysis_id', $analysis->id)->count());
+        Queue::assertPushed(GenerateLeadReportJob::class, 1);
+    }
+
+    /**
+     * 自社が読み取れない(SELF_NOT_READABLE)等でこのJobがerror終端になった
+     * 場合も、レポート生成の再確認が起動されること(ただしこのケースでは
+     * eligibility自体がfalseのためReportは作られない ―― 待たされていた
+     * ものが無いことの確認)。
+     */
+    public function test_erroring_out_still_triggers_a_report_dispatch_recheck(): void
+    {
+        Queue::fake([GenerateLeadReportJob::class]);
+
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
+        $selfWebsite = Website::factory()->create(['project_id' => $project->id, 'is_primary' => true]);
+        $selfWa = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $selfWebsite->id]);
+
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id, 'website_analysis_id' => $selfWa->id, 'status' => 'insufficient_input', 'axes' => null,
+        ]);
+        $suggestion = BrandWheelImprovementSuggestion::factory()->create(['analysis_id' => $analysis->id, 'status' => 'pending']);
+
+        $this->handle(new GenerateBrandWheelImprovementSuggestionJob($suggestion->id));
+
+        $this->assertSame('error', $suggestion->fresh()->status);
+        // 自社が読み取れないためeligibility=false ―― レポートは作られない
+        // (このサービスからは、依頼のためのReport(Skipped)は作らない設計、
+        // クラスdocblock参照)。例外なくrecheckが呼ばれたこと自体は、
+        // GenerateLeadReportJobがdispatchされていないことで確認する。
+        Queue::assertNotPushed(GenerateLeadReportJob::class);
     }
 }

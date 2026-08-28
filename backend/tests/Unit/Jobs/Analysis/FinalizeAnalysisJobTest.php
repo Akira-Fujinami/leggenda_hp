@@ -117,6 +117,53 @@ class FinalizeAnalysisJobTest extends TestCase
     }
 
     // ------------------------------------------------------------------
+    // 依頼AM-1(2026-08-28、本番analysis_id=110): 診断が完了しても、改善提案
+    // (BrandWheelImprovementSuggestion)が確定するまではReport行を作らない
+    // (GenerateLeadReportJobがViewModelを組み立てる時点で理由・中長期が
+    // 入っていない、というレースの修正)。
+    // ------------------------------------------------------------------
+
+    /**
+     * 改善提案がpendingの間、Report行が作られない(=ViewModelが組み立て
+     * られない)こと。代わりにWaitForBrandWheelImprovementSuggestionJobへ
+     * 委ねられる。
+     */
+    public function test_it_defers_report_generation_while_the_brand_wheel_suggestion_is_pending(): void
+    {
+        Queue::fake([GenerateLeadReportJob::class, \App\Jobs\Report\WaitForBrandWheelImprovementSuggestionJob::class]);
+        $analysis = $this->makeLeadAnalysis();
+        $analysis->update(['skip_brand_wheel' => false]);
+        $this->makeReportableSelfBrandWheelResult($analysis);
+        \App\Models\BrandWheelImprovementSuggestion::factory()->create(['analysis_id' => $analysis->id, 'status' => 'pending']);
+
+        (new FinalizeAnalysisJob($analysis->id))->handle(app(AnalysisPipeline::class));
+
+        $this->assertSame(AnalysisStatus::Completed, $analysis->fresh()->status);
+        $this->assertSame(0, Report::where('analysis_id', $analysis->id)->count());
+        Queue::assertNotPushed(GenerateLeadReportJob::class);
+        Queue::assertPushed(\App\Jobs\Report\WaitForBrandWheelImprovementSuggestionJob::class, 1);
+    }
+
+    /**
+     * 改善提案が既に終端(success)に達していれば、従来どおり診断完了と
+     * 同時にレポート生成(理由・中長期を含む)が起動されること ―― 待たされ
+     * ないこと。
+     */
+    public function test_it_dispatches_report_generation_immediately_when_the_brand_wheel_suggestion_already_settled(): void
+    {
+        Queue::fake([GenerateLeadReportJob::class]);
+        $analysis = $this->makeLeadAnalysis();
+        $analysis->update(['skip_brand_wheel' => false]);
+        $this->makeReportableSelfBrandWheelResult($analysis);
+        \App\Models\BrandWheelImprovementSuggestion::factory()->create(['analysis_id' => $analysis->id, 'status' => 'success']);
+
+        (new FinalizeAnalysisJob($analysis->id))->handle(app(AnalysisPipeline::class));
+
+        $this->assertSame(2, Report::where('analysis_id', $analysis->id)->count());
+        Queue::assertPushed(GenerateLeadReportJob::class, 1);
+    }
+
+    // ------------------------------------------------------------------
     // 依頼AK-2(2026-08-28): 診断が完了(completed/partial)したのに改善提案が
     // 無い場合、BrandWheelImprovementSuggestionDispatcher::
     // logIfSuggestionMissingAfterAnalysisCompletion()を1回だけ呼び、

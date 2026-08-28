@@ -15,6 +15,7 @@ use App\Services\BrandWheel\BrandWheelImprovementSuggestionInputFactory;
 use App\Services\BrandWheel\BrandWheelImprovementSuggestionProviderFactory;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
 use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
+use App\Services\Lead\LeadReportDispatchService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -109,6 +110,41 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
 
         $suggestion->update(['status' => 'running']);
 
+        // 依頼AM-1(2026-08-28): このJobの終端(成功・エラーいずれも、以下の
+        // 全returnを含む)で、待たされているかもしれないリード向けレポート
+        // 生成(WaitForBrandWheelImprovementSuggestionJob)を再確認させる ――
+        // 改善提案の生成が確定した瞬間にレポート生成を進められる(FinalizeAnalysisJob
+        // 側の起動を待つより速い、本番実測で約7〜8秒の短縮になる経路)。
+        // $analysis->refresh()で読むのは、このJobが並行して走る診断本体の
+        // 終端処理(FinalizeAnalysisJob)より先に完了する場合があり、
+        // コンストラクタ時点でロードした$analysis->statusが古いままの
+        // 可能性があるため(その場合はdispatchIfReportable()側の
+        // status判定で単に何もしない ―― 診断本体が後で終端に達したときに
+        // 改めて起動される、二重生成にはならない)。
+        try {
+            $this->handleGeneration($wheelComposer, $comparisonComposer, $inputFactory, $evidenceLookupBuilder, $comparisonSufficiency, $improvementFocusComposer, $suggestion, $analysis);
+        } finally {
+            $analysis->refresh();
+            app(LeadReportDispatchService::class)->dispatchIfReportable($analysis);
+        }
+    }
+
+    /**
+     * 依頼AM-1(2026-08-28): handle()本体を独立したメソッドに切り出した
+     * ―― handle()側のtry/finally(終端のたびにレポート生成を再確認する)を
+     * 全returnパスに機械的に効かせるための構造変更のみで、判定ロジック
+     * 自体は無改修。
+     */
+    private function handleGeneration(
+        BrandWheelLeadResponseComposer $wheelComposer,
+        BrandWheelSubElementComparisonComposer $comparisonComposer,
+        BrandWheelImprovementSuggestionInputFactory $inputFactory,
+        BrandWheelEvidenceLookupBuilder $evidenceLookupBuilder,
+        BrandWheelComparisonSufficiency $comparisonSufficiency,
+        BrandWheelImprovementFocusComposer $improvementFocusComposer,
+        BrandWheelImprovementSuggestion $suggestion,
+        Analysis $analysis,
+    ): void {
         $analysis->loadMissing([
             'websiteAnalyses.website',
             'websiteAnalyses.brandWheelAnalysisResults' => fn ($query) => $query->latest('id')->limit(1),
@@ -325,5 +361,16 @@ class GenerateBrandWheelImprovementSuggestionJob implements ShouldBeUnique, Shou
             'error_code' => $errorCode->value,
             'error_message' => $exception?->getMessage(),
         ]);
+
+        // 依頼AM-1(2026-08-28): handle()側のtry/finallyと同じ理由 ――
+        // キュー基盤自体がこのJobを終端させた場合(handle()を経由しない)も、
+        // 待たされているかもしれないレポート生成を再確認させる。
+        if ($suggestion !== null) {
+            $analysis = Analysis::find($suggestion->analysis_id);
+
+            if ($analysis !== null) {
+                app(LeadReportDispatchService::class)->dispatchIfReportable($analysis);
+            }
+        }
     }
 }
