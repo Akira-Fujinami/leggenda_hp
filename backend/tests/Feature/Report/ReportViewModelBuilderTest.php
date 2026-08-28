@@ -17,6 +17,7 @@ use App\Models\WebsiteAnalysis;
 use App\Services\Report\ReportViewModelBuilder;
 use Database\Seeders\CategoryDefinitionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class ReportViewModelBuilderTest extends TestCase
@@ -881,6 +882,90 @@ class ReportViewModelBuilderTest extends TestCase
 
         $this->assertNotNull($viewModel->improvementFocus);
         $this->assertNull($viewModel->improvementReason);
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼AI-3(2026-08-28): 依頼AF-2の一致チェックが失敗しても何のログも
+    // 出ず、理由のブロックが静かに消えるだけだった(依頼AHでcompose()の
+    // 選定ロジックを変えた際に実際に起きた「沈黙する失敗」)。一致チェック
+    // 自体(依頼W-2の安全網)は外さず、ログを1件出すだけにする。
+    // ------------------------------------------------------------------
+
+    /**
+     * 生成時点の選定(focus_items_reason_sub_names)と、表示時のカードの
+     * 項目が一致しない場合、構造化ログが1件出ること。本文・APIキー・
+     * 顧客情報(evidence等)は含めず、analysis_id・保存されていた項目名・
+     * 表示時の項目名・不一致であることが分かる情報のみを含める。
+     */
+    public function test_logs_a_warning_when_stored_focus_sub_names_do_not_match_the_current_focus_items(): void
+    {
+        [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
+
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'focus_items_reason' => '実際には別の項目について書かれた理由です。',
+            'focus_items_reason_sub_names' => ['組織構造'],
+        ]);
+
+        Log::spy();
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNull($viewModel->improvementReason);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context) use ($analysis) {
+                $encoded = json_encode($context, JSON_UNESCAPED_UNICODE);
+
+                return str_contains($message, 'no longer match')
+                    && $context['analysis_id'] === $analysis->id
+                    && $context['stored_focus_sub_names'] === ['組織構造']
+                    && $context['current_focus_sub_names'] === ['同僚・先輩像', '職場の雰囲気', 'リーダーシップ']
+                    // 本文・APIキー・顧客情報を含まないこと(理由本文・evidence等)。
+                    && ! str_contains($encoded, '実際には別の項目について書かれた理由です')
+                    && ! str_contains($encoded, 'test-key')
+                    && ! str_contains(mb_strtolower($encoded), 'api_key');
+            })
+            ->once();
+    }
+
+    /**
+     * 一致している場合はこのログが出ないこと(過渡状態や正常系でノイズに
+     * ならないようにする)。
+     */
+    public function test_does_not_log_a_warning_when_stored_focus_sub_names_match_the_current_focus_items(): void
+    {
+        [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
+
+        BrandWheelImprovementSuggestion::factory()->create([
+            'analysis_id' => $analysis->id,
+            'status' => 'success',
+            'focus_items_reason' => '同僚・先輩像と職場の雰囲気は、候補者が働くイメージを持つうえで重要な情報です。',
+            'focus_items_reason_sub_names' => ['同僚・先輩像', '職場の雰囲気', 'リーダーシップ'],
+        ]);
+
+        Log::spy();
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNotNull($viewModel->improvementReason);
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    /**
+     * 提案行自体がまだ無い(生成中)場合は、不一致の警告ログを出さない ――
+     * 生成完了後の不一致だけを異常として扱う(生成中は頻繁に起こる正常な
+     * 過渡状態のため、ノイズにしない)。
+     */
+    public function test_does_not_log_a_warning_when_no_suggestion_row_exists_yet(): void
+    {
+        [$analysis, $leadSession] = $this->makeImprovementFocusFixtureWithColleaguesAndAtmosphere();
+
+        Log::spy();
+
+        app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        Log::shouldNotHaveReceived('warning');
     }
 
     // ------------------------------------------------------------------

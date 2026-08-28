@@ -18,6 +18,7 @@ use App\Services\BrandWheel\BrandWheelRadarSvgBuilder;
 use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
 use App\Services\BrandWheel\BrandWheelTextTruncator;
 use App\Support\Report\ReportViewModel;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Analysis(+LeadSession)から、Word/PDF生成が共通で参照するReportViewModelを
@@ -274,9 +275,31 @@ class ReportViewModelBuilder
             // 同じ「失敗してもレポート生成自体は失敗させない」方針)。
             $currentFocusSubNames = array_column($improvementFocus['items'], 'sub_name');
             $storedFocusSubNames = (array) ($improvementSuggestion?->focus_items_reason_sub_names ?? []);
-            $improvementReason = $currentFocusSubNames !== [] && $currentFocusSubNames === $storedFocusSubNames
+            $focusSubNamesMatch = $currentFocusSubNames !== [] && $currentFocusSubNames === $storedFocusSubNames;
+            $improvementReason = $focusSubNamesMatch
                 ? $improvementSuggestion?->focus_items_reason
                 : null;
+
+            // 依頼AI-3(2026-08-28): 依頼AF-2の一致チェックは、失敗しても
+            // 何のログも出ず理由のブロックが静かに消えるだけだった ――
+            // 依頼AHでcompose()の選定ロジックを変えた際、生成時点(古い
+            // 選定)と表示時点(新しい選定)が食い違い、理由が永久に表示
+            // されなくなる不具合をPDFを見るまで誰も気づけなかった(依頼AE の
+            // キュー指定漏れと同じ「沈黙する失敗」)。一致チェック自体は
+            // 依頼W-2の安全網のまま外さず、ログを1件出すだけにする(挙動は
+            // 変えない ―― 一致しなければ理由を出さないという動作は正しい)。
+            // 「まだ生成中で提案行自体が無い」場合はログを出さない
+            // (生成完了後の不一致だけを異常として扱う ―― 生成中は頻繁に
+            // 起こる正常な過渡状態のため)。本文・プロンプト・APIキー・
+            // 顧客情報は含めない(下位要素名は固定configのラベルであり、
+            // 顧客固有の情報ではない)。
+            if ($improvementSuggestion !== null && $currentFocusSubNames !== [] && ! $focusSubNamesMatch) {
+                Log::warning('Improvement suggestion focus items no longer match the stored reason selection; hiding the reason block', [
+                    'analysis_id' => $analysis->id,
+                    'stored_focus_sub_names' => $storedFocusSubNames,
+                    'current_focus_sub_names' => $currentFocusSubNames,
+                ]);
+            }
 
             // 依頼AF-3(2026-08-27、依頼者承認済み): 「理由」と「中長期の
             // 差別化ポイント」が両方ともnull(AIの生成に失敗した場合等)の

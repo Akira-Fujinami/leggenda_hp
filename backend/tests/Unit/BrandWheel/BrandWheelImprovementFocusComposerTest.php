@@ -472,4 +472,76 @@ class BrandWheelImprovementFocusComposerTest extends TestCase
             $result['lead_text'],
         );
     }
+
+    // ------------------------------------------------------------------
+    // 依頼AI-4(2026-08-28): 「着目すべき項目を%1$d件挙げます(内訳は各
+    // カードでご確認いただけます)。」は、①②のどちらでも壊れないよう
+    // 位置・出典を落とした結果、何を挙げているのか分からない文になって
+    // いた。何を挙げているかが分かる文に差し替え、①のみ・②のみ・混在の
+    // いずれでも事実と合うことを確認する。
+    // ------------------------------------------------------------------
+
+    /**
+     * 新しい文言は「何を挙げているか」(自社のサイトから読み取れなかった
+     * 項目)が分かる内容であること。種類(①②)の区別はカードのラベルが担う
+     * ため、リード文自体には①②を区別する言い回しを含めない。
+     */
+    public function test_breakout_lead_text_explains_what_is_being_listed(): void
+    {
+        $items = [
+            $this->item('personality', 'company_distance', 'leadership', false, true), // ①
+            $this->item('will_activity', 'company_appeal', 'purpose', false, false), // ②
+        ];
+
+        $result = $this->composer->compose($items, []);
+
+        $this->assertSame(
+            '御社のサイトから読み取れなかった項目のうち、優先度の高いものを2件挙げます。',
+            $result['lead_text'],
+        );
+        // 「内訳をご確認いただけます」のような、中身を持たない誘導では終わらない。
+        $this->assertStringNotContainsString('内訳', $result['lead_text']);
+        // 種類の区別はカードのラベルが担うため、リード文自体では説明しない。
+        $this->assertStringNotContainsString('競合', $result['lead_text']);
+    }
+
+    /**
+     * ①のみの場合の既存文言(gap_positive/gap_non_positive)は変更しない。
+     */
+    public function test_catch_up_only_lead_text_is_unchanged(): void
+    {
+        $items = [
+            $this->item('personality', 'company_distance', 'leadership', false, true),
+            $this->item('personality', 'company_distance', 'org_structure', false, true),
+        ];
+
+        $result = $this->composer->compose($items, []);
+
+        $this->assertSame(
+            sprintf((string) config('brand_wheel.improvement_focus_templates.gap_positive'), '会社との距離', 2),
+            $result['lead_text'],
+        );
+    }
+
+    /**
+     * カードが1枚・2枚・3枚のいずれでも、②を含むリード文が件数と矛盾なく
+     * 成立すること。
+     */
+    public function test_breakout_lead_text_is_correct_for_one_two_and_three_cards(): void
+    {
+        foreach ([1, 2, 3] as $breakoutCount) {
+            $items = array_map(
+                fn (int $i) => $this->item('will_activity', 'company_appeal', "purpose{$i}", false, false),
+                range(1, $breakoutCount),
+            );
+
+            $result = $this->composer->compose($items, []);
+
+            $this->assertCount($breakoutCount, $result['items']);
+            $this->assertSame(
+                sprintf((string) config('brand_wheel.improvement_focus_templates.items_include_breakout'), $breakoutCount),
+                $result['lead_text'],
+            );
+        }
+    }
 }

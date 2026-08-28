@@ -1172,6 +1172,32 @@ class LeadPdfViewTest extends TestCase
     }
 
     /**
+     * 依頼AI-4(2026-08-28): ②(breakout)を含む場合、新しいリード文
+     * (「何を挙げているか」が分かる文言)がレンダリングされること。
+     */
+    public function test_improvement_page_shows_the_ai4_lead_text_when_items_include_a_breakout_card(): void
+    {
+        $html = $this->render($this->comparisonViewModel([
+            'improvementFocus' => [
+                'selected_group' => 'company_distance',
+                'groups' => [
+                    ['group' => 'company_appeal', 'label' => '会社の魅力', 'self_count' => 1, 'competitor_count' => 1, 'max_count' => 4],
+                    ['group' => 'company_distance', 'label' => '会社との距離', 'self_count' => 0, 'competitor_count' => 1, 'max_count' => 4],
+                    ['group' => 'job_appeal', 'label' => '仕事の魅力', 'self_count' => 0, 'competitor_count' => 0, 'max_count' => 0],
+                ],
+                'items' => [
+                    ['type' => 'catch_up', 'axis_name' => '就業環境', 'sub_name' => '精神的自由度', 'definition' => 'テスト定義', 'recommendation' => 'テスト提案文1', 'competitor_evidence' => '柔軟な働き方を推進しています。'],
+                    ['type' => 'breakout', 'axis_name' => '活動的魅力', 'sub_name' => '社会貢献活動', 'definition' => 'テスト定義', 'recommendation' => 'テスト提案文2', 'competitor_evidence' => null],
+                ],
+                'lead_text' => sprintf((string) config('brand_wheel.improvement_focus_templates.items_include_breakout'), 2),
+            ],
+        ]));
+
+        $this->assertStringContainsString('御社のサイトから読み取れなかった項目のうち、優先度の高いものを2件挙げます。', $html);
+        $this->assertStringNotContainsString('内訳は各カードでご確認いただけます', $html);
+    }
+
+    /**
      * 2026-08-25(修正: 所見→提案): カードの本文は判定用の定義文
      * (sub_element_definitions)ではなく、行動を促す提案文
      * (config('brand_wheel.axes.*.sub_element_recommendations'))を表示する。
