@@ -5,6 +5,7 @@ namespace App\Services\BrandWheel;
 use App\Jobs\GenerateBrandWheelImprovementSuggestionJob;
 use App\Models\BrandWheelAnalysisResult;
 use App\Models\BrandWheelImprovementSuggestion;
+use App\Models\WebsiteAnalysis;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
 
@@ -28,6 +29,22 @@ use Illuminate\Support\Facades\Log;
  * ため、複数のBrandWheelAnalysisResultが同時に終端状態へ達しても(自社・競合の
  * Jobが並行実行された場合)、最初に行を作成できた1回だけがJobをdispatchする
  * (2回目以降はQueryExceptionを捕捉して何もしない)。
+ *
+ * 依頼AJ-1(2026-08-28、本番analysis_id=109): 従来は「保留中(非終端)の
+ * BrandWheelAnalysisResultが無いこと」だけで判定していたが、これは
+ * 「必要な行が全部そろっている」ことを意味しない ―― BrandWheelAnalysisResult
+ * は各WebsiteAnalysisの独立したクロール/レンダリングパイプライン
+ * (AnalysisPipeline::dispatchBrandWheelAnalysisAfterCrawl())の終端で
+ * website_analysisごとに個別に作られる(診断開始時に自社・競合ぶんまとめて
+ * 作られるわけではない)。自社の判定が先に終端に達し、競合の行がまだ
+ * 「作られてすらいない」瞬間にこのJobが呼ばれると、存在しない行は
+ * whereNotIn(...)->exists()の対象にならないため「保留中は無い」と誤判定し、
+ * 競合ゼロの状態で改善提案の生成が始まっていた(実際に本番で確認・
+ * dispatchIfReady()を直接呼ぶ再現テストでも同じ壊れた状態
+ * (focus_items_reason_sub_names=[]・reason=null・mid_term_action=null)を
+ * 確認済み)。この診断の対象WebsiteAnalysis件数と同じ数のBrandWheelAnalysisResult
+ * が存在することを先に確認し、その後で従来どおり全件終端かを確認する
+ * (順序を入れ替えるだけで、終端判定・冪等性の仕組み自体は無改修)。
  */
 class BrandWheelImprovementSuggestionDispatcher
 {
@@ -38,6 +55,34 @@ class BrandWheelImprovementSuggestionDispatcher
 
     public function dispatchIfReady(int $analysisId): void
     {
+        // 依頼AK-1(2026-08-28): website_analysesは(analysis_id, website_id)に
+        // 一意制約があるため、このcount()は常にこの診断のサイト数(=distinct
+        // website_id数)と一致する ―― 同一websiteに対する重複行は構造的に
+        // 作れない。
+        $websiteAnalysisCount = WebsiteAnalysis::query()->where('analysis_id', $analysisId)->count();
+
+        // brand_wheel_analysis_resultsは同一website_analysis_idに複数行を
+        // 持ちうる設計(--force再実行での比較用、AnalysisPipeline::
+        // dispatchBrandWheelAnalysisAfterCrawl()のdocblock参照、一意制約は
+        // 意図的に張っていない)。行数ではなくdistinctなwebsite_analysis_id数で
+        // 数えないと、例えば自社だけ--forceで2行になった場合に
+        // 「2行(自社)+0行(競合)=2行」が診断のサイト数(2)と一致してしまい、
+        // 競合の行が1件も無いままガードを通過してしまう(依頼者指摘)。
+        $brandWheelResultWebsiteAnalysisCount = BrandWheelAnalysisResult::query()
+            ->where('analysis_id', $analysisId)
+            ->distinct()
+            ->count('website_analysis_id');
+
+        if ($brandWheelResultWebsiteAnalysisCount < $websiteAnalysisCount) {
+            // まだ一部のWebsiteAnalysisについて、BrandWheelAnalysisResult
+            // 行自体が作られていない(依頼AJ-1 ―― 存在しない行は「保留中」
+            // として数えられないため、この確認を先に行う必要がある)。
+            // 依頼AK-1: 多い場合(--force再実行で件数が診断のサイト数を
+            // 超える場合)はガードしない ―― `!==`にすると--force再実行が
+            // 正常に完了できなくなるため、不足のみを見る。
+            return;
+        }
+
         $hasPending = BrandWheelAnalysisResult::query()
             ->where('analysis_id', $analysisId)
             ->whereNotIn('status', self::TERMINAL_STATUSES)
@@ -111,5 +156,77 @@ class BrandWheelImprovementSuggestionDispatcher
         // Render Worker設定の突き合わせで判明)。兄弟Job(GenerateBrandWheel
         // AnalysisJob、OpenAI呼び出し)と同じ'ai'キューに揃える。
         GenerateBrandWheelImprovementSuggestionJob::dispatch($suggestion->id)->onQueue('ai');
+    }
+
+    /**
+     * 依頼AK-2(2026-08-28): dispatchIfReady()は「まだ材料がそろっていない」
+     * ことをログ無しで何度でも早期returnする(正常な待機のたびにログを
+     * 出すとノイズになるため、依頼者指定でここは変えない)。しかし
+     * dispatchIfReady()の呼び出しの起点はGenerateBrandWheelAnalysisJobの
+     * cascadeProgress()の1箇所だけであり、あるサイトのBrandWheelAnalysisResult
+     * が(クロール系ジョブのOOM等でfailed()すら経ずに)最後まで作られなければ、
+     * そのサイトのGenerateBrandWheelAnalysisJob自体が走らず、dispatchIfReady()は
+     * 二度と呼ばれない ―― 「必要な行がそろうまで待つ」という正しい判断が、
+     * 行が永久にそろわない場合は「二度と生成されない」まま沈黙する。
+     *
+     * この関数は、Analysis全体が終端に達した時点(FinalizeAnalysisJob、
+     * ShouldBeUniqueで1診断につき1回だけ実行される)で1回だけ呼ぶことを
+     * 想定する ―― dispatchIfReady()側では呼ばない(要件「早期returnごとに
+     * 出さないこと」を、呼び出し場所を分けることで機械的に満たす)。
+     *
+     * 診断完了時点でBrandWheelImprovementSuggestionが存在しない場合に
+     * 構造化ログを1件出す。診断対象のWebsiteAnalysis件数・実際に
+     * BrandWheelAnalysisResultが存在するwebsite_analysis_idの件数・
+     * 欠けているwebsite_analysis_id(IDのみ、URL・会社名は含めない)を
+     * 併記する。本文・プロンプト・APIキー・顧客情報は含めない。
+     *
+     * 依頼AL-1(2026-08-28): 存在しない理由は2種類あり、性質が異なるため
+     * ログレベル・本文を分ける。
+     * - missing_website_analysis_idsが非空: あるサイトのBrandWheel
+     *   AnalysisResultが最後まで作られなかった異常(依頼AK-2が見えるように
+     *   したかったのはこちら) ―― warning。
+     * - missing_website_analysis_idsが空: 行はそろっているが、自社が
+     *   読み取れず(insufficient_input・axesが空・totalMatched===0)意図的に
+     *   生成しなかった正常系(依頼X以来の想定済みの結末、レポートの
+     *   Skipped状態としてDB・管理画面から既に見える) ―― warningのまま
+     *   出し続けると、この珍しくない正常系のたびに鳴り続けて無視される
+     *   ようになり、本当に見たい異常側まで一緒に見過ごされる(依頼者指摘)。
+     *   infoに落とし、本文も「行は揃っているが自社が読み取れず生成しな
+     *   かった」と分かるものにする(warning側と同じ本文のままレベルだけ
+     *   変えると、ログ集約側で本文による絞り込みができないため)。
+     */
+    public function logIfSuggestionMissingAfterAnalysisCompletion(int $analysisId): void
+    {
+        $websiteAnalysisIds = WebsiteAnalysis::query()->where('analysis_id', $analysisId)->pluck('id');
+
+        if ($websiteAnalysisIds->isEmpty()) {
+            return;
+        }
+
+        if (BrandWheelImprovementSuggestion::query()->where('analysis_id', $analysisId)->exists()) {
+            return;
+        }
+
+        $presentWebsiteAnalysisIds = BrandWheelAnalysisResult::query()
+            ->where('analysis_id', $analysisId)
+            ->distinct()
+            ->pluck('website_analysis_id');
+
+        $missingWebsiteAnalysisIds = $websiteAnalysisIds->diff($presentWebsiteAnalysisIds)->values();
+
+        $context = [
+            'analysis_id' => $analysisId,
+            'website_analysis_count' => $websiteAnalysisIds->count(),
+            'brand_wheel_result_distinct_website_analysis_count' => $presentWebsiteAnalysisIds->count(),
+            'missing_website_analysis_ids' => $missingWebsiteAnalysisIds->values()->all(),
+        ];
+
+        if ($missingWebsiteAnalysisIds->isNotEmpty()) {
+            Log::warning('Analysis completed without a brand wheel improvement suggestion: a BrandWheelAnalysisResult row is missing for at least one website', $context);
+
+            return;
+        }
+
+        Log::info('Analysis completed without a brand wheel improvement suggestion: all rows exist, likely skipped because self was not readable', $context);
     }
 }

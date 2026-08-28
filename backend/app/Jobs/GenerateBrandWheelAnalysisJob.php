@@ -35,9 +35,17 @@ use Illuminate\Support\Facades\Storage;
 /**
  * WebsiteAnalysis単位でブランド・ホイール(6軸)分析を生成する。
  * GenerateAiAnalysisJobと同じ設計方針:
- * - 事前にAnalysisPipeline::dispatchWebsiteFanOut()がbrand_wheel_analysis_
- *   resultsへstatus=pendingの行を作成し(自社・競合の両方、診断実行時)、
- *   そのIDだけを受け取る。
+ * - 依頼AK-2(2026-08-28)訂正: 以前はここで「事前にAnalysisPipeline::
+ *   dispatchWebsiteFanOut()がbrand_wheel_analysis_resultsへstatus=pendingの
+ *   行を作成し(自社・競合の両方、診断実行時)」と記載していたが誤り
+ *   (依頼AJ-1で発覚した既存テストの誤ったコメントと同じ種類の古い記述)。
+ *   dispatchWebsiteFanOut()はFetchStaticPageJob等を起動するだけで、
+ *   brand_wheel_analysis_resultsの行は作らない。実際はwebsite_analysis
+ *   ごとに、RenderPageJobの終端(成功・失敗いずれも)から
+ *   AnalysisPipeline::dispatchBrandWheelAnalysisAfterCrawl()が個別に
+ *   1件ずつ作成する(自社・競合が同時に作られるとは限らない ――
+ *   BrandWheelImprovementSuggestionDispatcher参照)。このJobはそうして
+ *   作られたBrandWheelAnalysisResultのIDを受け取る。
  * - 同一website_analysis_id×同一input_hashで既に成功している結果があれば、
  *   APIを再度呼ばずそれを複製する(冪等・コスト削減)。
  * - Provider未設定/認証エラー等は永久に待ち続けず、明確なエラーとして

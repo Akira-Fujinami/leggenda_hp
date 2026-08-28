@@ -11,6 +11,7 @@ use App\Models\Analysis;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStatusResolver;
+use App\Services\BrandWheel\BrandWheelImprovementSuggestionDispatcher;
 use App\Services\Lead\LeadReportDispatchService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -119,6 +120,31 @@ class FinalizeAnalysisJob implements ShouldBeUnique, ShouldQueue
                 } catch (\Throwable $e) {
                     report($e);
                     Log::warning('Failed to dispatch admin comparison report generation from FinalizeAnalysisJob', [
+                        'analysis_id' => $this->analysisId,
+                        'exception_class' => get_class($e),
+                    ]);
+                }
+            }
+
+            // 依頼AK-2(2026-08-28): 診断が完了(completed/partial)したのに
+            // 改善提案が1件も無い場合、構造化ログを1件出す(BrandWheelImprovement
+            // SuggestionDispatcher::dispatchIfReady()は「まだ材料がそろって
+            // いない」を早期returnで何度も無言に処理するため、あるサイトの
+            // BrandWheelAnalysisResultが最後まで作られなかった場合に二度と
+            // 生成されないまま沈黙する ―― このJobはShouldBeUniqueで1診断に
+            // つき1回だけ実行されるため、ここで1回だけ確認するのに適した
+            // 場所になる)。skip_brand_wheel=trueは改善提案自体を対象外にする
+            // 意図的な設定のため、対象から除く。挙動(生成の有無)は変えず、
+            // ログのみ ―― 他の副作用と同じく独立したtry/catchで囲み、
+            // この確認自体の失敗をこのJob本来の責務(Analysisの集計)の失敗に
+            // しない。
+            if ($analysis->skip_brand_wheel !== true && in_array($status, [AnalysisStatus::Completed, AnalysisStatus::Partial], true)) {
+                try {
+                    app(BrandWheelImprovementSuggestionDispatcher::class)
+                        ->logIfSuggestionMissingAfterAnalysisCompletion($analysis->id);
+                } catch (\Throwable $e) {
+                    report($e);
+                    Log::warning('Failed to check for a missing brand wheel improvement suggestion from FinalizeAnalysisJob', [
                         'analysis_id' => $this->analysisId,
                         'exception_class' => get_class($e),
                     ]);

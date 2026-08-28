@@ -18,6 +18,7 @@ use App\Models\Website;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
@@ -113,6 +114,100 @@ class FinalizeAnalysisJobTest extends TestCase
         $this->assertSame(AnalysisStatus::Completed, $analysis->fresh()->status);
         Queue::assertNotPushed(GenerateLeadReportJob::class);
         $this->assertSame(0, Report::where('analysis_id', $analysis->id)->count());
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼AK-2(2026-08-28): 診断が完了(completed/partial)したのに改善提案が
+    // 無い場合、BrandWheelImprovementSuggestionDispatcher::
+    // logIfSuggestionMissingAfterAnalysisCompletion()を1回だけ呼び、
+    // 構造化ログを出す(挙動は変えない、実際の配線を確認する)。
+    // ------------------------------------------------------------------
+
+    public function test_it_logs_a_warning_when_the_analysis_completes_without_a_brand_wheel_analysis_result_row(): void
+    {
+        Queue::fake([GenerateLeadReportJob::class]);
+        $analysis = $this->makeLeadAnalysis();
+        // skip_brand_wheelの既定値(DBカラムのdefault)はtrue ―― 実際のリード
+        // 診断(LeadAnalysisController::store())と同じくfalseに揃える。
+        $analysis->update(['skip_brand_wheel' => false]);
+        // makeReportableSelfBrandWheelResult()を呼ばない = BrandWheelAnalysisResultが
+        // 1件も無い状態で診断が完了する(依頼AK-2が検知すべき状態)。
+
+        Log::spy();
+
+        (new FinalizeAnalysisJob($analysis->id))->handle(app(AnalysisPipeline::class));
+
+        // 依頼AL-1: このケースは自社自身のBrandWheelAnalysisResultすら
+        // 存在しない(=missing_website_analysis_idsが非空)ため、異常側の
+        // warningになる(本文からも「行が欠けている」ことが分かる)。
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $message, array $context) => str_contains($message, 'a BrandWheelAnalysisResult row is missing')
+                && $context['analysis_id'] === $analysis->id)
+            ->once();
+        Log::shouldNotHaveReceived('info');
+    }
+
+    /**
+     * 改善提案が既に存在する(正常に生成された)場合はログを出さないこと。
+     */
+    public function test_it_does_not_log_when_a_brand_wheel_improvement_suggestion_already_exists(): void
+    {
+        Queue::fake([GenerateLeadReportJob::class]);
+        $analysis = $this->makeLeadAnalysis();
+        $analysis->update(['skip_brand_wheel' => false]);
+        $this->makeReportableSelfBrandWheelResult($analysis);
+        \App\Models\BrandWheelImprovementSuggestion::factory()->create(['analysis_id' => $analysis->id, 'status' => 'success']);
+
+        Log::spy();
+
+        (new FinalizeAnalysisJob($analysis->id))->handle(app(AnalysisPipeline::class));
+
+        Log::shouldNotHaveReceived('warning');
+        Log::shouldNotHaveReceived('info');
+    }
+
+    /**
+     * 依頼AL-1: 行はそろっているが自社が読み取れず意図的に生成しなかった
+     * 場合(想定済みの正常な結末)は、warningではなくinfoになること。
+     */
+    public function test_it_logs_at_info_level_when_all_rows_exist_but_self_is_not_readable(): void
+    {
+        Queue::fake([GenerateLeadReportJob::class]);
+        $analysis = $this->makeLeadAnalysis();
+        $analysis->update(['skip_brand_wheel' => false]);
+        $selfWa = $analysis->websiteAnalyses()->first();
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id, 'website_analysis_id' => $selfWa->id, 'status' => 'insufficient_input', 'axes' => null,
+        ]);
+
+        Log::spy();
+
+        (new FinalizeAnalysisJob($analysis->id))->handle(app(AnalysisPipeline::class));
+
+        Log::shouldNotHaveReceived('warning');
+        Log::shouldHaveReceived('info')
+            ->withArgs(fn (string $message, array $context) => str_contains($message, 'all rows exist')
+                && $context['analysis_id'] === $analysis->id
+                && $context['missing_website_analysis_ids'] === [])
+            ->once();
+    }
+
+    /**
+     * skip_brand_wheel=trueの診断は、改善提案自体が対象外の意図的な設定
+     * のため、ログの対象から除く。
+     */
+    public function test_it_does_not_log_when_brand_wheel_is_intentionally_skipped(): void
+    {
+        Queue::fake([GenerateLeadReportJob::class]);
+        $analysis = $this->makeLeadAnalysis();
+        $analysis->update(['skip_brand_wheel' => true]);
+
+        Log::spy();
+
+        (new FinalizeAnalysisJob($analysis->id))->handle(app(AnalysisPipeline::class));
+
+        Log::shouldNotHaveReceived('warning');
+        Log::shouldNotHaveReceived('info');
     }
 
     /**

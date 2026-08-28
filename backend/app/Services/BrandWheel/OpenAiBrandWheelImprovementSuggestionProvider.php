@@ -134,6 +134,26 @@ class OpenAiBrandWheelImprovementSuggestionProvider implements BrandWheelImprove
      * 揃えた。断定禁止・文体・出力言語・スキーマ(フィールド名・型)は
      * v9から無変更。
      *
+     * 【依頼AJ-2(2026-08-28)による訂正】v10の「本番直近10件すべてでnullだった
+     * 原因はプロンプトの主観的な逃げ道」という結論は誤りだった可能性が高い。
+     * v10の検証はmutually_unmatched_itemsが空でない「材料が揃った良いデータ」
+     * でのみ行われていた。実際の本番null事例(analysis_id=109等)を調査した
+     * 結果、真因はBrandWheelImprovementSuggestionDispatcher側にあった ――
+     * 競合のBrandWheelAnalysisResult行が「まだ作られてすらいない」状態で
+     * 改善提案の生成が始まり、competitor側のデータが実質ゼロのまま
+     * AIへ渡っていた(依頼AJ-1で修正、同クラスのdocblock参照)。この場合
+     * mutually_unmatched_itemsはhasCompetitor=false(BrandWheelImprovement
+     * SuggestionInputFactory参照)により強制的に空配列になるため、
+     * mid_term_actionがnullになるのはプロンプトの単一客観条件どおり
+     * 正しい動作であり、プロンプト自体に問題があったとは限らない。
+     * 【教訓】本番の現象を検証するときは、本番と同じ入力条件(この場合は
+     * 「競合データが実質ゼロ」)を再現する必要がある ―― 良いデータで
+     * 動作を確認しても、本番が悪いデータならその検証は再現になっていない。
+     * ただし、v10で削除した主観的な逃げ道(「関連性が低い」「根拠が弱い」等)
+     * 自体は無いほうが望ましい判断のため、v10の変更(プロンプト本文)は
+     * このまま維持する ―― 訂正するのは「本番nullの原因はこれだった」という
+     * 認識のみ。
+     *
      * v11(2026-08-27、依頼AF-2): 「理由」の復活。依頼W-2で競合ありの
      * ワンポイントを数値由来(BrandWheelImprovementFocusComposerが選んだ項目)
      * に差し替えた際、reasonをnullにして非表示にした(ReportViewModelBuilder:260)。
