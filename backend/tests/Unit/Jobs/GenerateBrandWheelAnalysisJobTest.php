@@ -120,14 +120,16 @@ class GenerateBrandWheelAnalysisJobTest extends TestCase
 
     /**
      * input_hash再利用のテストは、同一website_analysis_idに対してこのJobを
-     * 複数回handle()する(BrandWheelAnalysisInput::toArrayにwebsite_analysis_id
-     * 自体が含まれるため、ハッシュ一致による再利用は同一WebsiteAnalysisへの
-     * 再実行でのみ起こりうる ―― RunBrandWheelAnalysisCommandの--forceによる
-     * 再実行がまさにこのシナリオ)。2026-08-03のAnalysisJob連携により
-     * analysis_jobsは(analysis_id, website_analysis_id, job_type)単位の
-     * 冪等キーを持つため、同一website_analysis_idへ2回目のhandle()を呼ぶ前に
-     * 前回のAnalysisJob行を明示的にリセットする(RunBrandWheelAnalysisCommand
-     * 自身も同じ理由で同じリセットを行う)。
+     * 複数回handle()する。再利用クエリ自体が`where('website_analysis_id', ...)`
+     * で明示的に絞っている(依頼AR-6: BrandWheelAnalysisInput::toArray()から
+     * websiteAnalysisIdを除外した後も、この絞り込みは変えていない)ため、
+     * 同一WebsiteAnalysisへの再実行でのみ再利用が起こりうる点は変わらない
+     * ―― RunBrandWheelAnalysisCommandの--forceによる再実行がまさにこの
+     * シナリオ。2026-08-03のAnalysisJob連携により analysis_jobsは
+     * (analysis_id, website_analysis_id, job_type)単位の冪等キーを持つため、
+     * 同一website_analysis_idへ2回目のhandle()を呼ぶ前に前回のAnalysisJob行を
+     * 明示的にリセットする(RunBrandWheelAnalysisCommand自身も同じ理由で
+     * 同じリセットを行う)。
      */
     private function resetBrandWheelAnalysisJobRecord(WebsiteAnalysis $websiteAnalysis): void
     {

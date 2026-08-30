@@ -9,6 +9,16 @@ namespace App\Services\BrandWheel\Data;
  * リンクラベルのみを保持する。生HTML・スクリーンショット・Lighthouse/Semrush
  * 生データ・リードの個人情報/企業識別情報は一切含めない(型として持ち得ない
  * ことで、AIへ渡してよい情報の境界を強制する)。
+ *
+ * 依頼AR-6(2026-08-30): websiteAnalysisIdはtoArray()(=AIへのプロンプト・
+ * input_hashの算出対象)から除外した。これはDB行の連番IDであり「入力の
+ * 内容」ではないため、別々の診断(=別々のwebsite_analysis_id)は中身が
+ * 一字一句同じでもinput_hashが一致しないという問題があった(依頼AQ-0で
+ * 混乱の原因になった)。再利用判定(GenerateBrandWheelAnalysisJob)は
+ * 元々`where('website_analysis_id', ...)`で明示的に絞っており、hashに
+ * websiteAnalysisIdを含めるのは冗長なだけだった。プロパティ自体は
+ * ログ・診断用に引き続き保持する(この変更で除外されるのはtoArray()の
+ * 出力からのみ)。
  */
 readonly class BrandWheelAnalysisInput
 {
@@ -40,12 +50,15 @@ readonly class BrandWheelAnalysisInput
     ) {}
 
     /**
+     * 依頼AR-6: websiteAnalysisId(診断ごとに一意なDB行ID、入力の内容では
+     * ない)は含めない ―― AIへ渡すプロンプト、およびinput_hashはどちらも
+     * この配列から算出されるため、ここに含めないことで両方から除外される。
+     *
      * @return array<string, mixed>
      */
     public function toArray(): array
     {
         return [
-            'website_analysis_id' => $this->websiteAnalysisId,
             'recruit_page_title' => $this->recruitPageTitle,
             'recruit_page_body_text' => $this->recruitPageBodyText,
             'recruit_page_headings' => $this->recruitPageHeadings,

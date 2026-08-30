@@ -478,4 +478,37 @@ class BrandWheelAnalysisInputFactoryTest extends TestCase
 
         $this->assertStringContainsString('会社の紹介文です', $input->homepageBodyText);
     }
+
+    /**
+     * 依頼AR-6(2026-08-30): toArray()にwebsiteAnalysisIdを含めないため、
+     * 別々のWebsiteAnalysis(=必ず別のwebsite_analysis_idを持つ)でも、
+     * 中身(本文・見出し・リンクラベル等)が同一なら、そこから算出される
+     * ハッシュも同一になること。依頼AQ-0で「別診断は中身が同じでも
+     * input_hashが一致しない」という混乱の原因になった問題への対応。
+     * websiteAnalysisId自体は引き続きプロパティとして保持されている
+     * (toArray()からのみ除外)ことも併せて確認する。
+     */
+    public function test_toarray_content_hash_is_identical_across_different_website_analyses_with_identical_content(): void
+    {
+        $waA = WebsiteAnalysis::factory()->create();
+        $waB = WebsiteAnalysis::factory()->create();
+        $this->assertNotSame($waA->id, $waB->id);
+
+        foreach ([$waA, $waB] as $wa) {
+            $this->putHtmlPage($wa, PageType::Recruit, '<html><head><title>採用</title></head><body><h1>採用情報</h1><p>私たちは挑戦を続けます。</p></body></html>', '採用');
+            $this->putHtmlPage($wa, PageType::Homepage, '<html><head><title>Example</title></head><body><h1>Example</h1><p>会社概要のご案内です。</p></body></html>', 'Example');
+        }
+
+        $inputA = $this->factory->build($waA->fresh());
+        $inputB = $this->factory->build($waB->fresh());
+
+        $this->assertSame($waA->id, $inputA->websiteAnalysisId);
+        $this->assertSame($waB->id, $inputB->websiteAnalysisId);
+
+        $hashA = hash('sha256', json_encode($inputA->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $hashB = hash('sha256', json_encode($inputB->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+        $this->assertSame($hashA, $hashB);
+        $this->assertArrayNotHasKey('website_analysis_id', $inputA->toArray());
+    }
 }

@@ -94,6 +94,12 @@ class BrandWheelAnalysisInputFactoryCrawlIntegrationTest extends TestCase
      * toArray()の出力がバイト単位で完全に同一であること。同一フィクスチャに
      * 対して期待するJSON(この変更を加える前のBrandWheelAnalysisInputFactoryを
      * 手元で実行して採取した実際の出力)をハードコードして比較する。
+     *
+     * 依頼AR-6(2026-08-30): website_analysis_idはtoArray()から除外した
+     * (DB行のIDであり「入力の内容」ではないため。別々の診断は必ず別の
+     * website_analysis_idを持つので、これが含まれる限りinput_hashは
+     * 内容が同一でも一度も一致しない ―― 依頼AQ-0で判明)。$expectedから
+     * このキーを除いたことが、この依頼による唯一の差分。
      */
     public function test_crawl_site_false_produces_byte_identical_toarray_output(): void
     {
@@ -111,7 +117,6 @@ class BrandWheelAnalysisInputFactoryCrawlIntegrationTest extends TestCase
         $input = $this->factory->build($websiteAnalysis->fresh());
 
         $expected = [
-            'website_analysis_id' => $websiteAnalysis->id,
             'recruit_page_title' => '採用情報 | Example',
             'recruit_page_body_text' => "採用情報\n働き方\n私たちは挑戦を続けます。",
             'recruit_page_headings' => [
