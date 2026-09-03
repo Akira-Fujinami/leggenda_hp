@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LeadAnalysisForm } from "@/features/lead/lead-analysis-form";
@@ -102,6 +102,57 @@ describe("LeadAnalysisForm", () => {
     expect(screen.getByText("コーポレートサイトの「採用情報」ページ")).toBeInTheDocument();
     expect(screen.getByText("求人媒体の掲載ページ")).toBeInTheDocument();
     expect(screen.getByText("求人一覧だけのページ・ログインが必要なページ")).toBeInTheDocument();
+  });
+
+  /**
+   * 依頼AS-3(2026-09-03): 診断完了時のブラウザ通知の許可要求は、
+   * ユーザー操作(この「診断をはじめる」ボタンの押下)を起点に行う。
+   */
+  describe("browser notification permission request (依頼AS-3)", () => {
+    let requestPermissionMock: ReturnType<typeof vi.fn>;
+
+    function stubNotification(permission: NotificationPermission) {
+      requestPermissionMock = vi.fn();
+      vi.stubGlobal("Notification", { permission, requestPermission: requestPermissionMock });
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("permission未確定のときはボタン押下で許可を求める", async () => {
+      stubNotification("default");
+      const user = userEvent.setup();
+      render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
+
+      await user.type(screen.getByLabelText("貴社の採用サイト URL"), "https://example.com");
+      await user.click(screen.getByRole("button", { name: "診断をはじめる" }));
+
+      expect(requestPermissionMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("既に許可/拒否が確定している場合は聞き直さない", async () => {
+      stubNotification("denied");
+      const user = userEvent.setup();
+      render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
+
+      await user.type(screen.getByLabelText("貴社の採用サイト URL"), "https://example.com");
+      await user.click(screen.getByRole("button", { name: "診断をはじめる" }));
+
+      expect(requestPermissionMock).not.toHaveBeenCalled();
+    });
+
+    it("Notification未対応ブラウザ(jsdomの既定、windowにNotification自体が無い)でも送信自体は行われる", async () => {
+      const user = userEvent.setup();
+      render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
+
+      await user.type(screen.getByLabelText("貴社の採用サイト URL"), "https://example.com");
+      await user.click(screen.getByRole("button", { name: "診断をはじめる" }));
+
+      await waitFor(() => {
+        expect(mutateMock).toHaveBeenCalled();
+      });
+    });
   });
 
   it("keeps showing the form with the specific message for non-token errors like congestion", () => {

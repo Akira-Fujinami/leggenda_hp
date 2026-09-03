@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -83,6 +83,19 @@ function DiagnoseResult({
   const isTerminal = progressQuery.data?.data.status !== "processing";
   const resultsQuery = useLeadResults(token, isTerminal ? analysisId : null);
 
+  // 依頼AS-3(2026-09-03): 進捗が"processing"から終端状態(completed/partial/
+  // failed)へ切り替わった瞬間にブラウザ通知を1件出す。ポーリング(2.5秒間隔)
+  // のたびにuseLeadProgress()の再取得は起こるが、同じanalysisIdについては
+  // このrefで一度だけに絞る(タブを開いている間だけの通知、Web Pushは対象外)。
+  const notifiedAnalysisIdRef = useRef<number | null>(null);
+  const progressStatus = progressQuery.data?.data.status;
+  useEffect(() => {
+    if (!progressStatus || progressStatus === "processing") return;
+    if (notifiedAnalysisIdRef.current === analysisId) return;
+    notifiedAnalysisIdRef.current = analysisId;
+    notifyDiagnosisComplete();
+  }, [analysisId, progressStatus]);
+
   if (progressQuery.isLoading) {
     return <Skeleton className="h-40" />;
   }
@@ -122,4 +135,27 @@ function DiagnoseResult({
       <LeadResults results={resultsQuery.data.data} token={token} analysisId={analysisId} onRetry={onRetry} />
     </div>
   );
+}
+
+/**
+ * 依頼AS-3(2026-09-03): タブを開いている間だけのブラウザ通知(Web Push・
+ * Service Worker・購読情報の保存は対象外)。以下のいずれかに該当する場合は
+ * 何もしない(画面には一切影響させない、失敗は無視する):
+ * - ブラウザが通知に未対応、または許可されていない
+ * - タブがアクティブ(document.visibilityState === "visible")なとき ――
+ *   画面を見ている人に通知は不要
+ * 本文には会社名・担当者名・メールアドレスを一切含めない。
+ */
+function notifyDiagnosisComplete(): void {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  if (typeof document !== "undefined" && document.visibilityState === "visible") return;
+
+  try {
+    new Notification("採用サイト診断が完了しました", {
+      body: "結果画面でご確認いただけます。",
+    });
+  } catch {
+    // 通知の生成に失敗しても画面には影響させない。
+  }
 }

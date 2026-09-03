@@ -3,6 +3,7 @@
 namespace Tests\Unit\Lead;
 
 use App\Mail\BrandWheelAnalysisCompletedMail;
+use App\Mail\BrandWheelLeadDiagnosisCompletedMail;
 use App\Models\BrandWheelAnalysisResult;
 use App\Services\Lead\LeadNotificationService;
 use Illuminate\Support\Facades\Log;
@@ -74,5 +75,63 @@ class LeadNotificationServiceBrandWheelTest extends TestCase
 
         $this->assertTrue($sent);
         Mail::assertSent(BrandWheelAnalysisCompletedMail::class, fn (BrandWheelAnalysisCompletedMail $mail) => $mail->data['insufficientInput'] === true);
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼AS-2(2026-09-03): 「診断が完了しました」メール(相談リクエストの
+    // 有無にかかわらず送る、既存のnotifyBrandWheelAnalysisCompletedToLeadとは
+    // 別のMailable)。
+    // ------------------------------------------------------------------
+
+    public function test_diagnosis_completed_sends_the_mail_to_the_lead_email(): void
+    {
+        Mail::fake();
+
+        $sent = app(LeadNotificationService::class)->notifyDiagnosisCompletedToLead(
+            $this->makeResult(), 'lead@example.com', 'https://example.com',
+        );
+
+        $this->assertTrue($sent);
+        Mail::assertSent(BrandWheelLeadDiagnosisCompletedMail::class, function (BrandWheelLeadDiagnosisCompletedMail $mail) {
+            return $mail->hasTo('lead@example.com') && $mail->data['targetUrl'] === 'https://example.com';
+        });
+    }
+
+    /**
+     * BrandWheelLeadEmailContentBuilder::canSend()と同じ絶対ルール
+     * (6軸すべて読み取れなかった場合は社外へ送らない)をこのメソッド自身の
+     * 中でも再確認する。ログにはlead_session_id相当の識別子(ここでは
+     * brand_wheel_analysis_result_id)のみを残し、メールアドレス・会社名・
+     * 担当者名は出さない。
+     */
+    public function test_diagnosis_completed_does_not_send_when_not_eligible_and_does_not_leak_pii_in_the_log(): void
+    {
+        Mail::fake();
+        Log::spy();
+
+        $unreadableResult = new BrandWheelAnalysisResult([
+            'id' => 2,
+            'status' => 'success',
+            'axes' => [],
+            'axis_state_counts' => ['read' => 0, 'partial' => 0, 'unread' => 6],
+            'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+        ]);
+
+        $sent = app(LeadNotificationService::class)->notifyDiagnosisCompletedToLead(
+            $unreadableResult, 'lead@example.com', 'https://example.com',
+        );
+
+        $this->assertFalse($sent);
+        Mail::assertNothingSent();
+        Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message, array $context) {
+                $encoded = json_encode($context);
+
+                return $message === 'Lead diagnosis completed notification skipped: not eligible to send'
+                    && $context['brand_wheel_analysis_result_id'] === 2
+                    && ! str_contains($encoded, 'lead@example.com')
+                    && ! str_contains($encoded, '株式会社');
+            })
+            ->once();
     }
 }

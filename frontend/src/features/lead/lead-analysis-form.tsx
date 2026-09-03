@@ -30,6 +30,7 @@ export function LeadAnalysisForm({ token, onStarted }: { token: string; onStarte
   });
 
   const onSubmit = (values: AnalysisFormValues) => {
+    requestBrowserNotificationPermission();
     start.mutate(
       { self_url: values.self_url, competitor_url: values.competitor_url || undefined },
       { onSuccess: (res) => onStarted(res.data.analysis_id) },
@@ -75,6 +76,20 @@ export function LeadAnalysisForm({ token, onStarted }: { token: string; onStarte
       </Button>
     </form>
   );
+}
+
+/**
+ * 依頼AS-3(2026-09-03): 診断完了時のブラウザ通知(タブを開いている間のみ、
+ * Web Pushは対象外)のための許可要求。Notification.requestPermission()は
+ * ユーザー操作(この場合は「診断をはじめる」ボタンの押下)を起点に呼ぶ必要が
+ * あるブラウザが多いため、ここで呼ぶ。既に許可/拒否が確定している場合は
+ * 何もしない(拒否後に毎回聞き直さない)。未対応ブラウザでも例外を投げず、
+ * 画面には一切影響させない。
+ */
+function requestBrowserNotificationPermission(): void {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission !== "default") return;
+  void Notification.requestPermission();
 }
 
 /**

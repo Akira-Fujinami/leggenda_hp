@@ -89,3 +89,106 @@ describe("LeadDiagnosePage retry flow (2026-08-24追加)", () => {
     expect(screen.getByLabelText("貴社の採用サイト URL")).toBeInTheDocument();
   });
 });
+
+/**
+ * 依頼AS-3(2026-09-03): 進捗が終端状態(completed/partial/failed)に
+ * 切り替わった瞬間、タブが非アクティブなときだけブラウザ通知を1件出す。
+ * Web Push(Service Worker・購読情報)は対象外 ―― window.Notificationの
+ * コンストラクタ呼び出しだけを検証する。
+ */
+describe("LeadDiagnosePage browser notification (依頼AS-3)", () => {
+  let notificationConstructor: ReturnType<typeof vi.fn>;
+
+  function setVisibility(state: "visible" | "hidden") {
+    Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+  }
+
+  function setPermission(permission: NotificationPermission) {
+    Object.defineProperty(window.Notification, "permission", { value: permission, configurable: true });
+  }
+
+  beforeEach(() => {
+    notificationConstructor = vi.fn();
+    vi.stubGlobal(
+      "Notification",
+      Object.assign(notificationConstructor, { permission: "granted" as NotificationPermission, requestPermission: vi.fn() }),
+    );
+    mockUseStartLeadAnalysis.mockReturnValue({ mutate: vi.fn(), isPending: false, error: null } as never);
+    window.localStorage.setItem("lead-analysis-id:abc", "42");
+    mockUseLeadResults.mockReturnValue({
+      data: { data: { status: "completed", reports: { docx: "skipped", pdf: "skipped" }, websites: [] } },
+      isLoading: false,
+    } as never);
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it("タブが非アクティブなときに完了で通知を1件出す", () => {
+    setVisibility("hidden");
+    setPermission("granted");
+    mockUseLeadProgress.mockReturnValue({
+      data: { data: { percent: 100, status: "completed", message: "診断が完了しました。" } },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as never);
+
+    render(<LeadDiagnosePage />);
+
+    expect(notificationConstructor).toHaveBeenCalledTimes(1);
+    const [title, options] = notificationConstructor.mock.calls[0];
+    expect(title).toBe("採用サイト診断が完了しました");
+    expect(JSON.stringify(options)).not.toMatch(/@|株式会社|様/);
+  });
+
+  it("タブがアクティブなときは通知を出さない", () => {
+    setVisibility("visible");
+    setPermission("granted");
+    mockUseLeadProgress.mockReturnValue({
+      data: { data: { percent: 100, status: "completed", message: "診断が完了しました。" } },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as never);
+
+    render(<LeadDiagnosePage />);
+
+    expect(notificationConstructor).not.toHaveBeenCalled();
+  });
+
+  it("通知が許可されていない場合は出さず、画面も従来どおり表示される", () => {
+    setVisibility("hidden");
+    setPermission("denied");
+    mockUseLeadProgress.mockReturnValue({
+      data: { data: { percent: 100, status: "completed", message: "診断が完了しました。" } },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as never);
+
+    render(<LeadDiagnosePage />);
+
+    expect(notificationConstructor).not.toHaveBeenCalled();
+    expect(screen.getByText("今回はご用意できる診断結果がありませんでした。")).toBeInTheDocument();
+  });
+
+  it("ポーリングによる再レンダリングが複数回起きても通知は1件だけ", () => {
+    setVisibility("hidden");
+    setPermission("granted");
+    mockUseLeadProgress.mockReturnValue({
+      data: { data: { percent: 100, status: "completed", message: "診断が完了しました。" } },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as never);
+
+    const { rerender } = render(<LeadDiagnosePage />);
+    rerender(<LeadDiagnosePage />);
+    rerender(<LeadDiagnosePage />);
+
+    expect(notificationConstructor).toHaveBeenCalledTimes(1);
+  });
+});

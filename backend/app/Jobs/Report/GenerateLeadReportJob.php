@@ -6,6 +6,7 @@ use App\Enums\ReportFormat;
 use App\Enums\ReportGenerationStatus;
 use App\Models\Analysis;
 use App\Models\Report;
+use App\Services\Lead\LeadDiagnosisCompletedNotifier;
 use App\Services\Report\PdfReportGenerator;
 use App\Services\Report\ReportViewModelBuilder;
 use App\Services\Report\WordReportGenerator;
@@ -52,6 +53,7 @@ class GenerateLeadReportJob implements ShouldBeUnique, ShouldQueue
         ReportViewModelBuilder $viewModelBuilder,
         WordReportGenerator $wordGenerator,
         PdfReportGenerator $pdfGenerator,
+        LeadDiagnosisCompletedNotifier $diagnosisCompletedNotifier,
     ): void {
         $analysis = Analysis::with('project.leadSession')->find($this->analysisId);
 
@@ -89,6 +91,23 @@ class GenerateLeadReportJob implements ShouldBeUnique, ShouldQueue
 
         if (! $docxSucceeded || ! $pdfSucceeded) {
             throw new RuntimeException("レポート生成に失敗した形式があります(analysis_id={$this->analysisId})");
+        }
+
+        // 依頼AS-1/AS-2(2026-09-03): 「診断が完了しました」メール(相談
+        // リクエストの有無にかかわらず送る)は、Word・PDF両方が実際に
+        // 完成したこの時点で送る ―― 判定完了時点(BrandWheelCompletionNotifier、
+        // 既存・無改修)では、この後に改善提案の生成待ち(依頼AM-1、最大
+        // 約75秒)とレポート生成そのものが残っており、レポートが実際には
+        // まだ存在しない状態でメールが飛んでしまう問題があった(依頼AS-1で
+        // 確認)。例外はここで握りつぶす(ログにのみ残す) ―― メール送信の
+        // 失敗が、既に完了しているレポート生成の成否に影響してはならない。
+        try {
+            $diagnosisCompletedNotifier->notifyIfReady($analysis);
+        } catch (Throwable $e) {
+            report($e);
+            Log::warning('Lead diagnosis completed notification failed unexpectedly', [
+                'analysis_id' => $this->analysisId,
+            ]);
         }
     }
 

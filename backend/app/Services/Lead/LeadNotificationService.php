@@ -4,6 +4,7 @@ namespace App\Services\Lead;
 
 use App\Mail\BrandWheelAnalysisCompletedMail;
 use App\Mail\BrandWheelLeadAnalysisCompletedMail;
+use App\Mail\BrandWheelLeadDiagnosisCompletedMail;
 use App\Models\BrandWheelAnalysisResult;
 use App\Models\LeadSession;
 use App\Notifications\Lead\LeadAnalysisStartedNotification;
@@ -202,6 +203,55 @@ class LeadNotificationService
             report($e);
 
             Log::warning('Brand wheel lead notification failed to send', [
+                'brand_wheel_analysis_result_id' => $result->id,
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
+     * 依頼AS-2(2026-09-03): 「診断が完了しました」メール。相談リクエストの
+     * 有無にかかわらず送る(LeadDiagnosisCompletedNotifier参照)。
+     * notifyBrandWheelAnalysisCompletedToLead()と同じくBrandWheelLead
+     * EmailContentBuilder::canSend()をここでも再確認する(境界そのもので
+     * 強制する既存方針)。Mailableのみが異なり(相談リクエストを前提にしない
+     * 中立的な文面)、送信条件・データの組み立ては完全に共通。
+     */
+    public function notifyDiagnosisCompletedToLead(
+        BrandWheelAnalysisResult $result,
+        ?string $leadEmail,
+        string $targetUrl,
+    ): bool {
+        $contentBuilder = app(BrandWheelLeadEmailContentBuilder::class);
+
+        if (! $contentBuilder->canSend($result)) {
+            Log::info('Lead diagnosis completed notification skipped: not eligible to send', [
+                'brand_wheel_analysis_result_id' => $result->id,
+                'reason' => $contentBuilder->blockedReason($result),
+            ]);
+
+            return false;
+        }
+
+        if ($leadEmail === null || $leadEmail === '') {
+            Log::warning('Lead diagnosis completed notification skipped: no lead email address available', [
+                'brand_wheel_analysis_result_id' => $result->id,
+            ]);
+
+            return false;
+        }
+
+        try {
+            $data = $contentBuilder->build($result, $targetUrl);
+
+            Mail::to($leadEmail)->send(new BrandWheelLeadDiagnosisCompletedMail($data));
+
+            return true;
+        } catch (Throwable $e) {
+            report($e);
+
+            Log::warning('Lead diagnosis completed notification failed to send', [
                 'brand_wheel_analysis_result_id' => $result->id,
             ]);
 
