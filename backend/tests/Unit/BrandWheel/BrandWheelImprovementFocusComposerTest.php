@@ -452,7 +452,7 @@ class BrandWheelImprovementFocusComposerTest extends TestCase
             sprintf((string) config('brand_wheel.improvement_focus_templates.items_include_breakout'), 2),
             $result['lead_text'],
         );
-        $this->assertStringNotContainsString('比較サイトの記述にあり', $result['lead_text']);
+        $this->assertStringNotContainsString('競合サイトの記述にあり', $result['lead_text']);
     }
 
     /**

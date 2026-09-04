@@ -203,10 +203,10 @@ class ReportSummaryComposer
         $competitorDisplay = (int) $competitorScore['display_score'];
 
         if ($scoreDiff > 0) {
-            return "自社サイトは総合スコア{$selfDisplay}点で、比較サイト({$competitorDisplay}点)を上回りました。";
+            return "自社サイトは総合スコア{$selfDisplay}点で、競合サイト({$competitorDisplay}点)を上回りました。";
         }
 
-        return "自社サイトは総合スコア{$selfDisplay}点で、比較サイト({$competitorDisplay}点)を下回りました。";
+        return "自社サイトは総合スコア{$selfDisplay}点で、競合サイト({$competitorDisplay}点)を下回りました。";
     }
 
     /**

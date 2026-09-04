@@ -194,7 +194,7 @@
     {{-- 依頼AG-2(2026-08-27): 「以降のページでは」という相対位置表現を削除
          (依頼AEと同じ考え方 ―― ページ構成の変更で実態とズレる恐れがある)。 --}}
     <p class="introbody">6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。本レポートでは、自社と競合{{ $viewModel->competitorCount }}社を、この24項目で比較します。</p>
-    <p class="introbody" style="font-size: 9.5pt; color: #6B6767;">読み取れなかった項目は、その魅力が『無い』という意味ではありません。サイトにそう書かれていない、というだけです。</p>
+    <p class="introbody" style="font-size: 9.5pt; color: #6B6767;">{{ config('brand_wheel.axis_unread_caveat') }}</p>
 </div>
 
 {{-- 3. 自社サイトの分析結果(スコア・レーダー図)。 --}}

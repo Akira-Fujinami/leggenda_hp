@@ -109,7 +109,7 @@ class WordReportGenerator
         $section->addText('対象サイト: '.$viewModel->selfWebsiteUrl, [], ['alignment' => Jc::CENTER]);
 
         if ($viewModel->competitorWebsiteUrl !== null) {
-            $section->addText('比較サイト: '.$viewModel->competitorWebsiteUrl, [], ['alignment' => Jc::CENTER]);
+            $section->addText('競合サイト: '.$viewModel->competitorWebsiteUrl, [], ['alignment' => Jc::CENTER]);
 
             // 依頼O-2/P-3(2026-08-25): 競合サイトの分析が成立しなかった場合、
             // PDF版と同じ注記を添える(案B、依頼者確定)。$competitorReadable()の
@@ -140,10 +140,13 @@ class WordReportGenerator
      * ReportViewModelを受け取らない(PDF側と同じ理由でBrandWheelHexagonRenderer
      * も通さない、2026-08-04)。
      *
-     * ここに含む「読み取れなかった項目は…」の一文は、この診断で最も誤解を
-     * 招きやすい箇所の断り書きのため、要約・省略せず原文のまま出すこと
-     * (引用符は『』を使う ―― ユーザー指定の「絶対に消してはいけない文言」
-     * 原文どおり、2026-08-04)。
+     * 末尾の断り書き(config('brand_wheel.axis_unread_caveat'))は、この診断で
+     * 最も誤解を招きやすい箇所の注記のため、要約・省略せず原文のまま出すこと。
+     * 2026-08-04時点では「絶対に消してはいけない文言」として原文固定
+     * だったが、依頼AX-2(2026-09-04)で文言そのものが差し替えられた ――
+     * 固定すべきは「原文の一言一句」ではなく「PDF・多社比較PDF・Wordの
+     * 3箇所で同じ文言であること」であり、configの値を直接参照することで
+     * それを保証する。
      */
     private function addBrandWheelFrameworkIntroSection(PhpWord $phpWord, ReportViewModel $viewModel): void
     {
@@ -172,15 +175,22 @@ class WordReportGenerator
         }
 
         // 2026-08-17: 軸単位の説明(config('brand_wheel.axes.*.definition')、
-        // 既存)を1段落にまとめて追加する(依頼者指定#6)。PDF版で表(セル内
-        // ネスト)に入れたところ実PDF確認で深刻なページ分割不具合が見つかった
-        // ため、Word版も最初から表の外の通常の段落として追加する(PDF版との
-        // 構造整合)。
+        // 既存)を追加する(依頼者指定#6)。PDF版で表(セル内ネスト)に入れた
+        // ところ実PDF確認で深刻なページ分割不具合が見つかったため、Word版も
+        // 最初から表の外の通常の段落として追加する(PDF版との構造整合)。
+        //
+        // 依頼AX-1(2026-09-04): 6カテゴリを1段落に'　'区切りで詰め込んで
+        // いたため、カテゴリ名が行頭に揃わなかった。PDF版と同じく1カテゴリ=
+        // 1行(段落)にし、カテゴリ名を太字にする ―― addText()は呼び出しごとに
+        // スタイルが1種類しか持てない(太字部分だけ変えられない)ため、
+        // addTextRun()で「太字のカテゴリ名」+「通常の定義文」を同一段落内の
+        // 別ランとして組み立てる。
         $section->addTextBreak(1);
-        $axisDefsText = collect((array) config('brand_wheel.axes', []))
-            ->map(fn ($axis) => $axis['name_ja'].'：'.$axis['definition'])
-            ->implode('　');
-        $section->addText($axisDefsText, ['size' => 9, 'color' => '4A4A4A']);
+        foreach ((array) config('brand_wheel.axes', []) as $axis) {
+            $textRun = $section->addTextRun(['spaceAfter' => 40]);
+            $textRun->addText($axis['name_ja'].'：', ['bold' => true, 'size' => 9, 'color' => '4A4A4A']);
+            $textRun->addText($axis['definition'], ['size' => 9, 'color' => '4A4A4A']);
+        }
 
         $section->addTextBreak(1);
         $section->addText(
@@ -204,9 +214,7 @@ class WordReportGenerator
 
         $section->addTextBreak(1);
         $section->addText(
-            '読み取れなかった項目は、その魅力が『無い』という意味ではありません。サイトにそう書かれていない、というだけです。'.
-            'また、採用ブランドは本来、グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども併せて構築するものです。'.
-            '今回はそのうちサイトの記述のみを拝見しています。',
+            (string) config('brand_wheel.axis_unread_caveat'),
             ['size' => 9, 'color' => '666666'],
         );
     }
@@ -356,7 +364,7 @@ class WordReportGenerator
         $table->addCell(3500)->addText('項目', ['bold' => true]);
         $table->addCell(1500)->addText('自社', ['bold' => true]);
         if ($showCompetitorColumn) {
-            $table->addCell(1500)->addText('比較', ['bold' => true]);
+            $table->addCell(1500)->addText('競合', ['bold' => true]);
         }
 
         foreach ($viewModel->subElementComparison as $item) {
@@ -372,7 +380,7 @@ class WordReportGenerator
         $section->addTextBreak(1);
         $legend = "合計　○自社サイト {$viewModel->selfTotalMatched} / {$viewModel->selfTotalMax}項目";
         if ($showCompetitorColumn) {
-            $legend .= "　　○比較サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目";
+            $legend .= "　　○競合サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目";
         }
         $section->addText($legend, ['size' => 9.5, 'color' => '6B6767']);
 
@@ -541,7 +549,7 @@ class WordReportGenerator
                     $section->addText($item['recommendation'], ['size' => 9, 'color' => '6B6767']);
                     $section->addText('（現在、サイトからは読み取れませんでした）', ['size' => 8, 'color' => '9A9A9A']);
                     if ($item['type'] === 'catch_up') {
-                        $section->addText('比較サイトの記述：「'.$item['competitor_evidence'].'」');
+                        $section->addText('競合サイトの記述：「'.$item['competitor_evidence'].'」');
                         // 依頼AA(2026-08-27): PDF版の.cmp-translationと同内容。
                         if (! empty($item['competitor_evidence_translation'])) {
                             $section->addText(
@@ -565,9 +573,6 @@ class WordReportGenerator
                     $section->addText('中長期の差別化ポイント', ['bold' => true, 'size' => 9.5, 'color' => '2C7F96']);
                     $section->addText($viewModel->improvementMidTermAction, ['size' => 9]);
                 }
-
-                $section->addTextBreak(1);
-                $section->addText('サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。');
             }
 
             return;
@@ -626,9 +631,6 @@ class WordReportGenerator
             $section->addText('中長期の差別化ポイント', ['bold' => true, 'size' => 9.5, 'color' => '2C7F96']);
             $section->addText($viewModel->improvementMidTermAction, ['size' => 9]);
         }
-
-        $section->addTextBreak(1);
-        $section->addText('サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。');
     }
 
     /**

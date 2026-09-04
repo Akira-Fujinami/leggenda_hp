@@ -268,11 +268,7 @@ class WordReportGeneratorTest extends TestCase
         $documentXml = $this->generate($this->viewModel());
 
         $this->assertStringContainsString('採用ブランドの捉え方', $documentXml);
-        $this->assertStringContainsString(
-            '読み取れなかった項目は、その魅力が『無い』という意味ではありません。'
-            .'サイトにそう書かれていない、というだけです。',
-            $documentXml,
-        );
+        $this->assertStringContainsString((string) config('brand_wheel.axis_unread_caveat'), $documentXml);
     }
 
     public function test_intro_section_group_labels_do_not_include_color_names(): void
@@ -303,7 +299,7 @@ class WordReportGeneratorTest extends TestCase
         ]));
 
         $this->assertStringContainsString('採用ブランドの捉え方', $documentXml);
-        $this->assertStringContainsString('読み取れなかった項目は、その魅力が『無い』という意味ではありません。', $documentXml);
+        $this->assertStringContainsString((string) config('brand_wheel.axis_unread_caveat'), $documentXml);
     }
 
     /**
@@ -390,7 +386,7 @@ class WordReportGeneratorTest extends TestCase
             'competitorTotalMax' => 0,
         ]));
 
-        $this->assertStringContainsString('比較サイト: https://competitor.example.com', $documentXml);
+        $this->assertStringContainsString('競合サイト: https://competitor.example.com', $documentXml);
         $this->assertStringContainsString(config('brand_wheel.cover_competitor_unreadable_notice'), $documentXml);
     }
 
@@ -459,7 +455,7 @@ class WordReportGeneratorTest extends TestCase
         $documentXml = $this->generate($viewModel);
 
         $this->assertStringContainsString("自社サイト {$viewModel->selfTotalMatched} / {$viewModel->selfTotalMax}項目", $documentXml);
-        $this->assertStringContainsString("比較サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目", $documentXml);
+        $this->assertStringContainsString("競合サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目", $documentXml);
     }
 
     public function test_comparison_section_shows_the_label_only_reference_counts_separately_from_the_total(): void
@@ -484,7 +480,7 @@ class WordReportGeneratorTest extends TestCase
             'competitorTotalMax' => 0,
         ]));
 
-        $this->assertStringNotContainsString('比較サイト 0 / 0項目', $documentXml);
+        $this->assertStringNotContainsString('競合サイト 0 / 0項目', $documentXml);
     }
 
     // ------------------------------------------------------------------
@@ -621,12 +617,14 @@ class WordReportGeneratorTest extends TestCase
     /**
      * 2026-08-19: 旧文言はPDF版の改善提案ページで末尾1文だけが次ページへ
      * あふれる不具合の原因だったため短縮した(依頼者承認、PDF版と同内容)。
+     * 依頼AX-4(2026-09-04)で、短縮後の文自体を削除した(依頼者指定、PDF版と
+     * 同内容)。
      */
-    public function test_improvement_section_keeps_the_shortened_closing_note_verbatim(): void
+    public function test_improvement_section_no_longer_shows_the_trailing_closing_note(): void
     {
         $documentXml = $this->generate($this->comparisonViewModel());
 
-        $this->assertStringContainsString('サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。', $documentXml);
+        $this->assertStringNotContainsString('サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。', $documentXml);
         $this->assertStringNotContainsString('なお、これらを『サイトに書き足す』ことで解決するとは限りません', $documentXml);
     }
 
@@ -745,7 +743,7 @@ class WordReportGeneratorTest extends TestCase
 
         $this->assertStringNotContainsString('比較サイトが無いため、領域ごとの比較はご用意できません。', $documentXml);
         $this->assertStringContainsString('サイトの記述から読み取れた項目が最も少なかったのは', $documentXml);
-        $this->assertStringNotContainsString('比較サイトの記述：', $documentXml);
+        $this->assertStringNotContainsString('競合サイトの記述：', $documentXml);
     }
 
     /**

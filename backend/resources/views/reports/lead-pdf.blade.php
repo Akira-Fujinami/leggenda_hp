@@ -241,7 +241,20 @@
         一度収まる値を決めれば実データによって再びあふれることはない)。
     --}}
     .introbody { width: 265mm; font-size: 9.5pt; line-height: 1.4; margin: 0 0 1.5mm; }
-    .axisdefs { width: 139mm; font-size: 8pt; line-height: 1.3; color: #4a4a4a; margin: 1.5mm 0 0; }
+    {{--
+        依頼AX-1(2026-09-04): 6カテゴリの定義を1つの<p>に詰めて流し込んで
+        いたため、カテゴリ名が行頭に揃わず(文章の途中で折り返した位置に
+        次のカテゴリ名が来る)、どこからが次の項目か読み取れない不具合が
+        あった。1カテゴリ=1つの<p>(axisdefitem)に分け、カテゴリ名を
+        必ず行頭に来るブロックにする。table化はしない ――
+        このページは過去にtable-in-table(grouptbl自体が外側tableのtd内)の
+        入れ子構造でdompdfのページ分割が壊れた実績があるため(直上の
+        axisdefs導入時のコメント参照)、同じ入れ子を避けブロック要素の
+        縦積みで解決する。行間・余白は実PDF確認で1ページに収まる値に
+        調整済み(依頼AX-1)。
+    --}}
+    .axisdefs { width: 139mm; margin: 1.5mm 0 0; }
+    .axisdefs p { font-size: 8pt; line-height: 1.2; color: #4a4a4a; margin: 0 0 0.7mm; }
     .introcaution { width: 265mm; font-size: 8.5pt; line-height: 1.45; color: #5b5b5b; border-top: 1px solid #E0E0E0; padding-top: 1.5mm; margin: 0; }
 
     {{-- 自社ページの分析結果ページの合計件数ボックス。 --}}
@@ -505,7 +518,7 @@
     <p>{{ $viewModel->companyDisplayName }}</p>
     <p>対象サイト: {{ $viewModel->selfWebsiteUrl }}</p>
     @if ($viewModel->competitorWebsiteUrl)
-        <p>比較サイト: {{ $viewModel->competitorWebsiteUrl }}</p>
+        <p>競合サイト: {{ $viewModel->competitorWebsiteUrl }}</p>
         {{--
             依頼O-2/P-3(2026-08-25): 競合サイトの分析が成立しなかった
             ($competitorReadable=false)場合、表紙は比較サイトのURLを
@@ -570,11 +583,11 @@
                 決めているため、この段落の追加ぶんは新たな行の高さを生まない
                 (画像の下に元々余っていた余白を使うだけ)。
             --}}
-            <p class="axisdefs">
+            <div class="axisdefs">
                 @foreach ((array) config('brand_wheel.axes', []) as $axis)
-                    <b>{{ $axis['name_ja'] }}</b>：{{ $axis['definition'] }}
+                    <p><b>{{ $axis['name_ja'] }}</b>：{{ $axis['definition'] }}</p>
                 @endforeach
-            </p>
+            </div>
         </td>
     </tr></table>
     <p class="introbody">6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。中心の<b>Core Value(約束する価値)</b>は、その24項目を貫く「この会社が候補者に約束するもの」にあたります。</p>
@@ -593,7 +606,7 @@
          N/24等の数値表示自体は3・4ページの統計ボックス等に引き続き残す。 --}}
     <p class="introbody">本レポートでは、サイト上から確認できた情報をもとに、候補者に伝わる情報や印象を分析しています。</p>
     <p class="introbody" style="font-size: 9.5pt; color: #6B6767;">{{ $viewModel->crawlSiteEnabled ? config('brand_wheel.crawl_enabled_scope_notice') : config('brand_wheel.crawl_disabled_scope_notice') }}</p>
-    <p class="introcaution">読み取れなかった項目は、その魅力が『無い』という意味ではありません。サイトにそう書かれていない、というだけです。また、採用ブランドは本来、グループインタビュー・口コミ・内定者や辞退者へのインタビュー・説明会・SNSなども併せて構築するものです。今回はそのうちサイトの記述のみを拝見しています。</p>
+    <p class="introcaution">{{ config('brand_wheel.axis_unread_caveat') }}</p>
 </div>
 
 {{--
@@ -747,7 +760,7 @@
                         <th class="sub"></th>
                         <th>自社</th>
                         @if ($showCompetitorColumn)
-                            <th>比較</th>
+                            <th>競合</th>
                         @endif
                     </tr>
                     @foreach ($comparisonByGroup->get($groupKey, []) as $item)
@@ -767,7 +780,7 @@
         <p class="vslegend">
             合計　<span class="mkon">○</span> 自社サイト {{ $viewModel->selfTotalMatched }} / {{ $viewModel->selfTotalMax }}項目
             @if ($showCompetitorColumn)
-                　　<span class="mkon cp">○</span> 比較サイト {{ $viewModel->competitorTotalMatched }} / {{ $viewModel->competitorTotalMax }}項目
+                　　<span class="mkon cp">○</span> 競合サイト {{ $viewModel->competitorTotalMatched }} / {{ $viewModel->competitorTotalMax }}項目
             @endif
         </p>
         <p class="vsreflegend">
@@ -795,9 +808,10 @@
     「－」の項目(discarded_sub_elements、AIが挙げた引用が原文照合で棄却
     されたもの)は一切参照しない ―― buildSelfEvidenceByAxis()がそもそも
     matched_sub_elementsしか読まないため、参照する経路自体が無い
-    (依頼者指定: 顧客に見せるものではない)。「－」については2ページ目の
-    既存の断り書き(「読み取れなかった項目は、その魅力が『無い』という
-    意味ではありません」)で足りている。
+    (依頼者指定: 顧客に見せるものではない)。「－」については対比表ページの
+    凡例(「－ 該当する記述が見つからなかった項目(『魅力が無い』という
+    意味ではありません)」、.cmplegend)で足りている(依頼AX-2で2ページ目の
+    断り書きからはこの一文を削除したため、この凡例が唯一の説明箇所になった)。
 
     $viewModel->selfEvidenceByAxisが空配列(matched=0件、または全項目の
     evidenceが空文字)の場合はページ自体を出さない(空のページを作らない)。
@@ -976,7 +990,7 @@
                                     <p class="q">{{ $item['recommendation'] }}</p>
                                     <p class="own">（現在、サイトからは読み取れませんでした）</p>
                                     @if ($item['type'] === 'catch_up')
-                                        <p class="lb">比較サイトの記述</p>
+                                        <p class="lb">競合サイトの記述</p>
                                         <p class="cmp">「{{ $item['competitor_evidence'] }}」</p>
                                         @if (! empty($item['competitor_evidence_translation']))
                                             <p class="cmp-translation">{{ config('brand_wheel.quote_translation_label') }}：{{ $item['competitor_evidence_translation'] }}</p>
@@ -1035,8 +1049,6 @@
                         <p>{{ $viewModel->improvementFallbackNote }}</p>
                     </div>
                 @endif
-
-                <p class="rlead" style="margin: 1.2mm 0 0;">サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。</p>
             @endif
         @elseif ($viewModel->improvementFocusSelfOnly)
             {{--
@@ -1115,8 +1127,6 @@
                         <p>{{ $viewModel->improvementMidTermAction }}</p>
                     </div>
                 @endif
-
-                <p class="rlead" style="margin: 1.2mm 0 0;">サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。</p>
             @endif
         @endif
     @endif

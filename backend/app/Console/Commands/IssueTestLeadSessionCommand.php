@@ -79,7 +79,7 @@ class IssueTestLeadSessionCommand extends Command
         $websites->create($project, ['name' => '自社サイト', 'url' => $selfUrl, 'is_primary' => true]);
 
         if (! empty($competitorUrl)) {
-            $websites->create($project, ['name' => '比較サイト', 'url' => (string) $competitorUrl, 'is_primary' => false]);
+            $websites->create($project, ['name' => '競合サイト', 'url' => (string) $competitorUrl, 'is_primary' => false]);
         }
 
         $analyses->start($project, [

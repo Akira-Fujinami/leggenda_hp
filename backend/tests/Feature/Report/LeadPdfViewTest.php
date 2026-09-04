@@ -203,20 +203,20 @@ class LeadPdfViewTest extends TestCase
 
         $this->assertStringContainsString('株式会社サンプル様', $html);
         $this->assertStringContainsString('対象サイト: https://example.com', $html);
-        $this->assertStringContainsString('比較サイト: https://competitor.example.com', $html);
+        $this->assertStringContainsString('競合サイト: https://competitor.example.com', $html);
     }
 
     public function test_cover_page_omits_the_competitor_line_when_there_is_no_competitor(): void
     {
         $html = $this->render($this->viewModel());
 
-        $this->assertStringNotContainsString('比較サイト:', $html);
+        $this->assertStringNotContainsString('競合サイト:', $html);
     }
 
     /**
      * 依頼O-2/P-3(2026-08-25): 競合サイトのURLはあるが分析が成立しなかった
-     * ($competitorReadable=false)場合、表紙は比較サイトのURLを案内し続ける
-     * のに本文(3・5ページ)には比較サイトの列が一切無いという不一致が
+     * ($competitorReadable=false)場合、表紙は競合サイトのURLを案内し続ける
+     * のに本文(3・5ページ)には競合サイトの列が一切無いという不一致が
      * あった。URLは残したまま、理由の注記を添える(案B、依頼者確定)。
      */
     public function test_cover_page_shows_the_url_and_a_notice_when_the_competitor_is_not_readable(): void
@@ -230,7 +230,7 @@ class LeadPdfViewTest extends TestCase
             'competitorTotalMax' => 0,
         ]));
 
-        $this->assertStringContainsString('比較サイト: https://competitor.example.com', $html);
+        $this->assertStringContainsString('競合サイト: https://competitor.example.com', $html);
         $this->assertStringContainsString(config('brand_wheel.cover_competitor_unreadable_notice'), $html);
     }
 
@@ -254,9 +254,9 @@ class LeadPdfViewTest extends TestCase
 
     /**
      * 分析結果に依存しない固定ページのため、status(success以外を含む)に
-     * よらず常に出る。誤解を招きやすい一文(読み取れなかった=魅力が無い、
-     * ではない)は一字一句削らずに含めること(引用符は『』を使う ――
-     * ユーザー指定の「絶対に消してはいけない文言」原文どおり)。
+     * よらず常に出る。依頼AX-2(2026-09-04)で文言を差し替えた ―― 固定すべき
+     * なのは「原文の一言一句」ではなく「configの値がそのまま出ること」
+     * (PDF・多社比較PDF・Wordの3箇所で同一文言にするため)。
      */
     public function test_intro_page_includes_the_required_caveat_verbatim_regardless_of_status(): void
     {
@@ -274,11 +274,7 @@ class LeadPdfViewTest extends TestCase
         ]));
 
         $this->assertStringContainsString('採用ブランドの捉え方', $html);
-        $this->assertStringContainsString(
-            '読み取れなかった項目は、その魅力が『無い』という意味ではありません。'
-            .'サイトにそう書かれていない、というだけです。',
-            $html,
-        );
+        $this->assertStringContainsString((string) config('brand_wheel.axis_unread_caveat'), $html);
         // 固定説明図(base64埋め込み)。生成時刻に依存するデータは無いため、
         // テストの固定資産(PNG)のbase64表現がそのまま出ていることだけを
         // 確認すれば足りる。
@@ -652,7 +648,7 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('同僚・先輩像', $html);
         $this->assertStringContainsString('職場の雰囲気', $html);
         $this->assertStringContainsString('就業環境が最も内容として充足しています', $html);
-        $this->assertStringContainsString('比較サイト 3 / 8項目', $html);
+        $this->assertStringContainsString('競合サイト 3 / 8項目', $html);
     }
 
     /**
@@ -719,8 +715,8 @@ class LeadPdfViewTest extends TestCase
             'competitorTotalMax' => 0,
         ]));
 
-        $this->assertStringNotContainsString('比較サイト 0 / 0項目', $html);
-        $this->assertStringNotContainsString('<th>比較</th>', $html);
+        $this->assertStringNotContainsString('競合サイト 0 / 0項目', $html);
+        $this->assertStringNotContainsString('<th>競合</th>', $html);
     }
 
     // ------------------------------------------------------------------
@@ -815,7 +811,7 @@ class LeadPdfViewTest extends TestCase
         $end = mb_strpos($html, '改善提案', $start) ?: mb_strlen($html);
         $pageHtml = mb_substr($html, $start, $end - $start);
 
-        $this->assertStringNotContainsString('<th>比較</th>', $pageHtml);
+        $this->assertStringNotContainsString('<th>競合</th>', $pageHtml);
     }
 
     public function test_comparison_page_shows_the_competitor_column_when_a_competitor_website_exists(): void
@@ -826,7 +822,7 @@ class LeadPdfViewTest extends TestCase
         $end = mb_strpos($html, '改善提案', $start) ?: mb_strlen($html);
         $pageHtml = mb_substr($html, $start, $end - $start);
 
-        $this->assertStringContainsString('<th>比較</th>', $pageHtml);
+        $this->assertStringContainsString('<th>競合</th>', $pageHtml);
     }
 
     /**
@@ -840,7 +836,7 @@ class LeadPdfViewTest extends TestCase
         $html = $this->render($viewModel);
 
         $this->assertStringContainsString("自社サイト {$viewModel->selfTotalMatched} / {$viewModel->selfTotalMax}項目", $html);
-        $this->assertStringContainsString("比較サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目", $html);
+        $this->assertStringContainsString("競合サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目", $html);
     }
 
     public function test_comparison_page_embeds_the_self_times_competitor_overlay_radar_png_when_available(): void
@@ -1091,13 +1087,15 @@ class LeadPdfViewTest extends TestCase
      * 2026-08-19: 旧文言(「なお、これらを『サイトに書き足す』ことで解決する
      * とは限りません…」)は、改善提案ページ末尾でこの1文だけが次ページへ
      * あふれてしまう不具合(実PDF確認で発見)の原因だったため短縮した
-     * (依頼者承認)。
+     * (依頼者承認)。依頼AX-4(2026-09-04)で、短縮後の文(「サイト上の情報
+     * 追加だけでなく、実態として存在する魅力の整理も重要です。」)自体を
+     * 削除した(依頼者指定)。
      */
-    public function test_improvement_page_keeps_the_shortened_closing_note_verbatim(): void
+    public function test_improvement_page_no_longer_shows_the_trailing_closing_note(): void
     {
         $html = $this->render($this->comparisonViewModel());
 
-        $this->assertStringContainsString('サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。', $html);
+        $this->assertStringNotContainsString('サイト上の情報追加だけでなく、実態として存在する魅力の整理も重要です。', $html);
         $this->assertStringNotContainsString('なお、これらを『サイトに書き足す』ことで解決するとは限りません', $html);
     }
 
@@ -1253,11 +1251,11 @@ class LeadPdfViewTest extends TestCase
 
         $this->assertStringNotContainsString('比較サイトが無いため、領域ごとの比較はご用意できません。', $pageHtml);
         $this->assertStringContainsString('class="rcard"', $pageHtml);
-        // 競合の実データ(比較サイトの記述)ブロックは出さない。
-        $this->assertStringNotContainsString('比較サイトの記述', $pageHtml);
-        // リード文は競合版と文言が異なる(比較サイト件数への言及を含まない)。
+        // 競合の実データ(競合サイトの記述)ブロックは出さない。
+        $this->assertStringNotContainsString('競合サイトの記述', $pageHtml);
+        // リード文は競合版と文言が異なる(競合サイト件数への言及を含まない)。
         $this->assertStringContainsString('サイトの記述から読み取れた項目が最も少なかったのは', $pageHtml);
-        $this->assertStringNotContainsString('比較サイトとの差', $pageHtml);
+        $this->assertStringNotContainsString('競合サイトとの差', $pageHtml);
     }
 
     /**

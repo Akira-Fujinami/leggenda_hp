@@ -168,7 +168,7 @@ class LeadAnalysisController extends Controller
         }
 
         if (! empty($data['competitor_url'])) {
-            $this->websites->create($project, ['name' => '比較サイト', 'url' => $data['competitor_url'], 'is_primary' => false]);
+            $this->websites->create($project, ['name' => '競合サイト', 'url' => $data['competitor_url'], 'is_primary' => false]);
         }
 
         $analysis = $this->analyses->start($project, [
