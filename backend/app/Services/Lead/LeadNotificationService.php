@@ -2,11 +2,14 @@
 
 namespace App\Services\Lead;
 
+use App\Enums\ReportFormat;
+use App\Enums\ReportGenerationStatus;
 use App\Mail\BrandWheelAnalysisCompletedMail;
 use App\Mail\BrandWheelLeadAnalysisCompletedMail;
 use App\Mail\BrandWheelLeadDiagnosisCompletedMail;
 use App\Models\BrandWheelAnalysisResult;
 use App\Models\LeadSession;
+use App\Models\Report;
 use App\Notifications\Lead\LeadAnalysisStartedNotification;
 use App\Notifications\Lead\LeadConsultationRequestedNotification;
 use App\Notifications\Lead\LeadDiagnosisUnavailableNotification;
@@ -15,9 +18,11 @@ use App\Services\BrandWheel\BrandWheelEmailContentBuilder;
 use App\Services\BrandWheel\BrandWheelHexagonRenderer;
 use App\Services\BrandWheel\BrandWheelHexagonSvgBuilder;
 use App\Services\BrandWheel\BrandWheelLeadEmailContentBuilder;
+use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 /**
@@ -217,6 +222,11 @@ class LeadNotificationService
      * EmailContentBuilder::canSend()をここでも再確認する(境界そのもので
      * 強制する既存方針)。Mailableのみが異なり(相談リクエストを前提にしない
      * 中立的な文面)、送信条件・データの組み立ては完全に共通。
+     *
+     * 依頼AW-1(2026-09-04): 診断レポート(PDF)を添付する。添付が取れない
+     * (レポート行が無い/未完了/ディスク上にファイルが無い)場合でも、
+     * メール送信自体は失敗させない ―― 添付なしで本文だけ送る
+     * (resolvePdfAttachment()が理由をwarningログに残す)。
      */
     public function notifyDiagnosisCompletedToLead(
         BrandWheelAnalysisResult $result,
@@ -244,8 +254,9 @@ class LeadNotificationService
 
         try {
             $data = $contentBuilder->build($result, $targetUrl);
+            $pdfAttachment = $this->resolvePdfAttachment($result->analysis_id);
 
-            Mail::to($leadEmail)->send(new BrandWheelLeadDiagnosisCompletedMail($data));
+            Mail::to($leadEmail)->send(new BrandWheelLeadDiagnosisCompletedMail($data, $pdfAttachment));
 
             return true;
         } catch (Throwable $e) {
@@ -264,6 +275,68 @@ class LeadNotificationService
         $frontendUrl = rtrim((string) config('cors.frontend_url'), '/');
 
         return "{$frontendUrl}/lead/diagnose?token={$rawToken}";
+    }
+
+    /**
+     * 依頼AW-1(2026-09-04): リード向け完了メールに添付する診断レポート
+     * (PDF)を解決する。Word(docx)は対象外(依頼者指定 ―― リードへ渡すのは
+     * PDFのみ)。取れない場合はnullを返し、呼び出し元は添付なしで本文だけ
+     * 送る(メール送信自体を失敗させない、依頼AW-1の要件)。
+     *
+     * $analysisIdは(BrandWheelAnalysisResult.analysis_idがnullable列のため)
+     * ?intで受ける ―― intに固定すると、万一analysis_idが取れていない結果を
+     * 渡された場合にTypeErrorとなり、添付が無いだけで済むはずの状況で
+     * メール送信自体を失敗させてしまう(この関数の存在意義に反する)。
+     *
+     * ログにはanalysis_idと理由のみを残す ―― メールアドレス・会社名・
+     * 担当者名・ファイルの中身は一切含めない(依頼AW-1の要件)。
+     */
+    private function resolvePdfAttachment(?int $analysisId): ?Attachment
+    {
+        if ($analysisId === null) {
+            Log::warning('Lead diagnosis completed notification: pdf attachment unavailable', [
+                'analysis_id' => null,
+                'reason' => 'no_analysis_id',
+            ]);
+
+            return null;
+        }
+
+        $report = Report::query()
+            ->where('analysis_id', $analysisId)
+            ->where('format', ReportFormat::Pdf->value)
+            ->first();
+
+        if ($report === null) {
+            Log::warning('Lead diagnosis completed notification: pdf attachment unavailable', [
+                'analysis_id' => $analysisId,
+                'reason' => 'no_report_row',
+            ]);
+
+            return null;
+        }
+
+        if ($report->status !== ReportGenerationStatus::Completed) {
+            Log::warning('Lead diagnosis completed notification: pdf attachment unavailable', [
+                'analysis_id' => $analysisId,
+                'reason' => 'report_not_completed',
+            ]);
+
+            return null;
+        }
+
+        if (! Storage::disk('analysis')->exists($report->storage_path)) {
+            Log::warning('Lead diagnosis completed notification: pdf attachment unavailable', [
+                'analysis_id' => $analysisId,
+                'reason' => 'file_missing_on_disk',
+            ]);
+
+            return null;
+        }
+
+        return Attachment::fromStorageDisk('analysis', $report->storage_path)
+            ->as('診断レポート.pdf')
+            ->withMime('application/pdf');
     }
 
     private function dispatch(LeadSession $leadSession, string $event, \Closure $send): void
