@@ -65,7 +65,16 @@
          次ページへ孤立する不具合が実PDF確認で見つかったため、まず
          全ページ共通の余白から縮小して確保した。 --}}
     .page { width: 297mm; padding: 6mm 16mm 20mm; position: relative; page-break-after: always; }
-    .page.cta { page-break-after: auto; }
+    {{--
+        依頼AY-2(2026-09-07): 「○と判定した根拠」をCTAページの後ろ(末尾)へ
+        移した。page-break-after:alwaysのまま最後のページに適用すると、
+        dompdfが末尾に無駄な白紙ページをもう1枚追加する(旧実装で.cta自身に
+        .cta{page-break-after:auto}を付けていたのと同じ理由 ―― 当時はCTAが
+        最後のページだった)。「最後のページはauto」という役割を.ctaから
+        付録ページ(.appendix)へ移し、CTA自身は他の中間ページと同じ
+        page-break-after:always(既定)に戻す(CTAの後ろに付録ページが続くため)。
+    --}}
+    .page.appendix { page-break-after: auto; }
     h1 { font-size: 24pt; margin: 0 0 6mm; font-weight: normal; }
     {{--
         2026-08-04: width:265mmを明示する ―― `.page`はbox-sizing:border-box+
@@ -278,47 +287,66 @@
     .lowcontentnotice { font-size: 7.5pt; color: #6B6767; margin: 1.5mm 0 0; line-height: 1.4; }
     .swatch { display: inline-block; width: 9px; height: 9px; margin-right: 4px; }
 
-    {{-- 「○△－の対比表」ページ。2026-08-08: ●／－の2値から○△－の3値へ変更。 --}}
-    {{-- widthを明示する理由は.lead1と同じ(2026-08-04、CSS冒頭のh2コメント参照)。 --}}
-    .vslead { width: 265mm; font-size: 9pt; color: #6B6767; margin: 0 0 1mm; line-height: 1.25; }
-    {{-- 2026-08-17追加: 比較結果サマリー(page5冒頭)。他の注記ボックス
-         (.onepoint等)と同じ配色トーン(藍のleft-border+淡グレー背景)に揃える。 --}}
-    {{-- 2026-08-17: 実PDF確認で、このボックスを追加した分だけ○△－の対比表
-         (24項目表)がページ5に収まらず、丸ごとページ6へあふれる不具合が
-         見つかったため、フォント・行間・余白を最小限に切り詰める。 --}}
-    .cmpoverview { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 1.5mm 3mm; margin: 0 0 1.5mm; }
-    .cmpoverview .t { font-size: 8.5pt; font-weight: bold; margin: 0 0 0.5mm; }
-    .cmpoverview p { font-size: 8pt; line-height: 1.25; margin: 0; }
-    {{-- グループ優劣バッジ(grpbar内の右寄せ小ラベル)。 --}}
-    .grpverdict { font-size: 7.5pt; font-weight: normal; opacity: .85; }
+    {{--
+        依頼AY-1(2026-09-07): 「診断結果 ―― 24項目の比較と改善提案」統合
+        ページ(旧「○△－の対比表」ページ+旧「改善提案」ページを1ページへ
+        統合)。このページ専用のクラス群 ―― 旧2ページの相当クラス
+        (.vscell/.vstbl/.mkon等/.cmpoverview/.cmplegend)はこの統合ページ
+        以外から参照されていないため、そのまま幅・余白だけ調整して流用する
+        (依頼AC等・多社比較PDF(admin-comparison-pdf.blade.php)は完全に
+        別ファイル・別<style>のため、同名クラスがあっても影響しない)。
+
+        列構成: 左98mm(比較結果サマリー+レーダー+凡例)+右3列55.6mm×3
+        (24項目表、領域ごと)=265mm。table-layout:fixedの外側table
+        (.diagwrap)1本で組む ―― table-in-tableの入れ子自体は既存の
+        vscell/vstblパターン(2026-08-04時点で実績あり)を踏襲するため、
+        依頼AX-1で問題になった「同じ行の中でさらにtableを持つ」構造とは
+        異なり、pxta-in-td(1階層)のみで安全。
+    --}}
+    .vslead { width: 265mm; font-size: 9pt; color: #6B6767; margin: 0 0 0.8mm; line-height: 1.2; }
+    .diagwrap { width: 265mm; table-layout: fixed; }
+    .diagleft { width: 98mm; padding-right: 2mm; vertical-align: top; }
+    .cmpoverview { width: 94mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 0.8mm 3mm; margin: 0 0 0.8mm; }
+    .cmpoverview .t { font-size: 8.5pt; font-weight: bold; margin: 0 0 0.3mm; }
+    .cmpoverview p { font-size: 7.5pt; line-height: 1.1; margin: 0; }
+    .diagradarwrap { text-align: center; }
+    {{--
+        依頼AY-1(2026-09-07): 領域優劣バッジ(旧.grpverdict、grpbar内の
+        「（自社優位）」等の小ラベル)は、右3列が55.6mm幅に狭まったことで
+        グループ名見出しと同じ行に収まらなくなったため削除した。改善提案
+        側のlead_text(「3つの領域のうち…差が最も大きかったのは」)が
+        同じ情報をプロースで説明しているため、情報自体は失われない
+        (実装報告で明記)。
+    --}}
     {{--
         凡例は表の近くに必ず置く(対比表ページの意味を誤読させないため
         ―― ○△－は正解/不正解の記号ではない、2ページ目の断り書きと矛盾
         しないこと。ユーザー指定)。
     --}}
-    {{-- 2026-08-10: width:265mm→165mm(レーダーと横並びにしたため、CSS冒頭の
-         h2コメントと同じ理由で明示が必要)。 --}}
-    {{-- 2026-08-17: .cmpoverview追加に伴い、表全体(グループ帯+8行×3列+
-         合計/参考の2行)がページに収まりきらない不具合が見つかったため、
-         padding/marginを全体的に切り詰めて数mm分の余白を確保する。 --}}
-    .cmplegend { width: 165mm; border: 1px solid #E0E0E0; background: #F5F5F5; padding: 1.3mm 4mm; margin: 0; }
-    .cmplegend p { font-size: 8.5pt; color: #393636; line-height: 1.3; margin: 0; }
+    .cmplegend { width: 94mm; border: 1px solid #E0E0E0; background: #F5F5F5; padding: 0.6mm 3mm; margin: 0 0 0.6mm; }
+    .cmplegend p { font-size: 7.2pt; color: #393636; line-height: 1.08; margin: 0; }
     .cmplegend .mk { display: inline-block; width: 5mm; font-weight: bold; }
-    .vscell { width: 88.3mm; padding: 0 2mm 0 0; vertical-align: top; }
-    .grpbar { color: #fff; font-size: 9.5pt; font-weight: bold; text-align: center; padding: 1mm; }
-    .vstbl th { font-size: 8.5pt; font-weight: bold; padding: 1mm; border-bottom: 1px solid #E0E0E0; color: #6B6767; text-align: center; }
+    .vscell { width: 55.6mm; padding: 0 1.5mm 0 0; vertical-align: top; }
+    .grpbar { color: #fff; font-size: 8.5pt; font-weight: bold; text-align: center; padding: 0.8mm; }
+    .vstbl th { font-size: 7.3pt; font-weight: bold; padding: 0.4mm; border-bottom: 1px solid #E0E0E0; color: #6B6767; text-align: center; }
     .vstbl th.sub { text-align: left; }
-    .vstbl td { font-size: 8.5pt; padding: 1mm; border-bottom: 1px solid #EFEFEF; }
+    .vstbl td { font-size: 7.6pt; padding: 0.4mm; border-bottom: 1px solid #EFEFEF; }
     .vstbl td.sub { text-align: left; }
-    .vstbl td.mk { text-align: center; width: 13mm; font-size: 10.5pt; }
+    .vstbl td.mk { text-align: center; width: 10mm; font-size: 9.5pt; }
     .mkon { color: #1D2088; font-weight: bold; }
     .mkon.cp { color: #E95446; }
     {{-- △(見出し・リンクラベルのみ)。○(mkon、自社紺/競合朱)・－(mkoff、
          淡灰)のどちらとも視覚的に紛れない中間色(アンバー)にする。 --}}
     .mktri { color: #B8860B; font-weight: bold; }
     .mkoff { color: #BFBFBF; }
-    .vslegend { width: 265mm; font-size: 9pt; color: #6B6767; margin: 1mm 0 0; }
-    .vsreflegend { width: 265mm; font-size: 8.5pt; color: #8A8A8A; margin: 0.5mm 0 0; }
+    {{-- 依頼AY-1: 旧2行(合計/(参考)△)を1行に統合し、統合ページの縦幅を
+         節約する(cmpoverviewの地の文が既に自社/競合の総数を説明している
+         ため、記号での再掲は簡潔にする)。 --}}
+    .diagtotals { width: 265mm; font-size: 7.8pt; color: #6B6767; margin: 0.4mm 0 0; }
+    .diagtotals .ref { color: #8A8A8A; }
+    {{-- 「改善提案」小見出し(h2ではない ―― ページ見出しは統合ページ全体で
+         1つ(h2)のみ、この小見出しはページ内の区切りとして軽く扱う)。 --}}
+    .diagsubhead { width: 265mm; font-size: 10pt; font-weight: bold; color: #1D2088; margin: 1mm 0 0.8mm; border-bottom: 1px solid #D3D4EC; padding-bottom: 0.5mm; }
 
     {{--
         「○と判定した根拠」ページ(依頼R、2026-08-26追加)。○△－の対比表の
@@ -343,52 +371,39 @@
          (「原文の続き」ではなく別要素であることを区別する)。 --}}
     .evidenceitem .quote-translation { font-size: 8pt; line-height: 1.3; margin: 0.5mm 0 0; padding-left: 2.5mm; color: #8A8A8A; }
 
-    {{-- 「改善提案」ページ。 --}}
-    {{-- widthを明示する理由は.lead1と同じ(2026-08-04、CSS冒頭のh2コメント参照)。 --}}
-    .rlead { width: 265mm; font-size: 9.5pt; color: #6B6767; margin: 0 0 2mm; line-height: 1.4; }
-    {{-- 2026-08-17: 改善提案AI(ワンポイント/詳細提言)追加に伴い、実PDF確認
-         (worst-caseの長文AI出力)でページ下部の余白が10mm未満になる不具合が
-         見つかったため、余白・行間を切り詰める。
-         2026-08-19: 「中長期の差別化ポイント」ボックス追加分の高さを吸収する
-         ため、余白・行間をさらに切り詰めた(フォントサイズは変更しない ――
-         極端な縮小は禁止、docs/lead-report-layout/README.mdの検証方法論に
-         従い実PDF確認で調整)。 --}}
-    .onepoint { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 1.6mm 4mm; margin: 0 0 1.5mm; page-break-inside: avoid; }
-    .onepoint .t { font-size: 10pt; font-weight: bold; margin: 0 0 1mm; }
-    .onepoint p { font-size: 9.5pt; line-height: 1.4; margin: 0; }
-    {{-- 2026-08-17追加: 改善提案AIの詳細提言パラグラフ。.onepointと同じ
-         トーン(藍のleft-border+淡グレー背景)だが、証拠カードの直後に置く
-         ため上マージンで区切る。 --}}
-    .recobox { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 1.4mm 4mm; margin: 1mm 0 0; page-break-inside: avoid; }
-    .recobox .t { font-size: 9.5pt; font-weight: bold; margin: 0 0 1mm; }
-    .recobox p { font-size: 9pt; line-height: 1.3; margin: 0; }
-    {{-- 2026-08-18追加: 「理由」(ワンポイント直下の地の文)・「具体的に
-         追加すべき情報」(箇条書き)。 --}}
-    .reasontext { width: 265mm; font-size: 9.5pt; color: #393636; line-height: 1.35; margin: 0.8mm 0 1.2mm; }
-    .recobox .recolist { margin: 0; padding-left: 4mm; font-size: 9pt; line-height: 1.3; }
+    {{--
+        依頼AY-1/AY-3(2026-09-07): 「改善提案」は独立ページから統合ページ
+        下段へ移した。ページ全体(比較表+改善提案)を1枚に収めるため、
+        余白・行間・フォントサイズを全体的に切り詰める(README「検証方法論」
+        通り実PDF確認で調整)。領域ごとの件数バー(旧.gapbar、自社/競合の
+        棒グラフ)は、統合ページでは上段の24項目表が同じ情報をより詳細に
+        示しており重複するため削除した(依頼AY-3、モックアップ
+        (統合レポート_モックアップ.pdf)も件数バーを含まない構成だった
+        ―― 実装報告で改めて確認を仰ぐ)。lead_text(「3つの領域のうち…」)
+        自体は件数バー無しでも文として成立するため残す。
+    --}}
+    .rlead { width: 265mm; font-size: 8.1pt; color: #6B6767; margin: 0 0 0.6mm; line-height: 1.15; }
+    .onepoint { width: 265mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 0.7mm 3.5mm; margin: 0 0 0.6mm; page-break-inside: avoid; }
+    .onepoint .t { font-size: 8.6pt; font-weight: bold; margin: 0 0 0.3mm; }
+    .onepoint p { font-size: 8.1pt; line-height: 1.1; margin: 0; }
+    .reasontext { width: 265mm; font-size: 8.1pt; color: #393636; line-height: 1.1; margin: 0 0 0.6mm; }
     {{-- 2026-08-19追加: 「中長期の差別化ポイント」。Quick Win系のボックス
-         (.onepoint/.recobox、藍の左ボーダー)とは別テーマだと一目で分かる
-         よう、既存パレットの「会社との距離」色(#2C7F96、groupBands参照)を
+         (.onepoint、藍の左ボーダー)とは別テーマだと一目で分かるよう、
+         既存パレットの「会社との距離」色(#2C7F96、groupBands参照)を
          左ボーダーに使う(新色は追加しない)。page-break-inside:avoidは、
          見出しだけがページ末尾に残り本文が次ページへ分離する不具合
          (実PDF確認で発見)を防ぐため。 --}}
-    .diffbox { width: 265mm; border-left: 4px solid #2C7F96; background: #F5F5F5; padding: 1.4mm 4mm; margin: 1mm 0 0; page-break-inside: avoid; }
-    .diffbox .t { font-size: 9.5pt; font-weight: bold; margin: 0 0 1mm; color: #2C7F96; }
-    .diffbox p { font-size: 9pt; line-height: 1.3; margin: 0; }
+    .diffbox { width: 265mm; border-left: 4px solid #2C7F96; background: #F5F5F5; padding: 0.7mm 3.5mm; margin: 0.6mm 0 0; page-break-inside: avoid; }
+    .diffbox .t { font-size: 8.6pt; font-weight: bold; margin: 0 0 0.3mm; color: #2C7F96; }
+    .diffbox p { font-size: 8.1pt; line-height: 1.1; margin: 0; }
     {{--
         依頼AF-3(2026-08-27、依頼者承認済み): 「理由」「中長期の差別化
         ポイント」が両方とも無いときの代替文言。新しい主張を追加するもの
-        ではなく次ページへの橋渡しのみのため、.diffbox/.recobox(色付きの
-        左ボーダー、見出し付き)ほど強調せず、罫線のみの控えめな箱にする。
-        余白調整(依頼者承認)として、直前の証拠カードとの間を.diffboxより
-        広めに取り、ページ下部の余白が目立ちにくいようにする。
+        ではなく次ページへの橋渡しのみのため、.diffbox(色付きの左ボーダー、
+        見出し付き)ほど強調せず、罫線のみの控えめな箱にする。
     --}}
-    .fallbacknote { width: 257mm; border: 1px solid #E0E0E0; padding: 2.2mm 4mm; margin: 4mm 0 0; text-align: center; page-break-inside: avoid; }
-    .fallbacknote p { font-size: 9pt; color: #6B6767; line-height: 1.3; margin: 0; }
-    .gapbar td { padding: 0 0 0.8mm; font-size: 9pt; vertical-align: middle; }
-    .gapbar .nm { width: 34mm; }
-    .gapbar .bar { height: 4.3mm; display: block; }
-    .gapbar .v { width: 26mm; text-align: right; color: #6B6767; padding-right: 3mm; }
+    .fallbacknote { width: 257mm; border: 1px solid #E0E0E0; padding: 1.6mm 3.5mm; margin: 2mm 0 0; text-align: center; page-break-inside: avoid; }
+    .fallbacknote p { font-size: 8.5pt; color: #6B6767; line-height: 1.25; margin: 0; }
     {{--
         2026-08-09: height:56mm固定をやめてauto(padding+内容まかせ)にした。
         比較サイトの実際の引用(competitor_evidence)が長い場合に、固定高さの
@@ -396,29 +411,29 @@
         不具合が実PDF確認で見つかった(ユーザー指摘)。3枚は同じ<tr>内の
         セルのため、いずれか1枚が伸びれば残り2枚も同じ高さに揃う(通常の
         テーブル行の挙動)。あわせてBrandWheelImprovementFocusComposer側で
-        引用に文字数上限を設け、極端に長い引用で改善提案ページ全体が
-        7ページ枠を超えることも防ぐ。
+        引用に文字数上限を設け、極端に長い引用で統合ページ全体が1ページ枠を
+        超えることも防ぐ。
     --}}
-    .rcard { border: 1px solid #E0E0E0; padding: 1.8mm 3mm; }
-    .rcard .no { font-size: 9pt; color: #fff; background: #1D2088; padding: 0.6mm 2.2mm; }
+    .rcard { border: 1px solid #E0E0E0; padding: 0.8mm 2.2mm; }
+    .rcard .no { font-size: 7.8pt; color: #fff; background: #1D2088; padding: 0.4mm 1.8mm; }
     {{-- 依頼AH-2(2026-08-28): ①「追いつく」/②「抜け出す」の見た目の区別。
          ①は競合の引用(.cmp)と同じ赤系、②は中長期の差別化ポイント(.diffbox)
          と同じ青緑系にして、レポート内の色の意味を統一する。 --}}
-    .rcard .ctype { display: inline-block; font-size: 7.5pt; padding: 0.5mm 2mm; margin-left: 1.5mm; border-radius: 1mm; }
+    .rcard .ctype { display: inline-block; font-size: 7pt; padding: 0.3mm 1.6mm; margin-left: 1.5mm; border-radius: 1mm; }
     .rcard .ctype-catch_up { color: #E95446; background: #FDEDEB; }
     .rcard .ctype-breakout { color: #2C7F96; background: #E8F3F5; }
-    .rcard .nm { font-size: 11.5pt; font-weight: bold; margin: 0.8mm 0 0.6mm; }
-    .rcard .q { font-size: 9pt; color: #6B6767; margin: 0 0 1mm; line-height: 1.25; }
-    .rcard .lb { font-size: 8.5pt; color: #8A8A8A; margin: 0 0 0.5mm; }
+    .rcard .nm { font-size: 9.3pt; font-weight: bold; margin: 0.3mm 0 0.2mm; }
+    .rcard .q { font-size: 7.8pt; color: #6B6767; margin: 0 0 0.3mm; line-height: 1.1; }
+    .rcard .lb { font-size: 7.3pt; color: #8A8A8A; margin: 0 0 0.2mm; }
     {{-- 2026-08-25更新: 所見(旧「御社のサイト／記述が見つかりませんでした」の
          2行)から提案への切替に伴い、現状注記は控えめな1行にする(依頼者指定
          「小さく、控えめに」)。 --}}
-    .rcard .own { font-size: 8pt; color: #9A9A9A; margin: 0 0 1mm; }
-    .rcard .cmp { font-size: 9pt; line-height: 1.3; margin: 0; border-left: 3px solid #E95446; padding-left: 2.5mm; }
+    .rcard .own { font-size: 7.1pt; color: #9A9A9A; margin: 0 0 0.3mm; }
+    .rcard .cmp { font-size: 7.8pt; line-height: 1.1; margin: 0; border-left: 3px solid #E95446; padding-left: 2.5mm; }
     {{-- 依頼AA(2026-08-27): .evidenceitem .quote-translationと同じ考え方
          (原文が主・訳が従)。カード幅が狭いため、原文(.cmp)よりさらに小さく。 --}}
-    .rcard .cmp-translation { font-size: 8pt; line-height: 1.3; margin: 0.5mm 0 0; padding-left: 2.5mm; color: #8A8A8A; }
-    .rcell { width: 88.3mm; padding: 0 2mm 2mm 0; vertical-align: top; }
+    .rcard .cmp-translation { font-size: 7.1pt; line-height: 1.1; margin: 0.3mm 0 0; padding-left: 2.5mm; color: #8A8A8A; }
+    .rcell { width: 88.3mm; padding: 0 2mm 0.6mm 0; vertical-align: top; }
 
     {{--
         7ページ目(最終ページ)。2026-08-08: 旧3ブロック構成(.ctabox/.ctacell)は
@@ -646,15 +661,24 @@
 @endif
 
 {{--
-    5. ○△－の対比表。●／－の2値から○△－の3値へ変更(2026-08-08)。
+    5. 診断結果 ―― 24項目の比較と改善提案(依頼AY-1、2026-09-07: 旧
+    「○△－の対比表」ページと旧「改善提案」ページを1ページへ統合した ――
+    A4横1ページに収めるため、旧2ページ分の情報を左列(比較結果サマリー・
+    レーダー・凡例)+右3列(24項目表)+下段(改善提案)の構成へ組み替える。
+    判定・選定ロジック自体(BrandWheelSubElementComparisonComposer/
+    BrandWheelImprovementFocusComposer/依頼AH・依頼X・依頼AF-3の各仕様)は
+    一切変更しない ―― この依頼で変わるのは表示位置・レイアウトのみ。
+
     ○△－の判定はすべてBrandWheelSubElementComparisonComposer(プログラム側)
-    が行う ―― AIに3段階を判定させない(「AIの引用を原文照合で検証する」
-    仕組みの外側に検証できない判断を入れないため、ユーザー指定)。
-    ○×は使わない(×は正解・不正解の記号であり、2ページ目の「読み取れな
-    かった項目は魅力が無いという意味ではない」という断りと矛盾する)。
-    合計(○の件数)は$viewModel->selfTotalMatched等(3・4ページ目と同じ
-    集計値)を使う ―― ページごとに個別集計しない。△は合計に含めず、
-    「(参考)」として別行に出す。
+    が行う ―― AIに3段階を判定させない。○×は使わない(×は正解・不正解の
+    記号であり、2ページ目の断りと矛盾する)。合計(○の件数)は
+    $viewModel->selfTotalMatched等(3・4ページ目と同じ集計値)を使う ――
+    ページごとに個別集計しない。△は合計に含めず、「(参考)」として同じ行に
+    まとめて出す(依頼AY-1: 旧2行→1行に統合し縦幅を節約)。
+
+    自社が読み取れない場合は、旧「○△－の対比表」ページ・旧「改善提案」
+    ページの両方に出ていた同じstatus_messageを、統合ページでは1回だけ出す
+    (旧2ページ構成では同じ文言が2ページに重複していた)。
 --}}
 @php
     $mark = function (string $state, bool $competitor = false) {
@@ -666,7 +690,7 @@
     };
 @endphp
 <div class="page">
-    <h2>○△－の対比表</h2>
+    <h2>診断結果 ―― 24項目の比較と改善提案</h2>
     <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
 
     @if (! $selfReadable)
@@ -675,87 +699,66 @@
         @php
             $comparisonByGroup = collect($viewModel->subElementComparison)->groupBy('group');
             $showCompetitorColumn = $competitorReadable;
-            $groupVerdictByKey = collect($viewModel->groupTotals)->keyBy('group');
-            $verdictBadge = fn (string $verdict) => match ($verdict) {
-                'self_advantage' => '自社優位',
-                'competitor_advantage' => '競合優位',
-                default => '同程度',
-            };
         @endphp
-        <p class="vslead">24項目それぞれについて、サイトに該当する記述があったかどうかを3段階で示しています。凡例は下記のとおりです。</p>
-        {{--
-            2026-08-17追加: 比較サマリー(依頼者指定#11 ―― 単純な総合勝敗では
-            なく「どの領域に情報差があるか」を示す)。BrandWheelComparisonSummary
-            Composer::comparisonOverview()が総合計件数とグループ優劣
-            (BrandWheelSubElementComparisonComposer::groupTotals())から機械的に
-            導出する(AIには書かせない)。競合が読み取れない場合は出さない。
-        --}}
-        @if ($viewModel->comparisonOverview !== [])
-            <div class="cmpoverview">
-                <p class="t">比較結果サマリー</p>
-                @foreach ($viewModel->comparisonOverview as $line)
-                    <p>{{ $line }}</p>
-                @endforeach
-            </div>
-        @endif
+        <p class="vslead">24項目それぞれについて、サイトに該当する記述があったかどうかを示しています。○＝本文の記述から確認できた項目、－＝該当する記述が見つからなかった項目(『魅力が無い』という意味ではありません)。</p>
 
         {{--
-            ○△－凡例と自社×競合を重ねたレーダー図。3・4ページを自社単独・
-            競合単独に分けたことで、視覚的な対比はこのページにしか無い
-            (README方針)。競合が読み取れない場合はレーダーだけ出さない
-            (3・4ページと同じ方針、凡例は競合の有無にかかわらず必要なため
-            常に出す)。
-            2026-08-10: レーダーと○△－凡例を縦2段(レーダー行→凡例行)で
-            並べていたところ、3グループ表(8行×3列、常に固定の高さ)と
-            合わせて190mm上限の残り8.3mmしか余白が無い状態になった
-            (ユーザー指摘: 10mm未満は不合格)。3・4ページと同じ考え方で、
-            横並びに変更 ―― 凡例の高さ(3行)はレーダーの高さ以下のため、
-            この行の高さはレーダーだけで決まり、凡例ぶんの追加コストが
-            無くなる。あわせてレーダーも46x33.5mm→68x49.4mm(縦横比380:276を
-            維持)に拡大した。
+            左列(diagleft、98mm)に比較結果サマリー・レーダー・凡例、
+            右3列(vscell、55.6mm×3)に24項目表(領域ごと)を並べる、1本の
+            外側table(.diagwrap、table-layout:fixed)。table-in-tdの入れ子
+            自体は旧vscell/vstblパターン(2026-08-04時点で実績あり)を踏襲
+            するため、依頼AX-1で問題になった「同じ行の中でさらにtableを
+            持つ」構造とは異なり安全(CSS側コメント参照)。
 
-            **列の並び順(凡例を左・レーダーを右)を変えないこと。** 逆
-            (レーダーを左・幅の広い凡例のtdを右=表の最終列)にすると、
-            table-layout:fixedで列幅を指定していても最終列がページ右端
-            (297mm)を大きく超えて描画される不具合をdompdfで実PDF確認した
-            (2026-08-10)。原因は特定できていないが、「幅の広い折り返しテキスト
-            を持つtdを固定テーブルの最終列に置かない」という回避策で解消した。
+            レーダー図は旧68mm×49.4mm表示から76mm×55.2mm表示へ拡大した
+            (依頼AY-1、当初85mm×61.7mmで実装したが1ページに収まらず縮小
+            した ―― ReportViewModelBuilder::COMPARISON_RADAR_WIDTH_PXの
+            コメント参照)。表示サイズだけ拡大するとぼやけるため、
+            ReportViewModelBuilder::COMPARISON_RADAR_WIDTH_PX/
+            COMPARISON_RADAR_HEIGHT_PX(850x617)をこのページ専用に新設し、
+            拡大後も同等の実効解像度(約284dpi)を保つ ――
+            BrandWheelRadarSvgBuilder/BrandWheelHexagonRendererの描画
+            ロジック自体は無改修(サイズ・解像度のみ変更)。
         --}}
-        <table style="width: 265mm; table-layout: fixed;"><tr>
-            <td style="width: 165mm; vertical-align: top;">
+        <table class="diagwrap"><tr>
+            <td class="diagleft">
+                {{--
+                    2026-08-17追加: 比較サマリー(依頼者指定#11 ―― 単純な
+                    総合勝敗ではなく「どの領域に情報差があるか」を示す)。
+                    BrandWheelComparisonSummaryComposer::comparisonOverview()が
+                    総合計件数とグループ優劣(BrandWheelSubElementComparison
+                    Composer::groupTotals())から機械的に導出する(AIには
+                    書かせない)。競合が読み取れない場合は出さない。
+                --}}
+                @if ($viewModel->comparisonOverview !== [])
+                    <div class="cmpoverview">
+                        <p class="t">比較結果サマリー</p>
+                        @foreach ($viewModel->comparisonOverview as $line)
+                            <p>{{ $line }}</p>
+                        @endforeach
+                    </div>
+                @endif
+
+                <div class="diagradarwrap">
+                    @if ($competitorReadable && $viewModel->brandWheelRadarPngComparison)
+                        <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPngComparison) }}" style="width: 76mm; height: 55.2mm;">
+                    @endif
+                </div>
                 <div class="cmplegend">
                     <p><span class="mk mkon">○</span> 本文の記述から確認できた項目</p>
                     <p><span class="mk mktri">△</span> 見出し・メニュー名などのラベルのみで、本文からは確認できなかった項目</p>
-                    <p><span class="mk mkoff">－</span> 該当する記述が見つからなかった項目(『魅力が無い』という意味ではありません)</p>
+                    <p><span class="mk mkoff">－</span> 該当する記述が見つからなかった項目</p>
                 </div>
-            </td>
-            <td style="width: 8mm;"></td>
-            <td style="width: 92mm; text-align: center; vertical-align: top;">
                 @if ($competitorReadable && $viewModel->brandWheelRadarPngComparison)
-                    <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPngComparison) }}" style="width: 68mm; height: 49.4mm;">
                     <div class="legend">
                         <span class="sw" style="background: #3A3FC0;"></span>自社サイト
                         <span class="sw" style="background: #E95446;"></span>競合サイト
                     </div>
                 @endif
             </td>
-        </tr></table>
-
-        {{-- 外側のテーブル(vscell、3列とも88.3mmで等しい)はtable-layout:auto
-             にしない(fixedのままで安全、ページ3のaxcellと同じパターン)。
-             内側のvstbl(sub/自社/比較の3列、幅が不均等)はtable-layout:auto
-             にする(2026-08-04、CSS側コメント参照) ―― この列の内容は
-             config('brand_wheel.axes.*.sub_elements')のラベル(数文字)と
-             ○△－の1文字のみで、長文が入ることは無いため、autoにしても
-             ページ右端をはみ出すリスクが無いことを確認済み。 --}}
-        <table style="width: 265mm;"><tr>
             @foreach ($groupBands as $groupKey => $band)
                 <td class="vscell">
-                    <div class="grpbar" style="background: {{ $band['color'] }};">{{ $band['label'] }}
-                        @if ($showCompetitorColumn && $groupVerdictByKey->has($groupKey))
-                            <span class="grpverdict">（{{ $verdictBadge($groupVerdictByKey[$groupKey]['verdict']) }}）</span>
-                        @endif
-                    </div>
+                    <div class="grpbar" style="background: {{ $band['color'] }};">{{ $band['label'] }}</div>
                     <table class="vstbl" style="table-layout: auto;"><tr>
                         <th class="sub"></th>
                         <th>自社</th>
@@ -777,361 +780,202 @@
             @endforeach
         </tr></table>
 
-        <p class="vslegend">
-            合計　<span class="mkon">○</span> 自社サイト {{ $viewModel->selfTotalMatched }} / {{ $viewModel->selfTotalMax }}項目
+        {{-- 依頼AY-1: 旧「合計」行+旧「(参考)△」行の2行を1行に統合。 --}}
+        <p class="diagtotals">
+            合計　<span class="mkon">○</span>自社 {{ $viewModel->selfTotalMatched }}/{{ $viewModel->selfTotalMax }}項目
             @if ($showCompetitorColumn)
-                　　<span class="mkon cp">○</span> 競合サイト {{ $viewModel->competitorTotalMatched }} / {{ $viewModel->competitorTotalMax }}項目
+                　<span class="mkon cp">○</span>競合 {{ $viewModel->competitorTotalMatched }}/{{ $viewModel->competitorTotalMax }}項目
             @endif
+            <span class="ref">
+                　｜　(参考)　<span class="mktri">△</span>自社 {{ $viewModel->selfTotalLabelOnly }}件
+                @if ($showCompetitorColumn)
+                    　<span class="mktri">△</span>競合 {{ $viewModel->competitorTotalLabelOnly }}件
+                @endif
+            </span>
         </p>
-        <p class="vsreflegend">
-            (参考)　<span class="mktri">△</span> 自社 {{ $viewModel->selfTotalLabelOnly }}件
-            @if ($showCompetitorColumn)
-                　　<span class="mktri">△</span> 比較 {{ $viewModel->competitorTotalLabelOnly }}件
-            @endif
-        </p>
-    @endif
-</div>
 
-{{--
-    6. ○と判定した根拠(依頼R、2026-08-26追加)。○△－の対比表の直後に、
-    独立したページとして追加する(3ページ目の軸カード・5ページ目の対比表は
-    既に情報密度が高く、引用を混ぜるとレイアウトが崩れるため、依頼者指定 ――
-    既存ページには一切差し込まない)。
+        @if ($viewModel->improvementFocus !== null || $viewModel->improvementFocusSelfOnly !== null)
+            <p class="diagsubhead">改善提案</p>
 
-    自社サイトのみ(競合サイトの引用は載せない、依頼者指定 ―― 第三者の
-    文章であること、本レポートの主題が自社サイトの診断であることの2点が
-    理由)。$viewModel->selfEvidenceByAxis(ReportViewModelBuilder::
-    buildSelfEvidenceByAxis()が組み立てる、対比表と同じ軸順・下位要素順の
-    配列)が唯一の情報源で、Bladeから$viewModel->brandWheelSelf['axes']等の
-    生JSONを直接掘らない。
-
-    「－」の項目(discarded_sub_elements、AIが挙げた引用が原文照合で棄却
-    されたもの)は一切参照しない ―― buildSelfEvidenceByAxis()がそもそも
-    matched_sub_elementsしか読まないため、参照する経路自体が無い
-    (依頼者指定: 顧客に見せるものではない)。「－」については対比表ページの
-    凡例(「－ 該当する記述が見つからなかった項目(『魅力が無い』という
-    意味ではありません)」、.cmplegend)で足りている(依頼AX-2で2ページ目の
-    断り書きからはこの一文を削除したため、この凡例が唯一の説明箇所になった)。
-
-    $viewModel->selfEvidenceByAxisが空配列(matched=0件、または全項目の
-    evidenceが空文字)の場合はページ自体を出さない(空のページを作らない)。
---}}
-@if ($viewModel->selfEvidenceByAxis !== [])
-<div class="page">
-    <h2>○と判定した根拠</h2>
-    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
-    {{-- 依頼AA(2026-08-27): このレポート内に日本語訳が1件でもあるときだけ
-         「(日本語訳を併記しています)」付きの説明文に差し替える。1件も
-         無ければ既存の文言のまま(訳が無いのに「併記しています」と書かない)。 --}}
-    <p class="evidenceintro">{{ $viewModel->hasQuoteTranslations ? config('brand_wheel.evidence_page_intro_with_translation') : config('brand_wheel.evidence_page_intro') }}</p>
-
-    @foreach ($viewModel->selfEvidenceByAxis as $axisGroup)
-        <div class="evidenceaxis">
-            <p class="axisname">{{ $axisGroup['axis_name'] }}</p>
-            @foreach ($axisGroup['items'] as $item)
-                <div class="evidenceitem">
-                    <p class="subname">{{ $item['sub_name'] }}</p>
-                    <p class="quote">「{{ $item['evidence'] }}」</p>
-                    @if (! empty($item['evidence_translation']))
-                        <p class="quote-translation">{{ config('brand_wheel.quote_translation_label') }}：{{ $item['evidence_translation'] }}</p>
-                    @endif
+            {{--
+                2026-08-17: ワンポイントの文言を、改善提案AI
+                (GenerateBrandWheelImprovementSuggestionJob)の生成結果へ
+                切り替える(依頼者指定 ―― 一言で最優先アクションを示す)。
+                AI未生成/失敗時は$viewModel->improvementOnePointが既存の
+                決定的ロジック($comparison['one_point'])へ自動フォール
+                バックする(ReportViewModelBuilder参照、AI障害でレポート
+                生成を止めない)。
+            --}}
+            @if ($viewModel->improvementOnePoint)
+                <div class="onepoint">
+                    <p class="t">【ワンポイント】</p>
+                    <p>{{ $viewModel->improvementOnePoint }}</p>
                 </div>
-            @endforeach
-        </div>
-    @endforeach
-</div>
-@endif
-
-{{--
-    7. 改善提案。ブランド・ホイール起点(README「技術的な指標から作らない
-    こと」)。ワンポイントは自社のみで判定可能なため常に自社の状態から出す。
-    領域差・3項目は競合ありなら$viewModel->improvementFocus、競合なし
-    (または読み取れない)なら$viewModel->improvementFocusSelfOnly
-    (2026-08-10追加、いずれも決定的な規則で選定)が唯一の情報源。△は
-    未該当扱いのまま(選定ロジックは無改修 ―― 自社△かつ競合○の項目も
-    引き続き候補に含まれる、ユーザー指定)。
-
-    2026-08-08: 下部の技術的提案ブロック(「あわせて、サイトの作りに
-    ついて」)を削除した。4観点(測定結果)ページを削除したのに技術的提案
-    だけ残すのは整合が取れないため(ユーザー判断)。
-
-    2026-08-10: このページ自体を出さない条件を追加(ユーザー指定)。
-    自社が読み取れない場合(status_messageを出すため)は常に出す。自社が
-    読み取れる場合は、競合あり(improvementFocus)か、競合なしでも自社の
-    「－」「△」項目が1件でもある(improvementFocusSelfOnly)場合にのみ出す
-    ―― 自社24項目すべてが○(=composeSelfOnly()がnullを返す)場合だけ、
-    このページを丸ごと省略する(白紙ページを作らないための保険。
-    実運用ではまず起きない)。
---}}
-@if (! $selfReadable || $viewModel->improvementFocus !== null || $viewModel->improvementFocusSelfOnly !== null)
-<div class="page">
-    <h2>改善提案</h2>
-    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
-
-    @if (! $selfReadable)
-        <p>{{ $selfWheel['status_message'] ?? '' }}</p>
-    @else
-        {{--
-            2026-08-17: ワンポイントの文言を、改善提案AI
-            (GenerateBrandWheelImprovementSuggestionJob)の生成結果へ切り替える
-            (依頼者指定 ―― 一言で最優先アクションを示す)。AI未生成/失敗時は
-            $viewModel->improvementOnePointが既存の決定的ロジック
-            ($comparison['one_point'])へ自動フォールバックする
-            (ReportViewModelBuilder参照、AI障害でレポート生成を止めない)。
-        --}}
-        @if ($viewModel->improvementOnePoint)
-            <div class="onepoint">
-                <p class="t">【ワンポイント】</p>
-                <p>{{ $viewModel->improvementOnePoint }}</p>
-            </div>
-        @endif
-
-        {{--
-            2026-08-18追加: ワンポイントの理由(依頼者指定の構成 ―― ワンポイント
-            →理由→自社と競合の差(既存)→具体的に追加すべき情報→中長期施策)。
-            改善提案AI未生成/失敗時はnullのため非表示(既存のバー＋カードのみで
-            成立する)。
-        --}}
-        @if ($viewModel->improvementReason)
-            <p class="reasontext"><b>理由：</b>{{ $viewModel->improvementReason }}</p>
-        @endif
-
-        @if ($viewModel->improvementFocus)
-            @php
-                $focus = $viewModel->improvementFocus;
-            @endphp
-            {{--
-                2026-08-04: 文言修正。旧文言「候補者が比較サイト側でしか情報を
-                得られない差が最も大きかったのは」は、選定ロジック(競合の
-                該当件数－自社の該当件数がグループ内で最大)と食い違って見える
-                ―― 自社が競合を上回るグループが選ばれることがあり(実データで
-                確認: 「会社の魅力」は自社2件・比較1件で自社が多いにも
-                関わらず選ばれた。全グループで自社優位のとき、選ばれるのは
-                「自社の優位が最も小さい(＝競合との差が最も小さい)グループ」
-                であって「競合が上回るグループ」ではないため)、直下の
-                件数バー(自社が多い)と文言(競合の方が情報が多いと読める)が
-                矛盾して見える不具合が実PDF確認で見つかった。
-                「差(比較サイト件数－自社件数)」を明示し、数値で検算できる
-                言い回しに変更する。件数バー自体はREADME「グループごとの
-                自社／競合件数バーを出し、差が最大の領域を特定する」の指定
-                通り残す(バーを別指標に変える案は取らない)。
-
-                依頼X-1〜X-4(2026-08-26、レポート42): 自社が3領域すべてで
-                競合を上回るとき、上記の選定ロジックが「候補項目(競合にあり
-                自社に無い項目)が1件も無い領域」を選び、「項目を0件挙げます。」
-                「差が最も大きかったのは『X』でした」(実際は自社優位で事実に
-                反する)という2つの不具合が同時に起きた。文言の組み立て自体を
-                BrandWheelImprovementFocusComposer::compose()側
-                (config('brand_wheel.improvement_focus_templates')参照)へ
-                移し、候補の有無・差の符号に応じて出し分けるようにしたため、
-                ここでは$focus['lead_text']を無条件に出すだけでよい
-                (「0件挙げます」を含む文言は候補が1件以上ある場合の
-                テンプレートにしか登場しないため、構造的に出しえない)。
-            --}}
-            <p class="rlead">{{ $focus['lead_text'] }}</p>
-
-            {{-- 2026-08-04: table-layout:autoにする理由はページ3のstatrowと
-                 同じ(CSS側コメント参照)。この表は5列(nm/v/bar/v/bar)が
-                 不均等なため、fixedのままだと均等割りされて棒グラフの幅が
-                 崩れる。widthも明示する(h2/.darkbandと同じ理由 ―― `.page`
-                 直下でwidth未指定だと右に16mmはみ出す)。 --}}
-            <table class="gapbar" style="width: 265mm; table-layout: auto;">
-                @foreach ($focus['groups'] as $group)
-                    @php
-                        $label = $groupBands[$group['group']]['label'] ?? $group['group'];
-                        $selfRatio = $group['max_count'] > 0 ? $group['self_count'] / $group['max_count'] * 100 : 0;
-                        $competitorRatio = $group['max_count'] > 0 ? $group['competitor_count'] / $group['max_count'] * 100 : 0;
-                    @endphp
-                    <tr>
-                        <td class="nm">{{ $label }}</td>
-                        <td class="v">自社 {{ $group['self_count'] }} / {{ $group['max_count'] }}</td>
-                        <td style="width: 52mm;"><span class="bar" style="background: #3A3FC0; width: {{ number_format($selfRatio, 1) }}%;"></span></td>
-                        <td class="v">比較 {{ $group['competitor_count'] }} / {{ $group['max_count'] }}</td>
-                        <td style="width: 52mm;"><span class="bar" style="background: #E95446; width: {{ number_format($competitorRatio, 1) }}%;"></span></td>
-                    </tr>
-                @endforeach
-            </table>
+            @endif
 
             {{--
-                依頼X-2(2026-08-26): 候補が0件のときの「該当する項目は
-                ありませんでした」という宙に浮いた一行は廃止した。
-                $focus['lead_text']が既に状況を説明する文言(no_candidate_
-                self_ahead等)を出しているため、追加の説明は不要 ――
-                カード・中長期の差別化ポイント・末尾の一文は、候補が
-                1件以上あるとき(=$focus['items']が空でないとき)のみ出す。
+                2026-08-18追加: ワンポイントの理由(依頼者指定の構成 ――
+                ワンポイント→理由→カード3枚→中長期施策)。改善提案AI
+                未生成/失敗時はnullのため非表示。
             --}}
-            @if (count($focus['items']) > 0)
-                {{-- table-layout:autoにしない理由 ―― この列にはcompetitor_evidence
-                     (比較サイトの実際の抜粋、長文になりうる)が入るため、autoにすると
-                     列幅がページ右端を超える危険がある。列幅は全列88.3mmで
-                     等しいので、fixedのままで安全に収まることを確認済み。 --}}
-                <table style="width: 265mm; margin-top: 2mm;">
-                    <tr>
-                        {{--
-                            依頼AH-2(2026-08-28): カードを①「追いつく」
-                            (catch_up、競合にあり自社に無い)と②「抜け出す」
-                            (breakout、競合にも自社にも無い)の2種類に分け、
-                            見た目で区別する(営業が説明を使い分けられる
-                            ように)。ラベル文言はconfig('brand_wheel.
-                            improvement_card_type_labels')に置く(Blade直書き
-                            にしない、依頼者指定)。②は比較サイトにも記述が
-                            無いため引用するものが存在しない ―― 引用ボックス
-                            (.lb/.cmp/.cmp-translation)ごと出さない(空の
-                            引用枠を作らない、依頼Xの「該当する項目は
-                            ありませんでした」が宙に浮いた件と同じ轍を踏まない)。
-                            見出し・推奨文・現状注記は①と同じ形のまま。
-                        --}}
-                        @foreach ($focus['items'] as $i => $item)
-                            <td class="rcell">
-                                <div class="rcard">
-                                    <span class="no">{{ $i + 1 }}</span>
-                                    <span class="ctype ctype-{{ $item['type'] }}">{{ config('brand_wheel.improvement_card_type_labels.'.$item['type']) }}</span>
-                                    <p class="nm">{{ $item['sub_name'] }}</p>
-                                    <p class="q">{{ $item['recommendation'] }}</p>
-                                    <p class="own">（現在、サイトからは読み取れませんでした）</p>
-                                    @if ($item['type'] === 'catch_up')
-                                        <p class="lb">競合サイトの記述</p>
-                                        <p class="cmp">「{{ $item['competitor_evidence'] }}」</p>
-                                        @if (! empty($item['competitor_evidence_translation']))
-                                            <p class="cmp-translation">{{ config('brand_wheel.quote_translation_label') }}：{{ $item['competitor_evidence_translation'] }}</p>
-                                        @endif
-                                    @endif
-                                </div>
-                            </td>
-                        @endforeach
-                    </tr>
-                </table>
+            @if ($viewModel->improvementReason)
+                <p class="reasontext"><b>理由：</b>{{ $viewModel->improvementReason }}</p>
+            @endif
+
+            @if ($viewModel->improvementFocus)
+                @php
+                    $focus = $viewModel->improvementFocus;
+                @endphp
+                {{--
+                    2026-08-04: 文言修正。旧文言「候補者が比較サイト側でしか
+                    情報を得られない差が最も大きかったのは」は、選定ロジック
+                    (競合の該当件数－自社の該当件数がグループ内で最大)と
+                    食い違って見える不具合が実PDF確認で見つかったため、
+                    「差(競合サイト件数－自社件数)」を明示し数値で検算できる
+                    言い回しに変更した。
+
+                    依頼X-1〜X-4(2026-08-26、レポート42): 文言の組み立て自体を
+                    BrandWheelImprovementFocusComposer::compose()側
+                    (config('brand_wheel.improvement_focus_templates')参照)へ
+                    移し、候補の有無・差の符号に応じて出し分けるようにした
+                    ため、ここでは$focus['lead_text']を無条件に出すだけでよい。
+
+                    依頼AY-3(2026-09-07): 領域ごとの件数バー(旧.gapbar、
+                    自社/競合の棒グラフ)は削除した ―― 統合ページでは上段の
+                    24項目表が同じ情報をより詳細に示しており重複するため
+                    (モックアップ(統合レポート_モックアップ.pdf)も件数
+                    バーを含まない構成、実装報告で改めて確認を仰ぐ)。
+                    lead_text自体は件数バー無しでも文として成立するため残す。
+                --}}
+                <p class="rlead">{{ $focus['lead_text'] }}</p>
 
                 {{--
-                    2026-08-18: 単一段落の「改善のご提案」(旧recommendation)を、
-                    依頼者指定の構成に合わせて理由＋「中長期の差別化ポイント」
-                    (該当する場合のみ)に分割した。既存のグループ差バー＋証拠
-                    カード(無改修、決定的ロジック)は「自社と競合の差」の根拠と
-                    して残す。
-
-                    2026-08-19: 「中長期の差別化ポイント」を、単なる末尾の
-                    1行(旧.midterm)から、Quick Win系ボックスと明確に分離した
-                    独立ボックス(.diffbox)へ格上げした(依頼者指定 ――
-                    「競合との差を埋める提案」と「競合も弱い領域での差別化
-                    提案」を役割として分けるため)。中身
-                    ($viewModel->improvementMidTermAction)は
-                    mutually_unmatched_items(自社・競合とも未充足の項目)から
-                    AIが選んだ1テーマのみ(OpenAiBrandWheelImprovementSuggestion
-                    Provider::buildPrompt()参照、決め打ちのカテゴリではない)。
-
-                    依頼Q-2(2026-08-25): 「具体的に追加すべき情報」の箇条書き
-                    (旧$viewModel->improvementRecommendedContents)は廃止した ――
-                    上のカード(sub_element_recommendationsの文面)と実質同じ
-                    内容を繰り返しており、「1ページ1推奨」の妨げになっていた
-                    (依頼者指定)。フィールド自体(AI生成・DB保存)は変更して
-                    いない、表示しないだけ。
+                    依頼X-2(2026-08-26): 候補が0件のときの「該当する項目は
+                    ありませんでした」という宙に浮いた一行は廃止した。
+                    $focus['lead_text']が既に状況を説明する文言(no_candidate_
+                    self_ahead等)を出しているため、追加の説明は不要 ――
+                    カード・中長期の差別化ポイントは、候補が1件以上あるとき
+                    (=$focus['items']が空でないとき)のみ出す。
                 --}}
-                @if ($viewModel->improvementMidTermAction)
-                    <div class="diffbox">
-                        <p class="t">中長期の差別化ポイント</p>
-                        <p>{{ $viewModel->improvementMidTermAction }}</p>
-                    </div>
-                @elseif ($viewModel->improvementFallbackNote)
+                @if (count($focus['items']) > 0)
+                    {{-- table-layout:autoにしない理由 ―― この列にはcompetitor_evidence
+                         (競合サイトの実際の抜粋、長文になりうる)が入るため、
+                         autoにすると列幅がページ右端を超える危険がある。
+                         列幅は全列88.3mmで等しいので、fixedのままで安全に
+                         収まることを確認済み。 --}}
+                    <table style="width: 265mm; margin-top: 1mm;">
+                        <tr>
+                            {{--
+                                依頼AH-2(2026-08-28): カードを①「追いつく」
+                                (catch_up、競合にあり自社に無い)と②「抜け出す」
+                                (breakout、競合にも自社にも無い)の2種類に分け、
+                                見た目で区別する。②は競合サイトにも記述が
+                                無いため引用ボックス(.lb/.cmp/.cmp-translation)
+                                ごと出さない(空の引用枠を作らない)。
+                            --}}
+                            @foreach ($focus['items'] as $i => $item)
+                                <td class="rcell">
+                                    <div class="rcard">
+                                        <span class="no">{{ $i + 1 }}</span>
+                                        <span class="ctype ctype-{{ $item['type'] }}">{{ config('brand_wheel.improvement_card_type_labels.'.$item['type']) }}</span>
+                                        <p class="nm">{{ $item['sub_name'] }}</p>
+                                        <p class="q">{{ $item['recommendation'] }}</p>
+                                        <p class="own">（現在、サイトからは読み取れませんでした）</p>
+                                        @if ($item['type'] === 'catch_up')
+                                            <p class="lb">競合サイトの記述</p>
+                                            <p class="cmp">「{{ $item['competitor_evidence'] }}」</p>
+                                            @if (! empty($item['competitor_evidence_translation']))
+                                                <p class="cmp-translation">{{ config('brand_wheel.quote_translation_label') }}：{{ $item['competitor_evidence_translation'] }}</p>
+                                            @endif
+                                        @endif
+                                    </div>
+                                </td>
+                            @endforeach
+                        </tr>
+                    </table>
+
                     {{--
-                        依頼AF-3(2026-08-27、依頼者承認済み): 「理由」
-                        (improvementReason)と「中長期の差別化ポイント」
-                        (improvementMidTermAction)が両方とも無いとき
-                        (AIの生成に失敗した場合等)、ページの下半分が
-                        白紙のままにならないよう表示する代替文言。
-                        improvementFallbackNoteは$focus['items']が0件のとき
-                        (自社が優位で候補が無いとき、直上のlead_textが既に
-                        説明済み)は常にnullのため、ここに到達するのは
-                        カードが表示されている場合のみ(ReportViewModelBuilder
-                        参照)。自社単独ページ(直後の同種ブロック)は対象外
-                        (improvementFallbackNoteが常にnullのため)。
+                        2026-08-19: 「中長期の差別化ポイント」。
+                        $viewModel->improvementMidTermActionはmutually_
+                        unmatched_items(自社・競合とも未充足の項目)からAIが
+                        選んだ1テーマのみ(OpenAiBrandWheelImprovementSuggestion
+                        Provider::buildPrompt()参照、決め打ちのカテゴリでは
+                        ない)。
                     --}}
-                    <div class="fallbacknote">
-                        <p>{{ $viewModel->improvementFallbackNote }}</p>
-                    </div>
+                    @if ($viewModel->improvementMidTermAction)
+                        <div class="diffbox">
+                            <p class="t">中長期の差別化ポイント</p>
+                            <p>{{ $viewModel->improvementMidTermAction }}</p>
+                        </div>
+                    @elseif ($viewModel->improvementFallbackNote)
+                        {{--
+                            依頼AF-3(2026-08-27、依頼者承認済み): 「理由」
+                            (improvementReason)と「中長期の差別化ポイント」
+                            (improvementMidTermAction)が両方とも無いとき
+                            (AIの生成に失敗した場合等)、ページの下部が白紙の
+                            ままにならないよう表示する代替文言。
+                        --}}
+                        <div class="fallbacknote">
+                            <p>{{ $viewModel->improvementFallbackNote }}</p>
+                        </div>
+                    @endif
                 @endif
-            @endif
-        @elseif ($viewModel->improvementFocusSelfOnly)
-            {{--
-                2026-08-10: 競合が無い(または読み取れない)診断向け。
-                「比較サイトが無いため、領域ごとの比較はご用意できません。」の
-                1行だけでページの大半が空白になり、営業資料として成立しない
-                という指摘(ユーザー)への対応。棒グラフ(groups)は常に
-                BrandWheelImprovementFocusComposer::composeSelfOnly()の決定的な
-                規則で選定した数値のまま(無改修)。
-                最終ページの「3〜5社と比較しませんか」への導線として機能させる。
+            @elseif ($viewModel->improvementFocusSelfOnly)
+                {{--
+                    2026-08-10: 競合が無い(または読み取れない)診断向け。
+                    棒グラフ(groups)は常にBrandWheelImprovementFocusComposer::
+                    composeSelfOnly()の決定的な規則で選定した数値のまま
+                    (無改修) ―― ただし依頼AY-3によりこの統合ページでは
+                    件数バー自体を表示しない(上段の24項目表と重複するため)。
 
-                依頼Q-2(2026-08-25): レポート35で、AI(ワンポイント/理由)と
-                規則(「最も少なかったのは〜」+3枚のカード)が同時に描画され、
-                領域が食い違って見える不具合があった(1ページに2つの推奨が
-                並ぶ状態)。改善提案AIがfocus_sub_element_keysで有効な項目を
-                挙げていれば、3枚のカード(items)はAI由来に差し替わり
-                ($focusSelf['items_source'] === 'ai'、ReportViewModelBuilder::
-                buildAiSelfOnlyFocusItems()参照)、「最も少なかったのは〜」の
-                一文(規則側のselected_groupに基づく主張)は出さない ――
-                棒グラフには実際の数値が残るため、情報は失われない。
-                AI未生成/失敗/有効な項目0件のときは、従来どおり規則由来の
-                一文+カード('rule')のまま(=この分岐の元の挙動)。
-                items_sourceキーが無いViewModel(ReportViewModelBuilderを経由
-                しない単体テストのfixture等)は'rule'扱いにする。
-            --}}
-            @php
-                $focusSelf = $viewModel->improvementFocusSelfOnly;
-                $focusSelfItemsSource = $focusSelf['items_source'] ?? 'rule';
-                $selectedLabelSelf = $groupBands[$focusSelf['selected_group']]['label'] ?? $focusSelf['selected_group'];
-                $selfOnlyReasonLabel = fn (string $reason) => $reason === 'label_only'
-                    ? '（現在、見出し・リンクラベルのみで、具体的な記述は見つかりませんでした）'
-                    : '（現在、サイトからは読み取れませんでした）';
-            @endphp
-            @if ($focusSelfItemsSource === 'rule')
-                <p class="rlead">3つの領域のうち、サイトの記述から読み取れた項目が最も少なかったのは「{{ $selectedLabelSelf }}」でした。この領域から、候補者が知りたがる項目を{{ count($focusSelf['items']) }}件挙げます。</p>
-            @endif
+                    依頼Q-2(2026-08-25): 改善提案AIがfocus_sub_element_keys
+                    で有効な項目を挙げていれば、3枚のカード(items)はAI由来に
+                    差し替わり($focusSelf['items_source'] === 'ai')、
+                    「最も少なかったのは〜」の一文(規則側の主張)は出さない。
+                    AI未生成/失敗/有効な項目0件のときは、従来どおり規則由来の
+                    一文+カード('rule')のまま。
+                --}}
+                @php
+                    $focusSelf = $viewModel->improvementFocusSelfOnly;
+                    $focusSelfItemsSource = $focusSelf['items_source'] ?? 'rule';
+                    $selectedLabelSelf = $groupBands[$focusSelf['selected_group']]['label'] ?? $focusSelf['selected_group'];
+                    $selfOnlyReasonLabel = fn (string $reason) => $reason === 'label_only'
+                        ? '（現在、見出し・リンクラベルのみで、具体的な記述は見つかりませんでした）'
+                        : '（現在、サイトからは読み取れませんでした）';
+                @endphp
+                @if ($focusSelfItemsSource === 'rule')
+                    <p class="rlead">3つの領域のうち、サイトの記述から読み取れた項目が最も少なかったのは「{{ $selectedLabelSelf }}」でした。この領域から、候補者が知りたがる項目を{{ count($focusSelf['items']) }}件挙げます。</p>
+                @endif
 
-            {{-- 自社のみの3列版(nm/v/bar)。競合が無いため.gapbarの5列版
-                 (nm/v/bar/v/bar)は使わず、赤い比較バーは出さない
-                 (ユーザー指定)。 --}}
-            <table class="gapbar" style="width: 265mm; table-layout: auto;">
-                @foreach ($focusSelf['groups'] as $group)
-                    @php
-                        $labelSelf = $groupBands[$group['group']]['label'] ?? $group['group'];
-                        $selfRatioSelf = $group['max_count'] > 0 ? $group['self_count'] / $group['max_count'] * 100 : 0;
-                    @endphp
-                    <tr>
-                        <td class="nm">{{ $labelSelf }}</td>
-                        <td class="v">自社 {{ $group['self_count'] }} / {{ $group['max_count'] }}</td>
-                        <td style="width: 108mm;"><span class="bar" style="background: #3A3FC0; width: {{ number_format($selfRatioSelf, 1) }}%;"></span></td>
-                    </tr>
-                @endforeach
-            </table>
+                @if (count($focusSelf['items']) === 0)
+                    <p class="gnone" style="margin-top: 1mm;">該当する項目はありませんでした</p>
+                @else
+                    <table style="width: 265mm; margin-top: 1mm;">
+                        <tr>
+                            @foreach ($focusSelf['items'] as $i => $item)
+                                <td class="rcell">
+                                    <div class="rcard">
+                                        <span class="no">{{ $i + 1 }}</span>
+                                        <p class="nm">{{ $item['sub_name'] }}</p>
+                                        <p class="q">{{ $item['recommendation'] }}</p>
+                                        <p class="own">{{ $selfOnlyReasonLabel($item['self_reason']) }}</p>
+                                    </div>
+                                </td>
+                            @endforeach
+                        </tr>
+                    </table>
 
-            @if (count($focusSelf['items']) === 0)
-                <p class="gnone" style="margin-top: 3mm;">該当する項目はありませんでした</p>
-            @else
-                <table style="width: 265mm; margin-top: 2mm;">
-                    <tr>
-                        @foreach ($focusSelf['items'] as $i => $item)
-                            <td class="rcell">
-                                <div class="rcard">
-                                    <span class="no">{{ $i + 1 }}</span>
-                                    <p class="nm">{{ $item['sub_name'] }}</p>
-                                    <p class="q">{{ $item['recommendation'] }}</p>
-                                    <p class="own">{{ $selfOnlyReasonLabel($item['self_reason']) }}</p>
-                                </div>
-                            </td>
-                        @endforeach
-                    </tr>
-                </table>
-
-                @if ($viewModel->improvementMidTermAction)
-                    <div class="diffbox">
-                        <p class="t">中長期の差別化ポイント</p>
-                        <p>{{ $viewModel->improvementMidTermAction }}</p>
-                    </div>
+                    @if ($viewModel->improvementMidTermAction)
+                        <div class="diffbox">
+                            <p class="t">中長期の差別化ポイント</p>
+                            <p>{{ $viewModel->improvementMidTermAction }}</p>
+                        </div>
+                    @endif
                 @endif
             @endif
         @endif
     @endif
 </div>
-@endif
 
 {{--
     8. 最終CTAページ。2026-08-17: 長い説明文(「サイトの改善をすれば課題が
@@ -1155,7 +999,14 @@
     ボタン風のラベル付きリンクにする(依頼者指定)。発行日は表紙と同じ
     $viewModel->generatedAtLabelを参照し、二重管理しない。
 --}}
-<div class="page cta">
+{{--
+    依頼AY-2(2026-09-07): 付録(○と判定した根拠)は$viewModel->
+    selfEvidenceByAxisが空配列の場合は出さない(既存方針、空のページを
+    作らない)。その場合CTAページ自身が最後のページになるため、
+    page-break-after:autoを付ける(付けないと末尾に無駄な白紙ページが増える、
+    CSS冒頭の.page.appendixコメントと同じ理由)。
+--}}
+<div class="page cta @if ($viewModel->selfEvidenceByAxis === []) appendix @endif">
     <div class="ctawrap">
         <img class="ctalogo" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
         <p class="ctah">さらに3〜5社の競合採用サイトと比較し、<br>御社が優先して改善すべき課題を整理しませんか？</p>
@@ -1167,6 +1018,56 @@
         </div>
     </div>
 </div>
+
+{{--
+    【付録】○と判定した根拠(依頼R、2026-08-26追加、依頼AY-2(2026-09-07)で
+    末尾の付録へ移動)。
+
+    移動の理由(依頼AY-2): 本編を6ページ(表紙/前置き/自社/競合/統合診断
+    結果/ご相談)で完結させつつ、判定の根拠を検証できる状態は維持する ――
+    「普段は見せず、聞かれたら開く」の位置づけで、CTAページの後ろ(最後)に
+    置く。見出しに「【付録】」を付け、本編ではないことを示す(依頼者指定
+    「文言は提案してよい」)。
+
+    内容は無改修(依頼R時点のまま) ―― 自社サイトのみ(競合サイトの引用は
+    載せない、依頼者指定)。$viewModel->selfEvidenceByAxis(ReportViewModelBuilder::
+    buildSelfEvidenceByAxis()が組み立てる、対比表と同じ軸順・下位要素順の
+    配列)が唯一の情報源で、Bladeから$viewModel->brandWheelSelf['axes']等の
+    生JSONを直接掘らない。「－」の項目は一切参照しない(依頼者指定: 顧客に
+    見せるものではない)。「－」については統合ページの凡例(.cmplegend)で
+    足りている。
+
+    $viewModel->selfEvidenceByAxisが空配列(matched=0件、または全項目の
+    evidenceが空文字)の場合はページ自体を出さない(空のページを作らない)。
+    このページが本編の最後(=CTAページ)の次に置かれる唯一のページのため、
+    class="page appendix"でpage-break-after:autoにする(CSS冒頭のコメント
+    参照 ―― alwaysのままだと末尾に無駄な白紙ページが増える)。
+--}}
+@if ($viewModel->selfEvidenceByAxis !== [])
+<div class="page appendix">
+    <h2>【付録】○と判定した根拠</h2>
+    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
+    {{-- 依頼AA(2026-08-27): このレポート内に日本語訳が1件でもあるときだけ
+         「(日本語訳を併記しています)」付きの説明文に差し替える。1件も
+         無ければ既存の文言のまま(訳が無いのに「併記しています」と書かない)。 --}}
+    <p class="evidenceintro">{{ $viewModel->hasQuoteTranslations ? config('brand_wheel.evidence_page_intro_with_translation') : config('brand_wheel.evidence_page_intro') }}</p>
+
+    @foreach ($viewModel->selfEvidenceByAxis as $axisGroup)
+        <div class="evidenceaxis">
+            <p class="axisname">{{ $axisGroup['axis_name'] }}</p>
+            @foreach ($axisGroup['items'] as $item)
+                <div class="evidenceitem">
+                    <p class="subname">{{ $item['sub_name'] }}</p>
+                    <p class="quote">「{{ $item['evidence'] }}」</p>
+                    @if (! empty($item['evidence_translation']))
+                        <p class="quote-translation">{{ config('brand_wheel.quote_translation_label') }}：{{ $item['evidence_translation'] }}</p>
+                    @endif
+                </div>
+            @endforeach
+        </div>
+    @endforeach
+</div>
+@endif
 
 </body>
 </html>

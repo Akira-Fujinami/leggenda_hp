@@ -676,21 +676,27 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringNotContainsString('サイトから十分な文章を読み取れなかったため', $html);
     }
 
-    public function test_report_has_seven_pages_when_the_competitor_is_readable(): void
+    /**
+     * 依頼AY-1(2026-09-07): 「○△－の対比表」ページと「改善提案」ページを
+     * 1ページ(「診断結果 ―― 24項目の比較と改善提案」)へ統合したことで、
+     * ページ数は旧7ページから6ページへ1つ減った(表紙/前置き/自社/競合/
+     * 統合ページ/CTA)。
+     */
+    public function test_report_has_six_pages_when_the_competitor_is_readable(): void
     {
         $html = $this->render($this->comparisonViewModel());
-
-        $this->assertSame(7, substr_count($html, 'class="page'));
-    }
-
-    public function test_report_has_six_pages_when_there_is_no_competitor_website(): void
-    {
-        $html = $this->render($this->viewModel());
 
         $this->assertSame(6, substr_count($html, 'class="page'));
     }
 
-    public function test_report_has_six_pages_when_the_competitor_url_exists_but_is_not_readable(): void
+    public function test_report_has_five_pages_when_there_is_no_competitor_website(): void
+    {
+        $html = $this->render($this->viewModel());
+
+        $this->assertSame(5, substr_count($html, 'class="page'));
+    }
+
+    public function test_report_has_five_pages_when_the_competitor_url_exists_but_is_not_readable(): void
     {
         $html = $this->render($this->comparisonViewModel([
             'brandWheelCompetitor' => $this->wheel([
@@ -701,7 +707,7 @@ class LeadPdfViewTest extends TestCase
             'competitorTotalMax' => 0,
         ]));
 
-        $this->assertSame(6, substr_count($html, 'class="page'));
+        $this->assertSame(5, substr_count($html, 'class="page'));
     }
 
     public function test_comparison_page_does_not_show_a_zero_over_zero_competitor_line_when_the_competitor_is_not_readable(): void
@@ -727,16 +733,11 @@ class LeadPdfViewTest extends TestCase
     {
         $html = $this->render($this->comparisonViewModel());
 
-        $start = mb_strpos($html, '○△－の対比表');
-        $this->assertNotFalse($start);
-        $end = mb_strpos($html, '改善提案', $start) ?: mb_strlen($html);
-        $pageHtml = mb_substr($html, $start, $end - $start);
-
-        $this->assertStringContainsString('<span class="mkon">○</span>', $pageHtml);
-        $this->assertStringContainsString('<span class="mkoff">－</span>', $pageHtml);
+        $this->assertStringContainsString('<span class="mkon">○</span>', $html);
+        $this->assertStringContainsString('<span class="mkoff">－</span>', $html);
         // 旧仕様の●は使わない。
-        $this->assertStringNotContainsString('●', $pageHtml);
-        $this->assertStringNotContainsString('×', $pageHtml);
+        $this->assertStringNotContainsString('●', $html);
+        $this->assertStringNotContainsString('×', $html);
     }
 
     /**
@@ -771,11 +772,7 @@ class LeadPdfViewTest extends TestCase
             'competitorTotalLabelOnly' => 1,
         ]));
 
-        $start = mb_strpos($html, '○△－の対比表');
-        $end = mb_strpos($html, '改善提案', $start) ?: mb_strlen($html);
-        $pageHtml = mb_substr($html, $start, $end - $start);
-
-        $this->assertStringContainsString('<span class="mktri">△</span>', $pageHtml);
+        $this->assertStringContainsString('<span class="mktri">△</span>', $html);
     }
 
     public function test_comparison_page_shows_the_label_only_reference_counts_separately_from_the_total(): void
@@ -785,8 +782,8 @@ class LeadPdfViewTest extends TestCase
             'competitorTotalLabelOnly' => 3,
         ]));
 
-        $this->assertStringContainsString('(参考)　<span class="mktri">△</span> 自社 2件', $html);
-        $this->assertStringContainsString('<span class="mktri">△</span> 比較 3件', $html);
+        $this->assertStringContainsString('(参考)　<span class="mktri">△</span>自社 2件', $html);
+        $this->assertStringContainsString('<span class="mktri">△</span>競合 3件', $html);
     }
 
     /**
@@ -806,23 +803,14 @@ class LeadPdfViewTest extends TestCase
     {
         $html = $this->render($this->viewModel());
 
-        $start = mb_strpos($html, '○△－の対比表');
-        $this->assertNotFalse($start);
-        $end = mb_strpos($html, '改善提案', $start) ?: mb_strlen($html);
-        $pageHtml = mb_substr($html, $start, $end - $start);
-
-        $this->assertStringNotContainsString('<th>競合</th>', $pageHtml);
+        $this->assertStringNotContainsString('<th>競合</th>', $html);
     }
 
     public function test_comparison_page_shows_the_competitor_column_when_a_competitor_website_exists(): void
     {
         $html = $this->render($this->comparisonViewModel());
 
-        $start = mb_strpos($html, '○△－の対比表');
-        $end = mb_strpos($html, '改善提案', $start) ?: mb_strlen($html);
-        $pageHtml = mb_substr($html, $start, $end - $start);
-
-        $this->assertStringContainsString('<th>競合</th>', $pageHtml);
+        $this->assertStringContainsString('<th>競合</th>', $html);
     }
 
     /**
@@ -835,8 +823,8 @@ class LeadPdfViewTest extends TestCase
         $viewModel = $this->comparisonViewModel();
         $html = $this->render($viewModel);
 
-        $this->assertStringContainsString("自社サイト {$viewModel->selfTotalMatched} / {$viewModel->selfTotalMax}項目", $html);
-        $this->assertStringContainsString("競合サイト {$viewModel->competitorTotalMatched} / {$viewModel->competitorTotalMax}項目", $html);
+        $this->assertStringContainsString("自社 {$viewModel->selfTotalMatched}/{$viewModel->selfTotalMax}項目", $html);
+        $this->assertStringContainsString("競合 {$viewModel->competitorTotalMatched}/{$viewModel->competitorTotalMax}項目", $html);
     }
 
     public function test_comparison_page_embeds_the_self_times_competitor_overlay_radar_png_when_available(): void
@@ -898,9 +886,11 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('○と判定した根拠', $html);
         $this->assertStringContainsString(config('brand_wheel.evidence_page_intro'), $html);
 
+        // 依頼AY-2(2026-09-07): 「○と判定した根拠」は末尾の付録ページに
+        // なった(以降にページが続かない)ため、開始位置から末尾までを
+        // そのままページ内容として扱う。
         $start = mb_strpos($html, '○と判定した根拠');
-        $end = mb_strpos($html, '<h2>改善提案</h2>');
-        $pageHtml = mb_substr($html, $start, $end - $start);
+        $pageHtml = mb_substr($html, $start);
 
         // 軸の順序どおりに出現すること(活動的魅力→資産的魅力→経営スタイル→
         // 就業環境→金銭的便益)。
@@ -1065,8 +1055,10 @@ class LeadPdfViewTest extends TestCase
     /**
      * 依頼R: 「○と判定した根拠」ページが追加された分、既存ページの数は
      * 変わらず合計だけ+1されること(既存ページのレイアウトは変更していない)。
+     * 依頼AY-1(2026-09-07)のページ統合により基準ページ数が7→6へ減ったため、
+     * 付録込みの合計も8→7になる。
      */
-    public function test_report_has_eight_pages_when_the_evidence_page_is_present(): void
+    public function test_report_has_seven_pages_when_the_evidence_page_is_present(): void
     {
         $html = $this->render($this->comparisonViewModel([
             'selfEvidenceByAxis' => [
@@ -1076,7 +1068,7 @@ class LeadPdfViewTest extends TestCase
             ],
         ]));
 
-        $this->assertSame(8, substr_count($html, 'class="page'));
+        $this->assertSame(7, substr_count($html, 'class="page'));
     }
 
     // ------------------------------------------------------------------
@@ -1356,7 +1348,9 @@ class LeadPdfViewTest extends TestCase
             'improvementFocusSelfOnly' => app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($subElementComparison),
         ]));
 
-        $this->assertStringNotContainsString('<h2>改善提案</h2>', $html);
+        // 依頼AY-1(2026-09-07): 「改善提案」は独立ページ(旧<h2>改善提案</h2>)
+        // ではなく、統合ページ下段の小見出し(<p class="diagsubhead">)になった。
+        $this->assertStringNotContainsString('<p class="diagsubhead">改善提案</p>', $html);
     }
 
     /**
@@ -1459,14 +1453,26 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('本分析は、ご提供いただいた採用ページ・トップページの記述を対象としており、サイト全体や他の関連ページを自動的に巡回して分析するものではありません。', $html);
     }
 
-    public function test_comparison_page_shows_overview_summary_and_group_verdict_badge_when_a_competitor_exists(): void
+    /**
+     * 依頼AY-1(2026-09-07): 領域優劣バッジ(旧.grpverdict、grpbar内の
+     * 「（自社優位）」等の小ラベル)は、統合ページの右3列が55.6mm幅に狭まった
+     * ことでグループ名見出しと同じ行に収まらなくなったため削除した
+     * (lead-pdf.blade.phpの.diagleft/.grpbar付近のコメント参照)。比較結果
+     * サマリー(cmpoverviewのプロース文)が同じ情報を文章で説明しているため、
+     * 情報自体は失われていない ―― このテストはバッジが「もう出ない」ことを
+     * 確認する回帰テストへ更新した。
+     */
+    public function test_comparison_page_shows_overview_summary_but_no_longer_shows_a_group_verdict_badge(): void
     {
         $html = $this->render($this->comparisonViewModel());
 
         $this->assertStringContainsString('比較結果サマリー', $html);
         $this->assertStringContainsString('自社は1 / 4項目、競合は3 / 8項目の情報が確認できました。', $html);
-        // fixtureはcompany_distance(会社との距離)で自社0件・競合2件(diff=-2)。
-        $this->assertStringContainsString('（競合優位）', $html);
+        // fixtureはcompany_distance(会社との距離)で自社0件・競合2件(diff=-2)
+        // だが、統合ページのgrpbarにはもうバッジを出さない。
+        $this->assertStringNotContainsString('（競合優位）', $html);
+        $this->assertStringNotContainsString('（自社優位）', $html);
+        $this->assertStringNotContainsString('（同程度）', $html);
     }
 
     public function test_comparison_page_omits_overview_summary_when_there_is_no_competitor(): void

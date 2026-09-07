@@ -40,6 +40,30 @@ class ReportViewModelBuilder
 
     private const RADAR_HEIGHT_PX = 552;
 
+    /**
+     * 依頼AY-1(2026-09-07): 統合ページ(「診断結果 ―― 24項目の比較と改善提案」)の
+     * レーダー図は、旧「○△－の対比表」ページの68mm×49.4mm表示から拡大する
+     * (76mm×55.2mm、docs/lead-report-layout想定)。表示サイズだけを上げると
+     * ラスタ画像がぼやけるため、viewBox(380x276)に対する倍率を既存の2倍から
+     * 約2.24倍(850x617)へ上げ、拡大後も同等の実効解像度(約284dpi)を保つ。
+     *
+     * 当初85mm×61.7mm(2.5倍、950x690)で実装したが、実データ(自社16/24・
+     * 競合20/24)で統合ページ全体をPDF化して目視確認したところ、改善提案の
+     * カード3枚(<table>の1行)が丸ごと2ページ目へあふれた(dompdfはtrを
+     * 分割しない)。左列(diagleft)の縦幅がレーダー画像の高さで支配されて
+     * いたため、レーダー表示サイズを76mm×55.2mmへ縮小して左列を約6.5mm
+     * 圧縮し、他の余白(cmpoverview/cmplegend/onepoint/reasontext/rlead/
+     * rcard等の padding・margin・line-height)もあわせて切り詰めることで
+     * カード3枚を含む全体を1ページに収めた(実PDF確認済み、実装報告に
+     * 詳細を記載)。旧68mm×49.4mm比では依然として拡大(表示面積で約+22%)。
+     * 自社単独・競合単独ページの表示サイズは変えないため、この定数は
+     * brandWheelRadarPngComparison(このページ専用)の生成にのみ使う ――
+     * RADAR_WIDTH_PX/HEIGHT_PX(自社/競合単独用)は無改修のまま。
+     */
+    private const COMPARISON_RADAR_WIDTH_PX = 850;
+
+    private const COMPARISON_RADAR_HEIGHT_PX = 617;
+
     public function __construct(
         private readonly HonorificNameFormatter $nameFormatter,
         // ブランド・ホイール(6軸)。JSON API(LeadAnalysisController)と同じ
@@ -436,7 +460,7 @@ class ReportViewModelBuilder
             brandWheelComparison: $brandWheelComparison,
             brandWheelRadarPngSelf: $this->buildRadarPng($selfReadable ? $selfAxes : null),
             brandWheelRadarPngCompetitor: $this->buildRadarPng($competitorReadable ? $competitorAxes : null, color: BrandWheelRadarSvgBuilder::competitorColor()),
-            brandWheelRadarPngComparison: $this->buildRadarPng($selfReadable ? $selfAxes : null, secondaryAxes: $competitorReadable ? $competitorAxes : null),
+            brandWheelRadarPngComparison: $this->buildRadarPng($selfReadable ? $selfAxes : null, secondaryAxes: $competitorReadable ? $competitorAxes : null, widthPx: self::COMPARISON_RADAR_WIDTH_PX, heightPx: self::COMPARISON_RADAR_HEIGHT_PX),
             selfTotalMatched: $selfTotalMatched,
             selfTotalMax: $selfTotalMax,
             competitorTotalMatched: $competitorTotalMatched,
@@ -622,7 +646,7 @@ class ReportViewModelBuilder
      * @param  ?list<array{key: string, name: string, matched_count: int, max_count: int}>  $axes  グリッド・主系列。呼び出し側がreadableと判断したものだけ渡す
      * @param  ?list<array{key: string, name: string, matched_count: int, max_count: int}>  $secondaryAxes  重ねる2系列目(対比表ページのみ指定)
      */
-    private function buildRadarPng(?array $axes, ?array $secondaryAxes = null, ?string $color = null): ?string
+    private function buildRadarPng(?array $axes, ?array $secondaryAxes = null, ?string $color = null, ?int $widthPx = null, ?int $heightPx = null): ?string
     {
         if ($axes === null || $axes === []) {
             return null;
@@ -630,6 +654,6 @@ class ReportViewModelBuilder
 
         $svg = $this->radarSvgBuilder->build($axes, $secondaryAxes, $color ?? BrandWheelRadarSvgBuilder::selfColor());
 
-        return $this->pngRenderer->renderPng($svg, self::RADAR_WIDTH_PX, self::RADAR_HEIGHT_PX);
+        return $this->pngRenderer->renderPng($svg, $widthPx ?? self::RADAR_WIDTH_PX, $heightPx ?? self::RADAR_HEIGHT_PX);
     }
 }

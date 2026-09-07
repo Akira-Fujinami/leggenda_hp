@@ -405,9 +405,9 @@ class WordReportGeneratorTest extends TestCase
     {
         $documentXml = $this->generate($this->comparisonViewModel());
 
-        $start = mb_strpos($documentXml, '○△－の対比表');
+        $start = mb_strpos($documentXml, '診断結果 ―― 24項目の比較と改善提案');
         $this->assertNotFalse($start);
-        $end = mb_strpos($documentXml, '改善提案', $start) ?: mb_strlen($documentXml);
+        $end = mb_strpos($documentXml, '<w:t>改善提案</w:t>', $start) ?: mb_strlen($documentXml);
         $sectionXml = mb_substr($documentXml, $start, $end - $start);
 
         $this->assertStringContainsString('○', $sectionXml);
@@ -432,8 +432,9 @@ class WordReportGeneratorTest extends TestCase
             'selfTotalLabelOnly' => 1,
         ]));
 
-        $start = mb_strpos($documentXml, '○△－の対比表');
-        $end = mb_strpos($documentXml, '改善提案', $start) ?: mb_strlen($documentXml);
+        $start = mb_strpos($documentXml, '診断結果 ―― 24項目の比較と改善提案');
+        $this->assertNotFalse($start);
+        $end = mb_strpos($documentXml, '<w:t>改善提案</w:t>', $start) ?: mb_strlen($documentXml);
         $sectionXml = mb_substr($documentXml, $start, $end - $start);
 
         $this->assertStringContainsString('△', $sectionXml);
@@ -681,7 +682,13 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString((string) config('brand_wheel.improvement_focus_templates.no_candidate_self_ahead'), $documentXml);
         $this->assertStringNotContainsString('0件挙げます', $documentXml);
         $this->assertStringNotContainsString('該当する項目はありませんでした', $documentXml);
-        $this->assertStringContainsString('改善提案', $documentXml);
+        // 依頼AY-1(2026-09-07): 統合ページのH1タイトル自体に「…改善提案」を
+        // 含むため(「診断結果 ―― 24項目の比較と改善提案」)、単純な部分文字列
+        // 一致では常にtrueになってしまう。改善提案の独立した小見出し
+        // (addTitle('改善提案', 2))が実際に出ていることを、そのXML表現
+        // (<w:t>改善提案</w:t>、標準のw:t、H1側は長い文字列全体が1つの
+        // w:tになるため区別できる)で確認する。
+        $this->assertStringContainsString('<w:t>改善提案</w:t>', $documentXml);
         $this->assertStringContainsString('会社の魅力', $documentXml);
     }
 
@@ -792,7 +799,15 @@ class WordReportGeneratorTest extends TestCase
             'improvementFocusSelfOnly' => app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($subElementComparison),
         ]));
 
-        $this->assertStringNotContainsString('改善提案', $documentXml);
+        // 依頼AY-1(2026-09-07): 統合ページのH1タイトル自体に「…改善提案」を
+        // 含む(「診断結果 ―― 24項目の比較と改善提案」)ため、単純な部分文字列
+        // の不在チェックでは常にtrueになってしまい、実際に小見出しが省略
+        // されたかを検証できない。改善提案の独立した小見出し
+        // (addTitle('改善提案', 2))のXML表現(<w:t>改善提案</w:t>)が
+        // 存在しないことを確認する(WordReportGeneratorTest::
+        // test_improvement_section_shows_the_no_candidate_message…の
+        // コメント参照)。
+        $this->assertStringNotContainsString('<w:t>改善提案</w:t>', $documentXml);
     }
 
     // ------------------------------------------------------------------

@@ -23,6 +23,19 @@ use PhpOffice\PhpWord\Style\Language;
  * 項目」は削除し、PDF版と1:1で一致する構成にした(ユーザー指示「Word版も
  * 同じ構成に合わせること」)。
  *
+ * 依頼AY-1/AY-2/AY-3(2026-09-07): PDF版が「○△－の対比表」ページと
+ * 「改善提案」ページを1ページ(「診断結果 ―― 24項目の比較と改善提案」)へ
+ * 統合し、「○と判定した根拠」を末尾の付録へ移したのに合わせ、Word版も
+ * 同じ構成(表紙/前置き/自社サイトの分析結果/競合サイトの分析結果/
+ * 診断結果統合セクション/最終ページ/付録)へ再編した。PhpWordはセクション
+ * (addSection())ごとに新しいページから始まり、セクション間の改ページを
+ * 外す指定はできないため、「対比表」と「改善提案」は2つのメソッドに
+ * 分かれたままでも1つのaddSection()呼び出しの中身として結合し、PDF版の
+ * 「1ページへ統合」に相当する構成にした(addComparisonAndImprovementSection()
+ * 参照、詳細は同メソッドのコメント)。あわせて、PDF版のみにあった
+ * レーダー比較図(brandWheelRadarPngComparison)をWord版にも追加した
+ * (依頼AY-4、内容の一致を優先)。
+ *
  * .docxはWordアプリ側のフォントで表示されるため、PDFのようなフォント埋め込みは
  * 不要 ―― 游ゴシック(Windows/Office標準の日本語フォント)を指定し、
  * 万一未インストールの環境でもWordが自動的に代替フォントへ切り替える。
@@ -83,10 +96,19 @@ class WordReportGenerator
                 $viewModel->brandWheelComparison['competitor_points'],
             );
         }
-        $this->addComparisonSection($phpWord, $viewModel);
-        $this->addEvidenceSection($phpWord, $viewModel);
-        $this->addImprovementProposalSection($phpWord, $viewModel);
+        // 依頼AY-1/AY-4: addComparisonAndImprovementSection()がレーダー比較図を
+        // 埋め込む際に作る一時PNGファイルのパス。PhpWordのaddImage()は
+        // ファイルパスを保持するだけで、実際に読み込むのはIOFactory::save()の
+        // 実行時(このメソッドの下のtry節)のため、addComparisonAndImprovement
+        // Section()の中でaddImage()直後に@unlink()すると「保存時にはもう
+        // ファイルが無い」状態になりZipArchive::addFile()が失敗する
+        // (実行確認で発見)。そのため一時ファイルの削除はsave()が完了した
+        // 後、このメソッドの末尾でまとめて行う。
+        $radarTempPath = $this->addComparisonAndImprovementSection($phpWord, $viewModel);
         $this->addCallToActionSection($phpWord, $viewModel);
+        // 依頼AY-2(2026-09-07): PDF版と同じく、「○と判定した根拠」は末尾の
+        // 付録として最後に置く(以前はCTAの直前だった)。
+        $this->addEvidenceSection($phpWord, $viewModel);
 
         $tempPath = tempnam(sys_get_temp_dir(), 'lead-report-').'.docx';
 
@@ -96,6 +118,9 @@ class WordReportGenerator
             return file_get_contents($tempPath);
         } finally {
             @unlink($tempPath);
+            if ($radarTempPath !== null) {
+                @unlink($radarTempPath);
+            }
         }
     }
 
@@ -316,23 +341,42 @@ class WordReportGenerator
     }
 
     /**
-     * PDF版5ページ目「○△－の対比表」と同内容。2026-08-08: ●／－の2値から
-     * ○△－の3値へ変更。○×は使わない(正解・不正解の記号であり、2ページ目の
-     * 断り書きと矛盾する)。判定はBrandWheelSubElementComparisonComposerが
-     * すべて行う(AIには一切判定させない)。$viewModel->subElementComparison
-     * (config順、24項目)が唯一の情報源。self_matched/competitor_matched
-     * (○のみtrue)は改善提案の選定ロジック専用のため、この表示には
-     * self_state/competitor_state('matched'|'label_only'|'none')を使う。
+     * 依頼AY-1/AY-3(2026-09-07): PDF版(lead-pdf.blade.php)で「○△－の対比表」
+     * ページと「改善提案」ページを1ページへ統合したのに合わせ、Word版でも
+     * 旧addComparisonSection()と旧addImprovementProposalSection()を1つの
+     * addSection()(=1ページ相当の開始点、以降は明示的な改ページを入れない)
+     * にまとめた。PhpWordはaddSection()の呼び出しごとに新しいページから
+     * 始まる(セクション間の改ページを外す指定はできない)ため、2つの
+     * addSection()に分けたままではPDF版のような「両方とも同じページに
+     * 続ける」構成を再現できない ―― これが2つを1メソッド・1addSection()に
+     * 統合した理由(依頼AY-4「WordはPDFと同一のレイアウトを再現できない
+     * 場合、その旨と代替案を報告すること」に対する回答は実装報告に記載)。
+     *
+     * 2026-08-08: ●／－の2値から○△－の3値へ変更。○×は使わない(正解・
+     * 不正解の記号であり、断り書きと矛盾する)。判定はBrandWheelSubElement
+     * ComparisonComposerがすべて行う(AIには一切判定させない)。
+     * $viewModel->subElementComparison(config順、24項目)が対比表の唯一の
+     * 情報源。改善提案側は旧addImprovementProposalSectionと全く同じ情報源
+     * ($viewModel->improvementFocus/improvementFocusSelfOnly等)・同じ選定
+     * ロジック(無改修)を使う。
+     *
+     * 依頼AY-1: 自社が読み取れない場合のstatus_messageは、PDF版と同じく
+     * 対比表・改善提案の両方に出していた重複を解消し、1回だけ出す。
+     *
+     * 依頼AY-3: 領域ごとの件数行(旧「{$label}：自社 x/y　比較 x/y」)は、
+     * この統合ページでは上の24項目表が同じ情報をより詳細に示しており
+     * 重複するため削除した(PDF版の.gapbar削除と同じ判断、モックアップに
+     * 準拠)。
      */
-    private function addComparisonSection(PhpWord $phpWord, ReportViewModel $viewModel): void
+    private function addComparisonAndImprovementSection(PhpWord $phpWord, ReportViewModel $viewModel): ?string
     {
         $section = $phpWord->addSection();
-        $section->addTitle('○△－の対比表', 1);
+        $section->addTitle('診断結果 ―― 24項目の比較と改善提案', 1);
 
         if (($viewModel->brandWheelSelf['status'] ?? null) !== 'success' || ($viewModel->brandWheelSelf['axes'] ?? []) === []) {
             $section->addText((string) ($viewModel->brandWheelSelf['status_message'] ?? ''));
 
-            return;
+            return null;
         }
 
         $showCompetitorColumn = $this->competitorReadable($viewModel);
@@ -349,6 +393,25 @@ class WordReportGenerator
             foreach ($viewModel->comparisonOverview as $line) {
                 $section->addText($line, ['size' => 9]);
             }
+        }
+
+        // 依頼AY-1・AY-4: PDF版のレーダー比較図(brandWheelRadarPngComparison)を
+        // Word版にも追加する。Word版はこれまでレーダー図を一切埋め込んで
+        // いなかった(自社/競合単独ページ含め、テキストと表のみ)が、PDF版の
+        // 統合ページではレーダー図が主要な構成要素になったため、内容の一致
+        // (依頼AY-4)を優先しWord版にも追加する。PhpWordのaddImage()は
+        // ファイルパスを取る(生のPNGバイト列を直接渡せない)ため、一時
+        // ファイルへ書き出してから渡す(generate()の.docx書き出しと同じ
+        // tempnam()方式)。PhpWordは実際にはIOFactory::save()実行時に初めて
+        // このファイルを読む(addImage()呼び出し時点では読まない)ため、
+        // ここではまだ削除できない ―― 呼び出し元(generate())がsave()完了後に
+        // 削除する(戻り値でパスを渡す、詳細はgenerate()側のコメント参照)。
+        $radarTempPath = null;
+        if ($showCompetitorColumn && $viewModel->brandWheelRadarPngComparison !== null) {
+            $radarTempPath = tempnam(sys_get_temp_dir(), 'lead-report-radar-').'.png';
+            file_put_contents($radarTempPath, $viewModel->brandWheelRadarPngComparison);
+            $section->addTextBreak(1);
+            $section->addImage($radarTempPath, ['width' => 220, 'height' => 160, 'alignment' => Jc::CENTER]);
         }
 
         $section->addTextBreak(1);
@@ -389,6 +452,10 @@ class WordReportGenerator
             $refLegend .= "　　△比較 {$viewModel->competitorTotalLabelOnly}件";
         }
         $section->addText($refLegend, ['size' => 9, 'color' => '8A8A8A']);
+
+        $this->addImprovementProposalContent($section, $viewModel);
+
+        return $radarTempPath;
     }
 
     /**
@@ -417,13 +484,15 @@ class WordReportGenerator
 
     /**
      * 依頼R(2026-08-26): 「○と判定した根拠」ページ(PDF版lead-pdf.blade.php
-     * と同内容)。○△－の対比表の直後に独立ページとして追加する
-     * (既存ページには一切差し込まない、依頼者指定)。$viewModel->
-     * selfEvidenceByAxis(ReportViewModelBuilder::buildSelfEvidenceByAxis()、
-     * 対比表と同じ軸順・下位要素順、自社のmatched項目のみ・evidenceが
-     * 空文字の項目は含まない)が唯一の情報源。競合サイトの引用・
-     * discarded_sub_elements(棄却された引用)はそもそもこのフィールドに
-     * 含まれない。
+     * と同内容)。$viewModel->selfEvidenceByAxis(ReportViewModelBuilder::
+     * buildSelfEvidenceByAxis()、対比表と同じ軸順・下位要素順、自社の
+     * matched項目のみ・evidenceが空文字の項目は含まない)が唯一の情報源。
+     * 競合サイトの引用・discarded_sub_elements(棄却された引用)はそもそも
+     * このフィールドに含まれない。
+     *
+     * 依頼AY-2(2026-09-07): 末尾の付録として最後(CTAの後)に置くよう移動した
+     * (以前はcomparisonセクションの直後)。見出しに「【付録】」を付け、
+     * 本編ではないことを示す(PDF版と同内容、内容自体は完全に無改修)。
      *
      * 空配列(matched=0件、または全項目のevidenceが空文字)の場合は
      * addSection()自体を呼ばない ―― 見出しだけの空セクション(空のページ)を
@@ -442,7 +511,7 @@ class WordReportGenerator
         }
 
         $section = $phpWord->addSection();
-        $section->addTitle('○と判定した根拠', 1);
+        $section->addTitle('【付録】○と判定した根拠', 1);
         // 依頼AA(2026-08-27): PDF版と同じ出し分け(このレポート内に日本語訳が
         // 1件でもあるときだけ「(日本語訳を併記しています)」付きの説明文)。
         $intro = $viewModel->hasQuoteTranslations
@@ -467,38 +536,38 @@ class WordReportGenerator
     }
 
     /**
-     * PDF版6ページ目「改善提案」と同内容。ブランド・ホイール起点であること
-     * (技術的な指標から作らない、docs/lead-report-layout/README.md)。
+     * 依頼AY-1/AY-3(2026-09-07): 旧addImprovementProposalSection()を、
+     * addSection()/addTitle()を持たない中身だけのメソッドへ変更した
+     * (呼び出し元のaddComparisonAndImprovementSection()が対比表と同じ
+     * $sectionへ続けて書き込むことで、PDF版と同じ「1ページへ統合」を
+     * 表現するため)。selfReadable判定・status_messageの表示は呼び出し元で
+     * 既に済んでいる(このメソッドはselfReadable===trueの場合のみ呼ばれる)。
+     *
+     * PDF版6ページ目相当「改善提案」と同内容。ブランド・ホイール起点で
+     * あること(技術的な指標から作らない、docs/lead-report-layout/README.md)。
      * ワンポイントは自社のみで判定可能なため常に自社の状態から出す。
      * 領域差・3項目は競合ありなら$viewModel->improvementFocus、競合なし
      * (または読み取れない)なら$viewModel->improvementFocusSelfOnly
      * (2026-08-10追加、いずれも決定的な規則で選定済み、△は未該当扱いのまま
-     * 選定ロジック無改修)が唯一の情報源。両方nullの場合は何も出さない
-     * (自社24項目すべてが○の場合、実運用ではまず起きない)。
+     * 選定ロジック無改修)が唯一の情報源。両方nullの場合は「改善提案」の
+     * 小見出しごと何も出さない(PDF版の@if ($viewModel->improvementFocus
+     * !== null || $viewModel->improvementFocusSelfOnly !== null)と同じ)。
+     *
+     * 依頼AY-3: 領域ごとの件数行(旧「{$label}：自社 x/y　比較 x/y」)は、
+     * 統合ページ上部の24項目表と重複するため削除した(PDF版と同じ判断)。
      *
      * 2026-08-08: 下部の技術的提案ブロック(「あわせて、サイトの作りに
      * ついて」)を削除した。4観点(測定結果)ページを削除したのに技術的提案
      * だけ残すのは整合が取れないため(ユーザー判断)。
      */
-    private function addImprovementProposalSection(PhpWord $phpWord, ReportViewModel $viewModel): void
+    private function addImprovementProposalContent(Section $section, ReportViewModel $viewModel): void
     {
-        $selfReadable = ($viewModel->brandWheelSelf['status'] ?? null) === 'success' && ($viewModel->brandWheelSelf['axes'] ?? []) !== [];
-
-        // 2026-08-10: PDF版(lead-pdf.blade.php)と同じ省略条件。セクション
-        // 自体をaddSection()する前に判定すること ―― 後から中身が無いと
-        // わかってreturnしても、見出しだけの空セクションが残ってしまう。
-        if ($selfReadable && $viewModel->improvementFocus === null && $viewModel->improvementFocusSelfOnly === null) {
+        if ($viewModel->improvementFocus === null && $viewModel->improvementFocusSelfOnly === null) {
             return;
         }
 
-        $section = $phpWord->addSection();
-        $section->addTitle('改善提案', 1);
-
-        if (! $selfReadable) {
-            $section->addText((string) ($viewModel->brandWheelSelf['status_message'] ?? ''));
-
-            return;
-        }
+        $section->addTextBreak(1);
+        $section->addTitle('改善提案', 2);
 
         // 2026-08-17: ワンポイントの文言を改善提案AIの生成結果へ切り替える
         // (PDF版と同内容)。$viewModel->improvementOnePointは未生成/失敗時に
@@ -525,12 +594,6 @@ class WordReportGenerator
             // 差の符号に応じた文言を組み立てるようにしたため、ここでは
             // $focus['lead_text']をそのまま出すだけでよい。
             $section->addText($focus['lead_text']);
-
-            $section->addTextBreak(1);
-            foreach ($focus['groups'] as $group) {
-                $label = self::GROUP_LABELS[$group['group']] ?? $group['group'];
-                $section->addText("{$label}：自社 {$group['self_count']} / {$group['max_count']}　比較 {$group['competitor_count']} / {$group['max_count']}");
-            }
 
             // 依頼X-2: 候補が0件のときの「該当する項目はありませんでした」は
             // 廃止した(PDF版と同内容 ―― lead_textが既に状況を説明している)。
@@ -604,12 +667,6 @@ class WordReportGenerator
                 "3つの領域のうち、サイトの記述から読み取れた項目が最も少なかったのは「{$selectedLabelSelf}」でした。".
                 'この領域から、候補者が知りたがる項目を'.count($focusSelfOnly['items']).'件挙げます。',
             );
-        }
-
-        $section->addTextBreak(1);
-        foreach ($focusSelfOnly['groups'] as $group) {
-            $label = self::GROUP_LABELS[$group['group']] ?? $group['group'];
-            $section->addText("{$label}：自社 {$group['self_count']} / {$group['max_count']}");
         }
 
         if ($focusSelfOnly['items'] === []) {
