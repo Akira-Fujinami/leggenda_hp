@@ -42,27 +42,32 @@ class ReportViewModelBuilder
 
     /**
      * 依頼AY-1(2026-09-07): 統合ページ(「診断結果 ―― 24項目の比較と改善提案」)の
-     * レーダー図は、旧「○△－の対比表」ページの68mm×49.4mm表示から拡大する
-     * (76mm×55.2mm、docs/lead-report-layout想定)。表示サイズだけを上げると
-     * ラスタ画像がぼやけるため、viewBox(380x276)に対する倍率を既存の2倍から
-     * 約2.24倍(850x617)へ上げ、拡大後も同等の実効解像度(約284dpi)を保つ。
+     * レーダー図は、旧「○△－の対比表」ページの68mm×49.4mm表示から拡大する。
+     * 表示サイズだけを上げるとラスタ画像がぼやけるため、viewBox(380x276)に
+     * 対する倍率を上げて拡大後も同等の実効解像度(約284dpi)を保つ。
      *
      * 当初85mm×61.7mm(2.5倍、950x690)で実装したが、実データ(自社16/24・
      * 競合20/24)で統合ページ全体をPDF化して目視確認したところ、改善提案の
      * カード3枚(<table>の1行)が丸ごと2ページ目へあふれた(dompdfはtrを
-     * 分割しない)。左列(diagleft)の縦幅がレーダー画像の高さで支配されて
-     * いたため、レーダー表示サイズを76mm×55.2mmへ縮小して左列を約6.5mm
-     * 圧縮し、他の余白(cmpoverview/cmplegend/onepoint/reasontext/rlead/
-     * rcard等の padding・margin・line-height)もあわせて切り詰めることで
-     * カード3枚を含む全体を1ページに収めた(実PDF確認済み、実装報告に
-     * 詳細を記載)。旧68mm×49.4mm比では依然として拡大(表示面積で約+22%)。
+     * 分割しない)ため、依頼AY-1では76mm×55.2mm(850x617)まで縮小した。
+     *
+     * 依頼AZ改(2026-09-07・AZ-3): 「比較結果サマリー」削除(AZ-1)+凡例統合
+     * (AZ-2)で左列の縦幅に余裕ができたため、「まず1ページに収め、余裕が
+     * 残った場合のみ拡大する」という優先順位に従い、最悪ケース(reason/
+     * mid_term_actionが文字数上限近く・カード3枚・競合の引用3件)で
+     * ページ下端まで最低5mmを確保できる範囲で84mm×61mm(950px相当ではなく
+     * 実測ベースでwidthPx=940/heightPx=682、約284dpi)へ再拡大した。
+     * 76mm×55.2mm時点で最悪ケースの余白が実測16〜17mmあったため、+6mmの
+     * 拡大(76→84mm相当の高さ換算で約+6mm)を行っても余白が10mm以上残る
+     * ことを実PDF確認(2分探索によるページ送りの実測)で確認済み(実装報告に
+     * 詳細を記載)。旧68mm×49.4mm比では表示面積で約+50%の拡大。
      * 自社単独・競合単独ページの表示サイズは変えないため、この定数は
      * brandWheelRadarPngComparison(このページ専用)の生成にのみ使う ――
      * RADAR_WIDTH_PX/HEIGHT_PX(自社/競合単独用)は無改修のまま。
      */
-    private const COMPARISON_RADAR_WIDTH_PX = 850;
+    private const COMPARISON_RADAR_WIDTH_PX = 940;
 
-    private const COMPARISON_RADAR_HEIGHT_PX = 617;
+    private const COMPARISON_RADAR_HEIGHT_PX = 682;
 
     public function __construct(
         private readonly HonorificNameFormatter $nameFormatter,

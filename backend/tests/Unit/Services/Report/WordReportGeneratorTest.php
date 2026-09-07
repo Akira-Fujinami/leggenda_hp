@@ -874,12 +874,18 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringContainsString('働く環境の具体像がイメージしづらい可能性があります。', $documentXml);
     }
 
-    public function test_comparison_section_shows_overview_summary_when_a_competitor_exists(): void
+    /**
+     * 依頼AZ改(2026-09-07・AZ-1): 「比較結果サマリー」はPDF版・Word版とも
+     * 削除した(すぐ下のレーダー比較図が同じ情報を視覚的に示しており、
+     * 文章は図をなぞって繰り返していただけのため、依頼者確認済み)。
+     * $viewModel->comparisonOverviewに値があっても描画しない。
+     */
+    public function test_comparison_section_never_shows_the_overview_summary_text_even_when_a_competitor_exists(): void
     {
         $documentXml = $this->generate($this->comparisonViewModel());
 
-        $this->assertStringContainsString('比較結果サマリー', $documentXml);
-        $this->assertStringContainsString('自社は1 / 4項目、競合は3 / 8項目の情報が確認できました。', $documentXml);
+        $this->assertStringNotContainsString('比較結果サマリー', $documentXml);
+        $this->assertStringNotContainsString('自社は1 / 4項目、競合は3 / 8項目の情報が確認できました。', $documentXml);
     }
 
     /**
@@ -926,9 +932,9 @@ class WordReportGeneratorTest extends TestCase
     }
 
     /**
-     * 修正3(2026-08-25): groupTotals/comparisonOverviewが空配列のとき
-     * (ReportViewModelBuilderが自社/競合いずれかの閾値未満で空にする)、
-     * Word版も比較結果サマリー自体を出さない(PDF版と同じ挙動)。
+     * 修正3(2026-08-25)由来のfixture(groupTotals/comparisonOverviewが
+     * 空配列になるケース)でも、依頼AZ改後の挙動(サマリーは常に非表示)が
+     * 変わらないことの回帰確認。
      */
     public function test_comparison_section_omits_overview_summary_when_group_totals_and_overview_are_empty_despite_a_competitor_existing(): void
     {

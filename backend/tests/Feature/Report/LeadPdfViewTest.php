@@ -1454,22 +1454,27 @@ class LeadPdfViewTest extends TestCase
     }
 
     /**
-     * 依頼AY-1(2026-09-07): 領域優劣バッジ(旧.grpverdict、grpbar内の
-     * 「（自社優位）」等の小ラベル)は、統合ページの右3列が55.6mm幅に狭まった
-     * ことでグループ名見出しと同じ行に収まらなくなったため削除した
-     * (lead-pdf.blade.phpの.diagleft/.grpbar付近のコメント参照)。比較結果
-     * サマリー(cmpoverviewのプロース文)が同じ情報を文章で説明しているため、
-     * 情報自体は失われていない ―― このテストはバッジが「もう出ない」ことを
-     * 確認する回帰テストへ更新した。
+     * 依頼AZ改(2026-09-07・AZ-1): 「比較結果サマリー」(旧.cmpoverview、
+     * BrandWheelComparisonSummaryComposer::comparisonOverview()のプロース文)
+     * は、左列のレーダーチャート(自社・競合を重ねた6軸+色凡例)が同じ情報
+     * (どの領域でどちらが強いか)を視覚的に示しており、文章は図をなぞって
+     * 繰り返していただけだったため削除した(依頼者確認済み)。$viewModel->
+     * comparisonOverviewに値があっても(競合が読み取れて閾値も満たしていても)
+     * もう描画しない ―― フィールド自体はReportViewModelBuilderが引き続き
+     * 計算するが、Blade側では一切参照しない。
+     *
+     * 依頼AY-1(2026-09-07)で削除した領域優劣バッジ(旧.grpverdict、grpbar内の
+     * 「（自社優位）」等の小ラベル)も、この依頼で復活させていないことを
+     * あわせて確認する(依頼者指定「バッジを復活させないこと」)。
      */
-    public function test_comparison_page_shows_overview_summary_but_no_longer_shows_a_group_verdict_badge(): void
+    public function test_comparison_page_never_shows_the_overview_summary_text_even_when_a_competitor_exists(): void
     {
         $html = $this->render($this->comparisonViewModel());
 
-        $this->assertStringContainsString('比較結果サマリー', $html);
-        $this->assertStringContainsString('自社は1 / 4項目、競合は3 / 8項目の情報が確認できました。', $html);
+        $this->assertStringNotContainsString('比較結果サマリー', $html);
+        $this->assertStringNotContainsString('自社は1 / 4項目、競合は3 / 8項目の情報が確認できました。', $html);
         // fixtureはcompany_distance(会社との距離)で自社0件・競合2件(diff=-2)
-        // だが、統合ページのgrpbarにはもうバッジを出さない。
+        // だが、統合ページのgrpbarにバッジは出さない(依頼AY-1のまま)。
         $this->assertStringNotContainsString('（競合優位）', $html);
         $this->assertStringNotContainsString('（自社優位）', $html);
         $this->assertStringNotContainsString('（同程度）', $html);
@@ -1483,13 +1488,9 @@ class LeadPdfViewTest extends TestCase
     }
 
     /**
-     * 修正3(2026-08-25): 自社/競合いずれかの合計matched件数が閾値未満の
-     * ときは、ReportViewModelBuilderがgroupTotals/comparisonOverviewを
-     * 空配列にする(ReportViewModelBuilderTest側で検証済み)。ここでは、
-     * その空配列がBlade側で「優劣判定・バッジを一切出さない」という
-     * 表示結果に正しくつながることを確認する(競合自体は存在する
-     * ケースであることに注意 ―― showCompetitorColumn=trueでも
-     * groupTotalsが空ならバッジは出ない)。
+     * 修正3(2026-08-25)由来のfixture(groupTotals/comparisonOverviewが
+     * 空配列になるケース)でも、依頼AZ改後の挙動(サマリー・バッジとも
+     * 常に非表示)が変わらないことの回帰確認。
      */
     public function test_comparison_page_omits_overview_summary_and_verdict_badge_when_group_totals_and_overview_are_empty_despite_a_competitor_existing(): void
     {

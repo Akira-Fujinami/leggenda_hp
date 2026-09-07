@@ -291,24 +291,28 @@
         依頼AY-1(2026-09-07): 「診断結果 ―― 24項目の比較と改善提案」統合
         ページ(旧「○△－の対比表」ページ+旧「改善提案」ページを1ページへ
         統合)。このページ専用のクラス群 ―― 旧2ページの相当クラス
-        (.vscell/.vstbl/.mkon等/.cmpoverview/.cmplegend)はこの統合ページ
-        以外から参照されていないため、そのまま幅・余白だけ調整して流用する
-        (依頼AC等・多社比較PDF(admin-comparison-pdf.blade.php)は完全に
-        別ファイル・別<style>のため、同名クラスがあっても影響しない)。
+        (.vscell/.vstbl/.mkon等)はこの統合ページ以外から参照されていない
+        ため、そのまま幅・余白だけ調整して流用する(依頼AC等・多社比較PDF
+        (admin-comparison-pdf.blade.php)は完全に別ファイル・別<style>の
+        ため、同名クラスがあっても影響しない)。
 
-        列構成: 左98mm(比較結果サマリー+レーダー+凡例)+右3列55.6mm×3
-        (24項目表、領域ごと)=265mm。table-layout:fixedの外側table
-        (.diagwrap)1本で組む ―― table-in-tableの入れ子自体は既存の
-        vscell/vstblパターン(2026-08-04時点で実績あり)を踏襲するため、
-        依頼AX-1で問題になった「同じ行の中でさらにtableを持つ」構造とは
-        異なり、pxta-in-td(1階層)のみで安全。
+        列構成: 左98mm(レーダー+凡例)+右3列55.6mm×3(24項目表、領域ごと)
+        =265mm。table-layout:fixedの外側table(.diagwrap)1本で組む ――
+        table-in-tableの入れ子自体は既存のvscell/vstblパターン
+        (2026-08-04時点で実績あり)を踏襲するため、依頼AX-1で問題になった
+        「同じ行の中でさらにtableを持つ」構造とは異なり、table-in-td
+        (1階層)のみで安全。
+
+        依頼AZ改(2026-09-07): 左列にあった「比較結果サマリー」
+        (.cmpoverview、旧・比較結果サマリーのプロース文)を削除した ――
+        レーダーチャート自体が同じ情報(自社・競合どちらが強いか)を
+        視覚的に示しており、文章は図をなぞって繰り返していただけの
+        ため(依頼者確認済み)。.cmpoverviewのCSSクラス自体も参照が
+        無くなったため削除した。
     --}}
     .vslead { width: 265mm; font-size: 9pt; color: #6B6767; margin: 0 0 0.8mm; line-height: 1.2; }
     .diagwrap { width: 265mm; table-layout: fixed; }
     .diagleft { width: 98mm; padding-right: 2mm; vertical-align: top; }
-    .cmpoverview { width: 94mm; border-left: 4px solid #1D2088; background: #F5F5F5; padding: 0.8mm 3mm; margin: 0 0 0.8mm; }
-    .cmpoverview .t { font-size: 8.5pt; font-weight: bold; margin: 0 0 0.3mm; }
-    .cmpoverview p { font-size: 7.5pt; line-height: 1.1; margin: 0; }
     .diagradarwrap { text-align: center; }
     {{--
         依頼AY-1(2026-09-07): 領域優劣バッジ(旧.grpverdict、grpbar内の
@@ -319,13 +323,12 @@
         (実装報告で明記)。
     --}}
     {{--
-        凡例は表の近くに必ず置く(対比表ページの意味を誤読させないため
-        ―― ○△－は正解/不正解の記号ではない、2ページ目の断り書きと矛盾
-        しないこと。ユーザー指定)。
+        依頼AZ改(2026-09-07・AZ-2): 凡例ボックス(.cmplegend)は、ページ
+        冒頭の.vsleadと内容が重複していたため廃止し、.vsleadへ統合した
+        (△の説明を含め、凡例の意味そのものはページ冒頭に残っている ――
+        「○△－は正解/不正解の記号ではない」という断り書きの位置が対比表の
+        直前から統合ページ冒頭へ変わっただけで、断り書き自体は無改修)。
     --}}
-    .cmplegend { width: 94mm; border: 1px solid #E0E0E0; background: #F5F5F5; padding: 0.6mm 3mm; margin: 0 0 0.6mm; }
-    .cmplegend p { font-size: 7.2pt; color: #393636; line-height: 1.08; margin: 0; }
-    .cmplegend .mk { display: inline-block; width: 5mm; font-weight: bold; }
     .vscell { width: 55.6mm; padding: 0 1.5mm 0 0; vertical-align: top; }
     .grpbar { color: #fff; font-size: 8.5pt; font-weight: bold; text-align: center; padding: 0.8mm; }
     .vstbl th { font-size: 7.3pt; font-weight: bold; padding: 0.4mm; border-bottom: 1px solid #E0E0E0; color: #6B6767; text-align: center; }
@@ -700,54 +703,60 @@
             $comparisonByGroup = collect($viewModel->subElementComparison)->groupBy('group');
             $showCompetitorColumn = $competitorReadable;
         @endphp
-        <p class="vslead">24項目それぞれについて、サイトに該当する記述があったかどうかを示しています。○＝本文の記述から確認できた項目、－＝該当する記述が見つからなかった項目(『魅力が無い』という意味ではありません)。</p>
+        {{--
+            依頼AZ改(2026-09-07): 「比較結果サマリー」(.cmpoverview、
+            旧・比較結果サマリーのプロース文)を削除した。左列のレーダー
+            チャート(brandWheelRadarPngComparison、自社・競合を重ねた6軸+
+            色凡例)が「どの領域でどちらが強いか」を視覚的に示しており、
+            文章はその図をなぞって繰り返していただけだったため(依頼者
+            確認済み)。失われる情報が無いことの確認:
+            - 総数比較(自社○/24・競合○/24)は表の下の.diagtotals(合計行)に
+              引き続き残る(依頼AY-1で1行化したもの、無改修)。
+            - 領域ごとの優劣は、このレーダーチャート自体で示される(旧
+              .grpverdictバッジは依頼AY-1で既に削除済み ―― このバッジを
+              復活させることはしない、55.6mm幅の右3列に収まらないため)。
+        --}}
+        {{--
+            依頼AZ改(2026-09-07・AZ-2): 凡例(○△－の意味)は、ページ冒頭の
+            .vslead(全幅の説明文、従来は○・－のみ言及)と、左列内の独立
+            ボックス(.cmplegend、94mm幅・3行・枠+パディング)の2箇所で
+            重複して説明していた。実PDF確認で「中長期の差別化ポイント」が
+            2ページ目へあふれる不具合(最悪ケースで約5〜6mmしか余裕が
+            なかった)が見つかったため、.cmplegendを廃止して.vsleadへ
+            △の説明を統合し1箇所にまとめた(△の説明自体は実際に△が出る
+            診断があるため残す)。左列の縦幅を1ボックス分縮められる。
+        --}}
+        <p class="vslead">24項目それぞれについて、サイトに該当する記述があったかどうかを示しています。○＝本文の記述から確認できた項目、△＝見出し・メニュー名などのラベルのみで、本文からは確認できなかった項目、－＝該当する記述が見つからなかった項目(『魅力が無い』という意味ではありません)。</p>
 
         {{--
-            左列(diagleft、98mm)に比較結果サマリー・レーダー・凡例、
-            右3列(vscell、55.6mm×3)に24項目表(領域ごと)を並べる、1本の
-            外側table(.diagwrap、table-layout:fixed)。table-in-tdの入れ子
-            自体は旧vscell/vstblパターン(2026-08-04時点で実績あり)を踏襲
-            するため、依頼AX-1で問題になった「同じ行の中でさらにtableを
-            持つ」構造とは異なり安全(CSS側コメント参照)。
+            左列(diagleft、98mm)にレーダー・色凡例、右3列(vscell、
+            55.6mm×3)に24項目表(領域ごと)を並べる、1本の外側table
+            (.diagwrap、table-layout:fixed)。table-in-tdの入れ子自体は旧
+            vscell/vstblパターン(2026-08-04時点で実績あり)を踏襲するため、
+            依頼AX-1で問題になった「同じ行の中でさらにtableを持つ」構造とは
+            異なり安全(CSS側コメント参照)。
 
-            レーダー図は旧68mm×49.4mm表示から76mm×55.2mm表示へ拡大した
-            (依頼AY-1、当初85mm×61.7mmで実装したが1ページに収まらず縮小
-            した ―― ReportViewModelBuilder::COMPARISON_RADAR_WIDTH_PXの
-            コメント参照)。表示サイズだけ拡大するとぼやけるため、
-            ReportViewModelBuilder::COMPARISON_RADAR_WIDTH_PX/
-            COMPARISON_RADAR_HEIGHT_PX(850x617)をこのページ専用に新設し、
-            拡大後も同等の実効解像度(約284dpi)を保つ ――
+            レーダー図は旧68mm×49.4mm表示から84mm×61mm表示へ拡大した
+            (依頼AY-1で当初85mm×61.7mm→カード3枚が溢れたため76mm×55.2mmへ
+            縮小、依頼AZ改でAZ-1(比較結果サマリー削除)・AZ-2(凡例統合)で
+            空いた縦幅を使って84mm×61mmへ再拡大 ――
+            ReportViewModelBuilder::COMPARISON_RADAR_WIDTH_PXのコメント
+            参照)。「まず1ページに収めることを優先し、拡大は余裕が残った
+            場合のみ」という指示に従い、最悪ケース(理由・中長期の文字数
+            上限近く、カード3枚)で2分探索により実測したうえで、ページ
+            下端まで10mm以上の余裕を残せるサイズに決めた(詳細は実装報告)。
+            表示サイズだけ拡大するとぼやけるため、ReportViewModelBuilder::
+            COMPARISON_RADAR_WIDTH_PX/COMPARISON_RADAR_HEIGHT_PXをこの
+            ページ専用に新設し、拡大後も同等の実効解像度を保つ ――
             BrandWheelRadarSvgBuilder/BrandWheelHexagonRendererの描画
             ロジック自体は無改修(サイズ・解像度のみ変更)。
         --}}
         <table class="diagwrap"><tr>
             <td class="diagleft">
-                {{--
-                    2026-08-17追加: 比較サマリー(依頼者指定#11 ―― 単純な
-                    総合勝敗ではなく「どの領域に情報差があるか」を示す)。
-                    BrandWheelComparisonSummaryComposer::comparisonOverview()が
-                    総合計件数とグループ優劣(BrandWheelSubElementComparison
-                    Composer::groupTotals())から機械的に導出する(AIには
-                    書かせない)。競合が読み取れない場合は出さない。
-                --}}
-                @if ($viewModel->comparisonOverview !== [])
-                    <div class="cmpoverview">
-                        <p class="t">比較結果サマリー</p>
-                        @foreach ($viewModel->comparisonOverview as $line)
-                            <p>{{ $line }}</p>
-                        @endforeach
-                    </div>
-                @endif
-
                 <div class="diagradarwrap">
                     @if ($competitorReadable && $viewModel->brandWheelRadarPngComparison)
-                        <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPngComparison) }}" style="width: 76mm; height: 55.2mm;">
+                        <img src="data:image/png;base64,{{ base64_encode($viewModel->brandWheelRadarPngComparison) }}" style="width: 84mm; height: 61mm;">
                     @endif
-                </div>
-                <div class="cmplegend">
-                    <p><span class="mk mkon">○</span> 本文の記述から確認できた項目</p>
-                    <p><span class="mk mktri">△</span> 見出し・メニュー名などのラベルのみで、本文からは確認できなかった項目</p>
-                    <p><span class="mk mkoff">－</span> 該当する記述が見つからなかった項目</p>
                 </div>
                 @if ($competitorReadable && $viewModel->brandWheelRadarPngComparison)
                     <div class="legend">
@@ -1034,7 +1043,7 @@
     buildSelfEvidenceByAxis()が組み立てる、対比表と同じ軸順・下位要素順の
     配列)が唯一の情報源で、Bladeから$viewModel->brandWheelSelf['axes']等の
     生JSONを直接掘らない。「－」の項目は一切参照しない(依頼者指定: 顧客に
-    見せるものではない)。「－」については統合ページの凡例(.cmplegend)で
+    見せるものではない)。「－」については統合ページ冒頭の凡例(.vslead)で
     足りている。
 
     $viewModel->selfEvidenceByAxisが空配列(matched=0件、または全項目の

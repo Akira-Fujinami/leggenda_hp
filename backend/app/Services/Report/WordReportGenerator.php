@@ -386,14 +386,12 @@ class WordReportGenerator
             ['size' => 9, 'italic' => true],
         );
 
-        // 2026-08-17追加: 比較結果サマリー(PDF版と同内容、依頼者指定#11)。
-        if ($viewModel->comparisonOverview !== []) {
-            $section->addTextBreak(1);
-            $section->addText('比較結果サマリー', ['bold' => true, 'size' => 9.5]);
-            foreach ($viewModel->comparisonOverview as $line) {
-                $section->addText($line, ['size' => 9]);
-            }
-        }
+        // 依頼AZ改(2026-09-07): 「比較結果サマリー」(PDF版の.cmpoverview
+        // 相当)を削除した。すぐ下に追加するレーダー比較図が同じ情報
+        // (自社・競合どちらが強いか)を視覚的に示しており、文章は図を
+        // なぞって繰り返していただけのため(PDF版lead-pdf.blade.phpの
+        // 同箇所コメント参照、依頼者確認済み)。PDF版・Word版どちらからも
+        // 削除する。
 
         // 依頼AY-1・AY-4: PDF版のレーダー比較図(brandWheelRadarPngComparison)を
         // Word版にも追加する。Word版はこれまでレーダー図を一切埋め込んで
