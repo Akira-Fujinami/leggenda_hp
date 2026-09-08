@@ -103,6 +103,15 @@ class LeadNotificationServiceBrandWheelTest extends TestCase
      * 中でも再確認する。ログにはlead_session_id相当の識別子(ここでは
      * brand_wheel_analysis_result_id)のみを残し、メールアドレス・会社名・
      * 担当者名は出さない。
+     *
+     * 依頼BD-3(2026-09-08): `id`は`BrandWheelAnalysisResult`の
+     * `#[Fillable([...])]`に意図的に含まれていない(主キーを一括代入可能に
+     * するのは誤りであり、この方針自体は変更しない)ため、コンストラクタの
+     * 配列に`'id' => 2`を渡しても黙って無視され、実際には`$result->id`が
+     * nullのままだった(依頼BC-4で特定 ―― commit 5e3f78a・依頼ASでの
+     * フィクスチャ記述ミス、ログ自体は正しく1回発火していたが期待値との
+     * 不一致でMockeryの検証が失敗していた)。個別プロパティへの代入は
+     * fillableの対象外のため、コンストラクタでなく代入で`id`を設定する。
      */
     public function test_diagnosis_completed_does_not_send_when_not_eligible_and_does_not_leak_pii_in_the_log(): void
     {
@@ -110,12 +119,12 @@ class LeadNotificationServiceBrandWheelTest extends TestCase
         Log::spy();
 
         $unreadableResult = new BrandWheelAnalysisResult([
-            'id' => 2,
             'status' => 'success',
             'axes' => [],
             'axis_state_counts' => ['read' => 0, 'partial' => 0, 'unread' => 6],
             'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
         ]);
+        $unreadableResult->id = 2;
 
         $sent = app(LeadNotificationService::class)->notifyDiagnosisCompletedToLead(
             $unreadableResult, 'lead@example.com', 'https://example.com',

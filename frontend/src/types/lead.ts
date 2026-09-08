@@ -16,6 +16,9 @@ export interface LeadOnboardingResult {
 export interface LeadAnalysisStartInput {
   self_url: string;
   competitor_url?: string;
+  // 依頼BB-1: 「指定しない」のときはキー自体を送らない(既存の挙動を
+  // 一切変えないため)。'unspecified'はDB既定値専用でここには含めない。
+  recruitment_track?: "new_graduate" | "career";
 }
 
 export interface LeadAnalysisStartResult {

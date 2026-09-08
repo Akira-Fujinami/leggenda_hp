@@ -155,6 +155,90 @@ describe("LeadAnalysisForm", () => {
     });
   });
 
+  /**
+   * 依頼BB-1: 新卒／キャリア採用の区別。既定は「指定しない」で、選ばなければ
+   * 送信ペイロードにrecruitment_trackが含まれない(=現在の挙動を変えない)。
+   */
+  describe("recruitment track selector (依頼BB-1)", () => {
+    it("shows all three options with 指定しない selected by default", () => {
+      render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
+
+      const group = screen.getByRole("radiogroup", { name: "採用区分" });
+      expect(group).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "新卒採用" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "キャリア採用（中途）" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "指定しない" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("does not send recruitment_track when 指定しない is left selected", async () => {
+      const user = userEvent.setup();
+      render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
+
+      await user.type(screen.getByLabelText("貴社の採用サイト URL"), "https://example.com");
+      await user.click(screen.getByRole("button", { name: "診断をはじめる" }));
+
+      await waitFor(() => {
+        expect(mutateMock).toHaveBeenCalledWith(
+          { self_url: "https://example.com", competitor_url: undefined, recruitment_track: undefined },
+          expect.anything(),
+        );
+      });
+    });
+
+    it("sends recruitment_track: new_graduate when 新卒採用 is selected", async () => {
+      const user = userEvent.setup();
+      render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
+
+      await user.type(screen.getByLabelText("貴社の採用サイト URL"), "https://example.com");
+      await user.click(screen.getByRole("button", { name: "新卒採用" }));
+      await user.click(screen.getByRole("button", { name: "診断をはじめる" }));
+
+      await waitFor(() => {
+        expect(mutateMock).toHaveBeenCalledWith(
+          { self_url: "https://example.com", competitor_url: undefined, recruitment_track: "new_graduate" },
+          expect.anything(),
+        );
+      });
+    });
+
+    it("sends recruitment_track: career when キャリア採用（中途） is selected", async () => {
+      const user = userEvent.setup();
+      render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
+
+      await user.type(screen.getByLabelText("貴社の採用サイト URL"), "https://example.com");
+      await user.click(screen.getByRole("button", { name: "キャリア採用（中途）" }));
+      await user.click(screen.getByRole("button", { name: "診断をはじめる" }));
+
+      await waitFor(() => {
+        expect(mutateMock).toHaveBeenCalledWith(
+          { self_url: "https://example.com", competitor_url: undefined, recruitment_track: "career" },
+          expect.anything(),
+        );
+      });
+    });
+
+    it("switching selection updates aria-pressed and only the latest choice is submitted", async () => {
+      const user = userEvent.setup();
+      render(<LeadAnalysisForm token="abc" onStarted={vi.fn()} />);
+
+      await user.click(screen.getByRole("button", { name: "新卒採用" }));
+      await user.click(screen.getByRole("button", { name: "キャリア採用（中途）" }));
+
+      expect(screen.getByRole("button", { name: "新卒採用" })).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByRole("button", { name: "キャリア採用（中途）" })).toHaveAttribute("aria-pressed", "true");
+
+      await user.type(screen.getByLabelText("貴社の採用サイト URL"), "https://example.com");
+      await user.click(screen.getByRole("button", { name: "診断をはじめる" }));
+
+      await waitFor(() => {
+        expect(mutateMock).toHaveBeenCalledWith(
+          expect.objectContaining({ recruitment_track: "career" }),
+          expect.anything(),
+        );
+      });
+    });
+  });
+
   it("keeps showing the form with the specific message for non-token errors like congestion", () => {
     mockUseStartLeadAnalysis.mockReturnValue({
       mutate: mutateMock,

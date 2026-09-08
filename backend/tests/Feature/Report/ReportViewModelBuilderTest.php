@@ -30,9 +30,13 @@ class ReportViewModelBuilderTest extends TestCase
         $this->seed(CategoryDefinitionSeeder::class);
     }
 
-    private function makeWebsiteAnalysis(Analysis $analysis, bool $isPrimary): WebsiteAnalysis
+    private function makeWebsiteAnalysis(Analysis $analysis, bool $isPrimary, ?string $url = null): WebsiteAnalysis
     {
-        $website = Website::factory()->create(['project_id' => $analysis->project_id, 'is_primary' => $isPrimary]);
+        $attributes = ['project_id' => $analysis->project_id, 'is_primary' => $isPrimary];
+        if ($url !== null) {
+            $attributes['url'] = $url;
+        }
+        $website = Website::factory()->create($attributes);
 
         return WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id]);
     }
@@ -125,6 +129,80 @@ class ReportViewModelBuilderTest extends TestCase
         $nonCrawlingAnalysis = Analysis::factory()->create(['project_id' => $nonCrawlingProject->id, 'status' => AnalysisStatus::Completed, 'crawl_site' => false]);
         $this->makeWebsiteAnalysis($nonCrawlingAnalysis, isPrimary: true);
         $this->assertFalse(app(ReportViewModelBuilder::class)->build($nonCrawlingAnalysis, $leadSession)->crawlSiteEnabled);
+    }
+
+    /**
+     * 依頼BB-4: recruitmentTrackCoverNoticeは'unspecified'(既定)ではnull、
+     * 'new_graduate'/'career'のときのみconfig('brand_wheel.
+     * recruitment_track_cover_notice')の対応する一文になる。
+     *
+     * 依頼BC-3: この一文が出るのは、自社サイトの起点URLが実際に採用
+     * セクションの内側(区分による除外が実際に適用される起点)にある場合の
+     * みである。ここでは/recruit/配下を起点にして、その前提を満たす。
+     * 起点が採用セクションの外にあるケースはtest_recruitment_track_cover_
+     * notice_is_suppressed_when_the_origin_is_outside_the_recruit_sectionで
+     * 別途検証する。
+     */
+    public function test_recruitment_track_cover_notice_reflects_the_analysis_recruitment_track(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $user = User::factory()->create()->id;
+
+        $makeAnalysis = function (string $recruitmentTrack) use ($leadSession, $user) {
+            $project = new Project(['name' => "テスト({$recruitmentTrack})"]);
+            $project->user_id = $user;
+            $project->lead_session_id = $leadSession->id;
+            $project->save();
+            $analysis = Analysis::factory()->create([
+                'project_id' => $project->id,
+                'status' => AnalysisStatus::Completed,
+                'recruitment_track' => $recruitmentTrack,
+            ]);
+            $this->makeWebsiteAnalysis($analysis, isPrimary: true, url: 'https://example.co.jp/recruit/');
+
+            return $analysis;
+        };
+
+        $unspecified = app(ReportViewModelBuilder::class)->build($makeAnalysis('unspecified'), $leadSession);
+        $this->assertNull($unspecified->recruitmentTrackCoverNotice);
+
+        $newGraduate = app(ReportViewModelBuilder::class)->build($makeAnalysis('new_graduate'), $leadSession);
+        $this->assertSame(
+            (string) config('brand_wheel.recruitment_track_cover_notice.new_graduate'),
+            $newGraduate->recruitmentTrackCoverNotice,
+        );
+
+        $career = app(ReportViewModelBuilder::class)->build($makeAnalysis('career'), $leadSession);
+        $this->assertSame(
+            (string) config('brand_wheel.recruitment_track_cover_notice.career'),
+            $career->recruitmentTrackCoverNotice,
+        );
+    }
+
+    /**
+     * 依頼BC-3: 自社サイトの起点URLが採用セクションの外(ルートパス+
+     * ホスト名に採用系の語が無い)にある場合、区分を選んでいても表紙の
+     * 一文は出さない(除外を実際には適用していないのに「新卒採用ページを
+     * 対象に分析しました」と書くのは虚偽になるため)。
+     */
+    public function test_recruitment_track_cover_notice_is_suppressed_when_the_origin_is_outside_the_recruit_section(): void
+    {
+        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
+        $project = new Project(['name' => 'テスト(BC-3見送り)']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_session_id = $leadSession->id;
+        $project->save();
+        $analysis = Analysis::factory()->create([
+            'project_id' => $project->id,
+            'status' => AnalysisStatus::Completed,
+            'recruitment_track' => 'new_graduate',
+        ]);
+        // コーポレートサイトのトップ(ルートパス、ホスト名に採用系の語なし)。
+        $this->makeWebsiteAnalysis($analysis, isPrimary: true, url: 'https://www.example.co.jp/');
+
+        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
+
+        $this->assertNull($viewModel->recruitmentTrackCoverNotice);
     }
 
     public function test_brand_wheel_is_composed_for_self_and_competitor_websites(): void

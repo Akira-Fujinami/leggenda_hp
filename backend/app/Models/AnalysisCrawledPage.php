@@ -40,6 +40,9 @@ class AnalysisCrawledPage extends Model
 
     public const STATUS_EXCLUDED_BY_SCOPE = 'excluded_by_scope';
 
+    // 依頼BB-2: 選択した区分(新卒/キャリア)と反対側の語を含むページ。
+    public const STATUS_EXCLUDED_BY_TRACK = 'excluded_by_track';
+
     protected function casts(): array
     {
         return [

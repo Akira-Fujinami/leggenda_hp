@@ -125,6 +125,10 @@ class LeadAnalysisController extends Controller
         $data = $request->validate([
             'self_url' => ['required', 'string', 'max:2048'],
             'competitor_url' => ['nullable', 'string', 'max:2048'],
+            // 依頼BB-1: 'unspecified'はDB既定値であって画面からは送らせない
+            // (未選択=フィールド自体を送らない、が「現在の挙動を一切変えない」
+            // ことの唯一の保証経路)。
+            'recruitment_track' => ['nullable', 'string', 'in:new_graduate,career'],
         ]);
 
         if ($this->isSelfUrlUnreachable($data['self_url'])) {
@@ -186,6 +190,12 @@ class LeadAnalysisController extends Controller
             // リード診断における巡回・条件付きレンダリングを制御する。
             // env未設定なら従来どおりcrawl_site=false。
             'crawl_site' => (bool) config('lead.crawl_site'),
+            // 依頼BB-1(2026-09-08): 新卒／キャリア採用の区別。画面が
+            // 送らなければnullのままで、AnalysisService::start()側の既定値
+            // 'unspecified'になる(=現在の挙動を一切変えない)。自社・競合
+            // 両方のWebsiteAnalysisが同じAnalysisにぶら下がるため、1回の
+            // 選択が両方に自然に適用される(is_primaryによる分岐は無い)。
+            'recruitment_track' => $data['recruitment_track'] ?? null,
         ], $sentinelUser);
 
         // 2026-08-22: 実行回数の消費(recordAnalysisStarted())はここでは行わない。

@@ -35,6 +35,11 @@ backend/C*/Users/*/AppData/**
 # 調査用の一時ファイル(パスによらず除外)
 cookies.txt
 
+# 検証用に生成した診断レポート(PDF/DOCX等)の出力先。リポジトリに含めない
+# (依頼BE-1、2026-09-08 ―― .gitignoreに記述が無く、コミットすると診断結果の
+# PDFがそのまま入ってしまうことが判明したため追加)。
+Claude outputs/
+
 # OS/Editor
 .DS_Store
 Thumbs.db

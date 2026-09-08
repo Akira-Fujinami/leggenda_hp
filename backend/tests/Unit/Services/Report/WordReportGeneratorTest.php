@@ -397,6 +397,41 @@ class WordReportGeneratorTest extends TestCase
         $this->assertStringNotContainsString(config('brand_wheel.cover_competitor_unreadable_notice'), $documentXml);
     }
 
+    /**
+     * 依頼BB-4: recruitmentTrackCoverNoticeが設定されているときのみ、
+     * 表紙にその一文が出る。既定(null)では何も出ない。
+     */
+    public function test_cover_section_shows_the_recruitment_track_notice_when_set(): void
+    {
+        $documentXml = $this->generate($this->viewModel(['recruitmentTrackCoverNotice' => '新卒採用ページを対象に分析しました。']));
+
+        $this->assertStringContainsString('新卒採用ページを対象に分析しました。', $documentXml);
+    }
+
+    public function test_cover_section_omits_the_recruitment_track_notice_by_default(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel());
+
+        $this->assertStringNotContainsString('を対象に分析しました', $documentXml);
+    }
+
+    /**
+     * 依頼BB-4: 統合セクション(「診断結果 ―― 24項目の比較と改善提案」)には
+     * 追加しない ―― 表紙にだけ1回出ること。
+     */
+    public function test_recruitment_track_notice_appears_only_once_not_in_the_integrated_section(): void
+    {
+        $documentXml = $this->generate($this->comparisonViewModel(['recruitmentTrackCoverNotice' => '新卒採用ページを対象に分析しました。']));
+
+        $this->assertSame(1, substr_count($documentXml, '新卒採用ページを対象に分析しました。'));
+
+        $start = mb_strpos($documentXml, '診断結果 ―― 24項目の比較と改善提案');
+        $this->assertNotFalse($start);
+        $end = mb_strpos($documentXml, '<w:t>改善提案</w:t>', $start) ?: mb_strlen($documentXml);
+        $sectionXml = mb_substr($documentXml, $start, $end - $start);
+        $this->assertStringNotContainsString('新卒採用ページを対象に分析しました。', $sectionXml);
+    }
+
     // ------------------------------------------------------------------
     // ○△－の対比表(2026-08-08、●／－の2値から3値へ変更)。
     // ------------------------------------------------------------------

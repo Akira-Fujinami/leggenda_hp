@@ -17,9 +17,11 @@ use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\CrawlLinkExtractor;
 use App\Services\Analysis\CrawlPolicyResolver;
+use App\Services\Analysis\RecruitmentTrackPageFilter;
 use App\Services\Analysis\RobotsTxtParser;
 use App\Services\Analysis\SitemapParser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -40,13 +42,16 @@ class CrawlWebsiteJobTest extends TestCase
         bool $withRecruit = false,
         string $homepageHost = 'example.co.jp',
         ?string $recruitHost = null,
+        string $recruitmentTrack = 'unspecified',
+        ?string $websiteUrl = null,
     ): array {
         $project = Project::factory()->create();
         $analysis = Analysis::factory()->for($project)->create([
             'status' => AnalysisStatus::Running,
             'crawl_site' => true,
+            'recruitment_track' => $recruitmentTrack,
         ]);
-        $website = Website::factory()->for($project)->create(['is_primary' => true, 'url' => "https://{$homepageHost}"]);
+        $website = Website::factory()->for($project)->create(['is_primary' => true, 'url' => $websiteUrl ?? "https://{$homepageHost}"]);
         $websiteAnalysis = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id]);
 
         $homepageHtml = '<html><body><p>会社の紹介文です。</p>'.
@@ -113,6 +118,7 @@ class CrawlWebsiteJobTest extends TestCase
             app(RobotsTxtParser::class),
             app(SitemapParser::class),
             app(CrawlLinkExtractor::class),
+            app(RecruitmentTrackPageFilter::class),
         );
     }
 
@@ -343,5 +349,94 @@ class CrawlWebsiteJobTest extends TestCase
         Queue::assertNotPushed(CrawlWebsiteJob::class);
         Queue::assertPushed(\App\Jobs\GenerateBrandWheelAnalysisJob::class, 1);
         $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BC-3: 起点が採用セクションの外にあるとき、区分の適用を見送った
+    // ことを構造化ログに1件だけ出す(このJobはサイト単位で1回しか
+    // 実行されないseed専用のため、ここで出せば「1件」になる)。
+    // ------------------------------------------------------------------
+
+    public function test_logs_once_when_the_track_is_skipped_because_the_origin_is_outside_the_recruit_section(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        Log::spy();
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(
+            recruitmentTrack: 'new_graduate',
+            websiteUrl: 'https://www.example.co.jp/',
+        );
+        $this->putRobotsPage($analysis, $websiteAnalysis, 404);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $matchingCalls = 0;
+        Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message, array $context) use ($analysis, $websiteAnalysis, &$matchingCalls) {
+                if ($message !== 'brand_wheel_crawl_recruitment_track_skipped_outside_recruit_section') {
+                    return true;
+                }
+                $matchingCalls++;
+                $this->assertSame($analysis->id, $context['analysis_id']);
+                $this->assertSame($websiteAnalysis->id, $context['website_analysis_id']);
+                $this->assertSame('new_graduate', $context['recruitment_track']);
+                $encoded = json_encode($context);
+                $this->assertStringNotContainsString('example.co.jp', $encoded, 'ログにURL・ホスト名を含めてはいけない');
+
+                return true;
+            });
+
+        $this->assertSame(1, $matchingCalls, '見送りログはちょうど1件だけ出ること');
+    }
+
+    /**
+     * 起点が採用セクションの内側(ホスト名に採用系の語あり、またはパスが
+     * ルートでない)であれば、見送りログは出ない。
+     */
+    public function test_does_not_log_the_skip_when_the_origin_is_inside_the_recruit_section(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        Log::spy();
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(
+            recruitmentTrack: 'new_graduate',
+            websiteUrl: 'https://www.example.co.jp/recruit/',
+        );
+        $this->putRobotsPage($analysis, $websiteAnalysis, 404);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        // 'brand_wheel_crawl_seeded'は必ず出るため、shouldHaveReceived('info')
+        // 自体は成立する ―― その中に見送りメッセージが1件も無いことを確認する
+        // (Log::shouldNotHaveReceived('info')は「infoが1回も呼ばれない」こと
+        // を要求してしまい、他のinfoログと両立しないため使えない)。
+        Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message) {
+                $this->assertNotSame('brand_wheel_crawl_recruitment_track_skipped_outside_recruit_section', $message);
+
+                return true;
+            });
+    }
+
+    /**
+     * recruitment_trackが'unspecified'のときは、起点がどこであっても
+     * 見送りログ自体を出さない(見送るべき「適用」自体が存在しないため)。
+     */
+    public function test_does_not_log_the_skip_when_track_is_unspecified(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        Log::spy();
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(
+            recruitmentTrack: 'unspecified',
+            websiteUrl: 'https://www.example.co.jp/',
+        );
+        $this->putRobotsPage($analysis, $websiteAnalysis, 404);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message) {
+                $this->assertNotSame('brand_wheel_crawl_recruitment_track_skipped_outside_recruit_section', $message);
+
+                return true;
+            });
     }
 }

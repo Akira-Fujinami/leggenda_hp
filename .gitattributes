@@ -1,0 +1,14 @@
+# 依頼BE-2(2026-09-08): renderステージのentrypointスクリプトが作業ツリーで
+# CRLFになっており、Renderコンテナのshebang実行(`exec .../backend-entrypoint
+# .render.sh`)が失敗する事故につながった(`#!/bin/bash\r`となり
+# `/bin/bash\r`というファイルを探しに行く)。core.autocrlf(ユーザー/マシン
+# ごとの設定)に依存せず、リポジトリ側で改行コードを固定する。
+#
+# 未指定のテキストファイルはgitの自動判定に任せる(標準的な最小構成)。
+* text=auto
+
+# シェルスクリプトは常にLF固定(このリポジトリはLinuxコンテナ内で実行する)。
+*.sh text eol=lf
+
+# Dockerfileも同じリスク領域(ビルド・起動に直結)のため固定する。
+Dockerfile text eol=lf

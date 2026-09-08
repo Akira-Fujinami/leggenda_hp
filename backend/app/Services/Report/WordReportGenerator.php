@@ -157,6 +157,17 @@ class WordReportGenerator
                 ['alignment' => Jc::CENTER],
             );
         }
+
+        // 依頼BB-4(2026-09-08): PDF版の表紙と同内容。'unspecified'
+        // (既定・大半の診断)ではnullのため何も出ない(既存の見た目を
+        // 変えない)。統合セクションには追加しない(依頼AZ改参照)。
+        if ($viewModel->recruitmentTrackCoverNotice !== null) {
+            $section->addText(
+                $viewModel->recruitmentTrackCoverNotice,
+                ['size' => 9, 'italic' => true],
+                ['alignment' => Jc::CENTER],
+            );
+        }
     }
 
     /**

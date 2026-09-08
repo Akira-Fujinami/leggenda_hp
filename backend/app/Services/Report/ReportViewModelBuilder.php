@@ -7,6 +7,7 @@ use App\Models\Analysis;
 use App\Models\BrandWheelImprovementSuggestion;
 use App\Models\LeadSession;
 use App\Models\WebsiteAnalysis;
+use App\Services\Analysis\RecruitmentTrackPageFilter;
 use App\Services\BrandWheel\BrandWheelComparisonSufficiency;
 use App\Services\BrandWheel\BrandWheelComparisonSummaryComposer;
 use App\Services\BrandWheel\BrandWheelEvidenceLookupBuilder;
@@ -94,6 +95,10 @@ class ReportViewModelBuilder
         // 依頼AA(2026-08-27): 日本語でない引用への日本語訳併記(1レポート
         // 1回のバッチ翻訳)。
         private readonly BrandWheelQuoteTranslator $quoteTranslator,
+        // 依頼BC-3(2026-09-08): 表紙の採用区分の一文を出す前に、自社/競合
+        // 双方の起点URLが実際に採用セクションの内側にあった(=区分の除外が
+        // 実際に適用された)かどうかを確認するために使う。
+        private readonly RecruitmentTrackPageFilter $recruitmentTrackFilter,
     ) {}
 
     public function build(Analysis $analysis, LeadSession $leadSession): ReportViewModel
@@ -454,6 +459,35 @@ class ReportViewModelBuilder
 
         $hasQuoteTranslations = $quoteTranslations !== [];
 
+        // 依頼BB-4(2026-09-08): 'unspecified'(既定・大半の診断)では
+        // config('brand_wheel.recruitment_track_cover_notice')にキー自体が
+        // 無いため、常にnullになる(表紙の見た目は一切変わらない)。
+        //
+        // 依頼BC-3(2026-09-08): 区分を選んでいても、自社・競合いずれかの
+        // 起点URLが採用セクションの外にあり実際には除外が適用されなかった
+        // 場合、「新卒採用ページを対象に分析しました」という一文は虚偽になる
+        // ため出さない。自社/競合それぞれの起点URL(存在するものだけ)が
+        // 採用セクションの内側にあったかを、CrawlWebsitePageJobと同じ判定
+        // (RecruitmentTrackPageFilter::isOriginInsideRecruitSection())で
+        // 独立に再確認する ―― クロール状態を新たに保存せず、Website.urlのみ
+        // から決まる純粋な判定のため、常に実際の適用結果と一致する。
+        $recruitmentTrackCoverNotice = config('brand_wheel.recruitment_track_cover_notice.'.$analysis->recruitment_track);
+        $recruitmentTrackCoverNotice = is_string($recruitmentTrackCoverNotice) ? $recruitmentTrackCoverNotice : null;
+
+        if ($recruitmentTrackCoverNotice !== null) {
+            $originUrls = array_filter([
+                $selfWebsiteAnalysis?->website?->url,
+                $competitorWebsiteAnalysis?->website?->url,
+            ]);
+            $trackAppliedToAllSites = array_all(
+                $originUrls,
+                fn (string $url) => $this->recruitmentTrackFilter->isOriginInsideRecruitSection($url),
+            );
+            if (! $trackAppliedToAllSites) {
+                $recruitmentTrackCoverNotice = null;
+            }
+        }
+
         return new ReportViewModel(
             companyDisplayName: $this->nameFormatter->format($leadSession->company_name),
             generatedAtLabel: sprintf('%d年%d月%d日', now()->year, now()->month, now()->day),
@@ -487,6 +521,7 @@ class ReportViewModelBuilder
             selfEvidenceByAxis: $selfEvidenceByAxis,
             hasQuoteTranslations: $hasQuoteTranslations,
             improvementFallbackNote: $improvementFallbackNote,
+            recruitmentTrackCoverNotice: $recruitmentTrackCoverNotice,
         );
     }
 

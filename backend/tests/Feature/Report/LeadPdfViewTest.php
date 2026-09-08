@@ -248,6 +248,44 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('一部のデータは取得できませんでしたが、取得できた範囲での診断結果です。', $html);
     }
 
+    /**
+     * 依頼BB-4: recruitmentTrackCoverNoticeが設定されているときのみ、
+     * 表紙にその一文が出る。既定(null)では何も出ない ―― 表紙が
+     * 現在と同一であること(依頼BBのテスト要件)。
+     */
+    public function test_cover_page_shows_the_recruitment_track_notice_when_set(): void
+    {
+        $html = $this->render($this->viewModel(['recruitmentTrackCoverNotice' => '新卒採用ページを対象に分析しました。']));
+
+        $this->assertStringContainsString('新卒採用ページを対象に分析しました。', $html);
+    }
+
+    public function test_cover_page_omits_the_recruitment_track_notice_by_default(): void
+    {
+        $htmlUnspecified = $this->render($this->viewModel());
+        $htmlComparison = $this->render($this->comparisonViewModel());
+
+        $this->assertStringNotContainsString('を対象に分析しました', $htmlUnspecified);
+        $this->assertStringNotContainsString('を対象に分析しました', $htmlComparison);
+    }
+
+    /**
+     * 依頼BB-4: 統合ページ(「診断結果 ―― 24項目の比較と改善提案」)には
+     * 追加しない(依頼AZ改で縦幅がぎりぎりのため)。表紙にだけ出ること。
+     */
+    public function test_recruitment_track_notice_appears_only_on_the_cover_page_not_the_integrated_page(): void
+    {
+        $html = $this->render($this->comparisonViewModel(['recruitmentTrackCoverNotice' => '新卒採用ページを対象に分析しました。']));
+
+        $this->assertSame(1, substr_count($html, '新卒採用ページを対象に分析しました。'));
+
+        $start = mb_strpos($html, '診断結果 ―― 24項目の比較と改善提案');
+        $this->assertNotFalse($start);
+        $end = mb_strpos($html, '<div class="page cta', $start) ?: mb_strlen($html);
+        $pageHtml = mb_substr($html, $start, $end - $start);
+        $this->assertStringNotContainsString('新卒採用ページを対象に分析しました。', $pageHtml);
+    }
+
     // ------------------------------------------------------------------
     // 2. 採用ブランドの捉え方(前置き)。
     // ------------------------------------------------------------------
@@ -638,6 +676,15 @@ class LeadPdfViewTest extends TestCase
      * 3ページ目(自社)・4ページ目(競合)は完全に同じパーシャルを主体だけ
      * 変えて2回includeする(ユーザー指定)。見出し・件数・サマリー・
      * 軸カードのいずれも自社ページと同じ形式で出ることを確認する。
+     *
+     * 依頼BD-3(2026-09-08): 見出し(「競合サイト　確認できた情報」)と
+     * 件数(「3 / 8項目」)は、実際のパーシャル
+     * (resources/views/reports/partials/lead-pdf-brand-wheel-page.blade.php)
+     * では別々の<p>タグに分かれて出力される。連続した1つの文字列として
+     * 検証していたため、実際には一度も成立し得ないアサーションになって
+     * いた(依頼BC-4で特定 ―― commit 7384154でパーシャル新設と同時に
+     * 書かれたテスト自身の記述ミスであり、以降のいずれの変更にも
+     * 起因しない)。実際の出力構造に合わせて2つに分けて検証する。
      */
     public function test_competitor_analysis_page_uses_the_same_layout_as_the_self_page_when_a_competitor_exists(): void
     {
@@ -648,7 +695,8 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringContainsString('同僚・先輩像', $html);
         $this->assertStringContainsString('職場の雰囲気', $html);
         $this->assertStringContainsString('就業環境が最も内容として充足しています', $html);
-        $this->assertStringContainsString('競合サイト 3 / 8項目', $html);
+        $this->assertStringContainsString('競合サイト　確認できた情報', $html);
+        $this->assertStringContainsString('<p class="num">3<small> / 8項目</small></p>', $html);
     }
 
     /**

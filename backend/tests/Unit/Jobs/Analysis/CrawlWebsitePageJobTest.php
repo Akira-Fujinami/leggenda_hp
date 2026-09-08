@@ -20,6 +20,7 @@ use App\Services\Analysis\CrawlLinkExtractor;
 use App\Services\Analysis\CrawlPolicyResolver;
 use App\Services\Analysis\HtmlSeoAnalyzer;
 use App\Services\Analysis\PageHtmlResolver;
+use App\Services\Analysis\RecruitmentTrackPageFilter;
 use App\Services\Analysis\RobotsTxtParser;
 use App\Services\Analysis\SafeHttpFetcher;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -40,18 +41,23 @@ class CrawlWebsitePageJobTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function makeWebsiteAnalysis(bool $robots404 = true): array
+    private function makeWebsiteAnalysis(bool $robots404 = true, string $recruitmentTrack = 'unspecified', string $websiteUrl = 'https://example.co.jp'): array
     {
         $project = Project::factory()->create();
-        $analysis = Analysis::factory()->for($project)->create(['crawl_site' => true]);
-        $website = Website::factory()->for($project)->create(['is_primary' => true, 'url' => 'https://example.co.jp']);
+        $analysis = Analysis::factory()->for($project)->create(['crawl_site' => true, 'recruitment_track' => $recruitmentTrack]);
+        $website = Website::factory()->for($project)->create(['is_primary' => true, 'url' => $websiteUrl]);
         $websiteAnalysis = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id]);
 
+        // allowedHosts()はWebsite.urlではなくAnalysisPage(homepage/recruit)の
+        // final_url/urlから求める(CrawlPolicyResolver::allowedHosts()参照)
+        // ため、$websiteUrlと同じホストで作る ―― 依頼BB-2のテストで
+        // 起点ホストを変える場合もHTTP取得が許可ホスト判定で弾かれないようにする。
+        $origin = rtrim($websiteUrl, '/');
         AnalysisPage::factory()->create([
             'website_analysis_id' => $websiteAnalysis->id,
             'page_type' => PageType::Homepage,
-            'url' => 'https://example.co.jp',
-            'final_url' => 'https://example.co.jp',
+            'url' => $origin,
+            'final_url' => $origin,
             'http_status' => 200,
         ]);
 
@@ -59,7 +65,7 @@ class CrawlWebsitePageJobTest extends TestCase
             AnalysisPage::factory()->create([
                 'website_analysis_id' => $websiteAnalysis->id,
                 'page_type' => PageType::Robots,
-                'url' => 'https://example.co.jp/robots.txt',
+                'url' => "{$origin}/robots.txt",
                 'http_status' => 404,
             ]);
         }
@@ -91,6 +97,7 @@ class CrawlWebsitePageJobTest extends TestCase
             app(AnalysisStoragePaths::class),
             app(HtmlSeoAnalyzer::class),
             app(PageHtmlResolver::class),
+            app(RecruitmentTrackPageFilter::class),
         );
     }
 
@@ -405,5 +412,304 @@ class CrawlWebsitePageJobTest extends TestCase
         (new CrawlWebsitePageJob($analysis->id, $websiteAnalysis->id))->failed(new \RuntimeException('boom'));
 
         $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BB-2: 新卒／キャリア採用の区別による巡回除外・安全弁。
+    // ------------------------------------------------------------------
+
+    /**
+     * recruitment_trackが'unspecified'(既定)のときは、除外ロジック自体が
+     * 一切発火しない ―― 上のすべての既存テストが変更なしで緑のままである
+     * こと自体がこの回帰確認を兼ねる。ここでは明示的に、キャリア側の語を
+     * 含むURLでも'unspecified'なら除外されないことを確認する。
+     */
+    public function test_unspecified_track_does_not_exclude_pages_matching_either_side(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(recruitmentTrack: 'unspecified');
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/careers/mid-career');
+
+        Http::fake(['https://example.co.jp/careers/mid-career' => Http::response('<html><body>ok</body></html>', 200, ['Content-Type' => 'text/html'])]);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $row = AnalysisCrawledPage::query()->where('url', 'https://example.co.jp/careers/mid-career')->first();
+        $this->assertSame(AnalysisCrawledPage::STATUS_FETCHED, $row->status);
+    }
+
+    /**
+     * 「新卒」を選んだとき、キャリア側の語(mid-career)を含むページは
+     * 除外され、HTTP取得も発生しない。
+     */
+    public function test_new_graduate_track_excludes_pages_containing_career_side_words(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        // 依頼BC-3: 起点が採用セクションの内側であることが前提の除外テスト
+        // のため、起点パスを/recruit/にする(ルート起点の見送り判定は別テスト
+        // test_track_is_not_applied_when_origin_is_outside_the_recruit_sectionで
+        // 検証する)。
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(recruitmentTrack: 'new_graduate', websiteUrl: 'https://example.co.jp/recruit/');
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/careers/mid-career');
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        Http::assertNothingSent();
+        $row = AnalysisCrawledPage::query()->where('url', 'https://example.co.jp/careers/mid-career')->first();
+        $this->assertSame(AnalysisCrawledPage::STATUS_EXCLUDED_BY_TRACK, $row->status);
+        Queue::assertPushed(CrawlWebsitePageJob::class, fn ($job) => $job->delay === null);
+    }
+
+    /**
+     * 起点URL(Website.url)自身にホスト名としてcareersを含む場合でも、
+     * ホスト名は判定に使わないため誤って除外されないこと(依頼BB「最重要」、
+     * careers.mercari.com相当)。
+     */
+    public function test_origin_host_name_containing_the_opposite_track_word_does_not_cause_false_exclusion(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(
+            recruitmentTrack: 'new_graduate',
+            websiteUrl: 'https://careers.example.co.jp/',
+        );
+        config(['analysis.ssrf_test_allowlist' => 'careers.example.co.jp']);
+        $this->seedPending($websiteAnalysis, 'https://careers.example.co.jp/jp/students/');
+
+        Http::fake(['https://careers.example.co.jp/jp/students/' => Http::response('<html><body>ok</body></html>', 200, ['Content-Type' => 'text/html'])]);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $row = AnalysisCrawledPage::query()->where('url', 'https://careers.example.co.jp/jp/students/')->first();
+        $this->assertSame(AnalysisCrawledPage::STATUS_FETCHED, $row->status, 'ホスト名のcareersを理由に除外されてはいけない');
+    }
+
+    /**
+     * 起点URLのパス自体(/careers/)にキャリア側の語を含む場合でも、起点の
+     * パスは判定に使わないため誤って除外されないこと(cyberagent.co.jp相当)。
+     * 起点より下の新しいセグメント(/students/)は新卒側の語として残り、
+     * (/mid-career/)はキャリア側の語として除外される。
+     */
+    public function test_origin_path_containing_the_opposite_track_word_does_not_cause_false_exclusion(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        config(['analysis.ssrf_test_allowlist' => 'www.example.co.jp']);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(
+            recruitmentTrack: 'new_graduate',
+            websiteUrl: 'https://www.example.co.jp/careers/',
+        );
+        $this->seedPending($websiteAnalysis, 'https://www.example.co.jp/careers/students/', depth: 1);
+        $this->seedPending($websiteAnalysis, 'https://www.example.co.jp/careers/mid-career/', depth: 1);
+        $this->seedPending($websiteAnalysis, 'https://www.example.co.jp/careers/about/', depth: 1);
+
+        Http::fake([
+            'https://www.example.co.jp/careers/students/' => Http::response('<html><body>ok</body></html>', 200, ['Content-Type' => 'text/html']),
+            'https://www.example.co.jp/careers/about/' => Http::response('<html><body>ok</body></html>', 200, ['Content-Type' => 'text/html']),
+        ]);
+
+        // pending 3件ぶんhandle()を連鎖実行する。
+        $this->handle($analysis, $websiteAnalysis);
+        $this->handle($analysis, $websiteAnalysis);
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertSame(
+            AnalysisCrawledPage::STATUS_FETCHED,
+            AnalysisCrawledPage::query()->where('url', 'https://www.example.co.jp/careers/students/')->value('status'),
+        );
+        $this->assertSame(
+            AnalysisCrawledPage::STATUS_EXCLUDED_BY_TRACK,
+            AnalysisCrawledPage::query()->where('url', 'https://www.example.co.jp/careers/mid-career/')->value('status'),
+        );
+        $this->assertSame(
+            AnalysisCrawledPage::STATUS_FETCHED,
+            AnalysisCrawledPage::query()->where('url', 'https://www.example.co.jp/careers/about/')->value('status'),
+            'どちらの語も含まないページは残ること',
+        );
+    }
+
+    /**
+     * 大文字・日本語パスでも同じ結果になること。
+     */
+    public function test_exclusion_matching_ignores_case_and_decodes_japanese_paths(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(
+            recruitmentTrack: 'new_graduate',
+            websiteUrl: 'https://www.example.co.jp/careers/',
+        );
+        $encodedPath = 'https://www.example.co.jp/careers/'.rawurlencode('中途');
+        $this->seedPending($websiteAnalysis, 'https://www.example.co.jp/Careers/Mid-Career/', depth: 1);
+        $this->seedPending($websiteAnalysis, $encodedPath, depth: 1);
+
+        $this->handle($analysis, $websiteAnalysis);
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertSame(
+            AnalysisCrawledPage::STATUS_EXCLUDED_BY_TRACK,
+            AnalysisCrawledPage::query()->where('url', 'https://www.example.co.jp/Careers/Mid-Career/')->value('status'),
+        );
+        $this->assertSame(
+            AnalysisCrawledPage::STATUS_EXCLUDED_BY_TRACK,
+            AnalysisCrawledPage::query()->where('url', $encodedPath)->value('status'),
+        );
+    }
+
+    /**
+     * 安全弁: 除外の結果fetched件数が閾値を下回るとき、除外済み行を
+     * pendingへ戻し、除外なしでやり直す。ログが1件出て、URL・会社名等は
+     * 含まれない。フォールバック後は同じキーワードを含むページも今度は
+     * 取得される。
+     */
+    public function test_falls_back_to_no_exclusion_when_fetched_count_drops_below_the_threshold(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class, RenderCrawledPageJob::class]);
+        config(['brand_wheel.recruitment_track_min_pages_after_exclusion' => 2]);
+        // 依頼BC-3: 安全弁のテストなので、区分が実際に適用される起点
+        // (採用セクションの内側)を使う。
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(recruitmentTrack: 'career', websiteUrl: 'https://example.co.jp/recruit/');
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/about', depth: 1);
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/shinsotsu', depth: 1);
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/students', depth: 1);
+
+        Http::fake([
+            'https://example.co.jp/about' => Http::response('<html><body>ok</body></html>', 200, ['Content-Type' => 'text/html']),
+            'https://example.co.jp/shinsotsu' => Http::response('<html><body>ok</body></html>', 200, ['Content-Type' => 'text/html']),
+            'https://example.co.jp/students' => Http::response('<html><body>ok</body></html>', 200, ['Content-Type' => 'text/html']),
+        ]);
+
+        \Illuminate\Support\Facades\Log::spy();
+
+        // 1周目: 1ジョブ=1ページのため、pending 3件(about→shinsotsu→students、
+        // id昇順)を3回のhandle()で処理し、4回目でフロンティア枯渇を検知する。
+        // about(fetched)・shinsotsu/students(excluded_by_track)となり、
+        // fetched=1 < 閾値2のため安全弁が発動、除外2件をpendingへ戻して
+        // 自分自身を再dispatchする。
+        $this->handle($analysis, $websiteAnalysis);
+        $this->handle($analysis, $websiteAnalysis);
+        $this->handle($analysis, $websiteAnalysis);
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertSame(1, AnalysisCrawledPage::query()->where('status', AnalysisCrawledPage::STATUS_FETCHED)->count());
+        $this->assertSame(2, AnalysisCrawledPage::query()->where('status', AnalysisCrawledPage::STATUS_PENDING)->count());
+        $this->assertNotNull($websiteAnalysis->fresh()->recruitment_track_exclusion_fallback_at);
+
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message, array $context) {
+                if ($message !== 'brand_wheel_crawl_recruitment_track_fallback') {
+                    return true;
+                }
+                $this->assertSame('career', $context['recruitment_track']);
+                $this->assertSame(1, $context['fetched_count']);
+                $this->assertSame(2, $context['excluded_count']);
+                $encoded = json_encode($context);
+                $this->assertStringNotContainsString('example.co.jp', $encoded, 'ログにURLを含めてはいけない');
+                $this->assertStringNotContainsString('株式会社', $encoded, 'ログに会社名を含めてはいけない');
+
+                return true;
+            })
+            ->atLeast()->once();
+
+        // 2周目以降: フォールバック済みのため、今度はshinsotsu/studentsも
+        // 除外されず取得される。
+        $this->handle($analysis, $websiteAnalysis);
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertSame(3, AnalysisCrawledPage::query()->where('status', AnalysisCrawledPage::STATUS_FETCHED)->count());
+        $this->assertSame(0, AnalysisCrawledPage::query()->where('status', AnalysisCrawledPage::STATUS_EXCLUDED_BY_TRACK)->count());
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BC-2: 両側の語を含むページは除外しない(残す)。
+    // ------------------------------------------------------------------
+
+    public function test_page_containing_both_sides_words_is_kept(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(recruitmentTrack: 'new_graduate', websiteUrl: 'https://example.co.jp/recruit/');
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/recruit/careers/students/');
+
+        Http::fake(['https://example.co.jp/recruit/careers/students/' => Http::response('<html><body>ok</body></html>', 200, ['Content-Type' => 'text/html'])]);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertSame(
+            AnalysisCrawledPage::STATUS_FETCHED,
+            AnalysisCrawledPage::query()->where('url', 'https://example.co.jp/recruit/careers/students/')->value('status'),
+            '反対側の語(careers)と選んだ側の語(students)を両方含むページは除外してはいけない',
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BC-3: 起点が採用セクションの外にあるとき、区分を適用しない。
+    // ------------------------------------------------------------------
+
+    /**
+     * 起点がコーポレートサイトのトップ(ルートパス+ホスト名に採用系の語が
+     * 無い)の場合、区分による除外は適用されない ―― 反対側の語を含む
+     * ページでも取得され、採用セクションが丸ごと消える事故を防ぐ。
+     */
+    public function test_track_is_not_applied_when_origin_is_outside_the_recruit_section(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        config(['analysis.ssrf_test_allowlist' => 'www.example.co.jp']);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(
+            recruitmentTrack: 'new_graduate',
+            websiteUrl: 'https://www.example.co.jp/',
+        );
+        $this->seedPending($websiteAnalysis, 'https://www.example.co.jp/careers/mid-career/');
+
+        Http::fake(['https://www.example.co.jp/careers/mid-career/' => Http::response('<html><body>ok</body></html>', 200, ['Content-Type' => 'text/html'])]);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertSame(
+            AnalysisCrawledPage::STATUS_FETCHED,
+            AnalysisCrawledPage::query()->where('url', 'https://www.example.co.jp/careers/mid-career/')->value('status'),
+            '起点が採用セクションの外にあるときは、区分による除外を適用してはいけない',
+        );
+    }
+
+    /**
+     * 起点がルートパスでも、ホスト名に採用系の語(careers)を含む場合は
+     * 従来どおり区分が適用される(careers.mercari.com相当)。
+     */
+    public function test_track_is_applied_when_origin_root_hostname_contains_a_recruit_word(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        config(['analysis.ssrf_test_allowlist' => 'careers.example.co.jp']);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(
+            recruitmentTrack: 'new_graduate',
+            websiteUrl: 'https://careers.example.co.jp/',
+        );
+        $this->seedPending($websiteAnalysis, 'https://careers.example.co.jp/jp/mid-career/');
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertSame(
+            AnalysisCrawledPage::STATUS_EXCLUDED_BY_TRACK,
+            AnalysisCrawledPage::query()->where('url', 'https://careers.example.co.jp/jp/mid-career/')->value('status'),
+            'ホスト名に採用系の語があれば、ルート起点でも区分は適用される',
+        );
+    }
+
+    /**
+     * 起点がルートでなければ(/recruit/等)、ホスト名に採用系の語が無くても
+     * 区分は適用される。
+     */
+    public function test_track_is_applied_when_origin_path_is_not_root(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        config(['analysis.ssrf_test_allowlist' => 'www.example.co.jp']);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(
+            recruitmentTrack: 'new_graduate',
+            websiteUrl: 'https://www.example.co.jp/recruit/',
+        );
+        $this->seedPending($websiteAnalysis, 'https://www.example.co.jp/mid-career/');
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertSame(
+            AnalysisCrawledPage::STATUS_EXCLUDED_BY_TRACK,
+            AnalysisCrawledPage::query()->where('url', 'https://www.example.co.jp/mid-career/')->value('status'),
+        );
     }
 }

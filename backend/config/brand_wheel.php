@@ -1044,6 +1044,171 @@ return [
         )),
     ))),
 
+    /*
+    |----------------------------------------------------------------
+    | 新卒／キャリア採用の区別(依頼BB、2026-09-08追加。依頼BC-1、
+    | 2026-09-08改訂)
+    |----------------------------------------------------------------
+    | analyses.recruitment_track('unspecified'/'new_graduate'/'career')が
+    | 'unspecified'以外のとき、CrawlWebsitePageJobが巡回候補URLのうち
+    | 「反対側」の語を含むページを除外する(App\Services\Analysis\
+    | RecruitmentTrackPageFilter参照)。判定は起点URL(自社/競合それぞれの
+    | Website.url)より下の新しいパスセグメント+クエリのみを対象とし、
+    | ホスト名・起点URL自身のパスは除外の根拠にしない(依頼BB「最重要」の
+    | 指定 ―― careers.mercari.comのようにホスト名自体にキャリア側の語を
+    | 含む採用トップが実在するため)。
+    |
+    | 【依頼BC-1】語の照合はパスセグメントの境界を見る(RecruitmentTrack
+    | PageFilter::matchesAny()参照) ―― 半角英数の語はセグメント全体との
+    | 完全一致、日本語(非ASCII)の語のみセグメント内の部分一致。これに伴い、
+    | 「セグメントの一部にしか現れない」ことを前提にしていた語を見直した:
+    | - 維持(いったん削除→実データ検証で復帰): intern(新卒側)。当初、
+    |   "international"・"internal-system"のような無関係なセグメントに
+    |   部分一致していた(旧実装の部分一致特有の問題)ことを理由に削除したが、
+    |   セグメント完全一致への切り替えでその問題自体が解消済みであることに、
+    |   開発機に蓄積された実データでの新旧比較で気づいた ―― 実データに
+    |   "/recruit/intern"(末尾が"ship"を伴わない、実在するインターン
+    |   ページ)があり、intern削除だけがこのページの除外漏れを引き起こして
+    |   いた。セグメント完全一致であれば"international"等への誤爆はもう
+    |   起きないため、削除の理由自体が無くなっている ―― internshipと併用する。
+    | - 削除: キャリア(単体、キャリア側)。セグメント内部分一致のままだと
+    |   `キャリアパス`・`キャリアプラン`・`キャリア形成`のような、新卒/
+    |   キャリアの区別ではなく「入社後の成長」を説明する共通ページに
+    |   誤爆する(ブランド・ホイール「仕事の魅力」領域の主要な材料であり、
+    |   新卒を選んだ人にこそ必要なページ)。こちらは完全一致に切り替えても
+    |   日本語の語は部分一致のままのため、削除の理由が今も有効。
+    | - 追加: キャリア採用, キャリア入社(キャリア側)。採用区分を明示する
+    |   複合語に置き換えることで、「キャリア」を含むだけの共通ページを
+    |   誤って拾わないようにする。
+    | - 維持: internship, インターン(新卒側 ―― インターン希望者は新卒採用と
+    |   同じ「まだ就業経験が無い」対象であり、キャリア(経験者)採用とは
+    |   明確に異なるため)。
+    | - 維持(依頼BBからの変更なし): carrier(キャリア側)を含めない ――
+    |   career の綴り違いではなく、「輸送業者」「通信キャリア」等を指す
+    |   独立した英単語であり、無関係なページを誤って除外するリスクの方が
+    |   高いと判断した。
+    |
+    | 語の一覧はcrawl_excluded_path_patternsと同じCSV+env方式(コードに
+    | 直書きしない、依頼者指定)。
+    |
+    | 【依頼BE-3、2026-09-08追加】BD-4の実データ計測(53サイト・92,816
+    | セグメント)で、キーワードのハイフンをアンダースコアで代用した表記ゆれ
+    | (`mid_career`・`new_graduate`)がセグメント完全一致をすり抜けていた
+    | ことが分かった。マッチ方式(セグメント完全一致)は変えず、既存の
+    | 表記ゆれ列挙方針(newgraduate/newgrads/newgrad、midcareer等、すでに
+    | ハイフン無し表記を個別に持つ)の延長として、この2語をそのまま追加した。
+    | 判定ロジックには一切手を入れていないため、`career-path`等(依頼BC-1で
+    | 修正した誤爆)が復活する余地は無い ―― `new_graduate`・`mid_career`は
+    | それぞれ単一トークンとしてセグメント全体と完全一致する場合のみヒットし、
+    | `career-path`のような別語との複合セグメントには一致しない。
+    | (もう1件の実データ該当"is-career-change"は、実際にfreee株式会社の
+    | 採用ブログのオウンドメディア記事(社員のキャリアアップ体験談)であり、
+    | 新卒/キャリアの区別のためのページではなかった ―― 除外対象ではなく、
+    | 現状どおり残ることが正しい。語の追加は行わない。)
+    */
+    'recruitment_track_keywords' => [
+        'new_graduate' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env(
+                'BRAND_WHEEL_RECRUITMENT_TRACK_NEW_GRADUATE_KEYWORDS',
+                'shinsotsu,sinsotsu,new-graduate,newgraduate,new_graduate,newgrads,newgrad,freshers,students,student,graduate,gakusei,intern,internship,新卒,インターン',
+            )),
+        ))),
+        'career' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env(
+                'BRAND_WHEEL_RECRUITMENT_TRACK_CAREER_KEYWORDS',
+                'career,careers,chuto,chutou,mid-career,mid_career,midcareer,experienced,中途,キャリア採用,キャリア入社',
+            )),
+        ))),
+    ],
+
+    /*
+    |----------------------------------------------------------------
+    | 採用区分の適用可否を判定するためのホスト名の語(依頼BC-3、2026-09-08追加。
+    | 依頼BD-1、2026-09-08改訂)
+    |----------------------------------------------------------------
+    | RecruitmentTrackPageFilter::isOriginInsideRecruitSection()が使う。
+    | ホスト名を`.`と`-`で分割したラベル単位の完全一致で判定する(依頼BD-1)。
+    | 起点URLのホスト名・パスのいずれにもこの一覧(またはpath側の一覧)の語が
+    | 見つからない場合、「起点がまだ採用セクションの外にいる」とみなし、
+    | 採用区分による除外の適用そのものを見送る(区分を適用しても採用
+    | セクション全体が丸ごと新しいセグメントとして扱われ、コーポレート
+    | サイトのトップを起点にすると採用情報が1ページも残らない事故を防ぐ、
+    | 依頼BC-3)。
+    |
+    | 依頼BD-1(2026-09-08): 旧実装は`str_contains($host, $keyword)`の
+    | 部分一致だったため、`threebond.co.jp`(株式会社スリーボンド、実在)が
+    | "three"の中の"hr"にヒットし、「採用セクションの内側」と誤判定されて
+    | いた(誤りの向きが悪い ―― BC-3が防ぐはずの事故を誘発する)。ラベル単位の
+    | 完全一致に変更し、`careers.mercari.com`(ラベル"careers"に完全一致)は
+    | 引き続きヒットし、`threebond.co.jp`(ラベル"threebond"は"hr"と不一致)は
+    | ヒットしなくなる。
+    |
+    | 【重要】ここでのホスト名の用途は「ページを除外する根拠」ではなく
+    | 「区分の適用自体を見送るかどうか」の判定のみ ―― 除外を弱める方向にしか
+    | 働かないため、依頼BBの禁止事項(ホスト名を除外の根拠に使うこと)には
+    | 反しない。careers.mercari.comのようにホストにこの一覧の語を含む場合は
+    | 従来どおり区分が適用される。
+    */
+    'recruitment_track_recruit_section_hostname_keywords' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env(
+            'BRAND_WHEEL_RECRUITMENT_TRACK_RECRUIT_SECTION_HOSTNAME_KEYWORDS',
+            'recruit,careers,career,saiyo,job,hr',
+        )),
+    ))),
+
+    /*
+    |----------------------------------------------------------------
+    | 採用区分の適用可否を判定するための起点パスの語(依頼BD-2、2026-09-08追加)
+    |----------------------------------------------------------------
+    | RecruitmentTrackPageFilter::isOriginInsideRecruitSection()が使う。
+    | 旧実装(依頼BC-3)は「起点パスがルート以外なら中身を問わず内側」と
+    | 判定していたため、`/ja/`・`/jp/`・`/index.html`のような、採用系の語を
+    | 一切含まない言語プレフィックス付きコーポレートトップまで「内側」と
+    | 誤判定していた(この起点で区分を選ぶと、実際には採用セクションが
+    | 丸ごと巡回除外の対象になり得た)。「ルートでなければ内側」ではなく、
+    | 「この一覧の語がパスセグメントに実際に見つかったときだけ内側」に
+    | 変更した(依頼BD-2)。ホスト名一覧と同じ照合ルール(半角英数は
+    | セグメント完全一致、日本語はセグメント内部分一致)を使う。
+    |
+    | 語の一覧はホスト名一覧を出発点とし、パス特有の表現(採用・recruiting・
+    | employment)を追加した ―― 「採用」はコーポレートサイトの採用ページで
+    | 最も一般的な日本語の見出し語。recruiting/employmentはrecruit/jobの
+    | 言い換えとして実在する(いずれも一般的すぎて無関係なページに誤爆する
+    | リスクは低いと判断)。見つからない場合は区分の適用を見送るだけ
+    | (「指定しない」時と同じ挙動)であり、誤って見つけてしまう場合の実害
+    | (採用セクションが丸ごと消える)より安全側に倒れているため、広めの
+    | 一覧を許容する。
+    */
+    'recruitment_track_recruit_section_path_keywords' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env(
+            'BRAND_WHEEL_RECRUITMENT_TRACK_RECRUIT_SECTION_PATH_KEYWORDS',
+            'recruit,careers,career,saiyo,job,hr,採用,recruiting,employment',
+        )),
+    ))),
+
+    // 除外を適用した結果、fetched件数がこの値を下回ったサイト(自社・競合
+    // いずれか)は、除外を適用せずにやり直す(依頼BB-2の安全弁)。5を出発点
+    // とする根拠: (1)巡回自体を行わない既存の既定経路(トップページ・
+    // 採用ページの2枚のみ)より明確に多い最低限のページ数であること、
+    // (2)理念・カルチャー・福利厚生・社員インタビュー・オフィス紹介等の
+    // 「共通ページ」だけでも健全なサイトなら通常5件は超えること、
+    // (3)一時的な取得失敗数件では誤発火しない低さであること(この判定は
+    // 「除外後のfetched件数」であり、除外していないページの取得失敗とは
+    // 別軸)。
+    'recruitment_track_min_pages_after_exclusion' => (int) env('BRAND_WHEEL_RECRUITMENT_TRACK_MIN_PAGES', 5),
+
+    // レポート表紙(依頼BB-4)。'unspecified'では何も表示しない(既存の
+    // 見た目を変えない)。統合ページには追加しない(依頼AZ改で縦幅が
+    // ぎりぎりまで詰まっているため)。
+    'recruitment_track_cover_notice' => [
+        'new_graduate' => '新卒採用ページを対象に分析しました。',
+        'career' => 'キャリア採用（中途）ページを対象に分析しました。',
+    ],
+
     // クロール結果(HTML保存分)の合計容量上限。診断1件(1サイト分)あたり。
     // SafeHttpFetcherのmax_response_bytes(1リクエストあたりの上限、
     // config('analysis.http.max_response_bytes'))とは別の、累積上限。

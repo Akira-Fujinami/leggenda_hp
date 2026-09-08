@@ -6,9 +6,11 @@ use App\Enums\JobType;
 use App\Enums\PageType;
 use App\Models\AnalysisCrawledPage;
 use App\Models\AnalysisPage;
+use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\CrawlLinkExtractor;
 use App\Services\Analysis\CrawlPolicyResolver;
+use App\Services\Analysis\RecruitmentTrackPageFilter;
 use App\Services\Analysis\RobotsTxtParser;
 use App\Services\Analysis\SitemapParser;
 use Illuminate\Bus\Queueable;
@@ -49,6 +51,7 @@ class CrawlWebsiteJob implements ShouldQueue
         RobotsTxtParser $robotsTxtParser,
         SitemapParser $sitemapParser,
         CrawlLinkExtractor $linkExtractor,
+        RecruitmentTrackPageFilter $trackFilter,
     ): void {
         // 依頼M-1: 進捗表示用のAnalysisJob行(CrawlWebsite)をPending→Running
         // へ遷移させる。このJobはcrawl_site=trueのときにしかdispatchされない
@@ -56,6 +59,27 @@ class CrawlWebsiteJob implements ShouldQueue
         // 常に登録済みのはずだが、markRunning()自体もfirstOrCreate経由で
         // 冪等に動く。
         $pipeline->markRunning($this->analysisId, $this->websiteAnalysisId, JobType::CrawlWebsite);
+
+        // 依頼BC-3: 起点URLが採用セクションの外(ルートパス+ホスト名に採用系
+        // の語を含まない)にあり、区分の適用そのものを見送る場合、この
+        // サイトの巡回について構造化ログを1件だけ出す(このJobはサイト単位で
+        // 1回しか実行されないseed専用Jobのため、ここに置けば「1件」になる)。
+        // 実際の見送り判定自体はCrawlWebsitePageJob側が独立に(状態を共有
+        // せず)毎回再計算する ―― ここはログのためだけの事前確認。
+        $websiteAnalysisForTrack = WebsiteAnalysis::query()->with(['analysis', 'website'])->find($this->websiteAnalysisId);
+        $recruitmentTrackForLog = $websiteAnalysisForTrack?->analysis?->recruitment_track ?? 'unspecified';
+        if ($recruitmentTrackForLog !== 'unspecified'
+            && $websiteAnalysisForTrack?->website?->url !== null
+            && ! $trackFilter->isOriginInsideRecruitSection($websiteAnalysisForTrack->website->url)
+        ) {
+            // ログにはURL・ホスト名・会社名・担当者名・メールアドレスを
+            // 含めない(既存方針)。件数・IDに留める。
+            Log::info('brand_wheel_crawl_recruitment_track_skipped_outside_recruit_section', [
+                'analysis_id' => $this->analysisId,
+                'website_analysis_id' => $this->websiteAnalysisId,
+                'recruitment_track' => $recruitmentTrackForLog,
+            ]);
+        }
 
         $robotsDecision = $policyResolver->resolveRobotsPolicy($this->websiteAnalysisId, $robotsTxtParser);
 

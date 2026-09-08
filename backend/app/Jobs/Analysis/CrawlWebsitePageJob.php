@@ -5,12 +5,14 @@ namespace App\Jobs\Analysis;
 use App\Exceptions\Analysis\AnalysisException;
 use App\Jobs\Analysis\Concerns\WritesAnalysisStorage;
 use App\Models\AnalysisCrawledPage;
+use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\CrawlLinkExtractor;
 use App\Services\Analysis\CrawlPolicyResolver;
 use App\Services\Analysis\HtmlSeoAnalyzer;
 use App\Services\Analysis\PageHtmlResolver;
+use App\Services\Analysis\RecruitmentTrackPageFilter;
 use App\Services\Analysis\RobotsTxtParser;
 use App\Services\Analysis\SafeHttpFetcher;
 use Illuminate\Bus\Queueable;
@@ -56,6 +58,7 @@ class CrawlWebsitePageJob implements ShouldQueue
         AnalysisStoragePaths $paths,
         HtmlSeoAnalyzer $htmlSeoAnalyzer,
         PageHtmlResolver $htmlResolver,
+        RecruitmentTrackPageFilter $trackFilter,
     ): void {
         $maxPages = (int) config('brand_wheel.crawl_max_pages', 50);
         $fetchedCount = $this->pages()->where('status', AnalysisCrawledPage::STATUS_FETCHED)->count();
@@ -108,6 +111,32 @@ class CrawlWebsitePageJob implements ShouldQueue
         $excludedPatterns = (array) config('brand_wheel.crawl_excluded_path_patterns', []);
         if ($this->matchesAnyPattern($path, $excludedPatterns) || $this->matchesAnyPattern($next->url, $excludedPatterns)) {
             $next->update(['status' => AnalysisCrawledPage::STATUS_EXCLUDED_BY_PATTERN]);
+            $this->dispatchNext(false);
+
+            return;
+        }
+
+        // 依頼BB-2: 新卒／キャリア採用の区別が選ばれており(recruitment_track
+        // !== 'unspecified')、かつこのサイトでまだ安全弁が発動していない
+        // (recruitment_track_exclusion_fallback_atが未設定)場合のみ判定する。
+        // 起点URL(Website.url、自社/競合それぞれの入力そのもの)はホスト・
+        // パスとも除外の根拠には使わない(RecruitmentTrackPageFilter参照)。
+        //
+        // 依頼BC-3: 起点URLが採用セクションの外(ルートパス+ホスト名に採用系
+        // の語を含まない)にある場合は、区分の適用そのものを見送る
+        // (isOriginInsideRecruitSection())。他のジョブと状態を共有しない
+        // 設計に合わせ、CrawlWebsiteJob(seedジョブ、ログを1件出す側)とは
+        // 独立にここでも同じ判定を毎回再計算する ―― 結果は起点URLだけで
+        // 決まる純粋な判定のため、二重に判定しても結果は必ず一致する。
+        $websiteAnalysis = $this->websiteAnalysisForTrackFilter();
+        $recruitmentTrack = $websiteAnalysis?->analysis?->recruitment_track ?? 'unspecified';
+        if ($recruitmentTrack !== 'unspecified'
+            && $websiteAnalysis?->recruitment_track_exclusion_fallback_at === null
+            && $websiteAnalysis?->website?->url !== null
+            && $trackFilter->isOriginInsideRecruitSection($websiteAnalysis->website->url)
+            && $trackFilter->shouldExclude($next->url, $websiteAnalysis->website->url, $recruitmentTrack)
+        ) {
+            $next->update(['status' => AnalysisCrawledPage::STATUS_EXCLUDED_BY_TRACK]);
             $this->dispatchNext(false);
 
             return;
@@ -198,6 +227,17 @@ class CrawlWebsitePageJob implements ShouldQueue
     private function pages(): \Illuminate\Database\Eloquent\Builder
     {
         return AnalysisCrawledPage::query()->where('website_analysis_id', $this->websiteAnalysisId);
+    }
+
+    /**
+     * 依頼BB-2: 新卒／キャリア除外判定・安全弁に必要な情報(recruitment_track・
+     * 起点URL・安全弁発動済みフラグ)をまとめて取得する。他のジョブ間で
+     * 状態を共有しない設計(クラスdocblock参照)に合わせ、毎回DBから引く
+     * (インメモリにキャッシュしない)。
+     */
+    private function websiteAnalysisForTrackFilter(): ?WebsiteAnalysis
+    {
+        return WebsiteAnalysis::query()->with(['analysis', 'website'])->find($this->websiteAnalysisId);
     }
 
     private function dispatchNext(bool $withDelay): void
@@ -294,6 +334,51 @@ class CrawlWebsitePageJob implements ShouldQueue
             'reason' => $reason,
             'counts' => $counts,
         ]);
+
+        // 依頼BB-2の安全弁: フロンティアが自然に枯渇した('exhausted')ときに
+        // 限って判定する ―― ページ数上限・総経過時間・総容量の上限到達時は
+        // 除外の有無に関わらずそこで打ち切るのが既存の仕様であり、この依頼で
+        // 変えない。除外によってfetched件数が閾値を下回っていれば、除外
+        // 済み行をpendingへ戻して除外なしで巡回を再開する(1サイトにつき
+        // 1回だけ ―― recruitment_track_exclusion_fallback_atが未設定の
+        // 場合のみ)。「誤判定で材料が消えるより、混ざっているほうがまだ
+        // マシ」という依頼者方針のとおり、以後はこのサイトの巡回全体で
+        // 除外を行わない。
+        if ($reason === 'exhausted') {
+            $websiteAnalysis = $this->websiteAnalysisForTrackFilter();
+            $recruitmentTrack = $websiteAnalysis?->analysis?->recruitment_track ?? 'unspecified';
+            $excludedByTrackCount = (int) ($counts[AnalysisCrawledPage::STATUS_EXCLUDED_BY_TRACK] ?? 0);
+            $fetchedCount = (int) ($counts[AnalysisCrawledPage::STATUS_FETCHED] ?? 0);
+            $minPages = (int) config('brand_wheel.recruitment_track_min_pages_after_exclusion', 5);
+
+            if ($recruitmentTrack !== 'unspecified'
+                && $websiteAnalysis !== null
+                && $websiteAnalysis->recruitment_track_exclusion_fallback_at === null
+                && $excludedByTrackCount > 0
+                && $fetchedCount < $minPages
+            ) {
+                $this->pages()
+                    ->where('status', AnalysisCrawledPage::STATUS_EXCLUDED_BY_TRACK)
+                    ->update(['status' => AnalysisCrawledPage::STATUS_PENDING]);
+
+                $websiteAnalysis->update(['recruitment_track_exclusion_fallback_at' => now()]);
+
+                // ログにはURL・会社名・担当者名・メールアドレスを含めない
+                // (既存方針)。件数とwebsite_analysis_idに留める。
+                Log::info('brand_wheel_crawl_recruitment_track_fallback', [
+                    'analysis_id' => $this->analysisId,
+                    'website_analysis_id' => $this->websiteAnalysisId,
+                    'recruitment_track' => $recruitmentTrack,
+                    'fetched_count' => $fetchedCount,
+                    'excluded_count' => $excludedByTrackCount,
+                    'min_pages_threshold' => $minPages,
+                ]);
+
+                self::dispatch($this->analysisId, $this->websiteAnalysisId)->onQueue('analysis');
+
+                return;
+            }
+        }
 
         $minChars = (int) config('brand_wheel.crawl_render_candidate_min_chars', 200);
         $maxCandidates = (int) config('brand_wheel.crawl_render_candidate_max_count', 10);

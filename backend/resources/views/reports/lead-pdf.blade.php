@@ -553,6 +553,17 @@
     @if ($viewModel->isPartial)
         <p style="font-size: 9pt; color: #7a7a7a;">一部のデータは取得できませんでしたが、取得できた範囲での診断結果です。</p>
     @endif
+    {{--
+        依頼BB-4(2026-09-08): 新卒／キャリア採用の区別を選んだ場合のみ、
+        何を対象に分析したかを表紙に明記する(config('brand_wheel.
+        recruitment_track_cover_notice')、'unspecified'ではnullのため
+        何も出ない=既存の見た目を変えない)。統合ページ(「診断結果 ――
+        24項目の比較と改善提案」)には追加しない ―― 依頼AZ改で縦幅が
+        ぎりぎりまで詰まっており、1行足すとあふれるため(依頼者指定)。
+    --}}
+    @if ($viewModel->recruitmentTrackCoverNotice)
+        <p style="font-size: 9pt; color: #7a7a7a;">{{ $viewModel->recruitmentTrackCoverNotice }}</p>
+    @endif
 </div>
 
 {{--

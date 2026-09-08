@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -18,8 +19,21 @@ const analysisSchema = z.object({
 
 type AnalysisFormValues = z.infer<typeof analysisSchema>;
 
+// 依頼BB-1: 「指定しない」が既定。react-hook-formのregister()が前提とする
+// ネイティブ入力ではなくボタン群での選択のため、RHFの外側で素朴な
+// useStateとして持つ(この画面の他の値と違い、任意のどれを選んでも常に
+// 妥当なのでzodバリデーションの対象にしない)。
+type RecruitmentTrack = "unspecified" | "new_graduate" | "career";
+
+const RECRUITMENT_TRACK_OPTIONS: { value: RecruitmentTrack; label: string }[] = [
+  { value: "new_graduate", label: "新卒採用" },
+  { value: "career", label: "キャリア採用（中途）" },
+  { value: "unspecified", label: "指定しない" },
+];
+
 export function LeadAnalysisForm({ token, onStarted }: { token: string; onStarted: (analysisId: number) => void }) {
   const start = useStartLeadAnalysis(token);
+  const [recruitmentTrack, setRecruitmentTrack] = useState<RecruitmentTrack>("unspecified");
   const {
     register,
     handleSubmit,
@@ -32,7 +46,13 @@ export function LeadAnalysisForm({ token, onStarted }: { token: string; onStarte
   const onSubmit = (values: AnalysisFormValues) => {
     requestBrowserNotificationPermission();
     start.mutate(
-      { self_url: values.self_url, competitor_url: values.competitor_url || undefined },
+      {
+        self_url: values.self_url,
+        competitor_url: values.competitor_url || undefined,
+        // 「指定しない」はキー自体を送らない ―― 送らなければ挙動が
+        // 一切変わらないことの唯一の保証経路(依頼BB-1)。
+        recruitment_track: recruitmentTrack === "unspecified" ? undefined : recruitmentTrack,
+      },
       { onSuccess: (res) => onStarted(res.data.analysis_id) },
     );
   };
@@ -69,6 +89,8 @@ export function LeadAnalysisForm({ token, onStarted }: { token: string; onStarte
         <p className="text-xs text-muted-foreground">候補者が併願しそうな企業を選ぶと、差が見えやすくなります。</p>
       </div>
 
+      <RecruitmentTrackSelector value={recruitmentTrack} onChange={setRecruitmentTrack} />
+
       <LeadUrlGuidance />
 
       <Button type="submit" className="w-full" disabled={start.isPending}>
@@ -90,6 +112,45 @@ function requestBrowserNotificationPermission(): void {
   if (typeof window === "undefined" || !("Notification" in window)) return;
   if (Notification.permission !== "default") return;
   void Notification.requestPermission();
+}
+
+/**
+ * 依頼BB-1(2026-09-08): 新卒採用／キャリア採用（中途）の区別。採用サイトに
+ * 両方のページが同居していることが多く、区別せずに巡回すると混合像に
+ * なってしまうための選択(既定は「指定しない」=現在の挙動のまま)。
+ * この画面にはSelect/RadioGroupのUIコンポーネントが無いため、既存の
+ * Buttonのvariant("default"=選択中/"outline"=未選択)だけで組む
+ * (新しいCSS・globals.cssの:rootトークンを追加しない)。
+ */
+function RecruitmentTrackSelector({
+  value,
+  onChange,
+}: {
+  value: "unspecified" | "new_graduate" | "career";
+  onChange: (value: "unspecified" | "new_graduate" | "career") => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>採用区分</Label>
+      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="採用区分">
+        {RECRUITMENT_TRACK_OPTIONS.map((option) => (
+          <Button
+            key={option.value}
+            type="button"
+            variant={value === option.value ? "default" : "outline"}
+            size="sm"
+            aria-pressed={value === option.value}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </Button>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        新卒・キャリア（中途）のどちらか一方に絞って分析したい場合にお選びください。自社・競合の両方に同じ区分が適用されます。
+      </p>
+    </div>
+  );
 }
 
 /**

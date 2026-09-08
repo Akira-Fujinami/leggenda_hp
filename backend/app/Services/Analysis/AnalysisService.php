@@ -14,7 +14,7 @@ use Illuminate\Validation\ValidationException;
 class AnalysisService
 {
     /**
-     * @param  array{website_ids?: array<int, int>, max_websites?: int, skip_lighthouse?: bool, skip_screenshots?: bool, skip_brand_wheel?: bool}  $data
+     * @param  array{website_ids?: array<int, int>, max_websites?: int, skip_lighthouse?: bool, skip_screenshots?: bool, skip_brand_wheel?: bool, crawl_site?: bool, recruitment_track?: ?string}  $data
      */
     public function start(Project $project, array $data, User $user): Analysis
     {
@@ -57,6 +57,11 @@ class AnalysisService
                 // ため常にfalseで、既存の挙動(トップページ・採用ページの
                 // 2枚のみ)は一切変わらない。
                 'crawl_site' => (bool) ($data['crawl_site'] ?? false),
+                // 依頼BB-1(2026-09-08): 新卒／キャリア採用の区別。他の
+                // 呼び出し元(社内向け分析等)はこのキーを渡さないため常に
+                // 既定値'unspecified'になり、除外ロジック・レポート表紙の
+                // 一文はいずれも発火しない(既存の挙動を一切変えない)。
+                'recruitment_track' => (string) ($data['recruitment_track'] ?? 'unspecified'),
             ]);
 
             foreach ($websites as $website) {
