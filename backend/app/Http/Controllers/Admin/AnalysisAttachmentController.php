@@ -2,13 +2,16 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Exceptions\Report\ComparisonSlideInsertionException;
 use App\Http\Controllers\Controller;
 use App\Models\Analysis;
 use App\Models\AnalysisAttachment;
 use App\Services\Admin\AnalysisAttachmentService;
+use App\Services\Report\AdminComparisonPptxInserter;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -18,13 +21,31 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class AnalysisAttachmentController extends Controller
 {
-    public function __construct(private readonly AnalysisAttachmentService $attachments) {}
+    public function __construct(
+        private readonly AnalysisAttachmentService $attachments,
+        private readonly AdminComparisonPptxInserter $pptxInserter,
+    ) {}
 
     public function store(Request $request, Analysis $analysis): RedirectResponse
     {
         $request->validate(['file' => ['required', 'file']]);
+        $file = $request->file('file');
 
-        $this->attachments->store($analysis, $request->file('file'));
+        // 依頼BI-3: PPTXの場合のみ、スライドサイズ・参照元ページの検証も
+        // かける(AdminComparisonPptxInserter::validate()、比較作成フォーム
+        // (ComparisonController)と同じ判定を共有 ―― 経路によって通ったり
+        // 通らなかったりしないようにするため)。PDF/DOCXにはこの検証を
+        // 一切かけない(既存の3拡張子を引き続き受け付ける、依頼者指定)。
+        $extension = strtolower((string) pathinfo($file->getClientOriginalName(), PATHINFO_EXTENSION));
+        if ($extension === 'pptx') {
+            try {
+                $this->pptxInserter->validate($file->getRealPath());
+            } catch (ComparisonSlideInsertionException $e) {
+                throw ValidationException::withMessages(['file' => [$e->getMessage()]]);
+            }
+        }
+
+        $this->attachments->store($analysis, $file);
 
         return back()->with('status', '資料をアップロードしました。');
     }

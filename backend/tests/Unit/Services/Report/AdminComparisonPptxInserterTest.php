@@ -337,9 +337,12 @@ class AdminComparisonPptxInserterTest extends TestCase
             $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
             $this->fail('例外が投げられるはず');
         } catch (ComparisonSlideInsertionException $e) {
-            $this->assertStringContainsString('スライドサイズ', $e->getMessage());
-            // 実際の寸法を文言に出すこと(依頼者指定)。
-            $this->assertStringContainsString('in', $e->getMessage());
+            // 依頼BI-3: 実際の寸法をcmで、分かる場合は比率名(4:3等)も添えて
+            // 文言に出すこと(依頼者指定の例文「この資料は 4:3（25.40 ×
+            // 19.05 cm）です。」に合わせる)。
+            $this->assertStringContainsString('4:3', $e->getMessage());
+            $this->assertStringContainsString('25.40', $e->getMessage());
+            $this->assertStringContainsString('cm', $e->getMessage());
         }
     }
 

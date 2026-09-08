@@ -274,7 +274,9 @@ class AdminComparisonPptxInsertTest extends TestCase
         $response = $this->asAdmin()->get(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false));
 
         $response->assertRedirect();
-        $this->assertStringContainsString('スライドサイズ', (string) session('status'));
+        // 依頼BI-3: 実際の寸法(cm)を文言に出すこと(依頼者指定)。
+        $this->assertStringContainsString('4:3', (string) session('status'));
+        $this->assertStringContainsString('cm', (string) session('status'));
     }
 
     // ------------------------------------------------------------------

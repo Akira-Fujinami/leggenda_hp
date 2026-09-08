@@ -4,7 +4,10 @@ server {
     root /var/www/html/public;
     index index.php;
 
-    client_max_body_size 20M;
+    # 依頼BI-4(2026-09-08): upload_max_filesize(20MB、php.ini参照)より
+    # 確実に大きくする ―― 同値だとnginxがPHPより先に413を返し、原因が
+    # 分かりにくくなる。post_max_sizeと同じ25MBに揃える(本番はこちら)。
+    client_max_body_size 25M;
 
     # Renderのログ収集はコンテナのstdout/stderrを読むため、
     # nginxのアクセス/エラーログもファイルではなくそこへ出す。

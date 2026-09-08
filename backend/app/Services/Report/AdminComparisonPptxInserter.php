@@ -37,6 +37,61 @@ class AdminComparisonPptxInserter
     private const REL_TYPE_SLIDE_LAYOUT = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout';
 
     /**
+     * 依頼BI-3: 差し込みは行わず、検証だけを行う。比較作成フォームの
+     * 送信時点(BI-3)・詳細画面の添付欄(AnalysisAttachmentController)の
+     * 両方から、実際の差し込み(insert())と全く同じ判定ロジックを呼ぶための
+     * 入口 ―― 判定を二重に書かない。検証をパスすれば正常終了(戻り値なし)、
+     * 満たさなければinsert()と同じComparisonSlideInsertionExceptionを
+     * 投げる(スライドサイズ不一致・参照元ページが見つからない、等)。
+     *
+     * 【重要】これは前倒しの検証であって、ダウンロード時(insert())の検証を
+     * 置き換えるものではない ―― 資料は差し替えられるし、config
+     * の検出語も変わりうるため、insert()側の検証はそのまま残す(依頼者指定)。
+     */
+    public function validate(string $deckPath): void
+    {
+        $zip = new ZipArchive();
+        if ($zip->open($deckPath) !== true) {
+            throw new ComparisonSlideInsertionException('営業資料(PPTX)を開けませんでした。ファイルが壊れている可能性があります。');
+        }
+
+        try {
+            $this->assertReferencePageExistsAndSizeMatches($zip);
+        } finally {
+            $zip->close();
+        }
+    }
+
+    /**
+     * @return array{0: string, 1: string, 2: list<array{id: int, rId: string}>, 3: array<string, string>, 4: int}
+     *              [presentation.xmlの中身, presentation.xml.relsの中身, sldIdLst, rId=>Target, 挿入位置(0始まり)]
+     */
+    private function assertReferencePageExistsAndSizeMatches(ZipArchive $zip): array
+    {
+        $presentationXml = $this->readEntry($zip, 'ppt/presentation.xml');
+        $presentationRelsXml = $this->readEntry($zip, 'ppt/_rels/presentation.xml.rels');
+
+        $this->assertSlideSize($presentationXml);
+
+        $sldIds = $this->parseSlideIdList($presentationXml);
+        if ($sldIds === []) {
+            throw new ComparisonSlideInsertionException('営業資料にスライドが1枚もありません。');
+        }
+
+        $rIdToTarget = $this->parseRelationshipTargets($presentationRelsXml);
+
+        $insertionIndex = $this->findReferencePageIndex($zip, $sldIds, $rIdToTarget);
+        if ($insertionIndex === null) {
+            $keywords = implode('/', (array) config('admin_comparison_pptx.reference_page_keywords'));
+            throw new ComparisonSlideInsertionException(
+                "営業資料に「{$keywords}」のページが見つかりませんでした。差し込み位置を判断できないため中止しました。",
+            );
+        }
+
+        return [$presentationXml, $presentationRelsXml, $sldIds, $rIdToTarget, $insertionIndex];
+    }
+
+    /**
      * @return string  差し込み後のPPTXを書き出した一時ファイルのパス(呼び出し側が削除すること)
      */
     public function insert(string $baseDeckPath, string $comparisonSlideBytes): string
@@ -56,26 +111,8 @@ class AdminComparisonPptxInserter
         }
 
         try {
-            $presentationXml = $this->readEntry($zip, 'ppt/presentation.xml');
-            $presentationRelsXml = $this->readEntry($zip, 'ppt/_rels/presentation.xml.rels');
+            [$presentationXml, $presentationRelsXml, $sldIds, $rIdToTarget, $insertionIndex] = $this->assertReferencePageExistsAndSizeMatches($zip);
             $contentTypesXml = $this->readEntry($zip, '[Content_Types].xml');
-
-            $this->assertSlideSize($presentationXml);
-
-            $sldIds = $this->parseSlideIdList($presentationXml);
-            if ($sldIds === []) {
-                throw new ComparisonSlideInsertionException('営業資料にスライドが1枚もありません。');
-            }
-
-            $rIdToTarget = $this->parseRelationshipTargets($presentationRelsXml);
-
-            $insertionIndex = $this->findReferencePageIndex($zip, $sldIds, $rIdToTarget);
-            if ($insertionIndex === null) {
-                $keywords = implode('/', (array) config('admin_comparison_pptx.reference_page_keywords'));
-                throw new ComparisonSlideInsertionException(
-                    "営業資料に「{$keywords}」のページが見つかりませんでした。差し込み位置を判断できないため中止しました。",
-                );
-            }
 
             $neighborIndex = $insertionIndex > 0 ? $insertionIndex - 1 : $insertionIndex;
             $neighborTarget = $rIdToTarget[$sldIds[$neighborIndex]['rId']] ?? null;
@@ -180,12 +217,44 @@ class AdminComparisonPptxInserter
         $requiredCy = (int) config('admin_comparison_pptx.required_slide_height_emu');
 
         if ($cx !== $requiredCx || $cy !== $requiredCy) {
-            $requiredIn = sprintf('%.3f×%.3fin', $requiredCx / 914400, $requiredCy / 914400);
-            $actualIn = sprintf('%.3f×%.3fin', $cx / 914400, $cy / 914400);
-            throw new ComparisonSlideInsertionException(
-                "営業資料のスライドサイズ({$actualIn})が、比較スライドのサイズ({$requiredIn})と一致しないため中止しました。",
-            );
+            throw new ComparisonSlideInsertionException(sprintf(
+                'この資料は%sです。%sの資料が必要です。',
+                $this->slideSizeLabel($cx, $cy),
+                $this->slideSizeLabel($requiredCx, $requiredCy),
+            ));
         }
+    }
+
+    /**
+     * 依頼BI-3: エラー文言に実際の寸法を示すこと(依頼者指定の例文
+     * 「この資料は 4:3（25.40 × 19.05 cm）です。」)。4:3/16:9/16:10等の
+     * よく使われる比率であれば比率名も添え、それ以外はcmの寸法のみ示す。
+     */
+    private function slideSizeLabel(int $cx, int $cy): string
+    {
+        $cm = sprintf('%.2f × %.2f cm', $cx / 360000, $cy / 360000);
+        $ratio = $this->slideAspectRatioName($cx, $cy);
+
+        return $ratio !== null ? "{$ratio}（{$cm}）" : $cm;
+    }
+
+    private function slideAspectRatioName(int $cx, int $cy): ?string
+    {
+        $divisor = $this->gcd($cx, $cy);
+        $ratioW = intdiv($cx, $divisor);
+        $ratioH = intdiv($cy, $divisor);
+
+        return match (true) {
+            $ratioW === 4 && $ratioH === 3 => '4:3',
+            $ratioW === 16 && $ratioH === 9 => '16:9',
+            $ratioW === 16 && $ratioH === 10 => '16:10',
+            default => null,
+        };
+    }
+
+    private function gcd(int $a, int $b): int
+    {
+        return $b === 0 ? $a : $this->gcd($b, $a % $b);
     }
 
     /**

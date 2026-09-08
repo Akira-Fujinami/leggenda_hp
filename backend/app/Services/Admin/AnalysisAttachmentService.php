@@ -55,11 +55,29 @@ class AnalysisAttachmentService
         ],
     ];
 
-    public function store(Analysis $analysis, UploadedFile $file): AnalysisAttachment
+    /**
+     * 依頼BI-3: 拡張子・実際の中身(マジックバイト)・1ファイルあたりの
+     * サイズ上限の検証だけを、保存(store())を伴わずに行う。比較作成
+     * フォーム(ComparisonController)が、まだ存在しない比較Analysisに対して
+     * 保存する前の時点でこの検証だけを済ませたいために切り出した
+     * (全診断合計のディスク容量上限(assertWithinStorageBudget)は対象の
+     * Analysisが無いと判定できないため、ここには含めない ―― 実際の保存時
+     * (store())には引き続き含まれる)。
+     *
+     * @return string  検証済みの拡張子(小文字)
+     */
+    public function assertBasicUploadIsValid(UploadedFile $file): string
     {
         $extension = $this->assertExtensionAllowed($file);
         $this->assertContentMatchesExtension($file, $extension);
         $this->assertSizeWithinPerFileLimit($file);
+
+        return $extension;
+    }
+
+    public function store(Analysis $analysis, UploadedFile $file): AnalysisAttachment
+    {
+        $extension = $this->assertBasicUploadIsValid($file);
         $this->assertWithinStorageBudget($analysis, $file->getSize());
 
         $storedName = Str::uuid()->toString().'.'.$extension;

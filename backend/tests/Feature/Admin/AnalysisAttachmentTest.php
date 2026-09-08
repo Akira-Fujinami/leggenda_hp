@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Tests\Concerns\MakesTestPptxDecks;
 use Tests\TestCase;
 
 /**
@@ -19,6 +20,7 @@ use Tests\TestCase;
 class AnalysisAttachmentTest extends TestCase
 {
     use RefreshDatabase;
+    use MakesTestPptxDecks;
 
     protected function setUp(): void
     {
@@ -290,6 +292,83 @@ class AnalysisAttachmentTest extends TestCase
 
         $response->assertSessionHasErrors('file');
         $this->assertSame(0, AnalysisAttachment::where('analysis_id', $analysis->id)->count());
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BI-3: PPTXのみ、スライドサイズ・参照元ページも検証する
+    // (AdminComparisonPptxInserter::validate()と共通のロジック)。
+    // ------------------------------------------------------------------
+
+    public function test_a_valid_pptx_with_a_reference_page_is_accepted(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $bytes = $this->makeMinimalPptxBytes(['内容1', '参照元']);
+
+        $response = $this->asAdmin()->post("/admin/analyses/{$analysis->id}/attachment", [
+            'file' => UploadedFile::fake()->createWithContent('提案資料.pptx', $bytes),
+        ]);
+
+        $response->assertSessionDoesntHaveErrors('file');
+        $this->assertSame(1, AnalysisAttachment::where('analysis_id', $analysis->id)->where('extension', 'pptx')->count());
+    }
+
+    public function test_a_pptx_without_a_reference_page_is_rejected_with_a_reason(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $bytes = $this->makeMinimalPptxBytes(['内容1', '内容2']);
+
+        $response = $this->asAdmin()->post("/admin/analyses/{$analysis->id}/attachment", [
+            'file' => UploadedFile::fake()->createWithContent('提案資料.pptx', $bytes),
+        ]);
+
+        $response->assertSessionHasErrors('file');
+        $this->assertStringContainsString('参照元', session('errors')->get('file')[0]);
+        $this->assertSame(0, AnalysisAttachment::where('analysis_id', $analysis->id)->count());
+    }
+
+    public function test_a_pptx_with_the_wrong_slide_size_is_rejected_with_the_actual_size(): void
+    {
+        $analysis = $this->makeAnalysis();
+        // 4:3相当(9144000x6858000 EMU)。
+        $bytes = $this->makeMinimalPptxBytes(['内容1', '参照元'], 9144000, 6858000);
+
+        $response = $this->asAdmin()->post("/admin/analyses/{$analysis->id}/attachment", [
+            'file' => UploadedFile::fake()->createWithContent('提案資料.pptx', $bytes),
+        ]);
+
+        $response->assertSessionHasErrors('file');
+        // 依頼BI-3: 実際の寸法(cm)・分かる場合は比率名も文言に出すこと
+        // (依頼者指定の例文「この資料は 4:3（25.40 × 19.05 cm）です。」に合わせる)。
+        $message = session('errors')->get('file')[0];
+        $this->assertStringContainsString('4:3', $message);
+        $this->assertStringContainsString('25.40', $message);
+        $this->assertStringContainsString('cm', $message);
+        $this->assertSame(0, AnalysisAttachment::where('analysis_id', $analysis->id)->count());
+    }
+
+    /**
+     * PDF/DOCXにはスライドサイズ・参照元ページの検証をかけない
+     * (この検証はPPTX専用、依頼者指定)。既存のtest_a_genuine_docx_file_
+     * is_accepted()も回帰確認を兼ねるが、ここでは明示的に「PPTXなら
+     * 弾かれる内容」のDOCXが弾かれないことを確認する。
+     */
+    public function test_docx_is_not_subject_to_the_slide_validation(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $zip = new \ZipArchive();
+        $tmpPath = tempnam(sys_get_temp_dir(), 'docx');
+        $zip->open($tmpPath, \ZipArchive::OVERWRITE);
+        $zip->addFromString('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>');
+        $zip->addFromString('word/document.xml', '<document/>');
+        $zip->close();
+
+        $response = $this->asAdmin()->post("/admin/analyses/{$analysis->id}/attachment", [
+            'file' => UploadedFile::fake()->createWithContent('proposal.docx', (string) file_get_contents($tmpPath)),
+        ]);
+        unlink($tmpPath);
+
+        $response->assertSessionDoesntHaveErrors('file');
+        $this->assertSame(1, AnalysisAttachment::where('analysis_id', $analysis->id)->count());
     }
 
     // ------------------------------------------------------------------
