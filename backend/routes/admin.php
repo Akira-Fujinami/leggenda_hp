@@ -42,6 +42,11 @@ Route::prefix('admin')->name('admin.')->group(function () {
         // のようなオーナーシップ検証は不要(既存のanalyses.show等と同じ、
         // 管理者は任意のAnalysisにアクセスできる前提)。
         Route::get('/analyses/{analysis}/comparison-report', [AnalysisController::class, 'downloadComparisonReport'])->name('analyses.comparison-report.download');
+        // 依頼BG(2026-09-08): 比較スライド1枚を、アップロード済みの営業資料
+        // (PPTX)の「参照元」ページ直前へ差し込んだPPTXのダウンロード。
+        // source_analysis_idがnull、添付が無い/PPTXでない場合は
+        // コントローラ側で404にする(画面でボタンを隠すだけにしない)。
+        Route::get('/analyses/{analysis}/comparison-report/pptx-insert', [AnalysisController::class, 'downloadComparisonPptxInsert'])->name('analyses.comparison-report.pptx-insert');
         // 依頼AG-1(2026-08-27): 無料診断のレポート(PDF/Word)のダウンロード。
         // 多社比較(source_analysis_idが非null)は上のcomparison-report専用
         // エンドポイントのまま変更しない ―― こちらはsource_analysis_idが

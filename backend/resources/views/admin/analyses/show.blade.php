@@ -143,6 +143,19 @@
                              admin.auth配下の専用エンドポイントからダウンロードする。 --}}
                         @if ($analysis->source_analysis_id && $report->format->value === 'pdf' && $report->status->value === 'completed')
                             <a href="{{ route('admin.analyses.comparison-report.download', $analysis->id, false) }}" style="margin-left: 8px;">ダウンロード</a>
+                            {{-- 依頼BG(2026-09-08): 営業資料(PPTX)がアップロード
+                                 されている比較Analysisにのみ、差し込み版の
+                                 ダウンロード導線を並べて出す。添付が無い/PPTX
+                                 でない場合はボタンを出さず、理由を短く示す
+                                 (依頼者指定)。 --}}
+                            @php
+                                $pptxAttachment = $analysis->attachments->firstWhere('extension', 'pptx');
+                            @endphp
+                            @if ($pptxAttachment)
+                                <a href="{{ route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false) }}" style="margin-left: 8px;">営業資料に差し込む</a>
+                            @else
+                                <span class="empty" style="margin-left: 8px;">営業資料(PPTX)をアップロードすると、比較ページを差し込んだ資料をダウンロードできます。</span>
+                            @endif
                         @elseif (! $analysis->source_analysis_id && $report->status->value === 'completed')
                             {{-- 依頼AG-1(2026-08-27): 無料診断(比較でない)の
                                  レポートは、管理者が生トークンを持たないため

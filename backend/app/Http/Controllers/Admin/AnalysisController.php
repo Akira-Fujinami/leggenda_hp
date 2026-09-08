@@ -5,10 +5,15 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\AnalysisStatus;
 use App\Enums\ReportFormat;
 use App\Enums\ReportGenerationStatus;
+use App\Exceptions\Report\ComparisonSlideInsertionException;
 use App\Http\Controllers\Controller;
 use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
 use App\Models\Report;
+use App\Services\Report\AdminComparisonPptxDataBuilder;
+use App\Services\Report\AdminComparisonPptxGenerator;
+use App\Services\Report\AdminComparisonPptxInserter;
+use App\Services\Report\MultiSiteReportViewModelBuilder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -118,6 +123,79 @@ class AnalysisController extends Controller
         return Storage::disk('analysis')->download($report->storage_path, "多社比較レポート_{$analysis->id}.pdf", [
             'Content-Type' => ReportFormat::Pdf->contentType(),
         ]);
+    }
+
+    /**
+     * 依頼BG(2026-09-08): 多社比較スライド1枚を、アップロード済みの営業資料
+     * (PPTX)の「参照元」ページの直前へ差し込んだPPTXをダウンロードする。
+     *
+     * 事前生成しない(Reportの行もJobも作らない) ―― 営業資料は差し替えられる
+     * ため、ダウンロード時にその場で生成する(依頼者指定、事前生成すると
+     * 差し替え後に古い資料へ差し込んだファイルを配ってしまう)。
+     *
+     * 添付が無い/PPTXでない場合、および比較Analysisでない場合は、画面で
+     * ボタンを隠すだけでなくこのエンドポイント自体も404にする(依頼者指定)。
+     *
+     * 差し込みが行えない場合(参照元ページが無い・スライドサイズ不一致等)は
+     * ComparisonSlideInsertionExceptionを捕捉し、理由が分かる文言を添えて
+     * 診断詳細画面へ戻す(500エラーにしない ―― 想定内の中止のため)。
+     *
+     * 一時ファイル(比較スライド単体のpptx・差し込み後の完成品)は、成功・
+     * 失敗のいずれの経路でもfinallyで必ず削除する。
+     */
+    public function downloadComparisonPptxInsert(
+        Analysis $analysis,
+        MultiSiteReportViewModelBuilder $viewModelBuilder,
+        AdminComparisonPptxDataBuilder $dataBuilder,
+        AdminComparisonPptxGenerator $slideGenerator,
+        AdminComparisonPptxInserter $inserter,
+    ): StreamedResponse|RedirectResponse {
+        abort_if($analysis->source_analysis_id === null, 404);
+
+        $analysis->loadMissing('attachments');
+        $attachment = $analysis->attachments->first();
+        abort_if($attachment === null || $attachment->extension !== 'pptx', 404);
+        abort_unless(Storage::disk('analysis')->exists($attachment->storage_path), 404);
+
+        $mergedPath = null;
+
+        try {
+            $viewModel = $viewModelBuilder->build($analysis);
+            $data = $dataBuilder->build($viewModel);
+            $slideBytes = $slideGenerator->generate($data);
+
+            $baseDeckPath = Storage::disk('analysis')->path($attachment->storage_path);
+            $mergedPath = $inserter->insert($baseDeckPath, $slideBytes);
+
+            $mergedBytes = (string) file_get_contents($mergedPath);
+            $downloadName = pathinfo($attachment->original_filename, PATHINFO_FILENAME).'_比較ページ差し込み.pptx';
+
+            // ダウンロード後に消してよい一時ファイルからバイト列を読んだ後は
+            // メモリ上のコンテンツを返すだけでよいため、Storage::download()
+            // (ディスク上のパスをストリーミング配信する用途)ではなく
+            // streamDownload()(日本語ファイル名のContent-Dispositionを
+            // 正しく組み立てる、既存のAnalysisAttachmentController::download()
+            // 等と同じ土台)を使う。
+            return response()->streamDownload(
+                fn () => print($mergedBytes),
+                $downloadName,
+                ['Content-Type' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+            );
+        } catch (ComparisonSlideInsertionException $e) {
+            Log::info('Admin comparison pptx insertion aborted', [
+                'analysis_id' => $analysis->id,
+                'reason' => $e->getMessage(),
+            ]);
+
+            // admin.layoutはsession('status')のみを汎用フラッシュとして表示する
+            // (session('error')の表示枠は無い ―― 承認外のadmin/layout.blade.php
+            // を今回変更しないため、既存のキーをそのまま使う)。
+            return back()->with('status', $e->getMessage());
+        } finally {
+            if ($mergedPath !== null && file_exists($mergedPath)) {
+                unlink($mergedPath);
+            }
+        }
     }
 
     /**
