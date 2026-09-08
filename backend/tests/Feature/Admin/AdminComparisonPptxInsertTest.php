@@ -279,6 +279,22 @@ class AdminComparisonPptxInsertTest extends TestCase
         $this->assertStringContainsString('cm', (string) session('status'));
     }
 
+    /**
+     * 依頼BK: ダウンロード時の経路でも、許容差(既定1200EMU)以内のずれは
+     * 弾かれず、差し込みが成功すること。比較作成フォーム・詳細画面の
+     * 添付欄と同じ判定になること(3経路すべての確認、依頼BK指定)。
+     */
+    public function test_a_deck_1200_emu_off_still_downloads_successfully(): void
+    {
+        $analysis = $this->makeComparisonAnalysis();
+        $this->attachPptx($analysis, $this->makeMinimalDeck(['内容1', '参照元'], 12192000 - 1200, 6858000 - 1200));
+
+        $response = $this->asAdmin()->get(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false));
+
+        $response->assertOk();
+        $this->assertStringContainsString('attachment', (string) $response->headers->get('Content-Disposition'));
+    }
+
     // ------------------------------------------------------------------
     // 404: 添付なし/PDF/DOCX/source_analysis_idがnull。
     // ------------------------------------------------------------------

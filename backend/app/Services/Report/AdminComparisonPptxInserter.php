@@ -205,56 +205,173 @@ class AdminComparisonPptxInserter
         return $content;
     }
 
+    /**
+     * @var array<string, float>  比率名 => cx/cy
+     */
+    private const KNOWN_ASPECT_RATIOS = [
+        '4:3' => 4 / 3,
+        '16:10' => 16 / 10,
+        '16:9' => 16 / 9,
+    ];
+
+    /**
+     * 依頼BK(2026-09-09): 本番で実物の16:9資料(cx=12191695、cy=6858000。
+     * 要求値との差はcxのみ305EMU)が完全一致判定により「16:9でない」として
+     * 弾かれた。cmでスライドサイズを指定するツール・書き出し経路の丸め等で
+     * 見た目には判別できないごく小さなEMUのずれが実在するため、完全一致
+     * ではなく設定した許容差(admin_comparison_pptx.slide_size_tolerance_emu、
+     * 依頼BL-2で9144EMU=0.01インチに拡大)以内かどうかで判定する。幅・
+     * 高さそれぞれに独立して適用する(比率で見ると、本番資料のように片方の
+     * 軸だけがずれているケースの許容量が直感的に説明しづらくなるため)。
+     *
+     * 【重要、依頼BL-1】この寸法チェックは「同じ紙面サイズか」だけを見る
+     * ―― 比率(縦横比)は一切見ない。比率名はエラーメッセージの文言を
+     * 分かりやすくするためだけに使う(slideSizeMismatchMessage()参照)。
+     * 通す/弾くの判定に比率を混ぜない ―― 比較スライドは絶対座標で置かれて
+     * おり、はみ出すかどうかは実際の紙面サイズだけで決まるため。
+     */
     private function assertSlideSize(string $presentationXml): void
     {
-        if (preg_match('/<p:sldSz\s+cx="(\d+)"\s+cy="(\d+)"/', $presentationXml, $m) !== 1) {
+        $size = $this->parseSlideSize($presentationXml);
+        if ($size === null) {
             throw new ComparisonSlideInsertionException('営業資料のスライドサイズを読み取れませんでした。');
         }
 
-        $cx = (int) $m[1];
-        $cy = (int) $m[2];
+        [$cx, $cy] = $size;
         $requiredCx = (int) config('admin_comparison_pptx.required_slide_width_emu');
         $requiredCy = (int) config('admin_comparison_pptx.required_slide_height_emu');
+        $tolerance = (int) config('admin_comparison_pptx.slide_size_tolerance_emu');
 
-        if ($cx !== $requiredCx || $cy !== $requiredCy) {
-            throw new ComparisonSlideInsertionException(sprintf(
-                'この資料は%sです。%sの資料が必要です。',
-                $this->slideSizeLabel($cx, $cy),
-                $this->slideSizeLabel($requiredCx, $requiredCy),
-            ));
+        if (abs($cx - $requiredCx) > $tolerance || abs($cy - $requiredCy) > $tolerance) {
+            throw new ComparisonSlideInsertionException($this->slideSizeMismatchMessage($cx, $cy, $requiredCx, $requiredCy));
         }
+    }
+
+    /**
+     * 依頼BK-3: <p:sldSz>の属性の並び("type"付き、cx/cyの順序が
+     * 前後する等)に依存せず読み取る。まずタグ全体を(属性の並びを問わず)
+     * 取り出し、そのうえでcx/cyをそれぞれ独立に探す ―― PowerPoint以外
+     * (Googleスライド・Keynote・LibreOffice等)の書き出し順を前提にしない。
+     * 読み取れない場合はnull(呼び出し側で「読み取れませんでした」にする。
+     * 既定値で処理を続けない、依頼者指定)。
+     *
+     * @return array{0: int, 1: int}|null  [cx, cy]
+     */
+    private function parseSlideSize(string $presentationXml): ?array
+    {
+        if (preg_match('/<p:sldSz\b[^>]*\/>/', $presentationXml, $tagMatch) !== 1) {
+            return null;
+        }
+
+        $cx = $this->extractIntAttribute($tagMatch[0], 'cx');
+        $cy = $this->extractIntAttribute($tagMatch[0], 'cy');
+
+        return ($cx !== null && $cy !== null) ? [$cx, $cy] : null;
+    }
+
+    private function extractIntAttribute(string $tag, string $attribute): ?int
+    {
+        if (preg_match('/\b'.preg_quote($attribute, '/').'="(\d+)"/', $tag, $m) !== 1) {
+            return null;
+        }
+
+        return (int) $m[1];
+    }
+
+    /**
+     * 依頼BL-1: 「比率は合うが寸法が違う」(例: 9144000×5143500、10×5.625in
+     * ―― cx/cyの比はちょうど16/9だが、要求している13.333×7.5inとは別の
+     * インチ数の16:9)場合に、依頼BKで直したのと同種の「16:9ではないと
+     * 言われたが、これは16:9である」という混乱を再発させないため、3つの
+     * 状態を区別して文言を出し分ける。
+     *   1. 比率も一致 → 直しかたの一文を添える(「16:9ですが…」)
+     *   2. 比率も不一致 → 従来通りの比較文言(依頼BK-2のEMU併記も維持)
+     */
+    private function slideSizeMismatchMessage(int $cx, int $cy, int $requiredCx, int $requiredCy): string
+    {
+        $actualRatioName = $this->slideAspectRatioName($cx, $cy);
+        $requiredRatioName = $this->slideAspectRatioName($requiredCx, $requiredCy);
+        // 依頼BK-2: cm表示(小数2桁)まで丸めると両側が同じ文字列になり
+        // 「何が違うのか分からない文」になっていた(依頼者指摘の実例)。
+        // cm表示が両側で一致する場合は、判別できるよう実際のEMU値も
+        // 両側に添える(この出し分けのどちらのケースでも維持する)。
+        $ambiguous = $this->cmLabel($cx, $cy) === $this->cmLabel($requiredCx, $requiredCy);
+
+        if ($actualRatioName !== null && $actualRatioName === $requiredRatioName) {
+            return sprintf(
+                '%sですが、%sです。%sの資料が必要です。'
+                .'PowerPointの［デザイン］→［スライドのサイズ］で、幅%s cm × 高さ%s cm に変更してください。',
+                $actualRatioName,
+                $this->sizeDetail($cx, $cy, $ambiguous),
+                $this->sizeDetail($requiredCx, $requiredCy, $ambiguous),
+                number_format($requiredCx / 360000, 2),
+                number_format($requiredCy / 360000, 2),
+            );
+        }
+
+        return sprintf(
+            'この資料は%sです。%sの資料が必要です。',
+            $this->slideSizeLabel($cx, $cy, $ambiguous),
+            $this->slideSizeLabel($requiredCx, $requiredCy, $ambiguous),
+        );
     }
 
     /**
      * 依頼BI-3: エラー文言に実際の寸法を示すこと(依頼者指定の例文
      * 「この資料は 4:3（25.40 × 19.05 cm）です。」)。4:3/16:9/16:10等の
-     * よく使われる比率であれば比率名も添え、それ以外はcmの寸法のみ示す。
+     * よく使われる比率に近ければ(依頼BL-1: cx/cyの比そのもので判定する)
+     * 比率名も添え、それ以外はcmの寸法のみ示す。
      */
-    private function slideSizeLabel(int $cx, int $cy): string
+    private function slideSizeLabel(int $cx, int $cy, bool $includeEmu = false): string
     {
-        $cm = sprintf('%.2f × %.2f cm', $cx / 360000, $cy / 360000);
+        $detail = $this->sizeDetail($cx, $cy, $includeEmu);
         $ratio = $this->slideAspectRatioName($cx, $cy);
 
-        return $ratio !== null ? "{$ratio}（{$cm}）" : $cm;
+        return $ratio !== null ? "{$ratio}（{$detail}）" : $detail;
     }
 
+    /**
+     * 依頼BK-2: $includeEmuがtrueのときは、実際のEMU値も併記する
+     * (cm表示だけでは両側が同じ文字列になるケースの解消)。
+     */
+    private function sizeDetail(int $cx, int $cy, bool $includeEmu): string
+    {
+        $cm = $this->cmLabel($cx, $cy);
+
+        return $includeEmu ? sprintf('%s / %d × %d EMU', $cm, $cx, $cy) : $cm;
+    }
+
+    private function cmLabel(int $cx, int $cy): string
+    {
+        return sprintf('%.2f × %.2f cm', $cx / 360000, $cy / 360000);
+    }
+
+    /**
+     * 依頼BL-1: 「既知サイズとの一致」ではなく「cx/cyの比そのもの」で
+     * 判定する。従来(依頼BK-2)は絶対サイズの表だけを見ていたため、同じ
+     * 16:9でも別のインチ数の資料(例: 9144000×5143500)に比率名が
+     * 付かなかった。判定は寸法の一致(assertSlideSize())とは独立
+     * ―― 比率が合っていても寸法が違えば差し込みは弾く(依頼者指定、
+     * 比較スライドは絶対座標で置かれているため)。許容差は
+     * admin_comparison_pptx.aspect_ratio_toleranceを使う
+     * (slide_size_tolerance_emuとは別の設定、意味が異なるため兼用しない)。
+     */
     private function slideAspectRatioName(int $cx, int $cy): ?string
     {
-        $divisor = $this->gcd($cx, $cy);
-        $ratioW = intdiv($cx, $divisor);
-        $ratioH = intdiv($cy, $divisor);
+        if ($cy === 0) {
+            return null;
+        }
 
-        return match (true) {
-            $ratioW === 4 && $ratioH === 3 => '4:3',
-            $ratioW === 16 && $ratioH === 9 => '16:9',
-            $ratioW === 16 && $ratioH === 10 => '16:10',
-            default => null,
-        };
-    }
+        $tolerance = (float) config('admin_comparison_pptx.aspect_ratio_tolerance');
+        $ratio = $cx / $cy;
 
-    private function gcd(int $a, int $b): int
-    {
-        return $b === 0 ? $a : $this->gcd($b, $a % $b);
+        foreach (self::KNOWN_ASPECT_RATIOS as $name => $knownRatio) {
+            if (abs($ratio - $knownRatio) <= $tolerance) {
+                return $name;
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -61,7 +61,12 @@ class AdminComparisonPptxInserterTest extends TestCase
      * @param  list<string>  $slideTexts  各スライドの本文(この配列の最後の要素の
      *                                    スライドが「参照元」相当のキーワードを含む)
      */
-    private function makeFixtureDeck(array $slideTexts, int $sldSzCx = self::SLIDE_W, int $sldSzCy = self::SLIDE_H, bool $includeReferenceKeyword = true): string
+    /**
+     * 依頼BK-3: $sldSzXmlOverrideを渡すと、自動生成する
+     * `<p:sldSz cx="..." cy="..."/>` の代わりにそのまま使う
+     * (属性の並び違い・type属性付き・タグ自体が無い、を再現するため)。
+     */
+    private function makeFixtureDeck(array $slideTexts, int $sldSzCx = self::SLIDE_W, int $sldSzCy = self::SLIDE_H, bool $includeReferenceKeyword = true, ?string $sldSzXmlOverride = null): string
     {
         $path = tempnam(sys_get_temp_dir(), 'fixture-deck').'.pptx';
         $this->tempFiles[] = $path;
@@ -150,7 +155,7 @@ class AdminComparisonPptxInserterTest extends TestCase
             .'<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
             .'<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>'
             .'<p:sldIdLst>'.$sldIdListXml.'</p:sldIdLst>'
-            .'<p:sldSz cx="'.$sldSzCx.'" cy="'.$sldSzCy.'"/>'
+            .($sldSzXmlOverride ?? '<p:sldSz cx="'.$sldSzCx.'" cy="'.$sldSzCy.'"/>')
             .'<p:notesSz cx="6858000" cy="9144000"/>'
             .'</p:presentation>';
         $zip->addFromString('ppt/presentation.xml', $presentationXml);
@@ -343,6 +348,205 @@ class AdminComparisonPptxInserterTest extends TestCase
             $this->assertStringContainsString('4:3', $e->getMessage());
             $this->assertStringContainsString('25.40', $e->getMessage());
             $this->assertStringContainsString('cm', $e->getMessage());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BK(2026-09-09): 完全一致ではなく許容差(既定1200EMU)で判定する。
+    // 本番で実物の16:9資料(cx=12191695、要求値との差はcxのみ305EMU)が
+    // 完全一致判定により誤って弾かれたことが発端。
+    // ------------------------------------------------------------------
+
+    /**
+     * BK-1必須要件: 1200EMU(既定の許容差ちょうど)ずれた資料は確実に通ること。
+     * 本番の実物資料の実測値(305EMU)より大きい、許容差の境界値そのもので
+     * 検証する。
+     */
+    public function test_a_deck_1200_emu_off_on_both_axes_is_accepted(): void
+    {
+        $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: self::SLIDE_W - 1200, sldSzCy: self::SLIDE_H - 1200);
+
+        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $this->tempFiles[] = $mergedPath;
+
+        $this->assertFileExists($mergedPath);
+    }
+
+    /**
+     * 本番で実際に弾かれた資料の実測値(cx=12191695、cy=6858000、
+     * 依頼BK-0で実測)を、そのまま再現して確認する。
+     */
+    public function test_the_actual_production_deck_dimensions_are_accepted(): void
+    {
+        $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 12191695, sldSzCy: 6858000);
+
+        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $this->tempFiles[] = $mergedPath;
+
+        $this->assertFileExists($mergedPath);
+    }
+
+    /**
+     * BK-1/BL-2必須要件: 許容差を入れても(広げても)4:3は確実に弾かれ、
+     * 比率が違うケースの文言(「4:3」と出て「16:9ですが」にはならない)に
+     * なること。
+     */
+    public function test_4_3_is_still_rejected_despite_the_tolerance(): void
+    {
+        $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 9144000, sldSzCy: 6858000);
+
+        try {
+            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->fail('例外が投げられるはず');
+        } catch (ComparisonSlideInsertionException $e) {
+            $this->assertStringContainsString('4:3', $e->getMessage());
+            $this->assertStringNotContainsString('ですが', $e->getMessage());
+        }
+    }
+
+    /**
+     * BK-1/BL-2必須要件: 許容差を入れても(広げても)16:10は確実に弾かれ、
+     * 比率名が文言に出ること。16:10(On-screen Show 16:10相当、10×6.25in)
+     * = 9144000×5715000EMU。
+     */
+    public function test_16_10_is_still_rejected_despite_the_tolerance(): void
+    {
+        $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 9144000, sldSzCy: 5715000);
+
+        try {
+            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->fail('例外が投げられるはず');
+        } catch (ComparisonSlideInsertionException $e) {
+            $this->assertStringContainsString('16:10', $e->getMessage());
+            $this->assertStringNotContainsString('ですが', $e->getMessage());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BL-1(2026-09-09): 比率名の判定を、既知の絶対サイズとの一致では
+    // なくcx/cyの比そのもので行う。「比率は合うが寸法が違う」場合に、
+    // 依頼BKで直したのと同種の「16:9ではないと言われたが、これは16:9で
+    // ある」という混乱を再発させないよう、文言を出し分ける。
+    // ------------------------------------------------------------------
+
+    /**
+     * 9144000×5143500(10×5.625in)はちょうど16:9だが、要求している
+     * 13.333×7.5inとは別のインチ数 ―― 比率は合うが寸法が違うケース。
+     * 「16:9ですが…」の文言になり、直しかたの一文が添えられること
+     * (依頼者指定の例文どおり)。
+     */
+    public function test_a_different_sized_16_9_deck_is_rejected_with_a_same_ratio_message(): void
+    {
+        $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 9144000, sldSzCy: 5143500);
+
+        try {
+            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->fail('例外が投げられるはず');
+        } catch (ComparisonSlideInsertionException $e) {
+            $message = $e->getMessage();
+            // 依頼者指定の例文: 「16:9ですが、25.40 × 14.29 cm です。
+            // 33.87 × 19.05 cm の資料が必要です。」
+            $this->assertStringContainsString('16:9ですが', $message);
+            $this->assertStringContainsString('25.40', $message);
+            $this->assertStringContainsString('14.29', $message);
+            $this->assertStringContainsString('33.87', $message);
+            $this->assertStringContainsString('19.05', $message);
+            // 「16:9ではない」と誤読させる文言(比率が違うかのような
+            // 「この資料は…」形式)になっていないこと。
+            $this->assertStringNotContainsString('この資料は', $message);
+            // 直しかたの一文(依頼者指定: 自分で直せるようにすること)。
+            $this->assertStringContainsString('スライドのサイズ', $message);
+            $this->assertStringContainsString('変更してください', $message);
+        }
+    }
+
+    /**
+     * 上下に細長い、既知のどの比率(4:3・16:9・16:10)にも一致しない資料。
+     * 比率判定が例外や誤検出にならず、比率名なしで寸法だけが文言に出る
+     * こと(依頼者指定のテストケース)。
+     */
+    public function test_a_portrait_deck_of_an_unknown_ratio_is_rejected_without_a_false_ratio_name(): void
+    {
+        $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 6858000, sldSzCy: 12192000);
+
+        try {
+            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->fail('例外が投げられるはず');
+        } catch (ComparisonSlideInsertionException $e) {
+            $message = $e->getMessage();
+            // 実際の資料側(文頭)には比率名が付かず、寸法だけが出ること
+            // ―― 要求側(16:9)には引き続き比率名が出るため、メッセージ
+            // 全体からの単純な文字列不在チェックはできない(要求側の
+            // 「16:9」は正しい)。文頭がそのまま寸法から始まることを見る。
+            $this->assertStringStartsWith('この資料は19.05 × 33.87 cmです。', $message);
+            $this->assertStringContainsString('16:9（33.87 × 19.05 cm）の資料が必要です。', $message);
+        }
+    }
+
+    /**
+     * 依頼BK-2: cm表示(小数2桁)まで丸めると両側が同じ文字列になっていた
+     * (依頼者指摘の実例: 「この資料は33.87 × 19.05 cmです。16:9
+     * （33.87 × 19.05 cm）の資料が必要です。」)。許容差を超えるがcm表示は
+     * 一致する寸法(1500EMUずれ = 0.0042cm、四捨五入で同じ33.87cmになる)で、
+     * 実際のEMU値が両側に添えられ、同じ文が2回出ないことを確認する。
+     */
+    public function test_when_rounded_cm_is_identical_the_message_shows_raw_emu_to_disambiguate(): void
+    {
+        config(['admin_comparison_pptx.slide_size_tolerance_emu' => 1200]);
+        $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 12193500, sldSzCy: 6858000);
+
+        try {
+            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->fail('例外が投げられるはず');
+        } catch (ComparisonSlideInsertionException $e) {
+            $message = $e->getMessage();
+            // cm表示(小数2桁)だけでは両側が同じ文字列になっていた
+            // (依頼者指摘の実例)。実際のEMU値を両側に添えることで、
+            // 読んで何が違うか分かるようにする。
+            $this->assertStringContainsString('12193500', $message, '実際のEMU値が文言に出ること');
+            $this->assertStringContainsString('12192000', $message, '要求側のEMU値も文言に出ること');
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BK-3: <p:sldSz>の属性の並び・type属性に依存しない読み取り。
+    // ------------------------------------------------------------------
+
+    public function test_sldsz_with_a_type_attribute_before_cx_cy_is_read_correctly(): void
+    {
+        $deckPath = $this->makeFixtureDeck(
+            ['内容1', '参照元'],
+            sldSzXmlOverride: '<p:sldSz type="screen16x9" cx="12192000" cy="6858000"/>',
+        );
+
+        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $this->tempFiles[] = $mergedPath;
+
+        $this->assertFileExists($mergedPath);
+    }
+
+    public function test_sldsz_with_cy_before_cx_is_read_correctly(): void
+    {
+        $deckPath = $this->makeFixtureDeck(
+            ['内容1', '参照元'],
+            sldSzXmlOverride: '<p:sldSz cy="6858000" cx="12192000"/>',
+        );
+
+        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $this->tempFiles[] = $mergedPath;
+
+        $this->assertFileExists($mergedPath);
+    }
+
+    public function test_a_deck_without_sldsz_is_rejected_as_unreadable_not_a_default(): void
+    {
+        $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzXmlOverride: '');
+
+        try {
+            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->fail('例外が投げられるはず');
+        } catch (ComparisonSlideInsertionException $e) {
+            $this->assertStringContainsString('読み取れませんでした', $e->getMessage());
         }
     }
 

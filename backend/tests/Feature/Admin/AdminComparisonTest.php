@@ -486,6 +486,28 @@ class AdminComparisonTest extends TestCase
         $this->assertSame(0, AnalysisAttachment::where('analysis_id', $source->id)->count());
     }
 
+    /**
+     * 依頼BK: 比較作成フォームでも、許容差(既定1200EMU)以内のずれは
+     * 弾かれないこと。詳細画面の添付欄・ダウンロード時と同じ判定になる
+     * こと(3経路すべての確認、依頼BK指定)。
+     */
+    public function test_a_pptx_1200_emu_off_attaches_and_submits_successfully(): void
+    {
+        Queue::fake([StartAnalysisJob::class]);
+        $source = $this->makeSourceAnalysis();
+
+        $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
+            'self_url' => 'https://self.example.com',
+            'competitor_urls' => $this->validCompetitorUrls(3),
+            'sales_deck' => $this->pptxUpload('営業資料.pptx', ['内容1', '参照元'], 12192000 - 1200, 6858000 - 1200),
+        ]);
+
+        $response->assertSessionDoesntHaveErrors('sales_deck');
+        $response->assertRedirect();
+        $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
+        $this->assertSame(1, AnalysisAttachment::where('analysis_id', $comparison->id)->where('extension', 'pptx')->count());
+    }
+
     public function test_below_minimum_competitor_urls_with_a_file_attached_does_not_create_a_comparison_and_preserves_input(): void
     {
         Queue::fake([StartAnalysisJob::class]);

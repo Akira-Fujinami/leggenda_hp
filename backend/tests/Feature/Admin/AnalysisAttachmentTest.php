@@ -347,6 +347,24 @@ class AnalysisAttachmentTest extends TestCase
     }
 
     /**
+     * 依頼BK: 詳細画面の添付欄でも、許容差(既定1200EMU)以内のずれは
+     * 弾かれないこと。比較作成フォーム・ダウンロード時と同じ判定になる
+     * こと(3経路すべての確認、依頼BK指定)。
+     */
+    public function test_a_pptx_1200_emu_off_is_accepted(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $bytes = $this->makeMinimalPptxBytes(['内容1', '参照元'], 12192000 - 1200, 6858000 - 1200);
+
+        $response = $this->asAdmin()->post("/admin/analyses/{$analysis->id}/attachment", [
+            'file' => UploadedFile::fake()->createWithContent('提案資料.pptx', $bytes),
+        ]);
+
+        $response->assertSessionDoesntHaveErrors('file');
+        $this->assertSame(1, AnalysisAttachment::where('analysis_id', $analysis->id)->where('extension', 'pptx')->count());
+    }
+
+    /**
      * PDF/DOCXにはスライドサイズ・参照元ページの検証をかけない
      * (この検証はPPTX専用、依頼者指定)。既存のtest_a_genuine_docx_file_
      * is_accepted()も回帰確認を兼ねるが、ここでは明示的に「PPTXなら
