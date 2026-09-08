@@ -1150,12 +1150,30 @@ return [
     | 働かないため、依頼BBの禁止事項(ホスト名を除外の根拠に使うこと)には
     | 反しない。careers.mercari.comのようにホストにこの一覧の語を含む場合は
     | 従来どおり区分が適用される。
+    |
+    | 依頼BF-1(2026-09-08): 手元のコーパス(53サイト・23,863行、ホスト
+    | ラベル頻度の実測)で`jobs`(189件、jobs.freee.co.jpの実例)が一覧に
+    | 無いことが判明し追加した。`jobs.`は採用サイトのサブドメインとして
+    | 一般的で、依頼BE-1〜3の調査で実際に触ったサイトそのものが該当する。
+    | `recruitment`・`saiyou`・`work`・`people`・`join`はコーパスに1件も
+    | 現れず(推測での追加を避けるため)見送った ―― 特に`work`/`people`/
+    | `join`は制作会社の`/work/`(実績)のような無関係なページに誤って
+    | 一致するリスクが具体的にあり、コーパスでの裏付けが無いまま追加する
+    | 判断はしない。
+    |
+    | 依頼BF-2(2026-09-08): パス側一覧にのみあった`recruiting`・
+    | `employment`をホスト側にも追加した ―― `recruiting.example.co.jp`・
+    | `employment.example.co.jp`のようなサブドメインは実在しうると判断
+    | したため(ホスト・パスで語の一覧を意図的に分ける理由が無い限り、
+    | 揃えておく方が保守しやすい)。「採用」(日本語)だけはパス側限定のまま
+    | とする ―― ホスト名(DNSラベル)に日本語が使われることは実務上
+    | 無いため、ホスト側一覧に加える意味が無い。
     */
     'recruitment_track_recruit_section_hostname_keywords' => array_values(array_filter(array_map(
         'trim',
         explode(',', (string) env(
             'BRAND_WHEEL_RECRUITMENT_TRACK_RECRUIT_SECTION_HOSTNAME_KEYWORDS',
-            'recruit,careers,career,saiyo,job,hr',
+            'recruit,careers,career,saiyo,job,jobs,hr,recruiting,employment',
         )),
     ))),
 
@@ -1181,12 +1199,21 @@ return [
     | (「指定しない」時と同じ挙動)であり、誤って見つけてしまう場合の実害
     | (採用セクションが丸ごと消える)より安全側に倒れているため、広めの
     | 一覧を許容する。
+    |
+    | 依頼BF-1(2026-09-08): ホスト側一覧と同じ根拠(コーパス実測189件、
+    | jobs.freee.co.jp)で`jobs`を追加した ―― 例: `/jobs/`配下を採用
+    | セクションの起点にしているサイトを想定。
+    |
+    | 依頼BF-2(2026-09-08): この一覧はホスト側一覧のスーパーセットに
+    | なるよう意図的に揃えている(「採用」だけがホスト側に無い唯一の
+    | 例外 ―― 日本語はDNSラベルに使われないため)。ホスト側・パス側で
+    | 別々の判断が必要になった場合のみ、ここで意図的に分ける。
     */
     'recruitment_track_recruit_section_path_keywords' => array_values(array_filter(array_map(
         'trim',
         explode(',', (string) env(
             'BRAND_WHEEL_RECRUITMENT_TRACK_RECRUIT_SECTION_PATH_KEYWORDS',
-            'recruit,careers,career,saiyo,job,hr,採用,recruiting,employment',
+            'recruit,careers,career,saiyo,job,jobs,hr,採用,recruiting,employment',
         )),
     ))),
 

@@ -23,10 +23,10 @@ class RecruitmentTrackPageFilterTest extends TestCase
             'career' => ['career', 'careers', 'chuto', 'mid-career', '中途', 'キャリア採用'],
         ]]);
         config(['brand_wheel.recruitment_track_recruit_section_hostname_keywords' => [
-            'recruit', 'careers', 'career', 'saiyo', 'job', 'hr',
+            'recruit', 'careers', 'career', 'saiyo', 'job', 'jobs', 'hr', 'recruiting', 'employment',
         ]]);
         config(['brand_wheel.recruitment_track_recruit_section_path_keywords' => [
-            'recruit', 'careers', 'career', 'saiyo', 'job', 'hr', '採用', 'recruiting', 'employment',
+            'recruit', 'careers', 'career', 'saiyo', 'job', 'jobs', 'hr', '採用', 'recruiting', 'employment',
         ]]);
     }
 
@@ -465,5 +465,30 @@ class RecruitmentTrackPageFilterTest extends TestCase
             $origin,
             'new_graduate',
         ));
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BF-1: `jobs`をホスト名/パスいずれの判定語一覧にも追加。
+    // ------------------------------------------------------------------
+
+    /**
+     * 依頼BE-1〜3の調査で実際に触ったサイト(jobs.freee.co.jp)そのものが、
+     * `job`(単数形)しか一覧に無かったために「採用セクションの外」と
+     * 誤判定されていた実例。コーパス実測(189件)に基づき`jobs`を追加した
+     * ことで、ルートパスのままでも「内側」と判定されること。
+     */
+    public function test_jobs_freee_co_jp_is_inside_the_recruit_section(): void
+    {
+        $this->assertTrue($this->filter()->isOriginInsideRecruitSection('https://jobs.freee.co.jp/'));
+    }
+
+    /**
+     * `recruiting`/`employment`をホスト側一覧にも追加した(依頼BF-2、
+     * パス側との非対称を解消)。
+     */
+    public function test_recruiting_and_employment_hostnames_are_inside_the_recruit_section(): void
+    {
+        $this->assertTrue($this->filter()->isOriginInsideRecruitSection('https://recruiting.example.co.jp/'));
+        $this->assertTrue($this->filter()->isOriginInsideRecruitSection('https://employment.example.co.jp/'));
     }
 }
