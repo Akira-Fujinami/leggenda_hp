@@ -93,6 +93,15 @@ class AdminComparisonTest extends TestCase
         return array_map(fn (int $i) => "https://competitor{$i}.example.com", range(1, $count));
     }
 
+    /**
+     * 依頼BM-3: URLを入力した行は企業名も必須になったため、
+     * validCompetitorUrls()と組で使う既定の企業名を用意する。
+     */
+    private function validCompetitorNames(int $count): array
+    {
+        return array_map(fn (int $i) => "競合{$i}社", range(1, $count));
+    }
+
     // ------------------------------------------------------------------
     // AB-1: 起点は無料診断の画面であること。
     // ------------------------------------------------------------------
@@ -117,6 +126,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(2),
+            'competitor_names' => $this->validCompetitorNames(2),
         ]);
 
         $response->assertSessionHasErrors('competitor_urls');
@@ -132,6 +142,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(6),
+            'competitor_names' => $this->validCompetitorNames(6),
         ]);
 
         $response->assertSessionHasErrors('competitor_urls');
@@ -147,6 +158,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(2),
+            'competitor_names' => $this->validCompetitorNames(2),
         ]);
 
         $response->assertRedirect();
@@ -161,6 +173,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => ['https://a.example.com', 'https://a.example.com/careers', 'https://c.example.com'],
+            'competitor_names' => $this->validCompetitorNames(3),
         ]);
 
         $response->assertSessionHasErrors('competitor_urls');
@@ -174,6 +187,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => ['https://self.example.com/careers', 'https://b.example.com', 'https://c.example.com'],
+            'competitor_names' => $this->validCompetitorNames(3),
         ]);
 
         $response->assertSessionHasErrors('competitor_urls');
@@ -189,6 +203,7 @@ class AdminComparisonTest extends TestCase
             // UrlNormalizer::normalize()がURLの形式エラーとして拒否する
             // (ホスト名が空)、既存のWebsiteService::create()と同じ検証経路。
             'competitor_urls' => ['http://', 'https://b.example.com', 'https://c.example.com'],
+            'competitor_names' => $this->validCompetitorNames(3),
         ]);
 
         $response->assertSessionHasErrors();
@@ -202,6 +217,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => ['ftp://a.example.com', 'https://b.example.com', 'https://c.example.com'],
+            'competitor_names' => $this->validCompetitorNames(3),
         ]);
 
         $response->assertSessionHasErrors();
@@ -237,6 +253,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
         ])->assertRedirect();
 
         $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
@@ -255,6 +272,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
         ])->assertRedirect();
 
         $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
@@ -278,6 +296,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
         ])->assertRedirect();
 
         $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
@@ -299,6 +318,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
         ])->assertRedirect();
 
         $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
@@ -316,6 +336,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
         ])->assertRedirect();
 
         $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
@@ -336,6 +357,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $competitorUrls,
+            'competitor_names' => $this->validCompetitorNames(5),
         ])->assertRedirect();
 
         $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
@@ -363,36 +385,69 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
-            'competitor_names' => ['サイボウズ', '', 'ZOZO'],
+            'competitor_names' => ['サイボウズ', 'フリー', 'ZOZO'],
         ])->assertRedirect();
 
         $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
         $names = $comparison->project->websites()->where('is_primary', false)->orderBy('display_order')->pluck('name')->all();
 
-        $this->assertSame('サイボウズ', $names[0]);
-        // 2件目は空欄のため、URLドメインから自動生成される
-        // (competitor2.example.com → competitor2.example.com、www無しのため
-        // そのまま)。
-        $this->assertSame('competitor2.example.com', $names[1]);
-        $this->assertSame('ZOZO', $names[2]);
+        $this->assertSame(['サイボウズ', 'フリー', 'ZOZO'], $names);
     }
 
-    public function test_competitor_website_name_falls_back_to_the_url_domain_when_no_name_is_given(): void
+    /**
+     * 依頼BM-3: URLを入力した行は、企業名も必須にする(空欄だとホスト名の
+     * 自動生成に頼ることになり、比較レポート・営業資料差し込み用スライドの
+     * 列見出しが読めない表記になっていたため、依頼者指摘)。フォーム経由の
+     * 送信ではこの検証で弾かれ、比較は作られないこと。
+     */
+    public function test_a_competitor_url_without_a_name_is_rejected_by_the_form(): void
     {
         Queue::fake([StartAnalysisJob::class]);
         $source = $this->makeSourceAnalysis();
 
-        $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
+        $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
-            'competitor_urls' => ['https://www.cybozu.example.com', 'https://competitor2.example.com', 'https://competitor3.example.com'],
-        ])->assertRedirect();
+            'competitor_urls' => ['https://competitor1.example.com', 'https://competitor2.example.com', 'https://competitor3.example.com'],
+            'competitor_names' => ['サイボウズ', '', 'ZOZO'],
+        ]);
 
-        $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
+        $response->assertSessionHasErrors('competitor_names.1');
+        $response->assertSessionHas('_old_input.competitor_urls.0', 'https://competitor1.example.com');
+        $this->assertSame(0, Analysis::query()->whereNotNull('source_analysis_id')->count());
+    }
+
+    /**
+     * 依頼BM-3: 自動生成のフォールバック自体は残す(既存データが壊れる
+     * ため、依頼者指定)。ただしホスト名をそのまま使わず、
+     * AdminComparisonService::shortenDomainLabel()で短縮する
+     * (hello-world.smarthr.co.jp → smarthr 程度)。フォーム側は空欄の
+     * 企業名を弾くため、このフォールバックは主にサービスを直接呼ぶ経路
+     * (既存データ・将来の別呼び出し元)向けの安全網として、サービスを
+     * 直接呼んで検証する。
+     */
+    public function test_the_auto_generated_fallback_name_shortens_the_domain_when_the_service_is_called_directly(): void
+    {
+        Queue::fake([StartAnalysisJob::class]);
+        $source = $this->makeSourceAnalysis();
+
+        $comparison = app(\App\Services\Admin\AdminComparisonService::class)->createFromSourceAnalysis(
+            $source,
+            'https://self.example.com',
+            ['https://jobs.brandco.co.jp', 'https://cybozu.jp', 'https://sub.example-corp.com'],
+            [],
+        );
+
         $names = $comparison->project->websites()->where('is_primary', false)->orderBy('display_order')->pluck('name')->all();
 
-        // www.は既存のLeadCompanyResolver::extractDomain()と同じくstripWww()
-        // で除去される。
-        $this->assertSame('cybozu.example.com', $names[0]);
+        // jobs.brandco.co.jp → co.jpは日本語ドメインでよく使う2階層
+        // サフィックスのため、その手前の1ラベル(brandco)まで短縮される。
+        $this->assertSame('brandco', $names[0]);
+        // cybozu.jpは元々2ラベルのため、そのまま(依頼者指定の例
+        // 「cybozu.co.jp → cybozu、元々短いものはそのまま」と同じ考え方)。
+        $this->assertSame('cybozu', $names[1]);
+        // sub.example-corp.comは3ラベルでcom単体(2階層サフィックス表に
+        // 無い)ため、末尾から2ラベル目(example-corp、先頭のsubを落とす)。
+        $this->assertSame('example-corp', $names[2]);
     }
 
     public function test_lead_quota_is_not_consumed(): void
@@ -403,6 +458,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
         ])->assertRedirect();
 
         $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
@@ -419,11 +475,13 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source1->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
         ])->assertRedirect();
 
         $response = $this->asAdmin()->post("/admin/analyses/{$source2->id}/compare", [
             'self_url' => 'https://self2.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
         ]);
 
         $response->assertSessionHasErrors('competitor_urls');
@@ -447,6 +505,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
             'sales_deck' => $this->pptxUpload('営業資料.pptx', ['内容1', '参照元']),
         ])->assertRedirect();
 
@@ -462,6 +521,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
         ])->assertRedirect();
 
         $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();
@@ -476,6 +536,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
             'sales_deck' => $this->pptxUpload('営業資料.pptx', ['内容1', '参照元']),
         ])->assertRedirect();
 
@@ -499,6 +560,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
             'sales_deck' => $this->pptxUpload('営業資料.pptx', ['内容1', '参照元'], 12192000 - 1200, 6858000 - 1200),
         ]);
 
@@ -516,6 +578,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(2),
+            'competitor_names' => $this->validCompetitorNames(2),
             'sales_deck' => $this->pptxUpload('営業資料.pptx', ['内容1', '参照元']),
         ]);
 
@@ -534,6 +597,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(2),
+            'competitor_names' => $this->validCompetitorNames(2),
         ])->assertSessionHasErrors('competitor_urls');
 
         // ラベルはplaceholderではなく固定のタグ+見出しのため、old()で入力が
@@ -555,6 +619,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
             'sales_deck' => $this->pptxUpload('営業資料.pptx', ['内容1', '内容2']),
         ]);
 
@@ -572,6 +637,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
             'sales_deck' => $this->pptxUpload('営業資料.pptx', ['内容1', '参照元'], 9144000, 6858000),
         ]);
 
@@ -590,6 +656,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
             'sales_deck' => UploadedFile::fake()->create('資料.pdf', 100, 'application/pdf'),
         ]);
 
@@ -606,6 +673,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
             'sales_deck' => UploadedFile::fake()->create('資料.docx', 100, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
         ]);
 
@@ -639,6 +707,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
             'sales_deck' => $upload,
         ]);
 
@@ -661,6 +730,7 @@ class AdminComparisonTest extends TestCase
         $response = $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
             'sales_deck' => $this->pptxUpload('営業資料.pptx', ['内容1', '参照元']),
         ]);
 
@@ -677,6 +747,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
             'sales_deck' => $this->pptxUpload('営業資料.pptx', ['内容1', '参照元']),
         ])->assertRedirect();
 
@@ -696,6 +767,7 @@ class AdminComparisonTest extends TestCase
         $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
             'self_url' => 'https://self.example.com',
             'competitor_urls' => $this->validCompetitorUrls(3),
+            'competitor_names' => $this->validCompetitorNames(3),
         ])->assertRedirect();
 
         $comparison = Analysis::query()->whereNotNull('source_analysis_id')->firstOrFail();

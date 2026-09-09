@@ -37,6 +37,10 @@ class AdminComparisonPptxInserterTest extends TestCase
         return new AdminComparisonPptxInserter;
     }
 
+    /**
+     * 依頼BM(2026-09-09): 「競合が伝えていて自社が伝えていない項目」一覧
+     * (rows/quote)から、6領域×各社のマトリクス(axes)へ作り直した。
+     */
     private function comparisonSlideBytes(): string
     {
         return app(AdminComparisonPptxGenerator::class)->generate([
@@ -45,10 +49,17 @@ class AdminComparisonPptxInserterTest extends TestCase
                 ['name' => 'テスト株式会社', 'matched' => 16, 'total' => 24, 'is_self' => true],
                 ['name' => '競合A社', 'matched' => 20, 'total' => 24, 'is_self' => false],
             ],
-            'competitor_count' => 1,
-            'rows' => [
-                ['sub_name' => '福利厚生', 'axis_name' => '金銭的便益', 'matched_count' => 1, 'quote' => 'サンプル'],
-            ],
+            'axes' => array_map(fn (string $name, string $caption) => [
+                'name' => $name,
+                'caption' => $caption,
+                'denominator' => 4,
+                'self_count' => 2,
+                'competitor_counts' => [3],
+                'self_gap' => true,
+            ], ['活動的魅力', '資産的魅力', '経営スタイル', '就業環境', '情緒的便益', '金銭的便益'], [
+                '事業・商品・成長性', '規模・実績・ブランド', '理念・組織・意思決定', '働き方・制度・場所', 'やりがい・人・風土', '報酬・福利厚生・成長機会',
+            ]),
+            'summary' => '総合では競合を下回ります、「経営スタイル」の1領域で競合の最高値を下回っています。理念・組織・意思決定の記述が薄い状態です。',
             'source_note' => 'テスト用ノート',
             'page_number' => null,
         ]);
@@ -223,6 +234,33 @@ class AdminComparisonPptxInserterTest extends TestCase
         $this->assertSame(0, preg_match('/\br:(id|embed|link)="/', $slideXml), '比較スライドは画像・グラフ等を参照していないこと');
         $this->assertSame(0, substr_count($slideXml, 'schemeClr'), 'テーマ色(schemeClr)を使っていないこと');
         $this->assertGreaterThan(0, substr_count($slideXml, 'Meiryo'), 'フォントを明示指定していること');
+    }
+
+    /**
+     * 依頼BM-1/BM-4: 「競合が伝えていて自社が伝えていない項目」一覧
+     * (件数に依存し0件だと下2/3が白紙になっていた旧構成)から、6領域の
+     * マトリクスへ作り直したこと・他社サイトの引用文を一切載せないことを、
+     * 生成されたスライドXMLで確認する。
+     */
+    public function test_comparison_slide_is_the_matrix_layout_and_contains_no_quotes(): void
+    {
+        $bytes = $this->comparisonSlideBytes();
+        $tmp = tempnam(sys_get_temp_dir(), 'slide').'.pptx';
+        $this->tempFiles[] = $tmp;
+        file_put_contents($tmp, $bytes);
+
+        $zip = new ZipArchive;
+        $zip->open($tmp);
+        $slideXml = $zip->getFromName('ppt/slides/slide1.xml');
+        $zip->close();
+
+        $this->assertStringContainsString('領域別の発信量', $slideXml);
+        // 旧構成(依頼BG〜BI)の見出し・列名が残っていないこと。
+        $this->assertStringNotContainsString('競合が伝えていて', $slideXml);
+        $this->assertStringNotContainsString('代表的な記述', $slideXml);
+        // comparisonSlideBytes()のテスト用フィクスチャに仕込んだダミーの
+        // 引用文が万一残っていないこと(引用を扱う経路自体が無いことの確認)。
+        $this->assertStringNotContainsString('サンプル', $slideXml);
     }
 
     public function test_inserts_the_comparison_slide_immediately_before_the_reference_page(): void

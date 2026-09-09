@@ -91,7 +91,7 @@
                 </div>
 
                 <div class="label">競合サイト({{ $minCompetitors }}〜{{ $maxCompetitors }}社)</div>
-                <p class="help">企業名は、比較レポートの表と、営業資料に差し込む比較ページの見出しに使います。空欄のときはURLのドメインから自動で作ります。</p>
+                <p class="help">企業名は、比較レポートの表と、営業資料に差し込む比較ページの見出しに使います。<b>URLを入力した行は、企業名も入力してください（必須）。</b>ホスト名がそのまま見出しになってしまうため、空欄では比較を開始できません。</p>
 
                 <table class="rows">
                     @for ($i = 0; $i < $maxCompetitors; $i++)
@@ -117,7 +117,7 @@
                                     type="text"
                                     name="competitor_names[]"
                                     value="{{ old('competitor_names.'.$i) }}"
-                                    placeholder="企業名"
+                                    placeholder="企業名（URL入力時は必須）"
                                 >
                             </td>
                         </tr>

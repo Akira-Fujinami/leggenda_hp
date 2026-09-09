@@ -81,6 +81,18 @@ class ComparisonController extends Controller
             'sales_deck' => ['nullable', 'file'],
         ]);
 
+        // 依頼BM-3: URLを入力した行は、企業名も必須にする(空欄だとホスト名の
+        // 自動生成に頼ることになり、比較レポート・営業資料差し込み用
+        // スライドの列見出しが「hello-world.smarthr.co.…」のような読めない
+        // 表記になっていたため、依頼者指摘)。URLが空の行は企業名も空でよい
+        // (=行自体が未使用)。$request->validate()の配列内でCloudureルール
+        // として書くと、"nullable"が先に評価され、空文字列は
+        // ConvertEmptyStringsToNullミドルウェアでnullに変換済みのため
+        // 後続のClosureが一切呼ばれず素通りしてしまう(実機で確認した
+        // Laravelのnullableの仕様) ―― そのため$request->validate()の外側で、
+        // 検証済みの$dataに対して独立してチェックする。
+        $this->assertCompetitorNamesGivenWhenUrlPresent($data['competitor_urls'], $data['competitor_names'] ?? []);
+
         // 依頼BI-3(この依頼の主目的、必須の順序): 比較を作成する前に、
         // 添付予定の営業資料を検証する。比較は自社+競合3〜5社をそれぞれ
         // 最大50ページ巡回し、数十分かかる ―― 差し込めない資料のために
@@ -119,6 +131,33 @@ class ComparisonController extends Controller
         return redirect()
             ->route('admin.analyses.show', $comparison->id)
             ->with('status', "比較(診断ID: {$comparison->id})を開始しました。");
+    }
+
+    /**
+     * 依頼BM-3: URLを入力した行(=使う行)は、企業名も必須にする。URLが
+     * 空の行(=未使用の行)は企業名も空でよい。入力済みの値を失わないよう
+     * (依頼BIと同じ方針)、ValidationExceptionで戻す ―― 通常の
+     * $request->validate()と同じくold()で復元される。
+     *
+     * @param  list<string|null>  $urls
+     * @param  list<string|null>  $names
+     */
+    private function assertCompetitorNamesGivenWhenUrlPresent(array $urls, array $names): void
+    {
+        $errors = [];
+
+        foreach ($urls as $index => $url) {
+            $url = trim((string) $url);
+            $name = trim((string) ($names[$index] ?? ''));
+
+            if ($url !== '' && $name === '') {
+                $errors["competitor_names.{$index}"] = ['URLを入力した行には、企業名も入力してください。'];
+            }
+        }
+
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
     }
 
     /**

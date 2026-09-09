@@ -41,6 +41,16 @@ use Illuminate\Validation\ValidationException;
  */
 class AdminComparisonService
 {
+    /**
+     * 依頼BM-3: shortenDomainLabel()が「末尾2ラベルがサフィックスか」を
+     * 判定するための一覧(完全なPublic Suffix Listの代わり、上のdocblock
+     * 参照)。
+     */
+    private const TWO_LABEL_PUBLIC_SUFFIXES = [
+        'co.jp', 'ne.jp', 'or.jp', 'ac.jp', 'go.jp', 'ad.jp', 'ed.jp', 'gr.jp', 'lg.jp',
+        'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'com.au', 'net.au', 'org.au',
+    ];
+
     public function __construct(
         private readonly UrlNormalizer $urlNormalizer,
         private readonly AnalysisService $analyses,
@@ -191,6 +201,17 @@ class AdminComparisonService
      * 空欄ならLeadCompanyResolver::extractDomain()と同じ方法でURLの
      * ドメインから自動生成する(依頼Rで既に確立した重複パターンを再利用)。
      * ドメイン抽出にも失敗した場合のみ、従来の記号表記にフォールバックする。
+     *
+     * 依頼BM-3(2026-09-09): 依頼BIで起票フォーム側に「URL入力時は企業名も
+     * 必須」を追加したため、以後この自動生成が使われるのは既存データの
+     * 再表示経路(過去に空欄で作られた比較)がほぼ全てになるが、フォールバック
+     * 自体は残す(依頼者指定 ―― 既存データが壊れるため)。ただし本番の
+     * 実データで、この自動生成がホスト名をそのまま列見出しに出し
+     * (例: "hello-world.smarthr.co.jp")、比較スライド・比較レポートが
+     * 商談に出せない見た目になっていたため、shortenDomainLabel()で
+     * 短縮してから使う(既存のextractDomain()自体はLeadCompanyの名寄せにも
+     * 使われる共有ロジックのため変更しない ―― ここでの短縮は表示名の
+     * 生成にだけ適用する)。
      */
     private function competitorLabel(string $adminProvidedName, string $rawUrl, int $index): string
     {
@@ -200,7 +221,36 @@ class AdminComparisonService
 
         $domain = $this->leadCompanyResolver->extractDomain($rawUrl);
 
-        return $domain ?? '競合サイト'.($index + 1);
+        return $domain !== null ? $this->shortenDomainLabel($domain) : '競合サイト'.($index + 1);
+    }
+
+    /**
+     * 依頼BM-3: ドメインから、先頭のサブドメインと公開サフィックス
+     * (co.jp等)を落とし、ブランド名らしき1ラベルまで短縮する。
+     *   hello-world.smarthr.co.jp → smarthr
+     *   jobs.freee.co.jp          → freee
+     *   cybozu.co.jp              → cybozu(元々短いものはそのまま)
+     *   sub.example.com           → example
+     * 公開サフィックスの一覧は完全なPublic Suffix Listを持たず、実際に
+     * 遭遇した日本語ドメインでよく使う2階層サフィックスのみを対象とする
+     * (それ以外は「末尾から2ラベル目」を採用する一般的な近似で足りる ――
+     * これは表示名の見た目を整えるためだけの処理であり、正規化・照合用途
+     * には使わないため)。
+     */
+    private function shortenDomainLabel(string $domain): string
+    {
+        $labels = explode('.', $domain);
+
+        if (count($labels) <= 2) {
+            return $labels[0] ?? $domain;
+        }
+
+        $lastTwo = implode('.', array_slice($labels, -2));
+        if (in_array($lastTwo, self::TWO_LABEL_PUBLIC_SUFFIXES, true)) {
+            return $labels[count($labels) - 3];
+        }
+
+        return $labels[count($labels) - 2];
     }
 
     private function normalizeOrFail(string $rawUrl, string $field): string

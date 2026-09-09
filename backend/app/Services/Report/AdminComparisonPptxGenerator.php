@@ -13,17 +13,26 @@ use PhpOffice\PhpPresentation\Style\Fill;
 use PhpOffice\PhpPresentation\Writer\PowerPoint2007;
 
 /**
- * 依頼AT(2026-09-03)の検証用スパイク実装。承認前のプロトタイプにつき、
- * まだJob/Controller/ルートには一切接続していない(依頼AT-4「報告してから
- * 実装に入ること」/AT-3「提案・承認前に実装すること」の禁止事項を守るため)。
+ * 依頼AT(2026-09-03)の検証用スパイク実装から発展。座標・色は共有された
+ * 比較スライド_モックアップ.pptxのXMLを実測した値をベースに、依頼BMで
+ * 「6領域×各社のマトリクス」構成へ作り直した(comparison_slide_v2.html)。
  *
- * 座標・色は共有された比較スライド_モックアップ.pptxのXMLを実測した値を
- * そのまま使う(依頼書AT-2の表と一致することを確認済み)。
+ * 依頼BM(2026-09-09): 旧構成(「競合が伝えていて自社が伝えていない項目」の
+ * 一覧)は、その件数に依存するため、自社が強いとページの下2/3が白紙になる
+ * (実データで確認済みの不具合)。6領域は分母4で固定のため、matched件数に
+ * 関わらず必ず埋まる。他社サイトの本文引用は一切扱わない(依頼BM-4)。
+ *
+ * 【差し込みの前提、依頼BK/BL/BG由来・変更禁止】
+ * - スライドサイズは12192000×6858000EMU固定(setCXにUNIT_INCHで13.333を
+ *   渡すと丸め誤差で不正なXMLになるため、EMUを直接指定する)。
+ * - schemeClr(テーマ色)を使わない。色は全てColor()経由のsrgbClr(明示RGB)。
+ * - フォントはMeiryoを明示指定する(font()参照)。
+ * - 画像・グラフ・埋め込みオブジェクトを使わない
+ *   (AdminComparisonPptxInserter::extractComparisonSlideParts()が
+ *   r:id/r:embed/r:linkの出現を検知して差し込みを中止する)。
  */
 class AdminComparisonPptxGenerator
 {
-    private const EMU_PER_INCH = 914400;
-
     private const PX_PER_INCH = 96;
 
     private const SLIDE_WIDTH_IN = 13.333;
@@ -44,45 +53,74 @@ class AdminComparisonPptxGenerator
 
     private const MUTED = '5A6B82';
 
+    private const DIM = '9AA6B4';
+
     private const RULE = 'D9DFE7';
 
-    private const BAND = 'F4F6F9';
+    private const BAND = 'FAFBFC';
 
     private const WHITE = 'FFFFFF';
 
-    private const TILE_TOP_IN = 1.6;
+    private const SELF_TINT = 'EEF1F5';
 
-    private const TILE_HEIGHT_IN = 0.86;
+    private const GAP_BG = 'FBEEE3';
+
+    private const GAP_TEXT = 'A85B1E';
+
+    private const SUMMARY_BG = 'FBF6F1';
+
+    // ------------------------------------------------------------------
+    // スコア帯(依頼BM-5: 社名の折り返しを許すため、旧版より縦に広げた)。
+    // ------------------------------------------------------------------
+
+    private const TILE_TOP_IN = 1.55;
+
+    private const TILE_HEIGHT_IN = 1.0;
 
     private const TILE_GAP_IN = 0.095;
 
-    private const TABLE_HEADER_TOP_IN = 2.98;
+    private const TILE_NAME_HEIGHT_IN = 0.46;
 
-    private const TABLE_HEADER_HEIGHT_IN = 0.32;
+    private const TILE_NUMBER_HEIGHT_IN = 0.4;
 
-    private const TABLE_ROWS_TOP_IN = 3.3;
+    // ------------------------------------------------------------------
+    // マトリクス(依頼BM-1: 6領域固定、常に埋まる)。
+    // ------------------------------------------------------------------
 
-    // 出所行(T6.35)の手前に空白を残すための、データ行が使える下端(依頼AT-4
-    // 検証で判明: モックアップ実測のまま1行0.415inで8行敷くと6.62inとなり、
-    // 出所行(T6.35)に重なる。行数に応じて行高を縮め、常にこの下端に収める。
-    private const TABLE_ROWS_BOTTOM_IN = 6.2;
+    private const SECTION_TITLE_TOP_IN = 2.65;
 
-    private const TABLE_ROW_HEIGHT_MAX_IN = 0.415;
+    private const TABLE_TOP_IN = 2.95;
 
-    /** @var array{sub_name: 2.35, axis_name: 1.75, count: 1.5, quote: 5.9} */
-    private const COL_WIDTHS_IN = [
-        'sub_name' => 2.35,
-        'axis_name' => 1.75,
-        'count' => 1.5,
-        'quote' => 5.9,
-    ];
+    /** ヘッダー行の高さは2行分で固定する(依頼BM-5、社名を切り詰めない)。 */
+    private const TABLE_HEADER_HEIGHT_IN = 0.5;
+
+    /** 領域名+補足を2行(別シェイプ)で収めるため、1行運用より高めに取る。 */
+    private const TABLE_ROW_HEIGHT_IN = 0.36;
+
+    private const AREA_COL_WIDTH_IN = 2.6;
+
+    private const SUMMARY_TOP_IN = 5.69;
+
+    /**
+     * 6領域すべてが網かけの最悪ケース(領域名6件+補足6件を繋いだ最長の
+     * 文言)でも3行に収まる高さ(依頼BM-2実機画像化で判明 ―― 2行想定の
+     * 高さでは footer と重なった)。
+     */
+    private const SUMMARY_HEIGHT_IN = 0.85;
 
     /**
      * @param  array{
      *     self_company_name: string,
      *     companies: list<array{name: string, matched: int, total: int, is_self: bool}>,
-     *     competitor_count: int,
-     *     rows: list<array{sub_name: string, axis_name: string, matched_count: int, quote: ?string}>,
+     *     axes: list<array{
+     *         name: string,
+     *         caption: ?string,
+     *         denominator: int,
+     *         self_count: int,
+     *         competitor_counts: list<int>,
+     *         self_gap: bool,
+     *     }>,
+     *     summary: string,
      *     source_note: string,
      *     page_number: ?string,
      * } $data
@@ -107,9 +145,10 @@ class AdminComparisonPptxGenerator
         $slide->getBackground();
 
         $this->addKicker($slide);
-        $this->addTitle($slide, $data['self_company_name']);
+        $this->addTitle($slide);
         $this->addScoreTiles($slide, $data['companies']);
-        $this->addMissingSection($slide, $data['self_company_name'], $data['rows'], $data['competitor_count']);
+        $this->addMatrixSection($slide, $data['companies'], $data['axes']);
+        $this->addSummaryBand($slide, $data['summary']);
         $this->addFooter($slide, $data['source_note'], $data['page_number']);
 
         $writer = new PowerPoint2007($presentation);
@@ -130,7 +169,7 @@ class AdminComparisonPptxGenerator
         $this->font($run, 12, true, self::COPPER);
     }
 
-    private function addTitle(Slide $slide, string $selfCompanyName): void
+    private function addTitle(Slide $slide): void
     {
         $box = $slide->createRichTextShape();
         $this->position($box, self::LEFT_IN, 0.86, self::CONTENT_WIDTH_IN, 0.55);
@@ -160,15 +199,22 @@ class AdminComparisonPptxGenerator
                 $tile->getBorder()->setLineWidth(0.75)->setColor(new Color('FF'.self::RULE));
             }
 
+            // 依頼BM-5: 社名を切り詰めず、2行までの折り返しを許す
+            // (旧版は1行に収まるよう強制的に省略記号で切っていた ――
+            // 本番の実データで「株式会社Fuji of In…」のように自社名が
+            // 切れる不具合として確認済み)。
+            $nameTop = self::TILE_TOP_IN + 0.08;
             $labelBox = $slide->createRichTextShape();
-            $this->position($labelBox, $left, 1.68, $width, 0.26);
+            $this->position($labelBox, $left, $nameTop, $width, self::TILE_NAME_HEIGHT_IN);
+            $labelBox->setWrap(RichText::WRAP_SQUARE);
             $labelBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $labelText = $this->truncateForWidth($company['name'], $width, 9.5, true);
+            $labelText = $this->wrapOrEllipsizeForLines($company['name'], $width, 9.5, true, 2);
             $labelRun = $labelBox->getActiveParagraph()->createTextRun($labelText);
             $this->font($labelRun, 9.5, true, $isSelf ? self::WHITE : self::MUTED);
 
+            $numberTop = $nameTop + self::TILE_NAME_HEIGHT_IN;
             $numberBox = $slide->createRichTextShape();
-            $this->position($numberBox, $left, 1.94, $width, 0.44);
+            $this->position($numberBox, $left, $numberTop, $width, self::TILE_NUMBER_HEIGHT_IN);
             $numberBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
             $numberRun = $numberBox->getActiveParagraph()->createTextRun("{$company['matched']} / {$company['total']}");
             $this->font($numberRun, 17, true, $isSelf ? self::LIGHT_COPPER : self::NAVY);
@@ -176,97 +222,183 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * @param  list<array{sub_name: string, axis_name: string, matched_count: int, quote: ?string}>  $rows
+     * 依頼BM-1: 「競合が伝えていて自社が伝えていない項目」一覧に代わる、
+     * 6領域(config('brand_wheel.axes')順)×各社のマトリクス。分母4固定
+     * (=各領域のsub_elements件数)のため、matched件数に関わらず必ず埋まる
+     * ―― 旧版の「該当0件だと下2/3が白紙になる」不具合はこの構成では
+     * 起こり得ない。
+     *
+     * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
+     * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
      */
-    private function addMissingSection(Slide $slide, string $selfCompanyName, array $rows, int $competitorCount): void
+    private function addMatrixSection(Slide $slide, array $companies, array $axes): void
     {
         $heading = $slide->createRichTextShape();
-        $this->position($heading, self::LEFT_IN, 2.62, self::CONTENT_WIDTH_IN, 0.3);
-        $run = $heading->getActiveParagraph()->createTextRun("競合が伝えていて、{$selfCompanyName}が伝えていない項目(言及社数の多い順)");
-        $this->font($run, 11, true, self::NAVY);
+        $this->position($heading, self::LEFT_IN, self::SECTION_TITLE_TOP_IN, self::CONTENT_WIDTH_IN, 0.28);
+        $run = $heading->getActiveParagraph()->createTextRun('領域別の発信量');
+        $this->font($run, 12.5, true, self::NAVY);
+        $noteRun = $heading->getActiveParagraph()->createTextRun('　各領域4項目・○と判定できた数');
+        $this->font($noteRun, 9.5, false, self::MUTED);
 
-        if ($rows === []) {
-            // 依頼AT報告事項(4): 0件時の表示(仮)。承認前のプロトタイプ表示。
-            $empty = $slide->createRichTextShape();
-            $this->position($empty, self::LEFT_IN, self::TABLE_HEADER_TOP_IN, self::CONTENT_WIDTH_IN, 0.5);
-            $emptyRun = $empty->getActiveParagraph()->createTextRun("競合各社と比べて、今回の比較の範囲では、{$selfCompanyName}に不足している項目は見つかりませんでした。");
-            $this->font($emptyRun, 9.5, false, self::MUTED);
+        $this->addLegend($slide);
 
-            return;
-        }
+        $companyCount = count($companies);
+        $colWidth = ($companyCount > 0) ? (self::CONTENT_WIDTH_IN - self::AREA_COL_WIDTH_IN) / $companyCount : 0;
 
-        $this->addTableHeader($slide);
+        $this->addMatrixHeader($slide, $companies, $colWidth);
 
-        $rowCount = count($rows);
-        $availableHeight = self::TABLE_ROWS_BOTTOM_IN - self::TABLE_ROWS_TOP_IN;
-        $rowHeight = min(self::TABLE_ROW_HEIGHT_MAX_IN, $availableHeight / $rowCount);
-
-        $x1 = self::LEFT_IN;
-        $x2 = $x1 + self::COL_WIDTHS_IN['sub_name'];
-        $x3 = $x2 + self::COL_WIDTHS_IN['axis_name'];
-        $x4 = $x3 + self::COL_WIDTHS_IN['count'];
-
-        foreach ($rows as $i => $row) {
-            $top = self::TABLE_ROWS_TOP_IN + $i * $rowHeight;
-
-            if ($i % 2 === 0) {
-                $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-                $this->position($band, $x1, $top, self::CONTENT_WIDTH_IN, $rowHeight);
-                $band->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::BAND));
-                $band->getBorder()->setLineStyle(Border::LINE_NONE);
-            }
-
-            $subBox = $slide->createRichTextShape();
-            $this->position($subBox, $x1, $top, self::COL_WIDTHS_IN['sub_name'], $rowHeight);
-            $subBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-            $subText = $this->truncateForWidth($row['sub_name'], self::COL_WIDTHS_IN['sub_name'], 9.5, true);
-            $this->font($subBox->getActiveParagraph()->createTextRun($subText), 9.5, true, self::NAVY);
-
-            $axisBox = $slide->createRichTextShape();
-            $this->position($axisBox, $x2, $top, self::COL_WIDTHS_IN['axis_name'], $rowHeight);
-            $axisBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-            $axisText = $this->truncateForWidth($row['axis_name'], self::COL_WIDTHS_IN['axis_name'], 8.5, false);
-            $this->font($axisBox->getActiveParagraph()->createTextRun($axisText), 8.5, false, self::MUTED);
-
-            $countBox = $slide->createRichTextShape();
-            $this->position($countBox, $x3, $top, self::COL_WIDTHS_IN['count'], $rowHeight);
-            $countBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-            $this->font($countBox->getActiveParagraph()->createTextRun("{$row['matched_count']} / {$competitorCount}社"), 9.5, true, self::COPPER);
-
-            $quoteBox = $slide->createRichTextShape();
-            $this->position($quoteBox, $x4, $top, self::COL_WIDTHS_IN['quote'], $rowHeight);
-            $quoteBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-            $quoteText = $this->truncateForWidth((string) $row['quote'], self::COL_WIDTHS_IN['quote'], 8.5, false);
-            $this->font($quoteBox->getActiveParagraph()->createTextRun($quoteText), 8.5, false, self::BODY_TEXT);
+        foreach ($axes as $i => $axis) {
+            $top = self::TABLE_TOP_IN + self::TABLE_HEADER_HEIGHT_IN + $i * self::TABLE_ROW_HEIGHT_IN;
+            $this->addMatrixRow($slide, $axis, $companies, $colWidth, $top, $i % 2 === 1);
         }
     }
 
-    private function addTableHeader(Slide $slide): void
+    /**
+     * 依頼BN-3(2026-09-09): オレンジの網かけ・競合内の最高値の太字が
+     * 何を意味するか、スライドのどこにも説明が無かった(初見の商談相手には
+     * 伝わらない、依頼者指摘)。「領域別の発信量」見出しと同じ行の右側に
+     * 凡例を置く ―― 縦の余白を新たに使わない(依頼者指定の制約)。
+     *
+     * 濃淡(競合内の最高値を太字にする表現)は残す判断とした(依頼者の
+     * 推し・依頼BN-3参照)。全社が同値の行では該当する競合全員が太字に
+     * なる(例: 情緒的便益で競合3社が同値)が、これは「その領域の競合内
+     * 最高値」という凡例の説明どおりの正しい表示であり、誤りではないため。
+     */
+    private function addLegend(Slide $slide): void
+    {
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN + 6.6, self::SECTION_TITLE_TOP_IN, self::CONTENT_WIDTH_IN - 6.6, 0.28);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $para = $box->getActiveParagraph();
+        $para->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+
+        $this->font($para->createTextRun('■'), 8, false, self::GAP_TEXT);
+        $this->font($para->createTextRun(' 自社が競合の最高値未達　'), 8, false, self::MUTED);
+        $this->font($para->createTextRun('■'), 8, true, self::NAVY);
+        $this->font($para->createTextRun(' 競合内の最高値'), 8, false, self::MUTED);
+    }
+
+    /**
+     * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
+     */
+    private function addMatrixHeader(Slide $slide, array $companies, float $colWidth): void
     {
         $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-        $this->position($band, self::LEFT_IN, self::TABLE_HEADER_TOP_IN, self::CONTENT_WIDTH_IN, self::TABLE_HEADER_HEIGHT_IN);
+        $this->position($band, self::LEFT_IN, self::TABLE_TOP_IN, self::CONTENT_WIDTH_IN, self::TABLE_HEADER_HEIGHT_IN);
         $band->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::NAVY));
         $band->getBorder()->setLineStyle(Border::LINE_NONE);
 
-        $labels = [
-            ['項目', self::LEFT_IN, self::COL_WIDTHS_IN['sub_name']],
-            ['領域', self::LEFT_IN + self::COL_WIDTHS_IN['sub_name'], self::COL_WIDTHS_IN['axis_name']],
-            ['言及社数', self::LEFT_IN + self::COL_WIDTHS_IN['sub_name'] + self::COL_WIDTHS_IN['axis_name'], self::COL_WIDTHS_IN['count']],
-            ['代表的な記述(引用)', self::LEFT_IN + self::COL_WIDTHS_IN['sub_name'] + self::COL_WIDTHS_IN['axis_name'] + self::COL_WIDTHS_IN['count'], self::COL_WIDTHS_IN['quote']],
-        ];
+        $areaBox = $slide->createRichTextShape();
+        $this->position($areaBox, self::LEFT_IN + 0.12, self::TABLE_TOP_IN, self::AREA_COL_WIDTH_IN - 0.12, self::TABLE_HEADER_HEIGHT_IN);
+        $areaBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $this->font($areaBox->getActiveParagraph()->createTextRun('領域'), 10.5, true, self::WHITE);
 
-        foreach ($labels as [$text, $left, $width]) {
+        foreach ($companies as $i => $company) {
+            $left = self::LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
             $box = $slide->createRichTextShape();
-            $this->position($box, $left, self::TABLE_HEADER_TOP_IN, $width, self::TABLE_HEADER_HEIGHT_IN);
+            $this->position($box, $left, self::TABLE_TOP_IN, $colWidth, self::TABLE_HEADER_HEIGHT_IN);
+            $box->setWrap(RichText::WRAP_SQUARE);
             $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-            $this->font($box->getActiveParagraph()->createTextRun($text), 9, true, self::WHITE);
+            $box->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            // 依頼BM-5: ヘッダーの高さは2行分で固定。2行に収まる社名は
+            // 折り返しをそのまま許し(切り詰めない)、2行に収まらない
+            // 極端に長い社名だけ、2行分の文字数で省略記号にする
+            // (対処の提案。ヘッダーの高さを固定する以上、際限なく伸ばせない)。
+            $text = $this->wrapOrEllipsizeForLines($company['name'], $colWidth, 10, true, 2);
+            $this->font($box->getActiveParagraph()->createTextRun($text), 10, true, self::WHITE);
         }
+    }
+
+    /**
+     * @param  array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}  $axis
+     * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
+     */
+    private function addMatrixRow(Slide $slide, array $axis, array $companies, float $colWidth, float $top, bool $isBanded): void
+    {
+        if ($isBanded) {
+            $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+            $this->position($band, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, self::TABLE_ROW_HEIGHT_IN);
+            $band->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::BAND));
+            $band->getBorder()->setLineStyle(Border::LINE_NONE);
+        }
+
+        $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($rule, self::LEFT_IN, $top + self::TABLE_ROW_HEIGHT_IN - 0.006, self::CONTENT_WIDTH_IN, 0.006);
+        $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
+        $rule->getBorder()->setLineStyle(Border::LINE_NONE);
+
+        // 依頼BM-1: 領域名+補足は、同じ行に並べると(フォントサイズが
+        // 混在するため)幅の見積もりが合わず、意図しない位置で折り返して
+        // 次の行と重なる不具合が実機画像化で見つかった。名前と補足を別々の
+        // 行(別シェイプ)にして、それぞれ1行に収まる前提で高さを固定する。
+        $areaNameBox = $slide->createRichTextShape();
+        $this->position($areaNameBox, self::LEFT_IN + 0.12, $top + 0.02, self::AREA_COL_WIDTH_IN - 0.12, 0.19);
+        $this->font($areaNameBox->getActiveParagraph()->createTextRun($axis['name']), 10.5, true, self::BODY_TEXT);
+
+        if ($axis['caption'] !== null) {
+            $captionBox = $slide->createRichTextShape();
+            $this->position($captionBox, self::LEFT_IN + 0.12, $top + 0.2, self::AREA_COL_WIDTH_IN - 0.12, 0.15);
+            $this->font($captionBox->getActiveParagraph()->createTextRun($axis['caption']), 7.5, false, self::MUTED);
+        }
+
+        $maxCompetitor = $axis['competitor_counts'] === [] ? 0 : max($axis['competitor_counts']);
+
+        foreach ($companies as $i => $company) {
+            $left = self::LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
+            $count = $company['is_self'] ? $axis['self_count'] : ($axis['competitor_counts'][$i - 1] ?? 0);
+
+            if ($company['is_self'] && $axis['self_gap']) {
+                [$bg, $fg] = [self::GAP_BG, self::GAP_TEXT];
+            } elseif ($company['is_self']) {
+                [$bg, $fg] = [self::SELF_TINT, self::NAVY];
+            } elseif ($count === $maxCompetitor && $maxCompetitor > 0) {
+                [$bg, $fg] = [null, self::NAVY];
+            } else {
+                [$bg, $fg] = [null, self::DIM];
+            }
+
+            if ($bg !== null) {
+                $cellBg = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+                $this->position($cellBg, $left, $top, $colWidth, self::TABLE_ROW_HEIGHT_IN);
+                $cellBg->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.$bg));
+                $cellBg->getBorder()->setLineStyle(Border::LINE_NONE);
+            }
+
+            $cell = $slide->createRichTextShape();
+            $this->position($cell, $left, $top, $colWidth, self::TABLE_ROW_HEIGHT_IN);
+            $cell->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $cell->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $this->font($cell->getActiveParagraph()->createTextRun("{$count} / {$axis['denominator']}"), 11, true, $fg);
+        }
+    }
+
+    /**
+     * 依頼BM-2: まとめの帯。文言はAdminComparisonPptxDataBuilderが組み立てた
+     * ものをそのまま表示するだけ(固定文にしない、空にしない、いずれも
+     * データビルダー側の責務)。
+     */
+    private function addSummaryBand(Slide $slide, string $summary): void
+    {
+        $accent = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($accent, self::LEFT_IN, self::SUMMARY_TOP_IN, 0.05, self::SUMMARY_HEIGHT_IN);
+        $accent->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::COPPER));
+        $accent->getBorder()->setLineStyle(Border::LINE_NONE);
+
+        $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($band, self::LEFT_IN + 0.05, self::SUMMARY_TOP_IN, self::CONTENT_WIDTH_IN - 0.05, self::SUMMARY_HEIGHT_IN);
+        $band->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::SUMMARY_BG));
+        $band->getBorder()->setLineStyle(Border::LINE_NONE);
+
+        $textBox = $slide->createRichTextShape();
+        $this->position($textBox, self::LEFT_IN + 0.25, self::SUMMARY_TOP_IN + 0.08, self::CONTENT_WIDTH_IN - 0.5, self::SUMMARY_HEIGHT_IN - 0.16);
+        $textBox->setWrap(RichText::WRAP_SQUARE);
+        $this->font($textBox->getActiveParagraph()->createTextRun($summary), 11, false, self::GAP_TEXT);
     }
 
     private function addFooter(Slide $slide, string $sourceNote, ?string $pageNumber): void
     {
         $source = $slide->createRichTextShape();
-        $this->position($source, self::LEFT_IN, 6.35, self::CONTENT_WIDTH_IN, 0.3);
+        $this->position($source, self::LEFT_IN, 6.62, self::CONTENT_WIDTH_IN, 0.3);
         $this->font($source->getActiveParagraph()->createTextRun($sourceNote), 8.5, false, self::MUTED);
 
         $logo = $slide->createRichTextShape();
@@ -280,27 +412,58 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * 依頼AT-1: 1行に収まる長さへの切り詰め(文の途中で切れる場合は末尾に…)。
-     * dompdf版(admin-comparison-pdf.blade.php)のtruncateNameと同じ考え方だが、
-     * pptxはHTMLのoverflow:hiddenのような自動クリップが無く自前で文字数を
-     * 見積もる必要がある。Meiryoの日本語フルwidth文字は概ね1em幅のため、
-     * 文字数 ≈ (列幅 - 左右余白) / フォントサイズ で近似する(実PowerPoint
-     * 画像化で目視確認済み、依頼AT報告事項5)。
+     * 依頼AT-1由来、依頼BM-5で2行対応に拡張。1行に収まる長さの見積もりは
+     * 従来と同じ(Meiryoの日本語フルwidth文字は概ね1em幅、実PowerPoint
+     * 画像化で目視確認済みの係数)。$maxLines行に収まる文字数までは
+     * そのまま返し(PowerPoint本体のwrap="square"が実際の折り返しを行う
+     * ため、ここでは改行位置を計算しない)、収まらない場合だけ$maxLines
+     * 行ぶんの文字数で省略記号にする(社名を切り詰めない、が極端に長い
+     * 社名でヘッダーの固定高さを崩さないための最終手段、依頼BM-5の
+     * 「対処の提案」への回答)。
      */
-    private function truncateForWidth(string $text, float $widthIn, float $sizePt, bool $bold): string
+    /**
+     * 依頼BN-2(2026-09-09): 文字数(mb_strlen)だけで見積もっていたため、
+     * 半角(英数・スペース)の実際の幅を全角と同じとして過大評価し、2行に
+     * 収まる社名(例:「株式会社Fuji of Innovation」、mb_strlen=22だが
+     * 実際の表示幅はmb_strwidthで26半角ぶんしかない)まで省略記号で
+     * 切ってしまっていた(実機画像化で発覚)。文字数ではなく、全角=2・
+     * 半角=1の表示幅(mb_strwidth、東アジアの文字幅の広さの慣習に基づく
+     * PHP標準の見積もり方)で見積もり直す。
+     */
+    private function wrapOrEllipsizeForLines(string $text, float $widthIn, float $sizePt, bool $bold, int $maxLines): string
     {
-        $insetPt = 9.0; // RichTextの既定lIns/rIns(左右合計)の近似値。
-        // 実PowerPoint画像化で1.0倍(1文字=1em)では2行に折り返す事例が
-        // 見つかったため、Meiryoの実測に合わせて安全側に大きくした係数。
-        $charWidthPt = $sizePt * ($bold ? 1.28 : 1.18);
+        $insetPt = 9.0;
+        // 全角1文字(表示幅2)がおおよそ1em(=$sizePt)になるよう、
+        // 表示幅1単位あたりの幅を$sizePt/2とする。
+        $unitWidthPt = $sizePt * ($bold ? 1.28 : 1.18) / 2;
         $usableWidthPt = $widthIn * 72 - $insetPt;
-        $maxChars = max(1, (int) floor($usableWidthPt / $charWidthPt));
+        $maxUnitsPerLine = max(1, (int) floor($usableWidthPt / $unitWidthPt));
+        $maxUnits = $maxUnitsPerLine * $maxLines;
 
-        if (mb_strlen($text) <= $maxChars) {
+        if (mb_strwidth($text, 'UTF-8') <= $maxUnits) {
             return $text;
         }
 
-        return mb_substr($text, 0, max(0, $maxChars - 1)).'…';
+        // 省略記号(全角相当、表示幅2)ぶんを差し引いた表示幅まで、
+        // 1文字ずつ表示幅を積算して切り詰める(文字数ではなく表示幅基準)。
+        return $this->truncateToDisplayWidth($text, max(0, $maxUnits - 2)).'…';
+    }
+
+    private function truncateToDisplayWidth(string $text, int $maxUnits): string
+    {
+        $result = '';
+        $usedUnits = 0;
+
+        foreach (mb_str_split($text) as $char) {
+            $charUnits = mb_strwidth($char, 'UTF-8');
+            if ($usedUnits + $charUnits > $maxUnits) {
+                break;
+            }
+            $result .= $char;
+            $usedUnits += $charUnits;
+        }
+
+        return $result;
     }
 
     private function position($shape, float $leftIn, float $topIn, float $widthIn, float $heightIn): void
