@@ -771,7 +771,12 @@ class AdminComparisonTest extends TestCase
 
         $response = $this->asAdmin()->get("/admin/analyses/{$comparison->id}");
         $response->assertOk();
-        $response->assertSee('営業資料に差し込む');
+        // 依頼BW-1(2026-09-11): 差し込みの入口は「レポート」節の小さい
+        // テキストリンク(旧文言「営業資料に差し込む」)から、画面上部の
+        // 「いまやること」パネルの大きなボタン(「資料に差し込んで
+        // ダウンロード」)へ置き場所を変えた(中身・エンドポイントは
+        // 変えていない)。
+        $response->assertSee('資料に差し込んでダウンロード');
     }
 
     public function test_comparison_created_without_an_attachment_shows_the_guidance_text(): void
@@ -790,6 +795,8 @@ class AdminComparisonTest extends TestCase
 
         $response = $this->asAdmin()->get("/admin/analyses/{$comparison->id}");
         $response->assertOk();
-        $response->assertSee('営業資料(PPTX)をアップロードすると');
+        // 依頼BW-1: この案内文言も「レポート」節から「いまやること」
+        // パネル(②のアップロード欄)へ移った。
+        $response->assertSee('営業資料(PPTX)を添付すると');
     }
 }

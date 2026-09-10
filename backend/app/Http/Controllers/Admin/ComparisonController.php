@@ -38,11 +38,45 @@ use Throwable;
  */
 class ComparisonController extends Controller
 {
+    /**
+     * 依頼BW-2(2026-09-11): 比較レポート一覧のページング件数。診断管理
+     * (AnalysisController::PER_PAGE=30)より少なくしている ―― 比較は
+     * 無料診断全体よりずっと少数(自社+競合3〜5社の起票のみ)で、営業が
+     * 日常的に見返す一覧のため、1ページで見渡しやすい件数を優先する。
+     */
+    private const PER_PAGE = 20;
+
     public function __construct(
         private readonly AdminComparisonService $comparisons,
         private readonly AnalysisAttachmentService $attachments,
         private readonly AdminComparisonPptxInserter $pptxInserter,
     ) {}
+
+    /**
+     * 依頼BW-2(この依頼で新設): 比較レポートの一覧。source_analysis_idが
+     * 非nullのAnalysisのみを対象にする(依頼AB-2と同じ既存方針、サイト数
+     * からの推測はしない)。営業が日常的に使う画面(依頼者指定)のため、
+     * ダッシュボード・サイドバーの両方からここへ導線を張る(BW-3)。
+     *
+     * N+1を避けるため、一覧に必要な関連(自社企業名・競合社数・PPTX添付
+     * 有無)をすべてwith()で先読みする。
+     */
+    public function index(Request $request): View
+    {
+        $comparisons = Analysis::query()
+            ->whereNotNull('source_analysis_id')
+            ->with(['project.leadCompany', 'project.websites', 'attachments', 'reports'])
+            ->orderByDesc('created_at')
+            ->paginate(self::PER_PAGE)
+            ->withQueryString()
+            // scheme+hostを含まないパスに固定する(AnalysisController::index()
+            // と同じ理由)。
+            ->setPath($request->getPathInfo());
+
+        return view('admin.comparisons.index', [
+            'comparisons' => $comparisons,
+        ]);
+    }
 
     /**
      * 比較の起票フォーム。自社URLは起点の無料診断から引き継いで初期値に

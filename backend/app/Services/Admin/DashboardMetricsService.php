@@ -32,6 +32,13 @@ class DashboardMetricsService
     private const NEEDS_ATTENTION_LIMIT = 10;
 
     /**
+     * 依頼BW-3(2026-09-11): ダッシュボードの「作成中・最近の比較」件数。
+     * BW-2の一覧(全件・ページングあり)への入口として、直近だけを一目で
+     * 見渡せれば足りる ―― 依頼者提案の「5件程度」のとおり。
+     */
+    private const RECENT_COMPARISONS_LIMIT = 5;
+
+    /**
      * @return array{today_count: int, month_count: int, company_count: int, re_diagnosed_count: int, consultation_count: int, needs_attention_count: int}
      */
     public function kpis(): array
@@ -69,6 +76,30 @@ class DashboardMetricsService
                 'diagnosis_count' => (int) $company->analyses_count,
                 'last_diagnosed_at' => $company->analyses_max_created_at,
                 'sales_status' => $company->sales_status,
+            ]);
+    }
+
+    /**
+     * 依頼BW-3(2026-09-11): ダッシュボード上部「作成中・最近の比較」。
+     * BW-2の一覧(admin.comparisons.index)と同じ対象(source_analysis_idが
+     * 非null)を、直近5件だけ新しい順で返す。N+1を避けるため、一覧表示に
+     * 必要な関連をすべてwith()で先読みする(BW-2のindex()と同じ考え方)。
+     *
+     * @return Collection<int, array{id: int, company_name: ?string, status: string, created_at: \Illuminate\Support\Carbon}>
+     */
+    public function recentComparisons(): Collection
+    {
+        return Analysis::query()
+            ->whereNotNull('source_analysis_id')
+            ->with(['project.leadCompany'])
+            ->orderByDesc('created_at')
+            ->limit(self::RECENT_COMPARISONS_LIMIT)
+            ->get()
+            ->map(fn (Analysis $comparison) => [
+                'id' => $comparison->id,
+                'company_name' => $comparison->project?->leadCompany?->company_name,
+                'status' => $comparison->status->value,
+                'created_at' => $comparison->created_at,
             ]);
     }
 

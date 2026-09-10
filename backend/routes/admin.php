@@ -74,5 +74,10 @@ Route::prefix('admin')->name('admin.')->group(function () {
         // 関与しない、実際の作成は既存のanalyses.compare.storeを使う)。
         Route::get('/comparisons/wizard', [ComparisonController::class, 'wizard'])->name('comparisons.wizard');
         Route::get('/comparisons/search', [ComparisonController::class, 'search'])->name('comparisons.search');
+        // 依頼BW-2(2026-09-11、この依頼で新設): 比較レポートの一覧。
+        // 上のwizard/searchより後ろに置く ―― 'comparisons/{何か}'という
+        // パターンでは無いため衝突しないが、関連するcomparisons配下の
+        // ルートをまとめて並べる(既存の並び順の慣習)。
+        Route::get('/comparisons', [ComparisonController::class, 'index'])->name('comparisons.index');
     });
 });

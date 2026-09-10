@@ -5,11 +5,41 @@
 @section('content')
 <h2>管理者ダッシュボード</h2>
 
-{{-- 依頼BP-4(2026-09-10): 会社名から比較を始められる入口を、ダッシュボード
-     の目立つ位置(見出し直下)に置く。 --}}
+{{--
+    依頼BP-4(2026-09-10): 会社名から比較を始められる入口を、ダッシュボード
+    の目立つ位置(見出し直下)に置く。
+
+    依頼BW-3(2026-09-11): この管理画面を使う人間が日常的に行うことは
+    「3〜5社比較を作る」ことと「ダッシュボードを見る」ことの2つ
+    (依頼者指定)。並び順を「1.比較を作る(大きく) → 2.作成中・最近の
+    比較 → 3.KPI → 4.最近の診断企業/注目企業 → 5.要確認・エラー」に
+    組み替える(依頼者指定の並び)。既存のKPI・カードは1つも消さない
+    (依頼者指定)。
+--}}
 <p style="margin: 0 0 20px;">
-    <a href="{{ route('admin.comparisons.wizard', [], false) }}" class="btn" style="font-size: 14px; padding: 10px 22px;">＋ 比較レポートを作る</a>
+    <a href="{{ route('admin.comparisons.wizard', [], false) }}" class="btn" style="font-size: 16px; padding: 14px 28px;">＋ 3〜5社比較を作る</a>
 </p>
+
+<div class="card" style="margin-bottom: 24px;">
+    <h3>作成中・最近の比較</h3>
+    @if ($recentComparisons->isEmpty())
+        <p class="empty">まだ比較レポートがありません。</p>
+    @else
+        <table class="list">
+            <tbody>
+                @foreach ($recentComparisons as $row)
+                    <tr class="clickable" onclick="location.href='{{ route('admin.analyses.show', $row['id'], false) }}'">
+                        <td>#{{ $row['id'] }}</td>
+                        <td>{{ $row['company_name'] ?? '—' }}</td>
+                        <td><span class="badge status-{{ $row['status'] }}">{{ $row['status'] }}</span></td>
+                        <td>{{ $row['created_at']->diffForHumans() }}</td>
+                    </tr>
+                @endforeach
+            </tbody>
+        </table>
+    @endif
+    <p style="margin-top: 12px;"><a href="{{ route('admin.comparisons.index', [], false) }}">すべて見る &rarr;</a></p>
+</div>
 
 <div class="kpi-row">
     <div class="kpi-card">

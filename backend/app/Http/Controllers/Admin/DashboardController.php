@@ -14,6 +14,7 @@ class DashboardController extends Controller
     {
         return view('admin.dashboard', [
             'kpis' => $this->metrics->kpis(),
+            'recentComparisons' => $this->metrics->recentComparisons(),
             'recentCompanies' => $this->metrics->recentCompanies(),
             'notableCompanies' => $this->metrics->notableCompanies(),
             'needsAttention' => $this->metrics->needsAttentionForDashboard(),

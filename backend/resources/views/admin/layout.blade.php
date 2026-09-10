@@ -26,6 +26,12 @@
         .sidebar nav a { display: block; padding: 10px 20px; font-size: 14px; color: var(--text); }
         .sidebar nav a:hover { background: var(--bg); text-decoration: none; }
         .sidebar nav a.active { background: #EEF0FB; color: var(--brand); font-weight: 700; border-right: 3px solid var(--brand); }
+        {{-- 依頼BW-3(2026-09-11): 「＋3〜5社比較を作る」を独立したボタンとして
+             最上部に置く(依頼者指定)。診断企業・診断管理は「記録」として
+             区切って下げるだけ(消さない、依頼者指定)。 --}}
+        .sidebar .primary-action { display: block; margin: 0 20px 16px; padding: 10px 14px; border-radius: 6px; background: var(--brand); color: #fff; font-size: 14px; font-weight: 700; text-align: center; }
+        .sidebar .primary-action:hover { opacity: .9; text-decoration: none; }
+        .sidebar nav .section-label { display: block; margin: 16px 20px 4px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); font-weight: 700; letter-spacing: .04em; }
         .sidebar .logout { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; }
         .sidebar .logout button { background: none; border: none; color: var(--muted); font-size: 13px; padding: 10px 20px; cursor: pointer; width: 100%; text-align: left; }
         .sidebar .logout button:hover { color: var(--text); }
@@ -109,15 +115,23 @@
     <div class="shell">
         <aside class="sidebar">
             <h1>管理者ダッシュボード</h1>
+            {{--
+                依頼BW-3(2026-09-11): この管理画面を使う人間が日常的に行う
+                ことは「3〜5社比較を作り、営業資料に差し込んだPPTXを手に
+                入れる」ことと「ダッシュボードを見る」ことの2つで、それ以外
+                (診断企業・診断管理)は記録の確認であり日常の作業ではない
+                (依頼者指定)。遷移先は既存の比較ウィザード
+                (admin.comparisons.wizard)のまま ―― 新しい入口は作らない
+                (依頼者指定)。
+            --}}
+            <a href="{{ route('admin.comparisons.wizard', [], false) }}" class="primary-action">＋ 3〜5社比較を作る</a>
             <nav>
                 <a href="{{ route('admin.dashboard', [], false) }}" class="{{ request()->routeIs('admin.dashboard*') ? 'active' : '' }}">ダッシュボード</a>
+                {{-- 依頼BW-2/BW-3: 比較レポートの一覧(この依頼で新設)。 --}}
+                <a href="{{ route('admin.comparisons.index', [], false) }}" class="{{ request()->routeIs('admin.comparisons.index') ? 'active' : '' }}">比較レポート</a>
+                <span class="section-label">記録</span>
                 <a href="{{ route('admin.companies.index', [], false) }}" class="{{ request()->routeIs('admin.companies.*') ? 'active' : '' }}">診断企業</a>
                 <a href="{{ route('admin.analyses.index', [], false) }}" class="{{ request()->routeIs('admin.analyses.*') ? 'active' : '' }}">診断管理</a>
-                {{-- 依頼BP-4(2026-09-10): サイドバーは全画面で常時表示されるため、
-                     どのページからでも2クリック以内で比較ウィザードへ入れる
-                     (診断一覧/admin.analyses.*からもここ経由で辿れる ――
-                     admin/analyses/index.blade.phpは承認外のため変更しない)。 --}}
-                <a href="{{ route('admin.comparisons.wizard', [], false) }}" class="{{ request()->routeIs('admin.comparisons.*') ? 'active' : '' }}">比較を作る</a>
             </nav>
             <div class="logout">
                 <form method="POST" action="{{ route('admin.logout', [], false) }}">

@@ -36,6 +36,157 @@
     </p>
 @endif
 
+{{--
+    依頼BW-1(2026-09-11、この依頼の主目的): 比較(source_analysis_idが
+    非null)のゴールは「差し込んだ資料を手に入れること」であり、それが
+    画面の主役になっていなかった(依頼者指摘)。サイト数からの推測はせず、
+    既存方針どおりsource_analysis_idの有無だけで比較かどうかを判断する
+    (依頼AB-2と同じ)。無料診断ではこの節自体を出さない ―― 見た目を
+    変えない(依頼者指定)。
+
+    中身(差し込みの仕組み・比較ウィザード・比較作成フォーム)は一切
+    変えない。既存のエンドポイント(admin.analyses.attachment.*・
+    admin.analyses.comparison-report.*)をそのまま使うだけ(依頼者指定、
+    新しい書き込み経路を作らない)。
+--}}
+@if ($analysis->source_analysis_id)
+    @php
+        $pptxAttachment = $analysis->attachments->firstWhere('extension', 'pptx');
+        $isDiagnosisTerminal = $analysis->status->isTerminal();
+        $pdfReport = $analysis->reports->first(fn ($r) => $r->format->value === 'pdf');
+
+        // 依頼BW-1の判定表(報告のとおり):
+        //   資料未添付                        → ②が「いま」
+        //   添付あり・診断未完了              → ③が「いま」
+        //   添付あり・診断完了                → ④が「いま」
+        //     (④の中でさらに、PDFレポートの完了/未完了/失敗で
+        //      パネルの中身が変わる ―― ④自体は分岐しない)
+        // 「①比較する会社」はこの画面に来た時点で既に選ばれているため、
+        // 常にdone。「いま止まっている段」は常に1つだけになるよう、
+        // ②→③→④の順で最初に条件を満たした段だけを「いま」にする。
+        if ($pptxAttachment === null) {
+            $currentStage = 2;
+        } elseif (! $isDiagnosisTerminal) {
+            $currentStage = 3;
+        } else {
+            $currentStage = 4;
+        }
+
+        $stageLabels = [1 => '比較する会社', 2 => '営業資料を添付', 3 => '診断の完了を待つ', 4 => '資料に差し込む'];
+        // 依頼BW-1: 検出語はconfigから出す(直書きしない、依頼者指定)。
+        $referenceKeywordsLabel = implode('」または「', (array) config('admin_comparison_pptx.reference_page_keywords'));
+    @endphp
+    <div class="card" style="margin-bottom: 24px;">
+        <div style="display: flex; gap: 8px; margin-bottom: 20px;">
+            @foreach ($stageLabels as $num => $label)
+                @php
+                    $stageState = $num < $currentStage ? 'done' : ($num === $currentStage ? 'current' : 'pending');
+                    $stageBg = match ($stageState) { 'done' => '#E4F6EA', 'current' => '#EEF0FB', default => '#F7F8FA' };
+                    $stageColor = match ($stageState) { 'done' => 'var(--ok)', 'current' => 'var(--brand)', default => 'var(--muted)' };
+                    $stageBorder = $stageState === 'current' ? 'var(--brand)' : 'var(--border)';
+                @endphp
+                <div style="flex: 1; text-align: center; padding: 10px 6px; border-radius: 6px; font-size: 13px; background: {{ $stageBg }}; color: {{ $stageColor }}; font-weight: {{ $stageState === 'current' ? '700' : '400' }}; border: 1px solid {{ $stageBorder }};">
+                    @if ($stageState === 'done')&#10003;&nbsp;@endif{{ $num }}. {{ $label }}
+                </div>
+            @endforeach
+        </div>
+
+        {{-- 「いまやること」パネル: 差し込みの入口はここだけに置く
+             (依頼者指定、他の場所(レポート節・既存資料節)には残さない)。 --}}
+        @if ($currentStage === 2)
+            <div>
+                <p>営業資料(PPTX)を添付すると、比較ページを1枚、資料の「{{ $referenceKeywordsLabel }}」ページの直前に差し込んだ資料を、診断完了後にダウンロードできるようになります。</p>
+                <form
+                    method="POST"
+                    action="{{ route('admin.analyses.attachment.store', $analysis->id, false) }}"
+                    enctype="multipart/form-data"
+                >
+                    @csrf
+                    <input type="file" name="file" required>
+                    <button type="submit" class="btn" style="margin-left: 8px;">アップロード</button>
+                    <p class="empty" style="margin-top: 8px;">
+                        許可される形式: {{ implode(' / ', config('analysis_attachment.allowed_extensions')) }}
+                        (最大{{ number_format(config('analysis_attachment.max_file_size_bytes') / 1024 / 1024, 0) }}MB)
+                    </p>
+                    @error('file')
+                        <p style="color: #c0392b; font-size: 13px;">{{ $message }}</p>
+                    @enderror
+                </form>
+            </div>
+        @elseif ($currentStage === 3)
+            <div>
+                <p>
+                    診断の進捗:
+                    <span class="badge status-{{ $analysis->status->value }}">{{ $analysis->status->value }}</span>
+                    ({{ $analysis->progress }}%)
+                </p>
+                <p class="empty">診断が完了しだい、資料に差し込んでダウンロードできるようになります。このパネルの表示は、画面を再読み込みすると更新されます。</p>
+            </div>
+        @else
+            @php
+                $pdfReportStatusMessages = [
+                    'pending' => 'レポートを生成中です。完了しだい、資料に差し込めるようになります。',
+                    'failed' => 'レポートの生成に失敗したため、資料には差し込めません。',
+                    'skipped' => 'レポートの生成が見送られたため、資料には差し込めません。',
+                ];
+            @endphp
+            @if ($pdfReport?->status?->value === 'completed')
+                <div>
+                    <p>
+                        <strong>{{ $pptxAttachment->original_filename }}</strong> の、資料の「{{ $referenceKeywordsLabel }}」ページの直前に、比較ページを1枚差し込みます。
+                        元の資料(アップロードした営業資料そのもの)は変更されません。
+                    </p>
+                    <a href="{{ route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false) }}" class="btn" style="font-size: 15px; padding: 12px 28px;">資料に差し込んでダウンロード</a>
+                </div>
+            @else
+                <p class="empty">{{ $pdfReportStatusMessages[$pdfReport?->status?->value] ?? 'レポートがまだ準備できていません。' }}</p>
+            @endif
+        @endif
+
+        {{-- 主役ではないものを、細い1行にまとめる(依頼者指定)。 --}}
+        <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted);">
+            @if ($pdfReport?->status?->value === 'completed')
+                比較レポート(PDF): <a href="{{ route('admin.analyses.comparison-report.download', $analysis->id, false) }}">ダウンロード</a>
+            @endif
+            @if ($pptxAttachment)
+                <span style="{{ $pdfReport?->status?->value === 'completed' ? 'margin-left: 12px;' : '' }}">
+                    営業資料: {{ $pptxAttachment->original_filename }}
+                    <a href="{{ route('admin.analyses.attachment.download', [$analysis->id, $pptxAttachment->id], false) }}">ダウンロード</a>
+                </span>
+            @endif
+            @if ($pptxAttachment)
+                {{-- 依頼BW-1: 資料が未添付(currentStage===2)のときは、
+                     上のパネル自体が唯一のアップロード入口(依頼者指定 ――
+                     差し込みの入口に限らず、ここでも二重に出さない)。
+                     差し替え・削除は既に添付がある場合のみ、この1行に
+                     まとめる。 --}}
+                <span style="margin-left: 12px;">
+                    <form
+                        method="POST"
+                        action="{{ route('admin.analyses.attachment.store', $analysis->id, false) }}"
+                        enctype="multipart/form-data"
+                        style="display: inline-flex; align-items: center; gap: 6px;"
+                    >
+                        @csrf
+                        <input type="file" name="file" required style="font-size: 12px;">
+                        <button type="submit" class="btn secondary" style="padding: 3px 10px; font-size: 12px;">差し替える</button>
+                    </form>
+                    <form
+                        method="POST"
+                        action="{{ route('admin.analyses.attachment.destroy', [$analysis->id, $pptxAttachment->id], false) }}"
+                        style="display: inline; margin-left: 6px;"
+                        onsubmit="return confirm('この資料を削除します。よろしいですか?');"
+                    >
+                        @csrf
+                        @method('DELETE')
+                        <button type="submit" class="btn secondary" style="padding: 3px 10px; font-size: 12px;">削除</button>
+                    </form>
+                </span>
+            @endif
+        </div>
+    </div>
+@endif
+
 <div class="info-grid">
     <div class="item">
         <div class="label">診断日時</div>
@@ -161,7 +312,11 @@
                             @endif
                         </td>
                         @if (! $hasCrawlData)
-                            <td colspan="6" style="{{ $criticalWarning ? 'color: #C2372B; font-weight: 600;' : 'color: var(--muted); font-size: 13px;' }}">
+                            {{-- 依頼BW-1: このテーブルは8列(サイト+7)なのに
+                                 colspanが6になっており1列ぶん足りなかった
+                                 (依頼者指摘、依頼BU由来のバグ)。サイト列を
+                                 除いた残り7列ぶんに修正する。 --}}
+                            <td colspan="7" style="{{ $criticalWarning ? 'color: #C2372B; font-weight: 600;' : 'color: var(--muted); font-size: 13px;' }}">
                                 巡回していません。@if ($crawlSummary['finished_reason'] !== null)({{ $crawlSummary['finished_reason_label'] }})@endif
                             </td>
                         @else
@@ -176,14 +331,14 @@
                     </tr>
                     @if ($criticalWarning)
                         <tr style="background: #FDEEEC;">
-                            <td colspan="7" style="padding-top: 0;">
+                            <td colspan="8" style="padding-top: 0;">
                                 <div style="color: #C2372B; font-size: 13px; font-weight: 600;">&#9940; {{ $criticalWarning['message'] }}</div>
                             </td>
                         </tr>
                     @endif
                     @if ($hasWarning)
                         <tr style="background: #FFF8EC;">
-                            <td colspan="7" style="padding-top: 0;">
+                            <td colspan="8" style="padding-top: 0;">
                                 @foreach ($crawlSummary['warnings'] as $warning)
                                     <div style="color: #7a5c00; font-size: 13px;">&#9888; {{ $warning['message'] }}</div>
                                 @endforeach
@@ -192,7 +347,7 @@
                     @endif
                     @if ($hasCrawlData && count($crawlSummary['failed_urls']) > 0)
                         <tr>
-                            <td colspan="7" style="padding-top: 0;">
+                            <td colspan="8" style="padding-top: 0;">
                                 <details>
                                     <summary style="cursor: pointer; font-size: 13px; color: #4B5563;">失敗したURL({{ $crawlSummary['failed_count'] }}件)を見る</summary>
                                     <table class="list" style="margin-top: 8px;">
@@ -263,26 +418,16 @@
                         <span class="badge status-{{ $report->status->value }}">
                             {{ $reportStatusLabels[$report->status->value] ?? $report->status->value }}
                         </span>
-                        {{-- 依頼AC(2026-08-27): 比較Analysis(source_analysis_idが
-                             非null)のpdfレポートは多社比較レポート。既存の
-                             リード向けdownloadReport()(トークン認証)とは別の
-                             admin.auth配下の専用エンドポイントからダウンロードする。 --}}
-                        @if ($analysis->source_analysis_id && $report->format->value === 'pdf' && $report->status->value === 'completed')
-                            <a href="{{ route('admin.analyses.comparison-report.download', $analysis->id, false) }}" style="margin-left: 8px;">ダウンロード</a>
-                            {{-- 依頼BG(2026-09-08): 営業資料(PPTX)がアップロード
-                                 されている比較Analysisにのみ、差し込み版の
-                                 ダウンロード導線を並べて出す。添付が無い/PPTX
-                                 でない場合はボタンを出さず、理由を短く示す
-                                 (依頼者指定)。 --}}
-                            @php
-                                $pptxAttachment = $analysis->attachments->firstWhere('extension', 'pptx');
-                            @endphp
-                            @if ($pptxAttachment)
-                                <a href="{{ route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false) }}" style="margin-left: 8px;">営業資料に差し込む</a>
-                            @else
-                                <span class="empty" style="margin-left: 8px;">営業資料(PPTX)をアップロードすると、比較ページを差し込んだ資料をダウンロードできます。</span>
-                            @endif
-                        @elseif (! $analysis->source_analysis_id && $report->status->value === 'completed')
+                        {{-- 依頼BW-1(2026-09-11): 比較(source_analysis_idが
+                             非null)のダウンロード・差し込みリンクは、上部の
+                             「いまやること」パネル配下の1行(依頼者指定の
+                             置き場所)へ移した ―― 差し込みの入口を2箇所に
+                             出さない(依頼者指定の禁止事項)ため、ここでは
+                             状態バッジのみを残す(元々の依頼AC/BGのリンクは
+                             削除、既存のダウンロード・差し込み用エンドポイント
+                             自体は変更していない)。無料診断側の分岐(下)は
+                             変更しない。 --}}
+                        @if (! $analysis->source_analysis_id && $report->status->value === 'completed')
                             {{-- 依頼AG-1(2026-08-27): 無料診断(比較でない)の
                                  レポートは、管理者が生トークンを持たないため
                                  リード向けURLを組み立てられない。admin.auth
@@ -300,10 +445,17 @@
 
 {{--
     依頼AD-1(2026-08-27): 商談相手ごとの既存資料(フォーマット未確定)。
-    無料診断・多社比較のどちらでも表示する(区別しない)。現時点では1診断
-    1件に制限している(AnalysisAttachmentServiceのdocblock参照) ―― 既に
-    1件ある状態でアップロードすると、既存の1件を自動的に差し替える。
+    現時点では1診断1件に制限している(AnalysisAttachmentServiceの
+    docblock参照) ―― 既に1件ある状態でアップロードすると、既存の1件を
+    自動的に差し替える。
+
+    依頼BW-1(2026-09-11): 比較(source_analysis_idが非null)では、この
+    カードの役割(添付・ダウンロード・差し替え・削除)を上部の「いまやること」
+    パネルとその下の1行へ統合した(依頼者指定 ―― 主役でないものを1行に
+    まとめる)。無料診断ではこれまでどおりこのカードを表示する
+    (依頼者指定「無料診断の詳細画面の見た目を変えないこと」)。
 --}}
+@unless ($analysis->source_analysis_id)
 <div class="card">
     <h3>既存資料</h3>
     @if ($analysis->attachments->isEmpty())
@@ -356,4 +508,5 @@
         @enderror
     </form>
 </div>
+@endunless
 @endsection

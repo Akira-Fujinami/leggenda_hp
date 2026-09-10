@@ -419,4 +419,42 @@ class CrawlDiagnosticsDisplayTest extends TestCase
         $response->assertDontSee('BU検証担当太郎');
         $response->assertDontSee('bu-secret-contact@example.com');
     }
+
+    /**
+     * 依頼BW-1: 巡回の実績テーブルは8列なのに、全幅の行(critical_warning・
+     * warnings・失敗したURL)のcolspanが7になっており1列ぶん足りな
+     * かった(依頼者指摘、依頼BU由来のバグ)。8列ぶんに直したことを確認する。
+     * 「巡回していません。」の行(サイト列+残り7列)のcolspanが6→7に
+     * 直っていることもあわせて確認する。
+     */
+    public function test_colspan_matches_the_number_of_columns_in_the_crawl_table(): void
+    {
+        $analysis = $this->makeAnalysis(crawlSite: true);
+        $noData = $this->makeWebsiteAnalysis($analysis, '巡回0件(BW検証)');
+        $noData->update(['crawl_finished_reason' => 'robots_txt_unavailable', 'crawl_finished_at' => now()]);
+
+        $warned = $this->makeWebsiteAnalysis($analysis, '警告あり(BW検証)');
+        $this->seedCrawledPages($warned, [
+            AnalysisCrawledPage::STATUS_FETCHED => 5,
+            AnalysisCrawledPage::STATUS_FAILED => 5,
+        ]);
+        for ($i = 0; $i < 12; $i++) {
+            AnalysisCrawledPage::factory()->create([
+                'website_analysis_id' => $warned->id,
+                'status' => AnalysisCrawledPage::STATUS_FAILED,
+                'url' => "https://example.com/bw-failed-{$i}",
+            ]);
+        }
+        $warned->update(['crawl_finished_reason' => 'exhausted', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $content = $response->getContent();
+        // 「巡回していません。」の行(サイト列+残り7列 = colspan 7)。
+        $this->assertStringContainsString('colspan="7"', $content);
+        // critical_warning・warnings・失敗したURLの全幅行(8列)。
+        $this->assertStringContainsString('colspan="8"', $content);
+        $this->assertStringNotContainsString('colspan="6"', $content, '巡回していません行のcolspanが1列足りないままです。');
+    }
 }

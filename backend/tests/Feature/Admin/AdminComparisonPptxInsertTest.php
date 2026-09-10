@@ -346,7 +346,9 @@ class AdminComparisonPptxInsertTest extends TestCase
 
         $response->assertOk();
         $response->assertDontSee(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false), false);
-        $response->assertSee('営業資料(PPTX)をアップロードすると');
+        // 依頼BW-1(2026-09-11): この案内文言は「レポート」節から
+        // 「いまやること」パネル(②のアップロード欄)へ移った。
+        $response->assertSee('営業資料(PPTX)を添付すると');
     }
 
     // ------------------------------------------------------------------
