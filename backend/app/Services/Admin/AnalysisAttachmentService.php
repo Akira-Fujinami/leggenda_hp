@@ -56,6 +56,72 @@ class AnalysisAttachmentService
     ];
 
     /**
+     * 依頼BR-1(2026-09-11): upload_max_filesizeを超えたアップロードは、
+     * PHP自身が$_FILESに「無効なUploadedFile」(getError()が
+     * UPLOAD_ERR_INI_SIZE等)として渡してくる。呼び出し元がLaravel標準の
+     * 'file'バリデーションルール($request->validate(['x' => ['file']]))に
+     * この判定を任せると、英語の汎用メッセージ
+     * ("The file failed to upload.")がそのまま出てしまう ―― このアプリは
+     * lang/ja翻訳を一切持たず、利用者向けの文言は常にこのクラスのように
+     * 直接組み立てる方針のため(既存の日本語メッセージがすべてそう)、
+     * 'file'ルールにこの判定を委ねないこと。呼び出し元は
+     * $request->file($field)を取得した直後、他の検証より先にこれを呼ぶこと。
+     *
+     * $fileがnullの場合は何もしない(必須/任意の判断は呼び出し元の責務、
+     * このメソッドは「渡された場合にPHP層で壊れていないか」だけを見る)。
+     *
+     * 【依頼BR-2、重要】このメソッドが実際に意味を持つ経路(PHPの
+     * upload_max_filesize/post_max_sizeによる実アップロード失敗)は、
+     * PHPUnitの自動テストでは再現できない ―― テストは
+     * Illuminate\Http\UploadedFile::fake()を使っており、実際のHTTP
+     * multipartアップロード・PHPのファイルアップロード処理(php.iniの
+     * 各種upload_*設定を含む)を一切経由しないため、常に
+     * isValid()===trueのUploadedFileしか渡ってこない。この分岐
+     * (isValid()===false)は自動テストで実行されたことが無く、今後も
+     * 通常のテスト追加では守れない(依頼者指定、無理に自動テスト化
+     * しないこと ―― 実際のPHPアップロード処理を経由する試験は
+     * この規模のアプリには見合わない)。
+     *
+     * 動作確認は、実際にPHPサーバー(docker composeのbackendコンテナ、
+     * ポート8002)へcurlでmultipartアップロードして行う(依頼BJ改-4・
+     * 依頼BR-1で実施した手順の要約):
+     *   1. 管理者としてログインし、セッションCookieを保存する
+     *      (`curl -c cookies.txt -d "username=…&password=…" \
+     *        http://localhost:8002/admin/auth`)
+     *   2. 対象画面(診断詳細の添付フォーム、または比較作成フォーム)を
+     *      GETし、`_token`(CSRF)を取得する
+     *   3. 20MB台前半(例: 21MB)のファイルで
+     *      `curl -b cookies.txt -F "_token=…" -F "file=@big.pdf" \
+     *        http://localhost:8002/admin/analyses/{id}/attachment`
+     *      → 日本語で「ファイルサイズが上限(20MB)を超えています。」が
+     *      出ること(このメソッドの分岐)
+     *   4. post_max_size(25M)を超えるファイル(例: 26MB)で同様に送る
+     *      → 419だが日本語の案内が出ること(bootstrap/app.phpの
+     *      419ハンドラ、このメソッドではなくPHPが$_POSTごと破棄する
+     *      別経路)
+     */
+    public function assertUploadSucceeded(?UploadedFile $file, string $field): void
+    {
+        if ($file === null || $file->isValid()) {
+            return;
+        }
+
+        if (in_array($file->getError(), [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)) {
+            $maxBytes = (int) config('analysis_attachment.max_file_size_bytes');
+            throw ValidationException::withMessages([
+                $field => ['ファイルサイズが上限('.$this->formatBytes($maxBytes).')を超えています。'],
+            ]);
+        }
+
+        // UPLOAD_ERR_PARTIAL/NO_TMP_DIR/CANT_WRITE/EXTENSION等、サイズ以外の
+        // まれなアップロード失敗。この先(finfo_file()等)は失敗した
+        // アップロードの実体(tmp_name)が無い前提で動くため、ここで止める。
+        throw ValidationException::withMessages([
+            $field => ['ファイルのアップロードに失敗しました。もう一度お試しください。'],
+        ]);
+    }
+
+    /**
      * 依頼BI-3: 拡張子・実際の中身(マジックバイト)・1ファイルあたりの
      * サイズ上限の検証だけを、保存(store())を伴わずに行う。比較作成
      * フォーム(ComparisonController)が、まだ存在しない比較Analysisに対して
@@ -63,6 +129,10 @@ class AnalysisAttachmentService
      * (全診断合計のディスク容量上限(assertWithinStorageBudget)は対象の
      * Analysisが無いと判定できないため、ここには含めない ―― 実際の保存時
      * (store())には引き続き含まれる)。
+     *
+     * 【重要】この時点で$fileは既にassertUploadSucceeded()を通っている
+     * (呼び出し元がPHP層のアップロード失敗を先に弾いている)前提 ――
+     * このメソッド自身はUploadedFile::isValid()を再確認しない。
      *
      * @return string  検証済みの拡張子(小文字)
      */

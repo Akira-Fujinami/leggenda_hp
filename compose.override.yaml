@@ -16,6 +16,12 @@ services:
     volumes:
       - ./backend:/var/www/html
       - backend-vendor:/var/www/html/vendor
+      # 依頼BJ-1/依頼BR-4: storage/framework/testingだけをバインドマウントの
+      # 外(Docker管理下の名前付きボリューム)に出す。フルスイート実行時の
+      # 一過性に見えるテスト失敗の原因がWindowsバインドマウントのI/O特性
+      # だったための恒久対処(compose.yamlのbackend-testing-storage参照)。
+      # ローカル開発専用 ―― 本番(Render)はこのファイルを経由しない。
+      - backend-testing-storage:/var/www/html/storage/framework/testing
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]
       interval: 10s

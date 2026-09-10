@@ -203,7 +203,11 @@ class ComparisonController extends Controller
             'competitor_urls.*' => ['nullable', 'string', 'max:2048'],
             'competitor_names' => ['nullable', 'array'],
             'competitor_names.*' => ['nullable', 'string', 'max:255'],
-            'sales_deck' => ['nullable', 'file'],
+            // 依頼BR-1(2026-09-11): sales_deckに'file'ルールを含めない。
+            // PHP層(upload_max_filesize)で弾かれたアップロードは、Laravel
+            // 標準の'file'ルールだと英語の汎用メッセージで落ちてしまう
+            // (AnalysisAttachmentService::assertUploadSucceeded()参照、
+            // 下のvalidateSalesDeck()呼び出し前で日本語のまま判定する)。
         ]);
 
         // 依頼BM-3: URLを入力した行は、企業名も必須にする(空欄だとホスト名の
@@ -223,6 +227,9 @@ class ComparisonController extends Controller
         // 最大50ページ巡回し、数十分かかる ―― 差し込めない資料のために
         // それを走らせてから気づくのが最悪の出方(依頼者指摘)。
         $salesDeck = $request->file('sales_deck');
+        // 依頼BR-1: PHP層でのアップロード失敗(ini_size等)を、
+        // 拡張子・構造の検証より先に日本語のまま弾く。
+        $this->attachments->assertUploadSucceeded($salesDeck, 'sales_deck');
         if ($salesDeck !== null) {
             $this->validateSalesDeck($salesDeck);
         }

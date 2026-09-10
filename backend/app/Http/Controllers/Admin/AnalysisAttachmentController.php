@@ -28,8 +28,16 @@ class AnalysisAttachmentController extends Controller
 
     public function store(Request $request, Analysis $analysis): RedirectResponse
     {
-        $request->validate(['file' => ['required', 'file']]);
+        // 依頼BR-1(2026-09-11): $request->validate(['file' => ['required', 'file']])
+        // だと、PHP層(upload_max_filesize)で弾かれたアップロードがLaravel
+        // 標準の英語メッセージ("The file failed to upload.")で落ちてしまう
+        // (AnalysisAttachmentService::assertUploadSucceeded()参照)。
+        // 'required'相当の判定も含め、このクラスで日本語のまま完結させる。
         $file = $request->file('file');
+        $this->attachments->assertUploadSucceeded($file, 'file');
+        if ($file === null) {
+            throw ValidationException::withMessages(['file' => ['ファイルを選択してください。']]);
+        }
 
         // 依頼BI-3: PPTXの場合のみ、スライドサイズ・参照元ページの検証も
         // かける(AdminComparisonPptxInserter::validate()、比較作成フォーム

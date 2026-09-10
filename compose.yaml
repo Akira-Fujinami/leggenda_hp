@@ -252,6 +252,15 @@ volumes:
   backend-storage:
   backend-public:
   frontend-node-modules:
+  # 依頼BJ-1(2026-09-10)/依頼BR-4(2026-09-11): storage/framework/testing
+  # (Storage::fake()が使う場所)をWindows Docker Desktopのバインドマウント
+  # (./backend:/var/www/html)の外に出す。バインドマウントのI/Oは
+  # フルスイート実行時にのみ問題化する遅延・ロック挙動があり、これが
+  # 「フルスイートでは稀に赤いが、単体では常に緑」という一過性に見える
+  # 失敗の原因だった(3回連続フルスイート実行で1711/1711全緑を確認、
+  # 依頼BJ-1参照)。開発環境専用(compose.override.yamlでのみマウントする、
+  # 本番のcompose.prod.yamlは触らない)。
+  backend-testing-storage:
   analyzer-node-modules:
   # backendとanalyzerで共有する分析結果ストレージ(生HTML/スクリーンショット/
   # Lighthouse生JSON等)。screenshotはanalyzerが直接書き込み、Laravelは

@@ -109,6 +109,38 @@ return Application::configure(basePath: dirname(__DIR__))
         // AccessDeniedHttpException (= HttpExceptionInterface) へ変換されて
         // しまうため、専用のrender()コールバックを登録しても発火しない。
         // そのため403は以下の汎用ハンドラ内で明示的に扱う。
+        // 依頼BR-1(2026-09-11): post_max_size(25M)を超えるPOSTは、PHP自身が
+        // $_POST/$_FILES(CSRFトークン含む)を丸ごと破棄するため、通常の
+        // セッション切れと見分けが付かないTokenMismatchException(419)に
+        // なる(依頼BJ改-4の実HTTP検証で確認)。upload_max_filesizeを
+        // 引き上げても(同依頼BR-1本体の対処)、post_max_size自体を超える
+        // 経路はPHPがLaravelを起動する前に$_POSTを破棄するため、
+        // アプリ側では原理的に防げない。ファイル添付を扱う2経路
+        // (比較作成フォームのsales_deck・詳細画面の添付欄)に限り、
+        // 419を英語の生エラーページのまま出さず日本語の案内へ差し替える
+        // ―― $wantsJson()の判定より前に置き、JSON/非JSONどちらの
+        // リクエストであってもこの2経路では常にこちらを優先する
+        // (それ以外の419挙動は変えない、依頼者指定の対象範囲に絞る)。
+        $exceptions->render(function (HttpExceptionInterface $e, Request $request) {
+            if ($e->getStatusCode() !== 419
+                || ! $request->routeIs('admin.analyses.attachment.store', 'admin.analyses.compare.store')
+            ) {
+                return null;
+            }
+
+            $message = 'ファイルが大きすぎるか、セッションの有効期限が切れました。お手数ですが、ファイルを選び直してもう一度お試しください。';
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => $message,
+                    'errors' => [],
+                    'error_code' => 'UPLOAD_TOO_LARGE_OR_SESSION_EXPIRED',
+                ], 419);
+            }
+
+            return back()->with('status', $message);
+        });
+
         $exceptions->render(function (HttpExceptionInterface $e, Request $request) use ($wantsJson) {
             if (! $wantsJson($request) || $e->getStatusCode() < 400) {
                 return null;

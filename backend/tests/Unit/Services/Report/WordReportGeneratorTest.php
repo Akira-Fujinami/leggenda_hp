@@ -150,21 +150,44 @@ class WordReportGeneratorTest extends TestCase
         ], $overrides));
     }
 
+    /**
+     * 依頼BR-3(2026-09-11): tempnam()はこの時点で拡張子無しの実ファイルを
+     * 作る。従来は`tempnam(...).'.docx'`という形で別パスを作り、そちらだけ
+     * unlink()していたため、tempnam()自身が作った拡張子無しのファイルが
+     * /tmpに残り続けていた(フルスイート1回でこのファイルの2メソッドぶん
+     * 48ファイル残存を確認、依頼BJ改-3で直した3箇所と同じ形、依頼BJ改-3の
+     * 報告で対象外として記録されていたもの)。App\Services\Report\
+     * WordReportGenerator::reservedTempPath()と同じ方式(rename()で
+     * tempnam()が予約した実体をそのまま使い回す)で直す。
+     */
+    private function reservedTempPath(string $extension): string
+    {
+        $reserved = tempnam(sys_get_temp_dir(), 'word-report-test-');
+        $path = $reserved.'.'.$extension;
+        rename($reserved, $path);
+
+        return $path;
+    }
+
     private function extractDocumentXml(string $docx): string
     {
-        $tempPath = tempnam(sys_get_temp_dir(), 'word-report-test-').'.docx';
-        file_put_contents($tempPath, $docx);
+        $tempPath = $this->reservedTempPath('docx');
 
-        $zip = new ZipArchive;
-        $this->assertTrue($zip->open($tempPath) === true, '生成されたファイルが有効なzip(docx)であること');
+        try {
+            file_put_contents($tempPath, $docx);
 
-        $documentXml = $zip->getFromName('word/document.xml');
-        $zip->close();
-        unlink($tempPath);
+            $zip = new ZipArchive;
+            $this->assertTrue($zip->open($tempPath) === true, '生成されたファイルが有効なzip(docx)であること');
 
-        $this->assertNotFalse($documentXml);
+            $documentXml = $zip->getFromName('word/document.xml');
+            $zip->close();
 
-        return $documentXml;
+            $this->assertNotFalse($documentXml);
+
+            return $documentXml;
+        } finally {
+            @unlink($tempPath);
+        }
     }
 
     private function generate(ReportViewModel $viewModel): string
@@ -182,14 +205,18 @@ class WordReportGeneratorTest extends TestCase
     private function generateRelsXml(ReportViewModel $viewModel): string
     {
         $docx = app(WordReportGenerator::class)->generate($viewModel);
-        $tempPath = tempnam(sys_get_temp_dir(), 'word-report-test-').'.docx';
-        file_put_contents($tempPath, $docx);
+        $tempPath = $this->reservedTempPath('docx');
 
-        $zip = new ZipArchive;
-        $zip->open($tempPath);
-        $relsXml = $zip->getFromName('word/_rels/document.xml.rels');
-        $zip->close();
-        unlink($tempPath);
+        try {
+            file_put_contents($tempPath, $docx);
+
+            $zip = new ZipArchive;
+            $zip->open($tempPath);
+            $relsXml = $zip->getFromName('word/_rels/document.xml.rels');
+            $zip->close();
+        } finally {
+            @unlink($tempPath);
+        }
 
         $this->assertNotFalse($relsXml);
 
