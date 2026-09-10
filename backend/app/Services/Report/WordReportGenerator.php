@@ -110,7 +110,7 @@ class WordReportGenerator
         // 付録として最後に置く(以前はCTAの直前だった)。
         $this->addEvidenceSection($phpWord, $viewModel);
 
-        $tempPath = tempnam(sys_get_temp_dir(), 'lead-report-').'.docx';
+        $tempPath = $this->reservedTempPath('lead-report-', 'docx');
 
         try {
             IOFactory::createWriter($phpWord, 'Word2007')->save($tempPath);
@@ -122,6 +122,26 @@ class WordReportGenerator
                 @unlink($radarTempPath);
             }
         }
+    }
+
+    /**
+     * 依頼BJ改-3(2026-09-11): tempnam()はこの時点で拡張子無しの実ファイルを
+     * 作る。従来は`tempnam(...).'.'.拡張子`という形で別パスを作り、そちらだけ
+     * @unlink()していたため、tempnam()自身が作った拡張子無しのファイルが
+     * /tmpに残り続けていた ―― Word版レポートを1本生成するたびに、.docx用
+     * ・レーダー画像用(競合表示時のみ)の最大2ファイルが増える計算になる
+     * (本番コンテナは長期間動き続けるため、時間とともに溜まる)。
+     * rename()でtempnam()が予約した一意な実体をそのまま目的の拡張子付き
+     * パスへ移動させ、拡張子無しの残骸を作らない(削除してから作り直すの
+     * ではなく、既に確保済みの実体を使い回す)。
+     */
+    private function reservedTempPath(string $prefix, string $extension): string
+    {
+        $reserved = tempnam(sys_get_temp_dir(), $prefix);
+        $path = $reserved.'.'.$extension;
+        rename($reserved, $path);
+
+        return $path;
     }
 
     private function addCoverSection(PhpWord $phpWord, ReportViewModel $viewModel): void
@@ -417,7 +437,7 @@ class WordReportGenerator
         // 削除する(戻り値でパスを渡す、詳細はgenerate()側のコメント参照)。
         $radarTempPath = null;
         if ($showCompetitorColumn && $viewModel->brandWheelRadarPngComparison !== null) {
-            $radarTempPath = tempnam(sys_get_temp_dir(), 'lead-report-radar-').'.png';
+            $radarTempPath = $this->reservedTempPath('lead-report-radar-', 'png');
             file_put_contents($radarTempPath, $viewModel->brandWheelRadarPngComparison);
             $section->addTextBreak(1);
             $section->addImage($radarTempPath, ['width' => 220, 'height' => 160, 'alignment' => Jc::CENTER]);

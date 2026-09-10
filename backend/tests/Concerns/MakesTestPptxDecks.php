@@ -18,55 +18,68 @@ trait MakesTestPptxDecks
      */
     protected function makeMinimalPptxBytes(array $slideTexts, int $sldSzCx = 12192000, int $sldSzCy = 6858000): string
     {
-        $path = tempnam(sys_get_temp_dir(), 'test-deck').'.pptx';
+        // 依頼BJ改-3(2026-09-11): tempnam()はこの時点で実ファイル(拡張子無し)を
+        // 作る。従来は末尾で$path(.pptx付き)だけを@unlink()していたため、
+        // tempnam()自身が作った拡張子無しのファイルが/tmpに残り続けていた
+        // (フルテストスイート1回につき、このヘルパーを使うテストの数だけ
+        // 0バイトファイルが増える)。rename()でtempnam()が予約した一意な
+        // ファイルをそのまま.pptx付きの名前へ移動させ、拡張子無しの残骸を
+        // 作らないようにする(削除してから作り直すのではなく、既に確保
+        // 済みの実体をそのまま使い回すため、他プロセスとの競合も増やさない)。
+        $reserved = tempnam(sys_get_temp_dir(), 'test-deck');
+        $path = $reserved.'.pptx';
+        rename($reserved, $path);
 
-        $zip = new ZipArchive;
-        $zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+        try {
+            $zip = new ZipArchive;
+            $zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE);
 
-        $zip->addFromString('ppt/theme/theme1.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="F"/>');
-        $zip->addFromString('ppt/slideMasters/slideMaster1.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>');
-        $zip->addFromString('ppt/slideMasters/_rels/slideMaster1.xml.rels', $this->pptxRels([['Id' => 'rId1', 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme', 'Target' => '../theme/theme1.xml']]));
-        $zip->addFromString('ppt/slideLayouts/slideLayout1.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>');
-        $zip->addFromString('ppt/slideLayouts/_rels/slideLayout1.xml.rels', $this->pptxRels([['Id' => 'rId1', 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster', 'Target' => '../slideMasters/slideMaster1.xml']]));
+            $zip->addFromString('ppt/theme/theme1.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="F"/>');
+            $zip->addFromString('ppt/slideMasters/slideMaster1.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>');
+            $zip->addFromString('ppt/slideMasters/_rels/slideMaster1.xml.rels', $this->pptxRels([['Id' => 'rId1', 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme', 'Target' => '../theme/theme1.xml']]));
+            $zip->addFromString('ppt/slideLayouts/slideLayout1.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>');
+            $zip->addFromString('ppt/slideLayouts/_rels/slideLayout1.xml.rels', $this->pptxRels([['Id' => 'rId1', 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster', 'Target' => '../slideMasters/slideMaster1.xml']]));
 
-        $overrides = [
-            '/ppt/presentation.xml' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml',
-            '/ppt/slideMasters/slideMaster1.xml' => 'application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml',
-            '/ppt/slideLayouts/slideLayout1.xml' => 'application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml',
-            '/ppt/theme/theme1.xml' => 'application/vnd.openxmlformats-officedocument.theme+xml',
-        ];
-        $presRels = [['Id' => 'rId1', 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster', 'Target' => 'slideMasters/slideMaster1.xml']];
-        $sldIds = [];
-        $rid = 2;
-        $sid = 256;
+            $overrides = [
+                '/ppt/presentation.xml' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml',
+                '/ppt/slideMasters/slideMaster1.xml' => 'application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml',
+                '/ppt/slideLayouts/slideLayout1.xml' => 'application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml',
+                '/ppt/theme/theme1.xml' => 'application/vnd.openxmlformats-officedocument.theme+xml',
+            ];
+            $presRels = [['Id' => 'rId1', 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster', 'Target' => 'slideMasters/slideMaster1.xml']];
+            $sldIds = [];
+            $rid = 2;
+            $sid = 256;
 
-        foreach ($slideTexts as $i => $text) {
-            $n = $i + 1;
-            $xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>'.htmlspecialchars($text, ENT_QUOTES | ENT_XML1).'</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>';
-            $zip->addFromString("ppt/slides/slide{$n}.xml", $xml);
-            $zip->addFromString("ppt/slides/_rels/slide{$n}.xml.rels", $this->pptxRels([['Id' => 'rId1', 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout', 'Target' => '../slideLayouts/slideLayout1.xml']]));
-            $overrides["/ppt/slides/slide{$n}.xml"] = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
-            $rId = 'rId'.$rid;
-            $presRels[] = ['Id' => $rId, 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide', 'Target' => "slides/slide{$n}.xml"];
-            $sldIds[] = ['id' => $sid, 'rId' => $rId];
-            $rid++;
-            $sid++;
+            foreach ($slideTexts as $i => $text) {
+                $n = $i + 1;
+                $xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>'.htmlspecialchars($text, ENT_QUOTES | ENT_XML1).'</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>';
+                $zip->addFromString("ppt/slides/slide{$n}.xml", $xml);
+                $zip->addFromString("ppt/slides/_rels/slide{$n}.xml.rels", $this->pptxRels([['Id' => 'rId1', 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout', 'Target' => '../slideLayouts/slideLayout1.xml']]));
+                $overrides["/ppt/slides/slide{$n}.xml"] = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
+                $rId = 'rId'.$rid;
+                $presRels[] = ['Id' => $rId, 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide', 'Target' => "slides/slide{$n}.xml"];
+                $sldIds[] = ['id' => $sid, 'rId' => $rId];
+                $rid++;
+                $sid++;
+            }
+
+            $zip->addFromString('ppt/_rels/presentation.xml.rels', $this->pptxRels($presRels));
+            $sldIdListXml = implode('', array_map(fn ($e) => '<p:sldId id="'.$e['id'].'" r:id="'.$e['rId'].'"/>', $sldIds));
+            $zip->addFromString('ppt/presentation.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>'.$sldIdListXml.'</p:sldIdLst><p:sldSz cx="'.$sldSzCx.'" cy="'.$sldSzCy.'"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>');
+
+            $typesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'.implode('', array_map(fn ($p, $t) => '<Override PartName="'.$p.'" ContentType="'.$t.'"/>', array_keys($overrides), $overrides)).'</Types>';
+            $zip->addFromString('[Content_Types].xml', $typesXml);
+            $zip->addFromString('_rels/.rels', $this->pptxRels([['Id' => 'rId1', 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument', 'Target' => 'ppt/presentation.xml']]));
+
+            $zip->close();
+
+            return (string) file_get_contents($path);
+        } finally {
+            // 依頼BJ改-3: 例外経路(addFromString等が失敗した場合)でも
+            // 必ず消す。
+            @unlink($path);
         }
-
-        $zip->addFromString('ppt/_rels/presentation.xml.rels', $this->pptxRels($presRels));
-        $sldIdListXml = implode('', array_map(fn ($e) => '<p:sldId id="'.$e['id'].'" r:id="'.$e['rId'].'"/>', $sldIds));
-        $zip->addFromString('ppt/presentation.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>'.$sldIdListXml.'</p:sldIdLst><p:sldSz cx="'.$sldSzCx.'" cy="'.$sldSzCy.'"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>');
-
-        $typesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'.implode('', array_map(fn ($p, $t) => '<Override PartName="'.$p.'" ContentType="'.$t.'"/>', array_keys($overrides), $overrides)).'</Types>';
-        $zip->addFromString('[Content_Types].xml', $typesXml);
-        $zip->addFromString('_rels/.rels', $this->pptxRels([['Id' => 'rId1', 'Type' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument', 'Target' => 'ppt/presentation.xml']]));
-
-        $zip->close();
-
-        $bytes = (string) file_get_contents($path);
-        @unlink($path);
-
-        return $bytes;
     }
 
     /**
