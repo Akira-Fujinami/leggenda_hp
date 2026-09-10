@@ -357,6 +357,9 @@ class CrawlWebsitePageJobTest extends TestCase
         $this->assertTrue($short->fresh()->render_candidate);
         Queue::assertPushed(RenderCrawledPageJob::class, 1);
         $this->assertSame(0, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+        // 依頼BV-2: render_candidateは処理後falseに戻ってしまうため、
+        // 選定した瞬間の件数をwebsite_analyses側に残す。
+        $this->assertSame(1, $websiteAnalysis->fresh()->render_candidate_count);
     }
 
     /**
@@ -381,6 +384,9 @@ class CrawlWebsitePageJobTest extends TestCase
         Queue::assertNotPushed(RenderCrawledPageJob::class);
         $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
         $this->assertSame('exhausted', $websiteAnalysis->fresh()->crawl_finished_reason);
+        // 依頼BV-2: 候補0件(=静的HTMLで足りていた、正常)も明示的に0として
+        // 保存する ―― nullのまま(依頼BV適用前の既存データ)と区別するため。
+        $this->assertSame(0, $websiteAnalysis->fresh()->render_candidate_count);
     }
 
     /**

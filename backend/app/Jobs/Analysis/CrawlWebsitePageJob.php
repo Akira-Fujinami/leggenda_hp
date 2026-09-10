@@ -411,6 +411,16 @@ class CrawlWebsitePageJob implements ShouldQueue
             })
             ->take($maxCandidates);
 
+        // 依頼BV-2(2026-09-11): analysis_crawled_pages.render_candidateは
+        // RenderCrawledPageJobの処理後にfalseへ戻ってしまうため、後から
+        // 「もともと何件が候補だったか」を数え直せない。選定した瞬間の
+        // 件数をここで保存する(候補選定のロジック自体は変えない、記録の
+        // 追加のみ)。0件(=全ページが本文200字以上で足りていた、正常)も
+        // 明示的に保存することで、既存データ(null)と区別できるようにする。
+        WebsiteAnalysis::query()->whereKey($this->websiteAnalysisId)->update([
+            'render_candidate_count' => $candidates->count(),
+        ]);
+
         if ($candidates->isEmpty()) {
             $pipeline->dispatchBrandWheelAnalysisAfterCrawl($this->analysisId, $this->websiteAnalysisId);
 

@@ -145,6 +145,13 @@ class CrawlWebsiteJobTest extends TestCase
         $this->assertSame(0, AnalysisCrawledPage::query()->count());
         Queue::assertNotPushed(CrawlWebsitePageJob::class);
         $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+        // 依頼BV-1: この経路はfinalizeCrawl()を通らないため、依頼BU-1の
+        // crawl_finished_reason/atがnullのまま残り、画面が「巡回して
+        // いません。」としか出せなかった(LINEヤフーの実例)。
+        // CrawlWebsiteJob::handle()自身が保存するようになったことを確認する。
+        $websiteAnalysis->refresh();
+        $this->assertSame('robots_txt_unavailable', $websiteAnalysis->crawl_finished_reason);
+        $this->assertNotNull($websiteAnalysis->crawl_finished_at);
     }
 
     /**
@@ -161,6 +168,32 @@ class CrawlWebsiteJobTest extends TestCase
 
         $this->assertSame(0, AnalysisCrawledPage::query()->count());
         Queue::assertNotPushed(CrawlWebsitePageJob::class);
+    }
+
+    /**
+     * 依頼BV-1: homepage/recruitのfinal_urlが無く許可ホストが解決できない
+     * 場合も、robots_txt_unavailable同様finalizeCrawl()を通らない。
+     * 依頼者提案の値'no_allowed_hosts'を保存する。
+     */
+    public function test_no_allowed_hosts_resolved_records_the_reason_and_dispatches_brand_wheel_directly(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        $project = Project::factory()->create();
+        $analysis = Analysis::factory()->for($project)->create(['status' => AnalysisStatus::Running, 'crawl_site' => true]);
+        $website = Website::factory()->for($project)->create(['is_primary' => true, 'url' => 'https://example.co.jp']);
+        $websiteAnalysis = WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id]);
+        // homepage/recruitのAnalysisPage行を一切作らない(allowedHosts()が
+        // []を返す状態を再現する)。
+        $this->putRobotsPage($analysis, $websiteAnalysis, 404);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertSame(0, AnalysisCrawledPage::query()->count());
+        Queue::assertNotPushed(CrawlWebsitePageJob::class);
+        $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+        $websiteAnalysis->refresh();
+        $this->assertSame('no_allowed_hosts', $websiteAnalysis->crawl_finished_reason);
+        $this->assertNotNull($websiteAnalysis->crawl_finished_at);
     }
 
     /**

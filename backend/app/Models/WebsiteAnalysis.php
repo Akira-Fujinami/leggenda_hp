@@ -15,6 +15,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
     'analysis_id', 'website_id', 'status', 'progress', 'started_at', 'completed_at',
     'error_summary', 'http_status', 'final_url', 'response_time_ms', 'brand_wheel_dispatched_at',
     'recruitment_track_exclusion_fallback_at', 'crawl_finished_reason', 'crawl_finished_at',
+    'render_candidate_count',
 ])]
 class WebsiteAnalysis extends Model
 {
@@ -31,6 +32,7 @@ class WebsiteAnalysis extends Model
             'brand_wheel_dispatched_at' => 'datetime',
             'recruitment_track_exclusion_fallback_at' => 'datetime',
             'crawl_finished_at' => 'datetime',
+            'render_candidate_count' => 'integer',
         ];
     }
 

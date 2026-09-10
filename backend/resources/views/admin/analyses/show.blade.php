@@ -103,7 +103,16 @@
 --}}
 <div class="card">
     <h3>巡回の実績</h3>
-    @if ($analysis->websiteAnalyses->every(fn ($wa) => ! ($crawlSummaries[$wa->id]['has_crawl_data'] ?? false)))
+    {{--
+        依頼BV-1: crawl_site=trueなのに巡回が始まらなかった(robots.txt
+        未取得・許可ホスト0件)場合も、依頼BU時点ではここが「この診断では
+        巡回を行っていません。」という一律の文言に隠れてしまい、なぜ
+        始まらなかったかが見えなかった(単独診断で1サイトしかない場合、
+        全サイトがhas_crawl_data=falseになるため)。crawl_site自体が
+        falseの診断(機能を使っていない、多数派)のときだけ、この簡潔な
+        表示に倒す。
+    --}}
+    @if (! $analysis->crawl_site)
         <p class="empty">この診断では巡回を行っていません。</p>
     @else
         <div style="overflow-x: auto;">
@@ -126,30 +135,52 @@
                         $crawlSummary = $crawlSummaries[$wa->id] ?? null;
                         $hasCrawlData = $crawlSummary['has_crawl_data'] ?? false;
                         $hasWarning = $hasCrawlData && count($crawlSummary['warnings']) > 0;
+                        $criticalWarning = $crawlSummary['critical_warning'] ?? null;
                         $durationLabel = null;
                         if ($hasCrawlData && $crawlSummary['duration_seconds'] !== null) {
                             $durationLabel = sprintf('%d分%02d秒', intdiv($crawlSummary['duration_seconds'], 60), $crawlSummary['duration_seconds'] % 60);
                         }
+                        $renderLabel = '—';
+                        if ($hasCrawlData) {
+                            $renderLabel = $crawlSummary['render_candidate_count'] !== null
+                                ? "{$crawlSummary['render_candidate_count']}件→{$crawlSummary['rendered_count']}件"
+                                : "{$crawlSummary['rendered_count']}件";
+                        }
                     @endphp
-                    <tr style="{{ $hasWarning ? 'background: #FFF8EC;' : '' }}">
+                    {{-- 依頼BV-3: critical_warning(crawl_site=trueなのにこの
+                         サイトだけ巡回が始まらなかった)は、BU-3の3条件より
+                         一段重い赤系で目立たせる ―― 同じ黄色にしない
+                         (依頼者指定)。 --}}
+                    <tr style="{{ $criticalWarning ? 'background: #FDEEEC;' : ($hasWarning ? 'background: #FFF8EC;' : '') }}">
                         <td>
                             {{ $wa->website?->name }}
-                            @if ($hasWarning)
+                            @if ($criticalWarning)
+                                <span title="このサイトは巡回されていません" style="color: #C2372B;">&#9940;</span>
+                            @elseif ($hasWarning)
                                 <span title="この結果は確認が必要です" style="color: #B8860B;">&#9888;</span>
                             @endif
                         </td>
                         @if (! $hasCrawlData)
-                            <td colspan="6" class="empty">巡回していません。</td>
+                            <td colspan="6" style="{{ $criticalWarning ? 'color: #C2372B; font-weight: 600;' : 'color: var(--muted); font-size: 13px;' }}">
+                                巡回していません。@if ($crawlSummary['finished_reason'] !== null)({{ $crawlSummary['finished_reason_label'] }})@endif
+                            </td>
                         @else
                             <td>{{ $crawlSummary['fetched_count'] }}</td>
                             <td>{{ $crawlSummary['failed_count'] }}</td>
                             <td>{{ $crawlSummary['excluded_counts']['by_pattern'] }}/{{ $crawlSummary['excluded_counts']['by_robots'] }}/{{ $crawlSummary['excluded_counts']['by_scope'] }}/{{ $crawlSummary['excluded_counts']['by_track'] }}</td>
                             <td>{{ $crawlSummary['pending_count'] }}</td>
-                            <td>{{ $crawlSummary['rendered_count'] }}</td>
+                            <td>{{ $renderLabel }}</td>
                             <td>{{ $crawlSummary['finished_reason_label'] }}</td>
                             <td>{{ $durationLabel ?? '—' }}</td>
                         @endif
                     </tr>
+                    @if ($criticalWarning)
+                        <tr style="background: #FDEEEC;">
+                            <td colspan="7" style="padding-top: 0;">
+                                <div style="color: #C2372B; font-size: 13px; font-weight: 600;">&#9940; {{ $criticalWarning['message'] }}</div>
+                            </td>
+                        </tr>
+                    @endif
                     @if ($hasWarning)
                         <tr style="background: #FFF8EC;">
                             <td colspan="7" style="padding-top: 0;">

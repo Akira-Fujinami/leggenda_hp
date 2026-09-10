@@ -92,6 +92,16 @@ class CrawlWebsiteJob implements ShouldQueue
                 'website_analysis_id' => $this->websiteAnalysisId,
                 'reason' => 'robots_txt_unavailable',
             ]);
+            // 依頼BV-1(2026-09-11): この経路はfinalizeCrawl()を通らないため、
+            // 依頼BU-1のcrawl_finished_reason/atがnullのまま残り、画面が
+            // 「巡回していません。」としか出せなかった(依頼者が実データ
+            // (LINEヤフー)で確認)。上のLog::infoが出しているのと同じ値を
+            // そのまま保存する ―― 判定ロジック・ログ出力は変えない、
+            // 記録の追加のみ。
+            WebsiteAnalysis::query()->whereKey($this->websiteAnalysisId)->update([
+                'crawl_finished_reason' => 'robots_txt_unavailable',
+                'crawl_finished_at' => now(),
+            ]);
             $pipeline->dispatchBrandWheelAnalysisAfterCrawl($this->analysisId, $this->websiteAnalysisId);
 
             return;
@@ -103,6 +113,12 @@ class CrawlWebsiteJob implements ShouldQueue
             Log::warning('CrawlWebsiteJob: no allowed hosts resolved (homepage/recruit final_url missing), skipping', [
                 'analysis_id' => $this->analysisId,
                 'website_analysis_id' => $this->websiteAnalysisId,
+            ]);
+            // 依頼BV-1: 依頼者提案の値('no_allowed_hosts')。上のrobots同様、
+            // finalizeCrawl()を通らないため、ここで記録する。
+            WebsiteAnalysis::query()->whereKey($this->websiteAnalysisId)->update([
+                'crawl_finished_reason' => 'no_allowed_hosts',
+                'crawl_finished_at' => now(),
             ]);
             $pipeline->dispatchBrandWheelAnalysisAfterCrawl($this->analysisId, $this->websiteAnalysisId);
 

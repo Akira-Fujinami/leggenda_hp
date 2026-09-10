@@ -139,7 +139,10 @@ class CrawlDiagnosticsDisplayTest extends TestCase
         $response->assertSee('>12<', false);
         $response->assertSee('>2<', false);
         $response->assertSee('>6<', false);
-        $response->assertSee('>7<', false);
+        // 依頼BV-2: render_candidate_countが未設定(null、既存データ)の
+        // 場合、レンダリング列は候補数を出せないため「7件」のみ表示する
+        // (「N件→M件」形式にはならない)。
+        $response->assertSee('>7件<', false);
     }
 
     public function test_failed_urls_are_shown_with_http_status_and_overflow_count(): void
@@ -262,6 +265,123 @@ class CrawlDiagnosticsDisplayTest extends TestCase
         $response->assertSee('上限ページ数に達して終了');
         // 自社(20件取得、閾値10以上)には出ず、競合(3件、閾値未満)にだけ出る。
         $response->assertSee(config('crawl_diagnostics.warning_messages.low_fetched_page_count'));
+    }
+
+    /**
+     * 依頼BV-1: 巡回が「始まらなかった」2経路(robots.txt未取得・許可ホスト
+     * 0件)は、analysis_crawled_pagesが0件のままだが、crawl_finished_reason
+     * には値が入る。「巡回していません。」だけで終わらせず、なぜ行われ
+     * なかったかを画面に出す。
+     */
+    public function test_robots_txt_unavailable_reason_shows_why_the_crawl_did_not_start(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $wa->update(['crawl_finished_reason' => 'robots_txt_unavailable', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee('robots.txtが読めず、巡回を行いませんでした');
+        $response->assertDontSee('robots_txt_unavailable');
+    }
+
+    public function test_no_allowed_hosts_reason_shows_why_the_crawl_did_not_start(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $wa->update(['crawl_finished_reason' => 'no_allowed_hosts', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee('対象サイトのURLが解決できず、巡回を行いませんでした');
+        $response->assertDontSee('no_allowed_hosts');
+    }
+
+    /**
+     * 依頼BV-3(この依頼の主目的): crawl_site=trueなのに、多社比較の1社だけ
+     * 巡回が1ページも行われなかった場合(LINEヤフーの実例そのもの)、
+     * BU-3の3条件とは独立した、資料に出さないよう明示する警告が出る。
+     * 巡回できた自社サイトには出ない。
+     */
+    public function test_critical_warning_shows_for_a_site_that_was_never_crawled_in_a_multi_site_comparison(): void
+    {
+        $analysis = $this->makeAnalysis(crawlSite: true);
+        $self = $this->makeWebsiteAnalysis($analysis, '自社サイト(BV検証)');
+        $notCrawled = $this->makeWebsiteAnalysis($analysis, '競合サイト(巡回0件・BV検証)');
+
+        $this->seedCrawledPages($self, [AnalysisCrawledPage::STATUS_FETCHED => 20]);
+        $self->update(['crawl_finished_reason' => 'exhausted', 'crawl_finished_at' => now()]);
+        // $notCrawledにはanalysis_crawled_pagesの行を一切作らない。
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee(config('crawl_diagnostics.crawl_not_started_message'));
+    }
+
+    /**
+     * crawl_site=false(機能自体を使っていない、多数派)の診断では、
+     * 巡回0件は正常な状態のため、BV-3の警告を出さない。
+     */
+    public function test_critical_warning_does_not_show_when_crawl_site_is_disabled(): void
+    {
+        $analysis = $this->makeAnalysis(crawlSite: false);
+        $this->makeWebsiteAnalysis($analysis);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertDontSee(config('crawl_diagnostics.crawl_not_started_message'));
+    }
+
+    /**
+     * 依頼BV-2: 候補0件(正常、静的HTMLで足りていた)・候補N件→成功M件・
+     * 候補N件→成功0件(異常)の3通りが、画面で区別できること。
+     */
+    public function test_render_candidate_count_shows_zero_candidates_as_normal(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $this->seedCrawledPages($wa, [AnalysisCrawledPage::STATUS_FETCHED => 20]);
+        $wa->update(['crawl_finished_reason' => 'exhausted', 'crawl_finished_at' => now(), 'render_candidate_count' => 0]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee('0件→0件', false);
+        $response->assertDontSee(config('crawl_diagnostics.warning_messages.rendering_failed'));
+    }
+
+    public function test_render_candidate_count_shows_partial_success(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $this->seedCrawledPages($wa, [AnalysisCrawledPage::STATUS_FETCHED => 20]);
+        AnalysisCrawledPage::query()->where('website_analysis_id', $wa->id)->limit(3)->update(['rendered_html_path' => 'x.html']);
+        $wa->update(['crawl_finished_reason' => 'exhausted', 'crawl_finished_at' => now(), 'render_candidate_count' => 5]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee('5件→3件', false);
+        $response->assertDontSee(config('crawl_diagnostics.warning_messages.rendering_failed'));
+    }
+
+    public function test_render_candidate_count_shows_and_warns_on_total_rendering_failure(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $this->seedCrawledPages($wa, [AnalysisCrawledPage::STATUS_FETCHED => 20]);
+        $wa->update(['crawl_finished_reason' => 'exhausted', 'crawl_finished_at' => now(), 'render_candidate_count' => 5]);
+        // rendered_html_pathを持つ行は1件も作らない(=成功0件)。
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee('5件→0件', false);
+        $response->assertSee(config('crawl_diagnostics.warning_messages.rendering_failed'));
     }
 
     public function test_crawl_site_false_analysis_does_not_break_the_page(): void

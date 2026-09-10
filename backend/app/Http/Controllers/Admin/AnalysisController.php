@@ -70,7 +70,7 @@ class AnalysisController extends Controller
         // $crawlSummaries[$wa->id]で引くだけにする(集計ロジックをここに
         // 置かず、CrawlDiagnosticsServiceへ寄せる)。
         $crawlSummaries = $analysis->websiteAnalyses
-            ->mapWithKeys(fn ($wa) => [$wa->id => $crawlDiagnostics->summarize($wa)]);
+            ->mapWithKeys(fn ($wa) => [$wa->id => $crawlDiagnostics->summarize($wa, (bool) $analysis->crawl_site)]);
 
         return view('admin.analyses.show', [
             'analysis' => $analysis,
