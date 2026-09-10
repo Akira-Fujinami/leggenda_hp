@@ -8,6 +8,7 @@ use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\PostTooLargeException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -139,6 +140,60 @@ return Application::configure(basePath: dirname(__DIR__))
             }
 
             return back()->with('status', $message);
+        });
+
+        // 依頼BT-2(2026-09-11): 依頼BT-1でdisplay_errors=Offにした結果、
+        // post_max_size超過時のPHP警告漏出は止まったが、代わりにLaravel
+        // 組み込みのValidatePostSizeミドルウェアがPostTooLargeException
+        // (413)を投げるようになった(依頼BSのrenderステージ実HTTP検証で
+        // display_errors=Offを試した際に確認、依頼BT-1適用後もこの経路自体は
+        // 変わらない)。413はPostTooLargeExceptionという専用の例外クラスで
+        // 判定する(getStatusCode()===413ではなく型で絞る ―― 他の原因で
+        // 偶然413を返すHttpExceptionが将来増えても誤って拾わないため)。
+        // 413はサイズ超過が確定している場合のみ発生するため、419
+        // (CSRFトークン失効 ―― セッション切れ等サイズ以外の原因もあり得る、
+        // 上のハンドラ)とは文言を分ける。対象ルートは上の419ハンドラと
+        // 同じ2経路に限る(依頼者指定、依頼BR-1の419ハンドラ自体は変更しない)。
+        //
+        // ValidatePostSizeはグローバルミドルウェア(ルーティング解決より前に
+        // 実行される、Illuminate\Foundation\Configuration\Middleware::
+        // getGlobalMiddleware()参照)のため、この時点では$request->route()が
+        // 未確定で、419ハンドラで使っているrouteIs()は常にfalseを返して
+        // しまう(実HTTP検証で発覚、依頼BR-1の419ハンドラは例外の発生
+        // タイミングが異なる=ルーティング後のCSRFミドルウェアのため
+        // routeIs()で問題なく動く)。パス自体はルーティング解決を経ずに
+        // 判定できるis()を使う。
+        $exceptions->render(function (PostTooLargeException $e, Request $request) {
+            if (! $request->is('admin/analyses/*/attachment', 'admin/analyses/*/compare')) {
+                return null;
+            }
+
+            $message = 'ファイルが大きすぎます。お手数ですが、ファイルを選び直してもう一度お試しください。';
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => $message,
+                    'errors' => [],
+                    'error_code' => 'UPLOAD_TOO_LARGE',
+                ], 413);
+            }
+
+            // 419ハンドラと違いback()->with('status', ...)は使えない ――
+            // ValidatePostSizeがStartSession(webミドルウェアグループ、
+            // ルーティング解決の一部として実行される)より前に発火するため、
+            // この時点ではまだセッションが開始されておらず、フラッシュしても
+            // Cookieに紐づくセッションには保存されない(実HTTP検証で、
+            // フラッシュしたはずのメッセージが次のページに出ないことを確認)。
+            // このアプリはlang/ja翻訳を持たず文言を直接組み立てる方針の
+            // ため、ここも簡潔な自己完結のHTMLを直接返す。
+            return response(
+                '<!doctype html><html lang="ja"><head><meta charset="utf-8">'
+                .'<title>アップロードエラー</title></head><body>'
+                .'<p>'.e($message).'</p>'
+                .'<p><a href="javascript:history.back()">戻る</a></p>'
+                .'</body></html>',
+                413
+            );
         });
 
         $exceptions->render(function (HttpExceptionInterface $e, Request $request) use ($wantsJson) {

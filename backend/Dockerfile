@@ -69,6 +69,11 @@ WORKDIR /var/www/html
 # 別途生成し、名前付きVolumeに永続化する (compose.yaml側で設定)。
 FROM base AS dev
 
+# 依頼BT-1(2026-09-11): docker/php/php.ini(zz-app.ini)でdisplay_errors=Off
+# にした分を、devステージのみ画面表示へ戻す。prod/renderステージには
+# このCOPYが無いため、本番ビルドには一切含まれない。
+COPY docker/php/php.dev.ini /usr/local/etc/php/conf.d/zz-dev-overrides.ini
+
 COPY docker/scripts/backend-entrypoint.dev.sh /usr/local/bin/backend-entrypoint.sh
 RUN chmod +x /usr/local/bin/backend-entrypoint.sh
 
