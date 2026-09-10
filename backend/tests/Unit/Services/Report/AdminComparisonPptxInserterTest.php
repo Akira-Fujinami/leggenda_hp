@@ -60,6 +60,14 @@ class AdminComparisonPptxInserterTest extends TestCase
                 '事業・商品・成長性', '規模・実績・ブランド', '理念・組織・意思決定', '働き方・制度・場所', 'やりがい・人・風土', '報酬・福利厚生・成長機会',
             ]),
             'summary' => '総合では競合を下回ります、「経営スタイル」の1領域で競合の最高値を下回っています。理念・組織・意思決定の記述が薄い状態です。',
+            'missing_items' => [
+                'heading' => '競合が伝えていて、自社が伝えていない項目',
+                'empty_text' => '競合と比べて、自社に不足している項目は見つかりませんでした。',
+                'items' => [
+                    ['axis_name' => '経営スタイル', 'sub_name' => 'リーダーシップ'],
+                ],
+                'others_count' => 0,
+            ],
             'source_note' => 'テスト用ノート',
             'page_number' => null,
         ]);
@@ -241,6 +249,16 @@ class AdminComparisonPptxInserterTest extends TestCase
      * (件数に依存し0件だと下2/3が白紙になっていた旧構成)から、6領域の
      * マトリクスへ作り直したこと・他社サイトの引用文を一切載せないことを、
      * 生成されたスライドXMLで確認する。
+     *
+     * 依頼BO-1(2026-09-09): 「競合が伝えていて、自社が伝えていない項目」
+     * という見出し自体は、項目名一覧(axis_name/sub_nameのみ、引用は
+     * 含まない)として復活した ―― 依頼BM-1/BM-4が禁止したのは「件数に
+     * 依存して下2/3が白紙になる旧構成」と「引用文」であり、見出しの
+     * 文言そのものではない。旧構成の名残(引用の代表企業名を示す
+     * 「代表的な記述」ラベル)が残っていないこと・comparisonSlideBytes()の
+     * フィクスチャに仕込んだ引用/定義/推奨文(quote/definition/
+     * recommendation、missing_itemsには含めていない)が万一漏れて
+     * いないことを確認する。
      */
     public function test_comparison_slide_is_the_matrix_layout_and_contains_no_quotes(): void
     {
@@ -255,8 +273,10 @@ class AdminComparisonPptxInserterTest extends TestCase
         $zip->close();
 
         $this->assertStringContainsString('領域別の発信量', $slideXml);
-        // 旧構成(依頼BG〜BI)の見出し・列名が残っていないこと。
-        $this->assertStringNotContainsString('競合が伝えていて', $slideXml);
+        // 依頼BO-1: 項目名一覧の見出し・項目自体は出ること。
+        $this->assertStringContainsString('競合が伝えていて、自社が伝えていない項目', $slideXml);
+        $this->assertStringContainsString('リーダーシップ', $slideXml);
+        // 旧構成(依頼BG〜BI)の引用ラベルが残っていないこと。
         $this->assertStringNotContainsString('代表的な記述', $slideXml);
         // comparisonSlideBytes()のテスト用フィクスチャに仕込んだダミーの
         // 引用文が万一残っていないこと(引用を扱う経路自体が無いことの確認)。

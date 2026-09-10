@@ -22,6 +22,12 @@ use PhpOffice\PhpPresentation\Writer\PowerPoint2007;
  * (実データで確認済みの不具合)。6領域は分母4で固定のため、matched件数に
  * 関わらず必ず埋まる。他社サイトの本文引用は一切扱わない(依頼BM-4)。
  *
+ * 依頼BO(2026-09-09): まとめの帯の下が「薄い」との指摘を受け、帯の高さを
+ * summaryの実際の行数から可変にし(summaryBandHeight())、空いた縦へ
+ * 「競合が伝えていて自社が伝えていない項目」一覧(addMissingItemsSection())
+ * を追加した。他社サイトの引用は引き続き一切扱わない(依頼BM-4を維持、
+ * ここで読むのはaxis_name/sub_nameの2フィールドのみ)。
+ *
  * 【差し込みの前提、依頼BK/BL/BG由来・変更禁止】
  * - スライドサイズは12192000×6858000EMU固定(setCXにUNIT_INCHで13.333を
  *   渡すと丸め誤差で不正なXMLになるため、EMUを直接指定する)。
@@ -102,11 +108,38 @@ class AdminComparisonPptxGenerator
     private const SUMMARY_TOP_IN = 5.69;
 
     /**
-     * 6領域すべてが網かけの最悪ケース(領域名6件+補足6件を繋いだ最長の
-     * 文言)でも3行に収まる高さ(依頼BM-2実機画像化で判明 ―― 2行想定の
-     * 高さでは footer と重なった)。
+     * 依頼BO-2: まとめの帯が1行のときも旧来の3行ぶん(0.85in)の高さで
+     * 描かれ、下に間延びした余白が残っていた(依頼者指摘)。帯の高さを
+     * summary文字列の実際の折り返し行数(estimateLineCount、
+     * wrapOrEllipsizeForLinesと同じmb_strwidthベースの見積もり)から
+     * 動的に計算するようにし、空いた縦をBO-1の「不足している項目」
+     * 一覧に回す。
+     *
+     * SUMMARY_LINE_HEIGHT_IN=0.23inは、旧来の固定高0.85in(依頼BM-2で
+     * 「3行に収まる」根拠として実機確認済みだった値)を
+     * 0.16(上下パディング)+3行で逆算した値(0.85-0.16=0.69、0.69÷3=0.23)
+     * ―― 1行あたりの実測済みの行送りをそのまま再利用しているため、
+     * 新しい行数(1〜2行)でも安全側の値になる。
      */
-    private const SUMMARY_HEIGHT_IN = 0.85;
+    private const SUMMARY_PADDING_IN = 0.16;
+
+    private const SUMMARY_LINE_HEIGHT_IN = 0.23;
+
+    private const SUMMARY_FONT_SIZE = 11;
+
+    // ------------------------------------------------------------------
+    // 不足している項目一覧(依頼BO-1)。まとめの帯のすぐ下、footerの
+    // 直前までの可変の余白に描く。
+    // ------------------------------------------------------------------
+
+    private const MISSING_ITEMS_GAP_IN = 0.08;
+
+    private const MISSING_ITEMS_FONT_SIZE = 10.0;
+
+    private const MISSING_ITEMS_LINE_HEIGHT_IN = 0.205;
+
+    /** footerの出典行(y=6.62in)の直前で止める。 */
+    private const MISSING_ITEMS_BOTTOM_LIMIT_IN = 6.58;
 
     /**
      * @param  array{
@@ -121,6 +154,12 @@ class AdminComparisonPptxGenerator
      *         self_gap: bool,
      *     }>,
      *     summary: string,
+     *     missing_items: array{
+     *         heading: string,
+     *         empty_text: string,
+     *         items: list<array{axis_name: string, sub_name: string}>,
+     *         others_count: int,
+     *     },
      *     source_note: string,
      *     page_number: ?string,
      * } $data
@@ -148,7 +187,13 @@ class AdminComparisonPptxGenerator
         $this->addTitle($slide);
         $this->addScoreTiles($slide, $data['companies']);
         $this->addMatrixSection($slide, $data['companies'], $data['axes']);
-        $this->addSummaryBand($slide, $data['summary']);
+
+        $summaryHeight = $this->summaryBandHeight($data['summary']);
+        $this->addSummaryBand($slide, $data['summary'], $summaryHeight);
+
+        $missingItemsTop = self::SUMMARY_TOP_IN + $summaryHeight + self::MISSING_ITEMS_GAP_IN;
+        $this->addMissingItemsSection($slide, $data['missing_items'], $missingItemsTop);
+
         $this->addFooter($slide, $data['source_note'], $data['page_number']);
 
         $writer = new PowerPoint2007($presentation);
@@ -209,8 +254,7 @@ class AdminComparisonPptxGenerator
             $labelBox->setWrap(RichText::WRAP_SQUARE);
             $labelBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
             $labelText = $this->wrapOrEllipsizeForLines($company['name'], $width, 9.5, true, 2);
-            $labelRun = $labelBox->getActiveParagraph()->createTextRun($labelText);
-            $this->font($labelRun, 9.5, true, $isSelf ? self::WHITE : self::MUTED);
+            $this->renderBalancedLines($labelBox->getActiveParagraph(), $labelText, $width, 9.5, true, $isSelf ? self::WHITE : self::MUTED);
 
             $numberTop = $nameTop + self::TILE_NAME_HEIGHT_IN;
             $numberBox = $slide->createRichTextShape();
@@ -305,7 +349,7 @@ class AdminComparisonPptxGenerator
             // 極端に長い社名だけ、2行分の文字数で省略記号にする
             // (対処の提案。ヘッダーの高さを固定する以上、際限なく伸ばせない)。
             $text = $this->wrapOrEllipsizeForLines($company['name'], $colWidth, 10, true, 2);
-            $this->font($box->getActiveParagraph()->createTextRun($text), 10, true, self::WHITE);
+            $this->renderBalancedLines($box->getActiveParagraph(), $text, $colWidth, 10, true, self::WHITE);
         }
     }
 
@@ -373,26 +417,116 @@ class AdminComparisonPptxGenerator
     }
 
     /**
+     * 依頼BO-2: まとめの帯の高さを、summary文字列の実際の折り返し行数
+     * から動的に計算する。本文ボックスの幅(CONTENT_WIDTH_IN-0.5、
+     * addSummaryBand参照)と同じ値を渡すこと。
+     */
+    private function summaryBandHeight(string $summary): float
+    {
+        $lines = $this->estimateLineCount($summary, self::CONTENT_WIDTH_IN - 0.5, self::SUMMARY_FONT_SIZE);
+
+        return self::SUMMARY_PADDING_IN + $lines * self::SUMMARY_LINE_HEIGHT_IN;
+    }
+
+    /**
      * 依頼BM-2: まとめの帯。文言はAdminComparisonPptxDataBuilderが組み立てた
      * ものをそのまま表示するだけ(固定文にしない、空にしない、いずれも
-     * データビルダー側の責務)。
+     * データビルダー側の責務)。依頼BO-2: 高さは呼び出し元(generate())が
+     * summaryBandHeight()で計算した値を渡す(固定値をやめた)。
      */
-    private function addSummaryBand(Slide $slide, string $summary): void
+    private function addSummaryBand(Slide $slide, string $summary, float $height): void
     {
         $accent = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-        $this->position($accent, self::LEFT_IN, self::SUMMARY_TOP_IN, 0.05, self::SUMMARY_HEIGHT_IN);
+        $this->position($accent, self::LEFT_IN, self::SUMMARY_TOP_IN, 0.05, $height);
         $accent->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::COPPER));
         $accent->getBorder()->setLineStyle(Border::LINE_NONE);
 
         $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-        $this->position($band, self::LEFT_IN + 0.05, self::SUMMARY_TOP_IN, self::CONTENT_WIDTH_IN - 0.05, self::SUMMARY_HEIGHT_IN);
+        $this->position($band, self::LEFT_IN + 0.05, self::SUMMARY_TOP_IN, self::CONTENT_WIDTH_IN - 0.05, $height);
         $band->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::SUMMARY_BG));
         $band->getBorder()->setLineStyle(Border::LINE_NONE);
 
         $textBox = $slide->createRichTextShape();
-        $this->position($textBox, self::LEFT_IN + 0.25, self::SUMMARY_TOP_IN + 0.08, self::CONTENT_WIDTH_IN - 0.5, self::SUMMARY_HEIGHT_IN - 0.16);
+        $this->position($textBox, self::LEFT_IN + 0.25, self::SUMMARY_TOP_IN + 0.08, self::CONTENT_WIDTH_IN - 0.5, $height - 0.16);
         $textBox->setWrap(RichText::WRAP_SQUARE);
-        $this->font($textBox->getActiveParagraph()->createTextRun($summary), 11, false, self::GAP_TEXT);
+        $this->font($textBox->getActiveParagraph()->createTextRun($summary), self::SUMMARY_FONT_SIZE, false, self::GAP_TEXT);
+    }
+
+    /**
+     * 依頼BO-1: まとめの帯の下に残る余白へ、「競合が伝えていて自社が
+     * 伝えていない項目」を差し込む。まとめの帯は依頼BO-2で可変高になった
+     * ため、この一覧が使える高さも帯の実際の行数に応じて変わる ――
+     * 見出し+項目列を1つの折り返し段落として扱い(estimateLineCountで
+     * 行数を見積もる)、余白に収まる件数まで先頭(=言及競合社数が多い順、
+     * AdminComparisonPptxDataBuilder参照)から採用し、削った分は
+     * 「ほかN件」に畳む。dataBuilder側のmissing_items_max_countは
+     * 「これ以上は出さない」という天井、ここでの計算は「実際に描画できる
+     * 件数」の実質的な上限 ―― 両者は別の役割を持つ。
+     *
+     * @param  array{heading: string, empty_text: string, items: list<array{axis_name: string, sub_name: string}>, others_count: int}  $missingItems
+     */
+    private function addMissingItemsSection(Slide $slide, array $missingItems, float $top): void
+    {
+        $width = self::CONTENT_WIDTH_IN;
+        $availableHeight = max(self::MISSING_ITEMS_LINE_HEIGHT_IN, self::MISSING_ITEMS_BOTTOM_LIMIT_IN - $top);
+
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, $top, $width, $availableHeight);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $para = $box->getActiveParagraph();
+
+        $this->font($para->createTextRun($missingItems['heading'].'：'), self::MISSING_ITEMS_FONT_SIZE, true, self::NAVY);
+
+        if ($missingItems['items'] === []) {
+            $this->font($para->createTextRun($missingItems['empty_text']), self::MISSING_ITEMS_FONT_SIZE, false, self::MUTED);
+
+            return;
+        }
+
+        $maxLines = max(1, (int) floor($availableHeight / self::MISSING_ITEMS_LINE_HEIGHT_IN));
+        [$shown, $others] = $this->fitMissingItems($missingItems['items'], $missingItems['others_count'], $missingItems['heading'], $width, $maxLines);
+
+        foreach ($shown as $item) {
+            $this->font($para->createTextRun("　「{$item['axis_name']}」{$item['sub_name']}"), self::MISSING_ITEMS_FONT_SIZE, false, self::BODY_TEXT);
+        }
+
+        if ($others > 0) {
+            $this->font($para->createTextRun("　ほか{$others}件"), self::MISSING_ITEMS_FONT_SIZE, false, self::MUTED);
+        }
+    }
+
+    /**
+     * 見出し込みで折り返し行数がmaxLines以内に収まる最大件数を、先頭から
+     * 貪欲に探す(件数降順の並びを崩さないため、末尾から削る)。削った分は
+     * othersCountへ繰り込む。見出し部分は実際は太字だが項目列は非太字
+     * ―― estimateLineCountのキャリブレーション(BO-2)では太字・非太字の
+     * 実測差がほぼ無かったため、太さを区別せず同じ係数で見積もっている。
+     *
+     * @param  list<array{axis_name: string, sub_name: string}>  $items
+     * @return array{0: list<array{axis_name: string, sub_name: string}>, 1: int}
+     */
+    private function fitMissingItems(array $items, int $baseOthersCount, string $heading, float $widthIn, int $maxLines): array
+    {
+        for ($n = count($items); $n >= 0; $n--) {
+            $others = $baseOthersCount + (count($items) - $n);
+            $text = $heading.'：'.$this->joinMissingItems(array_slice($items, 0, $n), $others);
+
+            if ($this->estimateLineCount($text, $widthIn, self::MISSING_ITEMS_FONT_SIZE) <= $maxLines) {
+                return [array_slice($items, 0, $n), $others];
+            }
+        }
+
+        return [[], $baseOthersCount + count($items)];
+    }
+
+    /**
+     * @param  list<array{axis_name: string, sub_name: string}>  $items
+     */
+    private function joinMissingItems(array $items, int $others): string
+    {
+        $text = implode('', array_map(fn (array $item) => "　「{$item['axis_name']}」{$item['sub_name']}", $items));
+
+        return $others > 0 ? $text."　ほか{$others}件" : $text;
     }
 
     private function addFooter(Slide $slide, string $sourceNote, ?string $pageNumber): void
@@ -409,6 +543,107 @@ class AdminComparisonPptxGenerator
         $this->position($page, 12.33, 6.98, 0.6, 0.3);
         $page->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         $this->font($page->getActiveParagraph()->createTextRun((string) $pageNumber), 10, false, self::MUTED);
+    }
+
+    /**
+     * wrapOrEllipsizeForLines・estimateLineCount・splitBalancedForTwoLinesが
+     * 共通で使う、1行に収まる表示幅(mb_strwidth基準)の見積もり(依頼AT-1由来、
+     * 依頼BO-3で共通化のため抽出。計算式そのものは変更していない)。
+     */
+    private function maxUnitsPerLine(float $widthIn, float $sizePt, bool $bold): int
+    {
+        $insetPt = 9.0;
+        // 全角1文字(表示幅2)がおおよそ1em(=$sizePt)になるよう、
+        // 表示幅1単位あたりの幅を$sizePt/2とする。
+        $unitWidthPt = $sizePt * ($bold ? 1.28 : 1.18) / 2;
+        $usableWidthPt = $widthIn * 72 - $insetPt;
+
+        return max(1, (int) floor($usableWidthPt / $unitWidthPt));
+    }
+
+    /**
+     * 依頼BO-2: まとめの帯の高さ・不足項目一覧の使える行数を決めるための、
+     * 折り返し後の行数の見積もり。総表示幅を1行あたりの許容表示幅で割って
+     * 行数だけを概算する(1文字ずつ改行位置を計算するのではない ――
+     * PowerPointの実描画(wrap="square")が実際の折り返しを行うため、
+     * ここでは行数の見積もりのみで足りる)。
+     *
+     * maxUnitsPerLine()(1.18/1.28倍、依頼BM-5/BN-2で社名の「切り詰めるか
+     * 否か」の安全側判定用に実機画像化で調整された値)をそのまま流用せず、
+     * 専用の係数(1.02)を使う ―― 実機画像化(LibreOffice)で検証した結果、
+     * まとめの帯(11pt非太字・幅11.0in)は表示幅140単位、不足項目一覧
+     * (10pt太字・幅11.5in)は表示幅156単位まで実際には1行に収まっていたが、
+     * maxUnitsPerLine()の係数で計算すると119/127単位までしか1行と判定
+     * されず、本当は1行に収まる文言を2行分の高さで確保してしまい
+     * (依頼BM-2の旧まとめ帯が3行固定だった問題の再発)、不足項目一覧に
+     * 回るはずの余白を無駄に消費していた。1.02はキャリブレーション実測値
+     * (140/156単位の実測)に対し、太字・非太字のどちらでも安全側(実測を
+     * 上回らない)に倒るよう選んだ小さな安全マージン ―― 太字と非太字で
+     * 実測値の差がほぼ無かった(156 vs 140は主にフォントサイズ差
+     * 10pt/11ptによるもの)ため、boldによる係数の出し分けをしていない。
+     */
+    private function estimateLineCount(string $text, float $widthIn, float $sizePt): int
+    {
+        $insetPt = 9.0;
+        $unitWidthPt = $sizePt * 1.02 / 2;
+        $usableWidthPt = $widthIn * 72 - $insetPt;
+        $maxUnitsPerLine = max(1, (int) floor($usableWidthPt / $unitWidthPt));
+
+        return max(1, (int) ceil(mb_strwidth($text, 'UTF-8') / $maxUnitsPerLine));
+    }
+
+    /**
+     * 依頼BO-3: 「株式会社マネーフォワード」のような社名で、PowerPointの
+     * 自動折り返し(wrap="square"、行を貪欲に埋める)が「ド」1文字だけを
+     * 2行目に取り残す不具合が実機画像化で見つかった。2行に折り返す必要が
+     * ある($textの表示幅が1行に収まらない)場合だけ、表示幅のほぼ半分の
+     * 位置で明示的に改行(createBreak())を入れて描画し、PowerPointの
+     * 自動折り返しに委ねない ―― 1行に収まる社名(大多数)はこのメソッドを
+     * 経由せず、従来どおり自動折り返しのみで済ませる。
+     */
+    private function renderBalancedLines(RichText\Paragraph $para, string $text, float $widthIn, float $sizePt, bool $bold, string $color): void
+    {
+        $maxUnitsPerLine = $this->maxUnitsPerLine($widthIn, $sizePt, $bold);
+
+        if (mb_strwidth($text, 'UTF-8') <= $maxUnitsPerLine) {
+            $this->font($para->createTextRun($text), $sizePt, $bold, $color);
+
+            return;
+        }
+
+        [$line1, $line2] = $this->splitBalancedForTwoLines($text, $maxUnitsPerLine);
+        $this->font($para->createTextRun($line1), $sizePt, $bold, $color);
+        $para->createBreak();
+        $this->font($para->createTextRun($line2), $sizePt, $bold, $color);
+    }
+
+    /**
+     * 表示幅のほぼ半分(端数は1行目に寄せる)を境目に、1文字単位で分割する
+     * (バイト単位や文字数単位ではなく表示幅基準 ―― 依頼BN-2と同じ理由)。
+     * 1行目の許容表示幅($maxUnitsPerLine)を超えないよう上限をかける。
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function splitBalancedForTwoLines(string $text, int $maxUnitsPerLine): array
+    {
+        $targetFirstLineUnits = min($maxUnitsPerLine, (int) ceil(mb_strwidth($text, 'UTF-8') / 2));
+
+        $chars = mb_str_split($text);
+        $line1 = '';
+        $units = 0;
+        $splitIndex = 0;
+
+        foreach ($chars as $i => $char) {
+            $charUnits = mb_strwidth($char, 'UTF-8');
+            if ($units > 0 && $units + $charUnits > $targetFirstLineUnits) {
+                break;
+            }
+            $line1 .= $char;
+            $units += $charUnits;
+            $splitIndex = $i + 1;
+        }
+
+        return [$line1, implode('', array_slice($chars, $splitIndex))];
     }
 
     /**
@@ -432,13 +667,7 @@ class AdminComparisonPptxGenerator
      */
     private function wrapOrEllipsizeForLines(string $text, float $widthIn, float $sizePt, bool $bold, int $maxLines): string
     {
-        $insetPt = 9.0;
-        // 全角1文字(表示幅2)がおおよそ1em(=$sizePt)になるよう、
-        // 表示幅1単位あたりの幅を$sizePt/2とする。
-        $unitWidthPt = $sizePt * ($bold ? 1.28 : 1.18) / 2;
-        $usableWidthPt = $widthIn * 72 - $insetPt;
-        $maxUnitsPerLine = max(1, (int) floor($usableWidthPt / $unitWidthPt));
-        $maxUnits = $maxUnitsPerLine * $maxLines;
+        $maxUnits = $this->maxUnitsPerLine($widthIn, $sizePt, $bold) * $maxLines;
 
         if (mb_strwidth($text, 'UTF-8') <= $maxUnits) {
             return $text;

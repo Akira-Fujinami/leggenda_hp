@@ -18,6 +18,13 @@ use App\Support\Report\MultiSiteReportViewModel;
  * 一切取得しない(依頼BM-4 ―― 表示を止めるだけでなく、取得処理自体を
  * 呼ばない)。MultiSiteReportViewModel.missingFromSelfそのものは多社比較PDF
  * (対象外、依頼者指定)がまだ使うため変更しない。
+ *
+ * 依頼BO-1(2026-09-09): まとめの帯の下に空く余白が「薄い」との指摘を受け、
+ * 「競合が伝えていて自社が伝えていない項目」の項目名一覧を戻した。
+ * viewModel.missingFromSelf(件数降順で既に並んでいる)からaxis_name/
+ * sub_nameの2フィールドだけを読む ―― quote/quote_translation/
+ * representative_company_name/definition/recommendationは一切読まない
+ * (依頼BM-4で止めた引用取得の復活を防ぐ、依頼者指定)。
  */
 class AdminComparisonPptxDataBuilder
 {
@@ -34,6 +41,12 @@ class AdminComparisonPptxDataBuilder
      *         self_gap: bool,
      *     }>,
      *     summary: string,
+     *     missing_items: array{
+     *         heading: string,
+     *         empty_text: string,
+     *         items: list<array{axis_name: string, sub_name: string}>,
+     *         others_count: int,
+     *     },
      *     source_note: string,
      *     page_number: ?string,
      * }
@@ -68,14 +81,50 @@ class AdminComparisonPptxDataBuilder
 
         $axes = $this->buildAxisMatrix($viewModel->comparisonTable, count($viewModel->competitors));
         $summary = $this->buildSummary($companies, $axes);
+        $missingItems = $this->buildMissingItems($viewModel->missingFromSelf);
 
         return [
             'self_company_name' => $viewModel->selfCompanyDisplayName,
             'companies' => $companies,
             'axes' => $axes,
             'summary' => $summary,
+            'missing_items' => $missingItems,
             'source_note' => "Leggenda 採用ブランド・ホイール診断({$viewModel->generatedAtLabel}時点)",
             'page_number' => null,
+        ];
+    }
+
+    /**
+     * 依頼BO-1: 上限(missing_items_max_count)は「これ以上は出さない」という
+     * 天井であり、実際に何件描画できるかはAdminComparisonPptxGenerator側で
+     * まとめの帯の実際の行数(可変)から動的に計算する(このクラスはレイアウト
+     * を一切知らない、依頼BM由来の役割分担を維持)。ここでは上限を超えた分を
+     * 「ほかN件」1件に畳んで、Generatorが常に「項目N件+ほか1件」以下の
+     * 固定件数だけを受け取れば済むようにする。
+     *
+     * @param  list<array{axis_name: string, sub_name: string, competitor_matched_count: int}>  $missingFromSelf  件数降順で既に並んでいる(BrandWheelMultiSiteComparisonComposer::extractMissingFromSelf())
+     * @return array{heading: string, empty_text: string, items: list<array{axis_name: string, sub_name: string}>, others_count: int}
+     */
+    private function buildMissingItems(array $missingFromSelf): array
+    {
+        $maxCount = (int) config('admin_comparison_pptx.missing_items_max_count');
+
+        $items = array_map(fn (array $item) => [
+            'axis_name' => $item['axis_name'],
+            'sub_name' => $item['sub_name'],
+        ], $missingFromSelf);
+
+        $othersCount = 0;
+        if (count($items) > $maxCount) {
+            $othersCount = count($items) - ($maxCount - 1);
+            $items = array_slice($items, 0, max(0, $maxCount - 1));
+        }
+
+        return [
+            'heading' => (string) config('admin_comparison_pptx.missing_items_heading'),
+            'empty_text' => (string) config('admin_comparison_pptx.missing_items_empty_text'),
+            'items' => $items,
+            'others_count' => $othersCount,
         ];
     }
 
