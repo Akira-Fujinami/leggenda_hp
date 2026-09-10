@@ -207,13 +207,20 @@ class AdminComparisonWizardTest extends TestCase
         $response = $this->asAdmin()->getJson('/admin/comparisons/search?q=マネーフォワードPII確認社');
 
         $response->assertOk();
-        $response->assertJsonStructure(['results' => [['id', 'company_name', 'self_host', 'analyzed_at', 'status']], 'truncated']);
+        // 依頼BX-1(2026-09-11): 既存5つ(id/company_name/self_host/
+        // analyzed_at/status)に加え、この依頼に限り3つ(self_url/
+        // competitor_url/competitor_name)を認める ―― それ以外は増やさない。
+        $response->assertJsonStructure(['results' => [[
+            'id', 'company_name', 'self_host', 'analyzed_at', 'status',
+            'self_url', 'competitor_url', 'competitor_name',
+        ]], 'truncated']);
         $body = $response->json();
-        $this->assertCount(5, $body['results'][0], '返すフィールドはid/company_name/self_host/analyzed_at/statusの5つだけであること');
+        $this->assertCount(8, $body['results'][0], '返すフィールドは既存5つ+依頼BX-1の3つの計8つだけであること');
         $raw = $response->getContent();
         $this->assertStringNotContainsString('担当太郎', $raw);
         $this->assertStringNotContainsString('tantou@example.com', $raw);
         $this->assertSame('recruit.moneyforward.com', $body['results'][0]['self_host']);
+        $this->assertSame('https://recruit.moneyforward.com', $body['results'][0]['self_url']);
     }
 
     public function test_search_is_case_insensitive(): void
@@ -248,7 +255,14 @@ class AdminComparisonWizardTest extends TestCase
         $response->assertJson(['results' => [], 'truncated' => false]);
     }
 
-    public function test_search_reports_truncation_and_returns_no_candidates_when_over_the_limit(): void
+    /**
+     * 依頼BX-2(2026-09-11): 上限を超えても、候補を1件も返さないのは
+     * 不親切だった(依頼者指摘、19件では普通に出るのに20件を1件超えた
+     * 瞬間に手がかりがゼロになっていた)。先頭$limit件は返しつつ、
+     * truncatedフラグで「まだある」ことを伝える形に直した。上限自体
+     * (config('analysis.admin_comparison.search_result_limit'))は変えない。
+     */
+    public function test_search_reports_truncation_but_still_returns_the_first_page_of_candidates_when_over_the_limit(): void
     {
         config(['analysis.admin_comparison.search_result_limit' => 2]);
         $this->makeSearchableAnalysis(['company_name' => 'マネーフォワード業務']);
@@ -258,7 +272,25 @@ class AdminComparisonWizardTest extends TestCase
         $response = $this->asAdmin()->getJson('/admin/comparisons/search?q=マネーフォワード');
 
         $response->assertOk();
-        $response->assertJson(['results' => [], 'truncated' => true]);
+        $response->assertJsonCount(2, 'results');
+        $response->assertJson(['truncated' => true]);
+    }
+
+    /**
+     * 上限ちょうど(超えていない)のときは、truncatedがfalseのまま
+     * 全件返ること。
+     */
+    public function test_search_does_not_report_truncation_when_the_result_count_exactly_matches_the_limit(): void
+    {
+        config(['analysis.admin_comparison.search_result_limit' => 2]);
+        $this->makeSearchableAnalysis(['company_name' => 'マネーフォワード業務']);
+        $this->makeSearchableAnalysis(['company_name' => 'マネーフォワード経理']);
+
+        $response = $this->asAdmin()->getJson('/admin/comparisons/search?q=マネーフォワード');
+
+        $response->assertOk();
+        $response->assertJsonCount(2, 'results');
+        $response->assertJson(['truncated' => false]);
     }
 
     public function test_search_requires_authentication(): void
@@ -377,6 +409,9 @@ class AdminComparisonWizardTest extends TestCase
 
         $rendered = view('admin.comparisons.wizard', [
             'selectedAnalysis' => null,
+            'selfUrl' => null,
+            'existingCompetitorUrl' => null,
+            'existingCompetitorName' => null,
             'minCompetitors' => (int) config('analysis.admin_comparison.min_competitors', 3),
             'maxCompetitors' => (int) config('analysis.admin_comparison.max_competitors', 5),
             'salesDeckMaxSizeMb' => 20,
@@ -389,5 +424,170 @@ class AdminComparisonWizardTest extends TestCase
         ])->render();
 
         $this->assertStringContainsString('もう一度ファイルを選び直してください', $rendered);
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BX-1(2026-09-11、この依頼の主目的): 起点の診断で使った自社URL・
+    // 競合1社を、比較ウィザードへ引き継ぐ。
+    // ------------------------------------------------------------------
+
+    /**
+     * input要素の属性は複数行にまたがって出力される(wizard.blade.php参照)
+     * ため、assertSee()の単純な部分一致では拾えない。id属性からvalue属性の
+     * 値だけを取り出して比較する。
+     */
+    private function assertInputValue(string $html, string $id, string $expectedValue): void
+    {
+        $pattern = '/id="'.preg_quote($id, '/').'"[^>]*value="([^"]*)"/s';
+        $this->assertMatchesRegularExpression($pattern, $html, "id={$id} の入力欄が見つかりません。");
+        preg_match($pattern, $html, $m);
+        $this->assertSame($expectedValue, html_entity_decode($m[1]), "id={$id} のvalueが期待と異なります。");
+    }
+
+    /**
+     * @return array{0: Analysis, 1: Website}  [起点の診断, 競合1のWebsite]
+     */
+    private function makeSearchableAnalysisWithCompetitor(?string $competitorName = '本物の競合企業名'): array
+    {
+        $source = $this->makeSearchableAnalysis(['self_url' => 'https://self-bx1.example.com']);
+        $competitor = Website::factory()->for($source->project)->create([
+            'url' => 'https://competitor-bx1.example.com',
+            'normalized_url' => 'https://competitor-bx1.example.com',
+            'name' => $competitorName,
+            'is_primary' => false,
+            'display_order' => 1,
+        ]);
+
+        return [$source, $competitor];
+    }
+
+    /**
+     * サーバー側のold()フォールバック(依頼BX-1で追加したwizard()の
+     * $selfUrl/$existingCompetitorUrl/$existingCompetitorName)を検証する。
+     * self_url/competitor_urls/competitor_namesを一切送らずに
+     * source_analysis_idだけを送ってバリデーションを失敗させ(competitor_urls
+     * がrequiredのため必ず失敗する)、old()にこれらのキーが存在しない状態を
+     * 作る ―― この状態でウィザードを再表示すると、起点の診断のデータが
+     * 初期値として入ること。
+     */
+    public function test_selecting_a_source_analysis_prefills_self_url_and_first_competitor(): void
+    {
+        [$source] = $this->makeSearchableAnalysisWithCompetitor('本物の競合企業名');
+
+        $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
+            'source_analysis_id' => (string) $source->id,
+        ])->assertSessionHasErrors('competitor_urls');
+
+        $wizardPage = $this->asAdmin()->get('/admin/comparisons/wizard');
+
+        $wizardPage->assertOk();
+        $wizardPage->assertSee('value="https://self-bx1.example.com"', false);
+        $wizardPage->assertSee('value="https://competitor-bx1.example.com"', false);
+        $wizardPage->assertSee('value="本物の競合企業名"', false);
+    }
+
+    /**
+     * 無料診断のWebsite.nameは実際には常にプレースホルダ('競合サイト')
+     * であり、リードが入力した実際の企業名ではない(実データを確認済み)。
+     * これをそのまま企業名欄へ入れると、ホスト名の自動生成(依頼BM-3で
+     * 禁止済み)と同じ「見出しに使えない値を機械的に埋める」ことになるため、
+     * 空のままにする(依頼者指定)。
+     */
+    public function test_competitor_name_is_left_empty_when_the_source_only_has_the_placeholder_name(): void
+    {
+        [$source] = $this->makeSearchableAnalysisWithCompetitor('競合サイト');
+
+        $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
+            'source_analysis_id' => (string) $source->id,
+        ])->assertSessionHasErrors('competitor_urls');
+
+        $wizardPage = $this->asAdmin()->get('/admin/comparisons/wizard');
+
+        $wizardPage->assertOk();
+        // URLは引き継ぐが、企業名の入力欄は空のまま(プレースホルダを
+        // 見出しとして機械的に埋めない)。
+        $wizardPage->assertSee('value="https://competitor-bx1.example.com"', false);
+        $this->assertInputValue($wizardPage->getContent(), 'competitor_name_input_0', '');
+    }
+
+    /**
+     * 競合が0件の起点診断(巡回失敗などで競合サイトが記録されていない)で、
+     * 画面が壊れないこと。何も入れないこと(依頼者指定)。
+     */
+    public function test_wizard_does_not_break_when_the_source_analysis_has_no_competitor_website(): void
+    {
+        $source = $this->makeSearchableAnalysis(['self_url' => 'https://self-no-competitor.example.com']);
+
+        $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
+            'source_analysis_id' => (string) $source->id,
+        ])->assertSessionHasErrors('competitor_urls');
+
+        $wizardPage = $this->asAdmin()->get('/admin/comparisons/wizard');
+
+        $wizardPage->assertOk();
+        $wizardPage->assertSee('value="https://self-no-competitor.example.com"', false);
+        $content = $wizardPage->getContent();
+        $this->assertInputValue($content, 'competitor_url_input_0', '');
+        $this->assertInputValue($content, 'competitor_name_input_0', '');
+    }
+
+    /**
+     * old()の値を優先すること。利用者が自社URLを書き換えて送信した場合、
+     * 書き換えたほうがウィザード再表示でも残ること(初期値で上書き
+     * しないこと、依頼者指定)。
+     */
+    public function test_old_input_takes_precedence_over_the_source_analysis_defaults(): void
+    {
+        [$source] = $this->makeSearchableAnalysisWithCompetitor();
+
+        $this->asAdmin()->post("/admin/analyses/{$source->id}/compare", [
+            'source_analysis_id' => (string) $source->id,
+            'self_url' => 'https://manually-edited.example.com',
+            'competitor_urls' => $this->validCompetitorUrls(3),
+            // competitor_names[1]を空にしてバリデーションを失敗させる
+            // (依頼者指定の既存パターン、test_empty_competitor_name_...と同じ)。
+            'competitor_names' => ['書き換えた競合名', '', '競合3社'],
+        ])->assertSessionHasErrors('competitor_names.1');
+
+        $wizardPage = $this->asAdmin()->get('/admin/comparisons/wizard');
+
+        $wizardPage->assertOk();
+        $wizardPage->assertSee('value="https://manually-edited.example.com"', false);
+        $wizardPage->assertSee('書き換えた競合名');
+        // 起点診断側のURL・自動生成の値では上書きされていないこと。
+        $wizardPage->assertDontSee('https://self-bx1.example.com', false);
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼BX-3(2026-09-11): 候補一覧の状態を日本語にする。
+    // ------------------------------------------------------------------
+
+    /**
+     * search()自体は既存の生のstatus値を返したまま(依頼者指定、JSON構造は
+     * 変えない)、wizard.blade.phpがクライアント側で変換するためのラベル
+     * マップをconfigから埋め込んでいること。
+     */
+    public function test_wizard_page_embeds_the_status_label_map_for_client_side_translation(): void
+    {
+        $response = $this->asAdmin()->get('/admin/comparisons/wizard');
+
+        $response->assertOk();
+        // @json()はデフォルトでマルチバイト文字を\uXXXXにエスケープする
+        // (Illuminate\View\Compilers\Concerns\CompilesJson参照)ため、
+        // 生の日本語文字列ではなく、埋め込まれたJSONオブジェクトのキー
+        // (内部のstatus値、ASCII)が揃っていることを確認する。
+        foreach (array_keys(config('analysis.admin_comparison.search_result_status_labels')) as $status) {
+            $response->assertSee('"'.$status.'":', false);
+        }
+    }
+
+    public function test_search_still_returns_the_raw_status_value_unchanged(): void
+    {
+        $this->makeSearchableAnalysis(['company_name' => 'ステータス確認社', 'status' => AnalysisStatus::Partial]);
+
+        $response = $this->asAdmin()->getJson('/admin/comparisons/search?q=ステータス確認社');
+
+        $response->assertOk();
+        $response->assertJsonPath('results.0.status', 'partial');
     }
 }

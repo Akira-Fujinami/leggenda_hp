@@ -52,6 +52,14 @@
 @if ($analysis->source_analysis_id)
     @php
         $pptxAttachment = $analysis->attachments->firstWhere('extension', 'pptx');
+        // 依頼BX-4(2026-09-11、依頼BWの穴): 添付はPPTX以外(PDF/DOCX、
+        // config('analysis_attachment.allowed_extensions'))も許可されて
+        // いるのに、下の「細い1行」が$pptxAttachmentだけを見ていたため、
+        // PPTX以外が添付されている比較ではファイルが画面のどこにも出ず、
+        // ダウンロード・削除もできなかった(依頼者指摘)。段の判定
+        // ($currentStage、下)はPPTXの有無で変えない ―― 差し込めないのは
+        // 事実であり、そこは変えない(依頼者指定)。表示だけを分ける。
+        $anyAttachment = $analysis->attachments->first();
         $isDiagnosisTerminal = $analysis->status->isTerminal();
         $pdfReport = $analysis->reports->first(fn ($r) => $r->format->value === 'pdf');
 
@@ -148,18 +156,18 @@
             @if ($pdfReport?->status?->value === 'completed')
                 比較レポート(PDF): <a href="{{ route('admin.analyses.comparison-report.download', $analysis->id, false) }}">ダウンロード</a>
             @endif
-            @if ($pptxAttachment)
+            @if ($anyAttachment)
+                {{-- 依頼BX-4: PPTX以外(PDF/DOCX)の添付もここに出す ――
+                     $pptxAttachmentではなく$anyAttachmentを見る。差し込める
+                     かどうか(=PPTXかどうか)は文言でだけ伝え、段の判定
+                     ($currentStage、上)はPPTXの有無のまま変えない。 --}}
                 <span style="{{ $pdfReport?->status?->value === 'completed' ? 'margin-left: 12px;' : '' }}">
-                    営業資料: {{ $pptxAttachment->original_filename }}
-                    <a href="{{ route('admin.analyses.attachment.download', [$analysis->id, $pptxAttachment->id], false) }}">ダウンロード</a>
+                    営業資料: {{ $anyAttachment->original_filename }}
+                    <a href="{{ route('admin.analyses.attachment.download', [$analysis->id, $anyAttachment->id], false) }}">ダウンロード</a>
+                    @if ($anyAttachment->extension !== 'pptx')
+                        <span style="color: #8A6D2F;">(この形式では営業資料に差し込めません)</span>
+                    @endif
                 </span>
-            @endif
-            @if ($pptxAttachment)
-                {{-- 依頼BW-1: 資料が未添付(currentStage===2)のときは、
-                     上のパネル自体が唯一のアップロード入口(依頼者指定 ――
-                     差し込みの入口に限らず、ここでも二重に出さない)。
-                     差し替え・削除は既に添付がある場合のみ、この1行に
-                     まとめる。 --}}
                 <span style="margin-left: 12px;">
                     <form
                         method="POST"
@@ -173,7 +181,7 @@
                     </form>
                     <form
                         method="POST"
-                        action="{{ route('admin.analyses.attachment.destroy', [$analysis->id, $pptxAttachment->id], false) }}"
+                        action="{{ route('admin.analyses.attachment.destroy', [$analysis->id, $anyAttachment->id], false) }}"
                         style="display: inline; margin-left: 6px;"
                         onsubmit="return confirm('この資料を削除します。よろしいですか?');"
                     >

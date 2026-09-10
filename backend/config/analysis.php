@@ -59,10 +59,34 @@ return [
         | 検索結果の上限。依頼者提案の「20件程度」を採用 ―― ウィザードの
         | STEP 2はスクロールなしで見比べて選べる件数を想定した一覧UIであり、
         | 20件は候補選択の画面としてまだ一覧性を保てる上限として妥当と判断した。
-        | 超えた場合は候補を返さず、絞り込みを促す(ComparisonController::search()
-        | 参照、件数を数えるだけの追加クエリを避けるため+1件で判定する)。
+        | 件数を数えるだけの追加クエリを避けるため+1件で判定する
+        | (ComparisonController::search()参照)。
+        |
+        | 依頼BX-2(2026-09-11): 超えた場合に候補を1件も返さない仕様は、
+        | 19件では普通に出るのに20件を1件超えた瞬間に手がかりがゼロになり
+        | 不親切だった(依頼者指摘、実運用で発生)。上限(この値)自体は
+        | 変えず、先頭この件数ぶんを返したうえでtruncatedフラグを立てる形に
+        | 直した。
         */
         'search_result_limit' => (int) env('ADMIN_COMPARISON_SEARCH_RESULT_LIMIT', 20),
+
+        /*
+        | 依頼BX-3(2026-09-11): 比較ウィザードSTEP 2の候補一覧に、
+        | Analysis.statusの内部値(completed/partial等)をそのまま出さない。
+        | 診断の状態の値自体は増やさず、表示文言だけをここに集約する
+        | (wizard.blade.phpのJSがこのマップを@json()で受け取り、
+        | クライアント側で変換する ―― ComparisonController::search()の
+        | JSONに新しいフィールドを足さない、依頼者指定の範囲を守るため)。
+        */
+        'search_result_status_labels' => [
+            'pending' => '実行待ち',
+            'queued' => '待機中',
+            'running' => '実行中',
+            'completed' => '完了',
+            'partial' => '一部完了',
+            'failed' => '失敗',
+            'cancelled' => '中止',
+        ],
     ],
 
     /*

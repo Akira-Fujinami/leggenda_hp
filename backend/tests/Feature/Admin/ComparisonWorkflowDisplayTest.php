@@ -242,4 +242,74 @@ class ComparisonWorkflowDisplayTest extends TestCase
         $response->assertOk();
         $response->assertSee(route('admin.analyses.lead-report.download', [$analysis->id, 'pdf'], false));
     }
+
+    // ------------------------------------------------------------------
+    // 依頼BX-4(2026-09-11、依頼BWの穴): PPTX以外(PDF/DOCX)の添付も
+    // 画面に出すこと。段の判定は変えない(PPTXが無ければ②のまま)。
+    // ------------------------------------------------------------------
+
+    public function test_a_pdf_attachment_is_shown_with_download_replace_and_delete(): void
+    {
+        $comparison = $this->makeComparison();
+        $attachment = AnalysisAttachment::factory()->create([
+            'analysis_id' => $comparison->id,
+            'original_filename' => '営業資料BW検証.pdf',
+            'extension' => 'pdf',
+        ]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$comparison->id}");
+
+        $response->assertOk();
+        $response->assertSee($attachment->original_filename);
+        $response->assertSee(route('admin.analyses.attachment.download', [$comparison->id, $attachment->id], false));
+        $response->assertSee('差し替える');
+        $response->assertSee('削除');
+    }
+
+    public function test_a_docx_attachment_shows_the_cannot_insert_notice(): void
+    {
+        $comparison = $this->makeComparison();
+        AnalysisAttachment::factory()->create([
+            'analysis_id' => $comparison->id,
+            'original_filename' => '営業資料BW検証.docx',
+            'extension' => 'docx',
+        ]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$comparison->id}");
+
+        $response->assertOk();
+        $response->assertSee('この形式では営業資料に差し込めません');
+    }
+
+    /**
+     * 段の判定($currentStage)は変えないこと ―― PPTX以外が添付されていても、
+     * 差し込めないのは事実であるため②(営業資料を添付)のままでよい
+     * (依頼者指定)。
+     */
+    public function test_stage_remains_two_when_only_a_non_pptx_attachment_exists(): void
+    {
+        $comparison = $this->makeComparison();
+        AnalysisAttachment::factory()->create([
+            'analysis_id' => $comparison->id,
+            'original_filename' => '営業資料BW検証.pdf',
+            'extension' => 'pdf',
+        ]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$comparison->id}");
+
+        $response->assertOk();
+        $response->assertSee('営業資料(PPTX)を添付すると');
+        $response->assertDontSee('資料に差し込んでダウンロード');
+    }
+
+    public function test_a_pptx_attachment_does_not_show_the_cannot_insert_notice(): void
+    {
+        $comparison = $this->makeComparison();
+        $this->attachPptx($comparison);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$comparison->id}");
+
+        $response->assertOk();
+        $response->assertDontSee('この形式では営業資料に差し込めません');
+    }
 }

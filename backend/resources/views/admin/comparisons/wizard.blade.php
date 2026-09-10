@@ -178,7 +178,10 @@
             </div></div>
 
             <div class="card" id="step-2-input">
-                <div id="step-2-truncated" class="truncated-hint" hidden>候補が多すぎます。会社名をもう少し絞り込んでください。</div>
+                {{-- 依頼BX-2(2026-09-11): 「候補が多すぎます」(候補0件を示唆)
+                     から、「表示しきれていない」ことだけを伝える文言に
+                     変えた ―― 先頭{{ config('analysis.admin_comparison.search_result_limit', 20) }}件は下に出ている。 --}}
+                <div id="step-2-truncated" class="truncated-hint" hidden>ほかにも候補があります。会社名をもう少し絞り込むと、より確実に選べます。</div>
                 <div id="step-2-empty" class="empty-hint" hidden>
                     見つかりませんでした。会社名の一部で試すか、<a href="{{ route('admin.analyses.index', [], false) }}">診断一覧</a>から探してください。
                 </div>
@@ -202,14 +205,25 @@
             </div>
         </div>
 
-        {{-- STEP 3: 競合(依頼BIのcreate.blade.phpと同じ構造) --}}
+        {{-- STEP 3: 自社URL・競合(依頼BIのcreate.blade.phpと同じ構造。
+             依頼BX-1(2026-09-11、この依頼の主目的): 起点の診断で使った
+             自社URL・競合1社を初期値にする ―― create.blade.phpは既に
+             自社URLを編集可能な入力欄にしているのに、このウィザードだけ
+             ホスト名の読み取り専用テキストのままだった(依頼者指摘)。 --}}
         <div class="qa" id="step-3">
             <div class="row"><div class="av">L</div><div class="bub">
-                <div class="q">比較する競合を{{ $minCompetitors }}〜{{ $maxCompetitors }}社、教えてください。</div>
+                <div class="q">自社URLと、比較する競合を{{ $minCompetitors }}〜{{ $maxCompetitors }}社、教えてください。</div>
                 <div class="hint">企業名は、比較レポートの表と、営業資料に差し込む比較ページの見出しに使います。<b>URLを入力した行は、企業名も入力してください（必須）。</b></div>
             </div></div>
 
             <div class="card" id="step-3-input">
+                <div style="margin-bottom:16px;">
+                    <div style="font-size:13px;font-weight:700;margin-bottom:5px;">自社サイトURL</div>
+                    <input type="text" name="self_url" id="self_url_input" value="{{ old('self_url', $selfUrl) }}">
+                    <p class="hint" id="self_url_help" style="margin-top:4px;">
+                        @if ($selectedAnalysis)診断 #{{ $selectedAnalysis->id }} で使ったURLです。サイトが変わっていれば書き換えてください。@endif
+                    </p>
+                </div>
                 <table class="rows">
                     @for ($i = 0; $i < $maxCompetitors; $i++)
                         <tr>
@@ -222,10 +236,22 @@
                                 <em>競合{{ $i + 1 }}</em>
                             </td>
                             <td class="url">
-                                <input type="text" name="competitor_urls[]" value="{{ old('competitor_urls.'.$i) }}" placeholder="https://…">
+                                <input
+                                    type="text"
+                                    name="competitor_urls[]"
+                                    id="competitor_url_input_{{ $i }}"
+                                    value="{{ old('competitor_urls.'.$i, $i === 0 ? $existingCompetitorUrl : null) }}"
+                                    placeholder="https://…"
+                                >
                             </td>
                             <td class="name">
-                                <input type="text" name="competitor_names[]" value="{{ old('competitor_names.'.$i) }}" placeholder="企業名（URL入力時は必須）">
+                                <input
+                                    type="text"
+                                    name="competitor_names[]"
+                                    id="competitor_name_input_{{ $i }}"
+                                    value="{{ old('competitor_names.'.$i, $i === 0 ? $existingCompetitorName : null) }}"
+                                    placeholder="企業名（URL入力時は必須）"
+                                >
                             </td>
                         </tr>
                     @endfor
@@ -308,6 +334,20 @@
     var selected = @json($selectedAnalysisForJs);
     var searchUrl = @json(route('admin.comparisons.search', [], false));
     var storeUrlTemplate = @json(route('admin.analyses.compare.store', ['analysis' => '__ID__'], false));
+    // 依頼BX-3(2026-09-11): 診断状態の表示文言はconfigに集約し(直書きしない、
+    // 依頼者指定)、search()のJSONレスポンス自体には新しいフィールドを
+    // 足さない(依頼BX-1で認められた3つ以外を増やさない、依頼者指定)ため、
+    // クライアント側でこのマップを使って変換する。
+    var statusLabels = @json(config('analysis.admin_comparison.search_result_status_labels', []));
+    // 依頼BX-1: 起点の診断を選び直したとき、自社URL・競合1のURL/企業名は
+    // 「まだ利用者が手で書き換えていなければ」新しい選択の値で上書きする
+    // ―― 一度でも手で編集していたら、その入力を優先して残す(依頼者に
+    // 判断を求められた項目、理由は報告に記載)。
+    var selfUrlTouched = false;
+    var competitor0Touched = false;
+    el('self_url_input').addEventListener('input', function () { selfUrlTouched = true; });
+    el('competitor_url_input_0').addEventListener('input', function () { competitor0Touched = true; });
+    el('competitor_name_input_0').addEventListener('input', function () { competitor0Touched = true; });
 
     function el(id) { return document.getElementById(id); }
 
@@ -396,8 +436,11 @@
     function renderStep2(data, query) {
         var list = el('step-2-list');
         list.innerHTML = '';
+        // 依頼BX-2(2026-09-11): 上限(20件)を超えても先頭20件は返るように
+        // なった(search()側の修正) ―― 「候補0件」ではなく「もっとある」
+        // 注意書きに変える。
         el('step-2-truncated').hidden = !data.truncated;
-        el('step-2-empty').hidden = data.truncated || data.results.length !== 0;
+        el('step-2-empty').hidden = data.results.length !== 0;
         el('step-2-question').textContent = data.results.length > 0
             ? (data.results.length + '件の診断が見つかりました。どれを起点にしますか？')
             : '見つかりませんでした。';
@@ -405,8 +448,9 @@
         data.results.forEach(function (r) {
             var div = document.createElement('div');
             div.className = 'pick';
+            var statusLabel = statusLabels[r.status] || r.status;
             div.innerHTML = '<span class="id">#' + r.id + '</span><span><b>' + escapeHtml(r.company_name || '(企業名未設定)') + '</b><br>'
-                + '<span>' + escapeHtml(r.self_host || '—') + ' ／ ' + escapeHtml(r.analyzed_at || '—') + ' ／ ' + escapeHtml(r.status) + '</span></span>';
+                + '<span>' + escapeHtml(r.self_host || '—') + ' ／ ' + escapeHtml(r.analyzed_at || '—') + ' ／ ' + escapeHtml(statusLabel) + '</span></span>';
             div.addEventListener('click', function () { selectAnalysis(r); });
             list.appendChild(div);
         });
@@ -418,6 +462,19 @@
         el('step-2-answer-text').textContent = '#' + r.id + '　' + (r.company_name || '');
         el('step-2-answer-sub').textContent = (r.self_host || '—') + ' ／ ' + (r.analyzed_at || '—');
         el('wizard-form').action = storeUrlTemplate.replace('__ID__', r.id);
+
+        // 依頼BX-1(この依頼の主目的): 起点の診断で使った自社URL・競合1社を
+        // STEP 3の入力欄へ引き継ぐ。利用者が既に手で書き換えている場合は
+        // 上書きしない(上のイベントリスナーでtouchedを追跡)。
+        if (!selfUrlTouched) {
+            el('self_url_input').value = r.self_url || '';
+        }
+        el('self_url_help').textContent = '診断 #' + r.id + ' で使ったURLです。サイトが変わっていれば書き換えてください。';
+        if (!competitor0Touched) {
+            el('competitor_url_input_0').value = r.competitor_url || '';
+            el('competitor_name_input_0').value = r.competitor_name || '';
+        }
+
         currentStep = 3;
         renderSteps();
     }

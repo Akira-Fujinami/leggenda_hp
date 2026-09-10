@@ -142,11 +142,21 @@ class ComparisonController extends Controller
                 ->find($selectedAnalysisId);
         }
 
+        // 依頼BX-1(2026-09-11、この依頼の主目的): 起点の診断で使った自社URL・
+        // 競合1社を、比較作成フォーム(create.blade.php、依頼BI)と同じく
+        // 入力欄の初期値にする。old()を優先する(バリデーションエラーで
+        // 戻ってきたとき、利用者の入力を上書きしない、依頼者指定)。
+        $selfUrl = $selectedAnalysis?->project?->websites?->firstWhere('is_primary', true)?->url;
+        $existingCompetitor = $selectedAnalysis?->project?->websites?->firstWhere('is_primary', false);
+
         $requiredCx = (int) config('admin_comparison_pptx.required_slide_width_emu');
         $requiredCy = (int) config('admin_comparison_pptx.required_slide_height_emu');
 
         return view('admin.comparisons.wizard', [
             'selectedAnalysis' => $selectedAnalysis,
+            'selfUrl' => $selfUrl,
+            'existingCompetitorUrl' => $existingCompetitor?->url,
+            'existingCompetitorName' => $this->realCompetitorName($existingCompetitor?->name),
             'minCompetitors' => (int) config('analysis.admin_comparison.min_competitors', 3),
             'maxCompetitors' => (int) config('analysis.admin_comparison.max_competitors', 5),
             'salesDeckMaxSizeMb' => (int) round((int) config('analysis_attachment.max_file_size_bytes') / 1024 / 1024),
@@ -164,9 +174,12 @@ class ComparisonController extends Controller
      * (project.lead_company_idが非null、source_analysis_idがnull =
      * 比較自身は候補に出さない)。
      *
-     * 返す情報は診断ID・会社名・自社サイトURLのホスト名・診断日・状態のみ
-     * (依頼者指定 ―― 担当者名・メールアドレス・電話番号・トークンは
-     * 返さない)。
+     * 返す情報は診断ID・会社名・自社サイトURLのホスト名・診断日・状態
+     * (依頼BP-2オリジナルの5つ)に加え、依頼BX-1でこの依頼に限り認められた
+     * 3つ(自社サイトURL全体・競合1社のURL・企業名)。対象は診断した企業の
+     * 公開サイトのURLであり、リードの個人情報ではない(依頼BU-2と同じ
+     * 判断)。担当者名・メールアドレス・電話番号・トークンは返さない
+     * (依頼者指定、この8つ以外を増やさない)。
      */
     public function search(Request $request): JsonResponse
     {
@@ -200,20 +213,23 @@ class ComparisonController extends Controller
             ->with(['project.leadCompany', 'project.websites'])
             ->orderByDesc('created_at')
             // 依頼BP-2: 超過判定のためlimit+1件だけ取得する(件数を数える
-            // 追加クエリを避ける)。超過時は候補を1件も返さず、絞り込みを促す
-            // (依頼者指定 ―― 上限ぎりぎりの一覧を出すより、まず絞り込ませる)。
+            // 追加クエリを避ける)。
             ->limit($limit + 1)
             ->get();
 
-        if ($matches->count() > $limit) {
-            return response()->json(['results' => [], 'truncated' => true]);
-        }
-
-        $results = $matches->map(function (Analysis $analysis) {
+        // 依頼BX-2(2026-09-11): 超えた場合でも先頭$limit件は返す ――
+        // 19件では普通に出るのに20件を1件超えた瞬間に手がかりがゼロに
+        // なるのは不親切だった(依頼者指摘)。上限自体は変えない。
+        $truncated = $matches->count() > $limit;
+        $results = $matches->take($limit)->map(function (Analysis $analysis) {
             $selfWebsite = $analysis->project?->websites?->firstWhere('is_primary', true);
             $selfHost = $selfWebsite?->url !== null
                 ? strtolower((string) parse_url($selfWebsite->url, PHP_URL_HOST))
                 : null;
+            // 依頼BX-1: 起点の診断選択時に、比較ウィザードへ自社URL・競合1社を
+            // 引き継ぐための材料。
+            $competitorWebsite = $analysis->project?->websites?->firstWhere('is_primary', false);
+            $competitorName = $this->realCompetitorName($competitorWebsite?->name);
 
             return [
                 'id' => $analysis->id,
@@ -221,10 +237,13 @@ class ComparisonController extends Controller
                 'self_host' => $selfHost !== '' ? $selfHost : null,
                 'analyzed_at' => $analysis->created_at?->format('Y年n月j日'),
                 'status' => $analysis->status->value,
+                'self_url' => $selfWebsite?->url,
+                'competitor_url' => $competitorWebsite?->url,
+                'competitor_name' => $competitorName,
             ];
         })->values();
 
-        return response()->json(['results' => $results, 'truncated' => false]);
+        return response()->json(['results' => $results, 'truncated' => $truncated]);
     }
 
     public function store(Request $request, Analysis $analysis): RedirectResponse
@@ -297,6 +316,21 @@ class ComparisonController extends Controller
         return redirect()
             ->route('admin.analyses.show', $comparison->id)
             ->with('status', "比較(診断ID: {$comparison->id})を開始しました。");
+    }
+
+    /**
+     * 依頼BX-1(2026-09-11): 無料診断のWebsite.nameは、リードが入力した
+     * 実際の企業名ではなく、登録時(LeadAnalysisController::store())に
+     * 常に固定のプレースホルダ('自社サイト'/'競合サイト')が入る
+     * (実データを確認済み)。これをそのまま比較ウィザードの企業名欄へ
+     * 引き継ぐと、ホスト名の自動生成(依頼BM-3で禁止済み)と同じ「見出しに
+     * 使えない値を機械的に埋める」ことになってしまうため、既知の
+     * プレースホルダはnull扱いにする(依頼者指定「無ければ空のままに
+     * する」を実際のデータ形に合わせて適用したもの)。
+     */
+    private function realCompetitorName(?string $name): ?string
+    {
+        return in_array($name, ['自社サイト', '競合サイト'], true) ? null : $name;
     }
 
     /**
