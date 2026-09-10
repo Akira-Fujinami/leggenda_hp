@@ -2,6 +2,7 @@
 
 namespace App\Services\Report;
 
+use App\Services\BrandWheel\BrandWheelMultiSiteComparisonComposer;
 use App\Support\Report\MultiSiteReportViewModel;
 
 /**
@@ -25,6 +26,12 @@ use App\Support\Report\MultiSiteReportViewModel;
  * sub_nameの2フィールドだけを読む ―― quote/quote_translation/
  * representative_company_name/definition/recommendationは一切読まない
  * (依頼BM-4で止めた引用取得の復活を防ぐ、依頼者指定)。
+ *
+ * 依頼BQ-1(2026-09-11): 抽出条件(BrandWheelMultiSiteComparisonComposer::
+ * extractMissingFromSelf())は「競合の少なくとも1社」ではなく「競合の
+ * 過半数」だが、見出しの文言がそれを表していなかった(調査で判明、依頼BQの
+ * 背景参照)。見出しに「競合N社中M社以上」を出すようにした ―― M は
+ * majorityThreshold()から算出し、このクラス側に計算式を複製しない。
  */
 class AdminComparisonPptxDataBuilder
 {
@@ -81,7 +88,7 @@ class AdminComparisonPptxDataBuilder
 
         $axes = $this->buildAxisMatrix($viewModel->comparisonTable, count($viewModel->competitors));
         $summary = $this->buildSummary($companies, $axes);
-        $missingItems = $this->buildMissingItems($viewModel->missingFromSelf);
+        $missingItems = $this->buildMissingItems($viewModel->missingFromSelf, count($viewModel->competitors));
 
         return [
             'self_company_name' => $viewModel->selfCompanyDisplayName,
@@ -102,10 +109,18 @@ class AdminComparisonPptxDataBuilder
      * 「ほかN件」1件に畳んで、Generatorが常に「項目N件+ほか1件」以下の
      * 固定件数だけを受け取れば済むようにする。
      *
+     * 依頼BQ-1(2026-09-11): 見出しに「競合N社中M社以上」の具体的な数字を
+     * 出す。M(過半数の人数)は、抽出条件そのものである
+     * BrandWheelMultiSiteComparisonComposer::majorityThreshold()から算出する
+     * (この依頼では同クラスを変更しないが、既存の公開メソッドを呼ぶのは
+     * 「定義を1箇所に保つ」という既存方針に沿うため問題ない ―― 計算式を
+     * このクラス側に複製すると、将来どちらか片方だけ変更されて定義が
+     * 割れる恐れがある)。
+     *
      * @param  list<array{axis_name: string, sub_name: string, competitor_matched_count: int}>  $missingFromSelf  件数降順で既に並んでいる(BrandWheelMultiSiteComparisonComposer::extractMissingFromSelf())
      * @return array{heading: string, empty_text: string, items: list<array{axis_name: string, sub_name: string}>, others_count: int}
      */
-    private function buildMissingItems(array $missingFromSelf): array
+    private function buildMissingItems(array $missingFromSelf, int $competitorCount): array
     {
         $maxCount = (int) config('admin_comparison_pptx.missing_items_max_count');
 
@@ -120,8 +135,11 @@ class AdminComparisonPptxDataBuilder
             $items = array_slice($items, 0, max(0, $maxCount - 1));
         }
 
+        $majorityThreshold = (new BrandWheelMultiSiteComparisonComposer)->majorityThreshold($competitorCount);
+        $heading = sprintf((string) config('admin_comparison_pptx.missing_items_heading'), $competitorCount, $majorityThreshold);
+
         return [
-            'heading' => (string) config('admin_comparison_pptx.missing_items_heading'),
+            'heading' => $heading,
             'empty_text' => (string) config('admin_comparison_pptx.missing_items_empty_text'),
             'items' => $items,
             'others_count' => $othersCount,

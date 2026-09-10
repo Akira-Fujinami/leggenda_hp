@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Services\Report;
 
+use App\Services\BrandWheel\BrandWheelMultiSiteComparisonComposer;
 use App\Services\Report\AdminComparisonPptxDataBuilder;
 use App\Support\Report\MultiSiteReportViewModel;
 use Tests\TestCase;
@@ -403,6 +404,20 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
     }
 
     /**
+     * 依頼BQ-1(2026-09-11): 見出しは「競合N社中M社以上」を埋め込んだ
+     * sprintfテンプレートになった。Mは
+     * BrandWheelMultiSiteComparisonComposer::majorityThreshold()から
+     * 算出する(計算式をテスト側に複製しない)。デフォルトのviewModel()は
+     * 競合2社のため、majorityThreshold(2)=2(2社とも、の意味)。
+     */
+    private function expectedMissingItemsHeading(int $competitorCount): string
+    {
+        $majorityThreshold = (new BrandWheelMultiSiteComparisonComposer)->majorityThreshold($competitorCount);
+
+        return sprintf(config('admin_comparison_pptx.missing_items_heading'), $competitorCount, $majorityThreshold);
+    }
+
+    /**
      * 依頼BO-1: 自社が全24項目を満たす(missingFromSelfが空)とき、
      * itemsは空になるが、見出し・0件時の文言はconfigの値のまま
      * 出力されること(セクションごと消して余白を残さない、依頼者指定)。
@@ -413,7 +428,7 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
 
         $this->assertSame([], $data['missing_items']['items']);
         $this->assertSame(0, $data['missing_items']['others_count']);
-        $this->assertSame(config('admin_comparison_pptx.missing_items_heading'), $data['missing_items']['heading']);
+        $this->assertSame($this->expectedMissingItemsHeading(2), $data['missing_items']['heading']);
         $this->assertSame(config('admin_comparison_pptx.missing_items_empty_text'), $data['missing_items']['empty_text']);
         $this->assertNotSame('', trim($data['missing_items']['empty_text']));
     }
@@ -424,6 +439,35 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
             'missingFromSelf' => [$this->missingFromSelfItem('活動的魅力', '福利厚生', 2)],
         ]));
 
-        $this->assertSame(config('admin_comparison_pptx.missing_items_heading'), $data['missing_items']['heading']);
+        $this->assertSame($this->expectedMissingItemsHeading(2), $data['missing_items']['heading']);
+    }
+
+    /**
+     * 依頼BQ-1: 過半数の実際の人数(競合N社中M社以上)が、競合社数に応じて
+     * 正しく変わること(3社なら2社、5社なら3社)。
+     */
+    public function test_missing_items_heading_reflects_the_majority_count_for_the_actual_competitor_count(): void
+    {
+        $data3 = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'competitors' => [
+                ['name' => '競合A社', 'url' => 'https://a.example.com'],
+                ['name' => '競合B社', 'url' => 'https://b.example.com'],
+                ['name' => '競合C社', 'url' => 'https://c.example.com'],
+            ],
+            'missingFromSelf' => [],
+        ]));
+        $this->assertSame('競合3社中2社以上が伝えていて、自社が伝えていない項目', $data3['missing_items']['heading']);
+
+        $data5 = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'competitors' => [
+                ['name' => '競合A社', 'url' => 'https://a.example.com'],
+                ['name' => '競合B社', 'url' => 'https://b.example.com'],
+                ['name' => '競合C社', 'url' => 'https://c.example.com'],
+                ['name' => '競合D社', 'url' => 'https://d.example.com'],
+                ['name' => '競合E社', 'url' => 'https://e.example.com'],
+            ],
+            'missingFromSelf' => [],
+        ]));
+        $this->assertSame('競合5社中3社以上が伝えていて、自社が伝えていない項目', $data5['missing_items']['heading']);
     }
 }
