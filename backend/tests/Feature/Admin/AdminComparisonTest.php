@@ -49,6 +49,21 @@ class AdminComparisonTest extends TestCase
     }
 
     /**
+     * 依頼BS-3(2026-09-11): tempnam()が拡張子無しで予約した実体を、
+     * rename()でそのまま最終パスとして使い回す(依頼BJ-3/BR-3と同じ方式)。
+     * `tempnam(...).'.ext'`のように別パスへ書き込むと、tempnam()自身が
+     * 作った拡張子無しの実体が/tmpに残り続ける。
+     */
+    private function reservedTempPath(string $prefix, string $extension): string
+    {
+        $reserved = tempnam(sys_get_temp_dir(), $prefix);
+        $path = $reserved.'.'.$extension;
+        rename($reserved, $path);
+
+        return $path;
+    }
+
+    /**
      * show.blade.phpの「営業資料に差し込む」導線・添付ガイダンス文言は、
      * 既存の比較PDFレポート行(format=pdf, status=completed)の中に並べて
      * 出すため、画面表示系のテストではこの行を用意する必要がある
@@ -693,7 +708,7 @@ class AdminComparisonTest extends TestCase
         Queue::fake([StartAnalysisJob::class]);
         $source = $this->makeSourceAnalysis();
 
-        $path = tempnam(sys_get_temp_dir(), 'near-limit').'.pptx';
+        $path = $this->reservedTempPath('near-limit', 'pptx');
         file_put_contents($path, $this->makeMinimalPptxBytes(['内容1', '参照元']));
         $zip = new \ZipArchive();
         $zip->open($path);

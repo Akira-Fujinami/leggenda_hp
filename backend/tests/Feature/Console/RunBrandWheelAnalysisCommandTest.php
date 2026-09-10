@@ -23,6 +23,21 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
         Storage::fake('analysis');
     }
 
+    /**
+     * 依頼BS-3(2026-09-11): tempnam()が拡張子無しで予約した実体を、
+     * rename()でそのまま最終パスとして使い回す(依頼BJ-3/BR-3と同じ方式)。
+     * `tempnam(...).'.ext'`のように別パスへ書き込むと、tempnam()自身が
+     * 作った拡張子無しの実体が/tmpに残り続ける。
+     */
+    private function reservedTempPath(string $prefix, string $extension): string
+    {
+        $reserved = tempnam(sys_get_temp_dir(), $prefix);
+        $path = $reserved.'.'.$extension;
+        rename($reserved, $path);
+
+        return $path;
+    }
+
     private function makeWebsiteAnalysis(): WebsiteAnalysis
     {
         $project = Project::factory()->create();
@@ -175,7 +190,7 @@ class RunBrandWheelAnalysisCommandTest extends TestCase
     {
         config(['services.brand_wheel_ai.provider' => 'mock', 'analysis.allow_mock_providers' => true]);
         $websiteAnalysis = $this->makeWebsiteAnalysis();
-        $outputPath = tempnam(sys_get_temp_dir(), 'brand_wheel_test_').'.json';
+        $outputPath = $this->reservedTempPath('brand_wheel_test_', 'json');
 
         try {
             $this->artisan('brand-wheel:run', [

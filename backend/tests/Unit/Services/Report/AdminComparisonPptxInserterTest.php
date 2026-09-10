@@ -38,6 +38,21 @@ class AdminComparisonPptxInserterTest extends TestCase
     }
 
     /**
+     * 依頼BS-3(2026-09-11): tempnam()が拡張子無しで予約した実体を、
+     * rename()でそのまま最終パスとして使い回す(依頼BJ-3/BR-3と同じ方式)。
+     * `tempnam(...).'.ext'`のように別パスへ書き込むと、tempnam()自身が
+     * 作った拡張子無しの実体が/tmpに残り続ける。
+     */
+    private function reservedTempPath(string $prefix, string $extension): string
+    {
+        $reserved = tempnam(sys_get_temp_dir(), $prefix);
+        $path = $reserved.'.'.$extension;
+        rename($reserved, $path);
+
+        return $path;
+    }
+
+    /**
      * 依頼BM(2026-09-09): 「競合が伝えていて自社が伝えていない項目」一覧
      * (rows/quote)から、6領域×各社のマトリクス(axes)へ作り直した。
      */
@@ -87,7 +102,7 @@ class AdminComparisonPptxInserterTest extends TestCase
      */
     private function makeFixtureDeck(array $slideTexts, int $sldSzCx = self::SLIDE_W, int $sldSzCy = self::SLIDE_H, bool $includeReferenceKeyword = true, ?string $sldSzXmlOverride = null): string
     {
-        $path = tempnam(sys_get_temp_dir(), 'fixture-deck').'.pptx';
+        $path = $this->reservedTempPath('fixture-deck', 'pptx');
         $this->tempFiles[] = $path;
 
         $zip = new ZipArchive;
@@ -230,7 +245,7 @@ class AdminComparisonPptxInserterTest extends TestCase
     public function test_comparison_slide_does_not_reference_images_charts_or_embeddings(): void
     {
         $bytes = $this->comparisonSlideBytes();
-        $tmp = tempnam(sys_get_temp_dir(), 'slide').'.pptx';
+        $tmp = $this->reservedTempPath('slide', 'pptx');
         $this->tempFiles[] = $tmp;
         file_put_contents($tmp, $bytes);
 
@@ -263,7 +278,7 @@ class AdminComparisonPptxInserterTest extends TestCase
     public function test_comparison_slide_is_the_matrix_layout_and_contains_no_quotes(): void
     {
         $bytes = $this->comparisonSlideBytes();
-        $tmp = tempnam(sys_get_temp_dir(), 'slide').'.pptx';
+        $tmp = $this->reservedTempPath('slide', 'pptx');
         $this->tempFiles[] = $tmp;
         file_put_contents($tmp, $bytes);
 

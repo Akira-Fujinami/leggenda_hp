@@ -146,9 +146,24 @@ class AdminComparisonPptxInsertTest extends TestCase
     /**
      * @param  list<string>  $slideTexts
      */
+    /**
+     * 依頼BS-3(2026-09-11): tempnam()が拡張子無しで予約した実体を、
+     * rename()でそのまま最終パスとして使い回す(依頼BJ-3/BR-3と同じ方式)。
+     * `tempnam(...).'.ext'`のように別パスへ書き込むと、tempnam()自身が
+     * 作った拡張子無しの実体が/tmpに残り続ける。
+     */
+    private function reservedTempPath(string $prefix, string $extension): string
+    {
+        $reserved = tempnam(sys_get_temp_dir(), $prefix);
+        $path = $reserved.'.'.$extension;
+        rename($reserved, $path);
+
+        return $path;
+    }
+
     private function makeMinimalDeck(array $slideTexts, int $sldSzCx = 12192000, int $sldSzCy = 6858000): string
     {
-        $path = tempnam(sys_get_temp_dir(), 'feature-deck').'.pptx';
+        $path = $this->reservedTempPath('feature-deck', 'pptx');
 
         $zip = new ZipArchive;
         $zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE);
@@ -223,7 +238,7 @@ class AdminComparisonPptxInsertTest extends TestCase
         $this->assertStringContainsString('比較ページ差し込み', rawurldecode((string) $response->headers->get('Content-Disposition')));
 
         $bytes = $response->streamedContent();
-        $tmp = tempnam(sys_get_temp_dir(), 'downloaded').'.pptx';
+        $tmp = $this->reservedTempPath('downloaded', 'pptx');
         file_put_contents($tmp, $bytes);
         $zip = new ZipArchive;
         $this->assertTrue($zip->open($tmp) === true);
