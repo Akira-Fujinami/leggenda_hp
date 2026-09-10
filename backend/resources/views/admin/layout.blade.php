@@ -113,6 +113,11 @@
                 <a href="{{ route('admin.dashboard', [], false) }}" class="{{ request()->routeIs('admin.dashboard*') ? 'active' : '' }}">ダッシュボード</a>
                 <a href="{{ route('admin.companies.index', [], false) }}" class="{{ request()->routeIs('admin.companies.*') ? 'active' : '' }}">診断企業</a>
                 <a href="{{ route('admin.analyses.index', [], false) }}" class="{{ request()->routeIs('admin.analyses.*') ? 'active' : '' }}">診断管理</a>
+                {{-- 依頼BP-4(2026-09-10): サイドバーは全画面で常時表示されるため、
+                     どのページからでも2クリック以内で比較ウィザードへ入れる
+                     (診断一覧/admin.analyses.*からもここ経由で辿れる ――
+                     admin/analyses/index.blade.phpは承認外のため変更しない)。 --}}
+                <a href="{{ route('admin.comparisons.wizard', [], false) }}" class="{{ request()->routeIs('admin.comparisons.*') ? 'active' : '' }}">比較を作る</a>
             </nav>
             <div class="logout">
                 <form method="POST" action="{{ route('admin.logout', [], false) }}">

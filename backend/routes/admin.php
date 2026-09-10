@@ -66,5 +66,13 @@ Route::prefix('admin')->name('admin.')->group(function () {
         // という「この診断から派生する」形にする。
         Route::get('/analyses/{analysis}/compare', [ComparisonController::class, 'create'])->name('analyses.compare.create');
         Route::post('/analyses/{analysis}/compare', [ComparisonController::class, 'store'])->name('analyses.compare.store');
+
+        // 依頼BP(2026-09-10): 会社名から起点の診断を探して選ぶ、チャット風
+        // ウィザード。起点の診断がまだ決まっていない状態からアクセスする
+        // ため、上のanalyses.compare.*とは別に/admin/comparisons配下に置く。
+        // search()はJSONのみを返す読み取り専用の口(比較を作る処理には
+        // 関与しない、実際の作成は既存のanalyses.compare.storeを使う)。
+        Route::get('/comparisons/wizard', [ComparisonController::class, 'wizard'])->name('comparisons.wizard');
+        Route::get('/comparisons/search', [ComparisonController::class, 'search'])->name('comparisons.search');
     });
 });

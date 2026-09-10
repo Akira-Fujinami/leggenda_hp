@@ -5,6 +5,12 @@
 @section('content')
 <h2>管理者ダッシュボード</h2>
 
+{{-- 依頼BP-4(2026-09-10): 会社名から比較を始められる入口を、ダッシュボード
+     の目立つ位置(見出し直下)に置く。 --}}
+<p style="margin: 0 0 20px;">
+    <a href="{{ route('admin.comparisons.wizard', [], false) }}" class="btn" style="font-size: 14px; padding: 10px 22px;">＋ 比較レポートを作る</a>
+</p>
+
 <div class="kpi-row">
     <div class="kpi-card">
         <div class="label">本日の診断数</div>

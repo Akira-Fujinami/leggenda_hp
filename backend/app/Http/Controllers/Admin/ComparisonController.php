@@ -8,6 +8,7 @@ use App\Models\Analysis;
 use App\Services\Admin\AdminComparisonService;
 use App\Services\Admin\AnalysisAttachmentService;
 use App\Services\Report\AdminComparisonPptxInserter;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -25,6 +26,15 @@ use Throwable;
  * 差し込みが行えない資料(スライドサイズ不一致・参照元ページなし)を
  * 送信時点で弾く ―― 比較(自社+競合3〜5社、それぞれ最大50ページ巡回、
  * 数十分かかる)を実行してから気づく事故を防ぐため(依頼BI-3、主目的)。
+ *
+ * 依頼BP(2026-09-10): 会社名から起点の無料診断を探して選べる、チャット風
+ * ウィザード(admin.comparisons.wizard)を追加した。AIは使わない(決まった
+ * 順番の質問を1問ずつ出すだけ、自由文の解釈はしない、依頼者指定)。
+ * 送信の最終経路はstore()のまま変更しない ―― ウィザードはJSで
+ * `<form>`のactionを`/admin/analyses/{id}/compare`に組み立てて、既存の
+ * create.blade.phpと同じ<form>をPOSTするだけ(比較を作る処理を別に
+ * 書かない、依頼者最重要指定)。search()はJSON専用の読み取り専用エンドポイント
+ * ―― 比較を作る処理には一切関与しない。
  */
 class ComparisonController extends Controller
 {
@@ -66,6 +76,121 @@ class ComparisonController extends Controller
             'salesDeckSlideSizeLabel' => sprintf('%.2f × %.2f cm', $requiredCx / 360000, $requiredCy / 360000),
             'salesDeckReferenceKeywords' => (array) config('admin_comparison_pptx.reference_page_keywords'),
         ]);
+    }
+
+    /**
+     * 依頼BP-1: 会社名で起点の診断を探すところから始める、チャット風の
+     * ウィザード。会社を選ぶ前(起点のAnalysisが未定)にアクセスするため、
+     * ルートパラメータを取らない ―― create()/store()の
+     * `/admin/analyses/{analysis}/compare` とは別のURL
+     * (`/admin/comparisons/wizard`)にする。
+     *
+     * 送信に失敗して戻ってきた場合(バリデーションエラー)、STEP 1〜3の
+     * 入力を失わないこと(依頼者指定)。競合URL/企業名/ファイル欄は
+     * 通常のold()でフォームが復元されるが、STEP 1(検索文言)・STEP 2
+     * (選んだ診断)はフォームの入力欄ではなくJS側の状態でしか保持されて
+     * いないため、hidden inputとして`company_query`/`source_analysis_id`を
+     * POSTに含め、old()から読み戻して再現する(依頼者指定「途中状態を
+     * DB・セッションに保存しない」に反しない ―― old()はリクエストの
+     * バリデーション失敗時にのみ1往復だけ保持されるフラッシュセッションで、
+     * 「中断された下書き」が溜まる仕組みとは異なる)。
+     */
+    public function wizard(Request $request): View
+    {
+        $selectedAnalysisId = old('source_analysis_id');
+        $selectedAnalysis = null;
+
+        if ($selectedAnalysisId !== null && $selectedAnalysisId !== '') {
+            $selectedAnalysis = Analysis::query()
+                ->whereHas('project', fn ($q) => $q->whereNotNull('lead_company_id'))
+                ->whereNull('source_analysis_id')
+                ->with(['project.leadCompany', 'project.websites'])
+                ->find($selectedAnalysisId);
+        }
+
+        $requiredCx = (int) config('admin_comparison_pptx.required_slide_width_emu');
+        $requiredCy = (int) config('admin_comparison_pptx.required_slide_height_emu');
+
+        return view('admin.comparisons.wizard', [
+            'selectedAnalysis' => $selectedAnalysis,
+            'minCompetitors' => (int) config('analysis.admin_comparison.min_competitors', 3),
+            'maxCompetitors' => (int) config('analysis.admin_comparison.max_competitors', 5),
+            'salesDeckMaxSizeMb' => (int) round((int) config('analysis_attachment.max_file_size_bytes') / 1024 / 1024),
+            'salesDeckSlideSizeLabel' => sprintf('%.2f × %.2f cm', $requiredCx / 360000, $requiredCy / 360000),
+            'salesDeckReferenceKeywords' => (array) config('admin_comparison_pptx.reference_page_keywords'),
+        ]);
+    }
+
+    /**
+     * 依頼BP-2: 会社名(部分一致)で、起点にできる無料診断を探す。JSONのみ
+     * 返す読み取り専用の口 ―― 比較を作る処理には一切関与しない。
+     *
+     * 起点にできる条件はComparisonController::create()・
+     * AdminComparisonService::createFromSourceAnalysis()と同じ
+     * (project.lead_company_idが非null、source_analysis_idがnull =
+     * 比較自身は候補に出さない)。
+     *
+     * 返す情報は診断ID・会社名・自社サイトURLのホスト名・診断日・状態のみ
+     * (依頼者指定 ―― 担当者名・メールアドレス・電話番号・トークンは
+     * 返さない)。
+     */
+    public function search(Request $request): JsonResponse
+    {
+        $query = trim((string) $request->query('q', ''));
+
+        if ($query === '') {
+            return response()->json(['results' => [], 'truncated' => false]);
+        }
+
+        // 依頼BP-2: 全角・半角の違いを吸収する。半角カナ→全角・全角英数記号→
+        // 半角に統一する(mb_convert_kanaのK/V/a、BrandWheelAnalysisResponseParser
+        // ::normalizeForEvidenceMatch()と同じ考え方)。DB側の会社名の表記
+        // (全角/半角どちらで登録されているか)までは統一できないため、
+        // 「検索文字列を正規化してから照合する」片側だけの対応になる ――
+        // 日本の企業名は全角で登録されるのが通例のため、半角カナで検索
+        // されたときに全角の登録名へ一致させる向きを優先した(逆向き
+        // (全角で検索して半角登録の名前に当てる)は実例が乏しいと判断)。
+        $normalizedQuery = mb_strtolower(mb_convert_kana($query, 'KVa', 'UTF-8'), 'UTF-8');
+
+        $limit = (int) config('analysis.admin_comparison.search_result_limit', 20);
+
+        $matches = Analysis::query()
+            ->whereHas('project', fn ($q) => $q->whereNotNull('lead_company_id'))
+            ->whereNull('source_analysis_id')
+            ->whereHas('project.leadCompany', function ($q) use ($normalizedQuery) {
+                // 依頼BP-2: 大文字小文字を無視する。LIKEの大文字小文字の
+                // 扱いはDBエンジンごとに異なる(Postgresは既定で大文字小文字を
+                // 区別する)ため、両辺をLOWER()に通してDBに依存しない形にする。
+                $q->whereRaw('LOWER(company_name) LIKE ?', ['%'.$normalizedQuery.'%']);
+            })
+            ->with(['project.leadCompany', 'project.websites'])
+            ->orderByDesc('created_at')
+            // 依頼BP-2: 超過判定のためlimit+1件だけ取得する(件数を数える
+            // 追加クエリを避ける)。超過時は候補を1件も返さず、絞り込みを促す
+            // (依頼者指定 ―― 上限ぎりぎりの一覧を出すより、まず絞り込ませる)。
+            ->limit($limit + 1)
+            ->get();
+
+        if ($matches->count() > $limit) {
+            return response()->json(['results' => [], 'truncated' => true]);
+        }
+
+        $results = $matches->map(function (Analysis $analysis) {
+            $selfWebsite = $analysis->project?->websites?->firstWhere('is_primary', true);
+            $selfHost = $selfWebsite?->url !== null
+                ? strtolower((string) parse_url($selfWebsite->url, PHP_URL_HOST))
+                : null;
+
+            return [
+                'id' => $analysis->id,
+                'company_name' => $analysis->project?->leadCompany?->company_name,
+                'self_host' => $selfHost !== '' ? $selfHost : null,
+                'analyzed_at' => $analysis->created_at?->format('Y年n月j日'),
+                'status' => $analysis->status->value,
+            ];
+        })->values();
+
+        return response()->json(['results' => $results, 'truncated' => false]);
     }
 
     public function store(Request $request, Analysis $analysis): RedirectResponse

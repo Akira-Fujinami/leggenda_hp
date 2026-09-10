@@ -54,6 +54,15 @@ return [
     'admin_comparison' => [
         'min_competitors' => (int) env('ADMIN_COMPARISON_MIN_COMPETITORS', 3),
         'max_competitors' => (int) env('ADMIN_COMPARISON_MAX_COMPETITORS', 5),
+        /*
+        | 依頼BP-2(2026-09-10): 比較ウィザードSTEP 2(会社名で診断を探す)の
+        | 検索結果の上限。依頼者提案の「20件程度」を採用 ―― ウィザードの
+        | STEP 2はスクロールなしで見比べて選べる件数を想定した一覧UIであり、
+        | 20件は候補選択の画面としてまだ一覧性を保てる上限として妥当と判断した。
+        | 超えた場合は候補を返さず、絞り込みを促す(ComparisonController::search()
+        | 参照、件数を数えるだけの追加クエリを避けるため+1件で判定する)。
+        */
+        'search_result_limit' => (int) env('ADMIN_COMPARISON_SEARCH_RESULT_LIMIT', 20),
     ],
 
     /*
