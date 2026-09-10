@@ -94,6 +94,101 @@
     </table>
 </div>
 
+{{--
+    依頼BU-2/BU-3(2026-09-11): サイトごとの巡回実績。「巡回がページに
+    届いていないのでは」という推測を、見た人が自分で判断できるようにする
+    (依頼者指定、この依頼の主目的)。巡回のロジック自体はここでは変えず、
+    既にDBにある実績(analysis_crawled_pages)と、依頼BU-1で新たに保存した
+    終了理由(website_analyses.crawl_finished_reason)を表示するだけ。
+--}}
+<div class="card">
+    <h3>巡回の実績</h3>
+    @if ($analysis->websiteAnalyses->every(fn ($wa) => ! ($crawlSummaries[$wa->id]['has_crawl_data'] ?? false)))
+        <p class="empty">この診断では巡回を行っていません。</p>
+    @else
+        <div style="overflow-x: auto;">
+        <table class="list">
+            <thead>
+                <tr>
+                    <th>サイト</th>
+                    <th>取得</th>
+                    <th>失敗</th>
+                    <th>除外(パターン/robots/対象外/新卒キャリア)</th>
+                    <th>未処理</th>
+                    <th>レンダリング</th>
+                    <th>終了理由</th>
+                    <th>所要時間</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach ($analysis->websiteAnalyses as $wa)
+                    @php
+                        $crawlSummary = $crawlSummaries[$wa->id] ?? null;
+                        $hasCrawlData = $crawlSummary['has_crawl_data'] ?? false;
+                        $hasWarning = $hasCrawlData && count($crawlSummary['warnings']) > 0;
+                        $durationLabel = null;
+                        if ($hasCrawlData && $crawlSummary['duration_seconds'] !== null) {
+                            $durationLabel = sprintf('%d分%02d秒', intdiv($crawlSummary['duration_seconds'], 60), $crawlSummary['duration_seconds'] % 60);
+                        }
+                    @endphp
+                    <tr style="{{ $hasWarning ? 'background: #FFF8EC;' : '' }}">
+                        <td>
+                            {{ $wa->website?->name }}
+                            @if ($hasWarning)
+                                <span title="この結果は確認が必要です" style="color: #B8860B;">&#9888;</span>
+                            @endif
+                        </td>
+                        @if (! $hasCrawlData)
+                            <td colspan="6" class="empty">巡回していません。</td>
+                        @else
+                            <td>{{ $crawlSummary['fetched_count'] }}</td>
+                            <td>{{ $crawlSummary['failed_count'] }}</td>
+                            <td>{{ $crawlSummary['excluded_counts']['by_pattern'] }}/{{ $crawlSummary['excluded_counts']['by_robots'] }}/{{ $crawlSummary['excluded_counts']['by_scope'] }}/{{ $crawlSummary['excluded_counts']['by_track'] }}</td>
+                            <td>{{ $crawlSummary['pending_count'] }}</td>
+                            <td>{{ $crawlSummary['rendered_count'] }}</td>
+                            <td>{{ $crawlSummary['finished_reason_label'] }}</td>
+                            <td>{{ $durationLabel ?? '—' }}</td>
+                        @endif
+                    </tr>
+                    @if ($hasWarning)
+                        <tr style="background: #FFF8EC;">
+                            <td colspan="7" style="padding-top: 0;">
+                                @foreach ($crawlSummary['warnings'] as $warning)
+                                    <div style="color: #7a5c00; font-size: 13px;">&#9888; {{ $warning['message'] }}</div>
+                                @endforeach
+                            </td>
+                        </tr>
+                    @endif
+                    @if ($hasCrawlData && count($crawlSummary['failed_urls']) > 0)
+                        <tr>
+                            <td colspan="7" style="padding-top: 0;">
+                                <details>
+                                    <summary style="cursor: pointer; font-size: 13px; color: #4B5563;">失敗したURL({{ $crawlSummary['failed_count'] }}件)を見る</summary>
+                                    <table class="list" style="margin-top: 8px;">
+                                        <thead><tr><th>URL</th><th>HTTPステータス</th></tr></thead>
+                                        <tbody>
+                                            @foreach ($crawlSummary['failed_urls'] as $failedUrl)
+                                                <tr>
+                                                    <td style="word-break: break-all;">{{ $failedUrl['url'] }}</td>
+                                                    <td>{{ $failedUrl['http_status'] ?? '—' }}</td>
+                                                </tr>
+                                            @endforeach
+                                        </tbody>
+                                    </table>
+                                    @if ($crawlSummary['failed_urls_overflow_count'] > 0)
+                                        <p class="empty">ほか{{ $crawlSummary['failed_urls_overflow_count'] }}件</p>
+                                    @endif
+                                </details>
+                            </td>
+                        </tr>
+                    @endif
+                @endforeach
+            </tbody>
+        </table>
+        </div>
+    @endif
+</div>
+
 <div class="card">
     <h3>Brand Wheel</h3>
     @if ($brandWheelResults->isEmpty())

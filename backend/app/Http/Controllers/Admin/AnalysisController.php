@@ -10,6 +10,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
 use App\Models\Report;
+use App\Services\Admin\CrawlDiagnosticsService;
 use App\Services\Report\AdminComparisonPptxDataBuilder;
 use App\Services\Report\AdminComparisonPptxGenerator;
 use App\Services\Report\AdminComparisonPptxInserter;
@@ -52,7 +53,7 @@ class AnalysisController extends Controller
         ]);
     }
 
-    public function show(Analysis $analysis): View
+    public function show(Analysis $analysis, CrawlDiagnosticsService $crawlDiagnostics): View
     {
         abort_unless($analysis->project?->lead_company_id !== null, 404);
 
@@ -64,9 +65,17 @@ class AnalysisController extends Controller
             ->get()
             ->unique('website_analysis_id');
 
+        // 依頼BU-2(2026-09-11): サイトごとの巡回実績。website_analysis_id
+        // をキーにしたコレクションにしておき、blade側は
+        // $crawlSummaries[$wa->id]で引くだけにする(集計ロジックをここに
+        // 置かず、CrawlDiagnosticsServiceへ寄せる)。
+        $crawlSummaries = $analysis->websiteAnalyses
+            ->mapWithKeys(fn ($wa) => [$wa->id => $crawlDiagnostics->summarize($wa)]);
+
         return view('admin.analyses.show', [
             'analysis' => $analysis,
             'brandWheelResults' => $brandWheelResults,
+            'crawlSummaries' => $crawlSummaries,
         ]);
     }
 

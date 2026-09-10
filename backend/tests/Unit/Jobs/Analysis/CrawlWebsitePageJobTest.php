@@ -199,6 +199,12 @@ class CrawlWebsitePageJobTest extends TestCase
         Http::assertNothingSent();
         Queue::assertNotPushed(CrawlWebsitePageJob::class);
         $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+        // 依頼BU-1: finalizeCrawl()がLog::infoに出しているのと同じreasonを
+        // website_analyses.crawl_finished_reason/atへも保存する(巡回の
+        // 判定・上限・順序自体には影響しない、記録の追加のみ)。
+        $websiteAnalysis->refresh();
+        $this->assertSame('max_pages', $websiteAnalysis->crawl_finished_reason);
+        $this->assertNotNull($websiteAnalysis->crawl_finished_at);
     }
 
     /**
@@ -217,6 +223,7 @@ class CrawlWebsitePageJobTest extends TestCase
         Http::assertNothingSent();
         Queue::assertNotPushed(CrawlWebsitePageJob::class);
         $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+        $this->assertSame('total_timeout', $websiteAnalysis->fresh()->crawl_finished_reason);
     }
 
     /**
@@ -373,6 +380,7 @@ class CrawlWebsitePageJobTest extends TestCase
         $this->assertFalse($long->fresh()->render_candidate);
         Queue::assertNotPushed(RenderCrawledPageJob::class);
         $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+        $this->assertSame('exhausted', $websiteAnalysis->fresh()->crawl_finished_reason);
     }
 
     /**
@@ -412,6 +420,7 @@ class CrawlWebsitePageJobTest extends TestCase
         (new CrawlWebsitePageJob($analysis->id, $websiteAnalysis->id))->failed(new \RuntimeException('boom'));
 
         $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+        $this->assertSame('failed_exception', $websiteAnalysis->fresh()->crawl_finished_reason);
     }
 
     // ------------------------------------------------------------------
@@ -591,6 +600,11 @@ class CrawlWebsitePageJobTest extends TestCase
         $this->assertSame(1, AnalysisCrawledPage::query()->where('status', AnalysisCrawledPage::STATUS_FETCHED)->count());
         $this->assertSame(2, AnalysisCrawledPage::query()->where('status', AnalysisCrawledPage::STATUS_PENDING)->count());
         $this->assertNotNull($websiteAnalysis->fresh()->recruitment_track_exclusion_fallback_at);
+        // 依頼BU-1: 安全弁(除外なしでの再巡回)を通った時点では、巡回は
+        // まだ実際には終わっていない ―― crawl_finished_reason/atを
+        // 書いてはいけない(finalizeCrawl()内でこの記録を安全弁のreturnより
+        // 後に置いている、という配置そのものの検証)。
+        $this->assertNull($websiteAnalysis->fresh()->crawl_finished_reason);
 
         \Illuminate\Support\Facades\Log::shouldHaveReceived('info')
             ->withArgs(function (string $message, array $context) {

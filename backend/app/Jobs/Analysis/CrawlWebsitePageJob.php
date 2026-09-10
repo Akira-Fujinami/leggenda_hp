@@ -380,6 +380,17 @@ class CrawlWebsitePageJob implements ShouldQueue
             }
         }
 
+        // 依頼BU-1(2026-09-11): 上のexhausted安全弁(除外なしでの再巡回)を
+        // 通った場合はここへ到達しない=実際にはまだ終了していないため、
+        // この位置(安全弁のreturnより後、巡回が本当に終わる一本道)でのみ
+        // 呼ぶ。上のLog::info('brand_wheel_crawl_completed', ...)が出して
+        // いるのと同じ$reasonをそのまま保存する(新しい理由は作らない)。
+        // 巡回の判定・上限・順序には一切影響しない、純粋な記録の追加。
+        WebsiteAnalysis::query()->whereKey($this->websiteAnalysisId)->update([
+            'crawl_finished_reason' => $reason,
+            'crawl_finished_at' => now(),
+        ]);
+
         $minChars = (int) config('brand_wheel.crawl_render_candidate_min_chars', 200);
         $maxCandidates = (int) config('brand_wheel.crawl_render_candidate_max_count', 10);
 
