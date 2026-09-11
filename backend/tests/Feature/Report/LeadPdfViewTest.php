@@ -123,7 +123,6 @@ class LeadPdfViewTest extends TestCase
             'improvementMidTermAction' => null,
             'selfLowContentNotice' => null,
             'crawlSiteEnabled' => false,
-            'selfEvidenceByAxis' => [],
         ];
         $defaults['improvementFocusSelfOnly'] = app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($defaults['subElementComparison']);
 
@@ -894,188 +893,49 @@ class LeadPdfViewTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // 6. ○と判定した根拠(依頼R、2026-08-26新設)。
+    // 依頼BY(2026-09-11): 【付録】○と判定した根拠ページ(依頼R、
+    // 2026-08-26新設、依頼AY-2で末尾へ移動)を削除した。ReportViewModelから
+    // selfEvidenceByAxis/hasQuoteTranslationsフィールド自体が無くなった
+    // ため、これらを操作して付録の見え方(軸の並び順・引用の逐語表示・
+    // HTMLエスケープ・日本語訳の出し分け)を検証していた以下のテストは、
+    // 対象のコード自体が無くなったため削除した(旧
+    // test_evidence_page_shows_axis_grouped_quotes_in_config_order/
+    // test_evidence_page_shows_the_quote_in_quotation_marks_verbatim/
+    // test_evidence_page_escapes_html_in_the_quote/
+    // test_evidence_page_shows_the_translation_below_the_quote_and_switches_the_intro_text/
+    // test_evidence_page_keeps_the_original_intro_text_when_there_are_no_translations/
+    // test_evidence_page_omits_the_translation_label_when_there_is_no_translation/
+    // test_evidence_page_escapes_html_in_the_translation/
+    // test_report_has_seven_pages_when_the_evidence_page_is_present)。
+    // 「付録が出ないこと」自体は、旧test_evidence_page_is_omitted_when_
+    // self_evidence_by_axis_is_emptyを下のtest_appendix_page_is_never_
+    // renderedへ書き換えて引き続き検証する。
     // ------------------------------------------------------------------
 
-    public function test_evidence_page_is_omitted_when_self_evidence_by_axis_is_empty(): void
+    /**
+     * 依頼BY(2026-09-11): 【付録】○と判定した根拠ページは、自社matchedが
+     * 何件あっても(=旧selfEvidenceByAxisが非空になる状況であっても)一切
+     * 出ないこと。ページ自体を削除したため、もはや条件で出し分ける対象では
+     * ない ―― 見出し文字列・旧appendixクラスのいずれも常に不在であることを
+     * 固定する回帰テスト。
+     */
+    public function test_appendix_page_is_never_rendered(): void
     {
-        $html = $this->render($this->viewModel());
+        $html = $this->render($this->comparisonViewModel());
 
         $this->assertStringNotContainsString('○と判定した根拠', $html);
+        $this->assertStringNotContainsString('【付録】', $html);
+        $this->assertStringNotContainsString('class="page appendix"', $html);
+        $this->assertStringNotContainsString('class="page cta appendix"', $html);
     }
 
     /**
-     * 依頼R: matchedが6件(複数軸)のとき、6件すべてが引用付きで、対比表と
-     * 同じ軸順で表示されること。導入文はconfig由来。
-     */
-    public function test_evidence_page_shows_axis_grouped_quotes_in_config_order(): void
-    {
-        $selfEvidenceByAxis = [
-            ['axis_name' => '活動的魅力', 'items' => [
-                ['sub_name' => 'パーパス', 'evidence' => 'パーパスの原文抜粋です。'],
-                ['sub_name' => '展開事業・商品', 'evidence' => '事業内容の原文抜粋です。'],
-            ]],
-            ['axis_name' => '資産的魅力', 'items' => [
-                ['sub_name' => '知名度・評判', 'evidence' => '知名度の原文抜粋です。'],
-            ]],
-            ['axis_name' => '経営スタイル', 'items' => [
-                ['sub_name' => 'リーダーシップ', 'evidence' => 'リーダーシップの原文抜粋です。'],
-            ]],
-            ['axis_name' => '就業環境', 'items' => [
-                ['sub_name' => '同僚・先輩像', 'evidence' => '同僚・先輩像の原文抜粋です。'],
-            ]],
-            ['axis_name' => '金銭的便益', 'items' => [
-                ['sub_name' => '給与水準', 'evidence' => '給与水準の原文抜粋です。'],
-            ]],
-        ];
-
-        $html = $this->render($this->viewModel(['selfEvidenceByAxis' => $selfEvidenceByAxis]));
-
-        $this->assertStringContainsString('○と判定した根拠', $html);
-        $this->assertStringContainsString(config('brand_wheel.evidence_page_intro'), $html);
-
-        // 依頼AY-2(2026-09-07): 「○と判定した根拠」は末尾の付録ページに
-        // なった(以降にページが続かない)ため、開始位置から末尾までを
-        // そのままページ内容として扱う。
-        $start = mb_strpos($html, '○と判定した根拠');
-        $pageHtml = mb_substr($html, $start);
-
-        // 軸の順序どおりに出現すること(活動的魅力→資産的魅力→経営スタイル→
-        // 就業環境→金銭的便益)。
-        $posWillActivity = mb_strpos($pageHtml, '活動的魅力');
-        $posAsset = mb_strpos($pageHtml, '資産的魅力');
-        $posPersonality = mb_strpos($pageHtml, '経営スタイル');
-        $posRelationship = mb_strpos($pageHtml, '就業環境');
-        $posFinancial = mb_strpos($pageHtml, '金銭的便益');
-        $this->assertTrue($posWillActivity < $posAsset);
-        $this->assertTrue($posAsset < $posPersonality);
-        $this->assertTrue($posPersonality < $posRelationship);
-        $this->assertTrue($posRelationship < $posFinancial);
-
-        foreach (['パーパスの原文抜粋です。', '事業内容の原文抜粋です。', '知名度の原文抜粋です。', 'リーダーシップの原文抜粋です。', '同僚・先輩像の原文抜粋です。', '給与水準の原文抜粋です。'] as $quote) {
-            $this->assertStringContainsString($quote, $html);
-        }
-    }
-
-    /**
-     * 依頼R: 引用はかぎ括弧で囲み、原文のまま(要約・改変なし)表示すること。
-     */
-    public function test_evidence_page_shows_the_quote_in_quotation_marks_verbatim(): void
-    {
-        $html = $this->render($this->viewModel([
-            'selfEvidenceByAxis' => [
-                ['axis_name' => '活動的魅力', 'items' => [
-                    ['sub_name' => 'パーパス', 'evidence' => '弊社は地域社会への貢献を第一に考えています。'],
-                ]],
-            ],
-        ]));
-
-        $this->assertStringContainsString('「弊社は地域社会への貢献を第一に考えています。」', $html);
-    }
-
-    /**
-     * 依頼R最重要: 引用に<script>や&が含まれていてもHTMLエスケープされ、
-     * 生のタグとして解釈されないこと。
-     */
-    public function test_evidence_page_escapes_html_in_the_quote(): void
-    {
-        $html = $this->render($this->viewModel([
-            'selfEvidenceByAxis' => [
-                ['axis_name' => '活動的魅力', 'items' => [
-                    ['sub_name' => 'パーパス', 'evidence' => '<script>alert(1)</script>採用 & 育成'],
-                ]],
-            ],
-        ]));
-
-        $this->assertStringNotContainsString('<script>alert(1)</script>', $html);
-        $this->assertStringContainsString('&lt;script&gt;', $html);
-        $this->assertStringContainsString('採用 &amp; 育成', $html);
-    }
-
-    // ------------------------------------------------------------------
-    // 依頼AA(2026-08-27): 日本語でない引用への日本語訳併記。
-    // ------------------------------------------------------------------
-
-    /**
-     * 訳が付いた引用は、原文の直下にラベル付きで表示され、
-     * 冒頭の説明文が「(日本語訳を併記しています)」付きに差し替わること。
-     */
-    public function test_evidence_page_shows_the_translation_below_the_quote_and_switches_the_intro_text(): void
-    {
-        $html = $this->render($this->viewModel([
-            'selfEvidenceByAxis' => [
-                ['axis_name' => '活動的魅力', 'items' => [
-                    ['sub_name' => 'パーパス', 'evidence' => 'We contribute to a better society.', 'evidence_translation' => 'より良い社会に貢献します。'],
-                ]],
-            ],
-            'hasQuoteTranslations' => true,
-        ]));
-
-        $this->assertStringContainsString('「We contribute to a better society.」', $html);
-        $this->assertStringContainsString((string) config('brand_wheel.quote_translation_label'), $html);
-        $this->assertStringContainsString('より良い社会に貢献します。', $html);
-        $this->assertStringContainsString((string) config('brand_wheel.evidence_page_intro_with_translation'), $html);
-        $this->assertStringNotContainsString((string) config('brand_wheel.evidence_page_intro'), $html);
-    }
-
-    /**
-     * 訳が1件も無いレポートでは、現行の説明文のままであること
-     * (「併記しています」と書かない)。
-     */
-    public function test_evidence_page_keeps_the_original_intro_text_when_there_are_no_translations(): void
-    {
-        $html = $this->render($this->viewModel([
-            'selfEvidenceByAxis' => [
-                ['axis_name' => '活動的魅力', 'items' => [
-                    ['sub_name' => 'パーパス', 'evidence' => '弊社は地域社会への貢献を第一に考えています。'],
-                ]],
-            ],
-            'hasQuoteTranslations' => false,
-        ]));
-
-        $this->assertStringContainsString((string) config('brand_wheel.evidence_page_intro'), $html);
-        $this->assertStringNotContainsString('日本語訳を併記しています', $html);
-    }
-
-    /**
-     * 訳が無い項目(evidence_translationがnull)では、ラベル・訳が一切
-     * 出ないこと(空のラベルだけが残る状態を作らない)。
-     */
-    public function test_evidence_page_omits_the_translation_label_when_there_is_no_translation(): void
-    {
-        $html = $this->render($this->viewModel([
-            'selfEvidenceByAxis' => [
-                ['axis_name' => '活動的魅力', 'items' => [
-                    ['sub_name' => 'パーパス', 'evidence' => '弊社は地域社会への貢献を第一に考えています。', 'evidence_translation' => null],
-                ]],
-            ],
-        ]));
-
-        $this->assertStringNotContainsString((string) config('brand_wheel.quote_translation_label'), $html);
-    }
-
-    /**
-     * 訳のテキストにも<script>や&が含まれる場合、HTMLエスケープされること。
-     */
-    public function test_evidence_page_escapes_html_in_the_translation(): void
-    {
-        $html = $this->render($this->viewModel([
-            'selfEvidenceByAxis' => [
-                ['axis_name' => '活動的魅力', 'items' => [
-                    ['sub_name' => 'パーパス', 'evidence' => 'Our purpose', 'evidence_translation' => '<script>alert(1)</script>採用 & 育成'],
-                ]],
-            ],
-            'hasQuoteTranslations' => true,
-        ]));
-
-        $this->assertStringNotContainsString('<script>alert(1)</script>', $html);
-        $this->assertStringContainsString('&lt;script&gt;', $html);
-        $this->assertStringContainsString('採用 &amp; 育成', $html);
-    }
-
-    /**
-     * 改善提案ページの競合引用カードにも同じ体裁(ラベル付きの訳)が
-     * 適用されること(依頼AA-1: 洗い出した全箇所に一貫して適用する)。
+     * 改善提案ページの競合引用カードには、引き続きラベル付きの日本語訳が
+     * 表示されること(依頼AA-1: 洗い出した全箇所に一貫して適用する)。
+     * 依頼BY(2026-09-11): hasQuoteTranslationsフィールド自体は削除した
+     * (このページの表示はcompetitor_evidence_translationの有無だけで
+     * 決まり、hasQuoteTranslationsを参照していなかったため、削除しても
+     * このテストの検証内容に影響しない)。
      */
     public function test_improvement_page_shows_the_translation_below_the_competitor_evidence(): void
     {
@@ -1092,31 +952,11 @@ class LeadPdfViewTest extends TestCase
                 ],
                 'lead_text' => 'テスト用の一文。',
             ],
-            'hasQuoteTranslations' => true,
         ]));
 
         $this->assertStringContainsString('「Meet our diverse team.」', $html);
         $this->assertStringContainsString((string) config('brand_wheel.quote_translation_label'), $html);
         $this->assertStringContainsString('多様なチームをご紹介します。', $html);
-    }
-
-    /**
-     * 依頼R: 「○と判定した根拠」ページが追加された分、既存ページの数は
-     * 変わらず合計だけ+1されること(既存ページのレイアウトは変更していない)。
-     * 依頼AY-1(2026-09-07)のページ統合により基準ページ数が7→6へ減ったため、
-     * 付録込みの合計も8→7になる。
-     */
-    public function test_report_has_seven_pages_when_the_evidence_page_is_present(): void
-    {
-        $html = $this->render($this->comparisonViewModel([
-            'selfEvidenceByAxis' => [
-                ['axis_name' => '活動的魅力', 'items' => [
-                    ['sub_name' => 'パーパス', 'evidence' => 'パーパスの原文抜粋です。'],
-                ]],
-            ],
-        ]));
-
-        $this->assertSame(7, substr_count($html, 'class="page'));
     }
 
     // ------------------------------------------------------------------

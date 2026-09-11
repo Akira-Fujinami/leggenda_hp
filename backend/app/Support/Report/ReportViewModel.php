@@ -19,6 +19,12 @@ namespace App\Support\Report;
  * 4観点自体はJSON API/画面向けにLeadPerspectiveComposerとして引き続き
  * 存在するが、レポートはもう参照しない)。レーダー画像は自社単独・競合単独・
  * 対比表用の重ね図の3種類に分割した(旧brandWheelRadarPngは廃止)。
+ *
+ * 依頼BY(2026-09-11): 【付録】○と判定した根拠ページを削除したため、
+ * その表示専用だったselfEvidenceByAxis/hasQuoteTranslationsを削除した。
+ * evidence自体の収集・保存・翻訳の仕組みは変えていない(表示をやめただけ)。
+ * 多社比較レポート側の同名フィールド(MultiSiteReportViewModel)は別物で、
+ * このクラスとは無関係にそのまま残っている。
  */
 readonly class ReportViewModel
 {
@@ -47,8 +53,6 @@ readonly class ReportViewModel
      * @param  ?string  $improvementMidTermAction  中長期施策(2026-08-18追加、該当する場合のみ1〜2文)。未生成/失敗/該当なしの場合はnull。
      * @param  ?string  $selfLowContentNotice  自社の合計matched件数がconfig('brand_wheel.comparison_sufficiency_threshold')未満のときの但し書き(2026-08-25追加、修正5)。config('brand_wheel.self_low_content_notice')。閾値以上のときはnull。
      * @param  bool  $crawlSiteEnabled  依頼Q-1(2026-08-25追加)。Analysis.crawl_siteをそのまま複製したもの。前置きページの「本分析の対象範囲」の文言(config('brand_wheel.crawl_disabled_scope_notice')/config('brand_wheel.crawl_enabled_scope_notice'))の出し分けにのみ使う。
-     * @param  list<array{axis_name: string, items: list<array{sub_name: string, evidence: string, evidence_translation: ?string}>}>  $selfEvidenceByAxis  依頼R(2026-08-26追加)。「○と判定した根拠」ページ(○△－の対比表の直後)の唯一の情報源。ReportViewModelBuilder::buildSelfEvidenceByAxis()が、自社のBrandWheelAnalysisResult.axes(matched_sub_elementsのevidence、原文の抜粋)と$subElementComparisonから、対比表と同じ軸順・下位要素順で組み立てる。evidenceが空文字の項目は含まれない。1件あたりconfig('brand_wheel.evidence_page_quote_max_chars')でBrandWheelTextTruncator::truncateAtSentenceBoundary()により切り詰め済み(文の途中では切らない)。競合サイトの引用・discarded_sub_elements(棄却された引用)は一切含まない。空配列の場合、Blade/WordReportGenerator側はこのページ自体を出さない。evidence_translationは依頼AA(2026-08-27追加)。evidenceが日本語でない場合のみ日本語訳が入り、日本語の場合・翻訳が失敗した場合はnull(evidence自体は一切書き換えない)。
-     * @param  bool  $hasQuoteTranslations  依頼AA(2026-08-27追加)。このレポート内(evidence_translation・improvementFocus['items'][*]['competitor_evidence_translation'])に1件でも訳が付いたかどうか。「○と判定した根拠」ページ冒頭の説明文(config('brand_wheel.evidence_page_intro')/evidence_page_intro_with_translation)の出し分けにのみ使う。
      * @param  ?string  $improvementFallbackNote  依頼AF-3(2026-08-27追加)。競合ありの改善提案ページで、improvementReason・improvementMidTermActionが両方ともnull(自社が24項目全てで競合と互角以上、またはAIの生成に失敗した場合)のときにのみ表示する代替文言(config('brand_wheel.improvement_focus_templates.no_reason_and_mid_term_fallback')、依頼者承認済み)。それ以外(自社単独ページ、または理由・中長期のいずれかが表示される場合)は常にnull。
      * @param  ?string  $recruitmentTrackCoverNotice  依頼BB-4(2026-09-08追加)。Analysis.recruitment_trackが'new_graduate'/'career'のときのみ、config('brand_wheel.recruitment_track_cover_notice')から対応する一文。'unspecified'のとき(既定・大半の診断)はnull ―― 表紙の見た目を一切変えない。統合ページには追加しない(依頼AZ改で縦幅がぎりぎりのため)。
      */
@@ -82,8 +86,6 @@ readonly class ReportViewModel
         public ?string $improvementMidTermAction,
         public ?string $selfLowContentNotice,
         public bool $crawlSiteEnabled,
-        public array $selfEvidenceByAxis,
-        public bool $hasQuoteTranslations = false,
         public ?string $improvementFallbackNote = null,
         public ?string $recruitmentTrackCoverNotice = null,
     ) {}

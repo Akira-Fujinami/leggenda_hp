@@ -105,10 +105,10 @@ class WordReportGenerator
         // (実行確認で発見)。そのため一時ファイルの削除はsave()が完了した
         // 後、このメソッドの末尾でまとめて行う。
         $radarTempPath = $this->addComparisonAndImprovementSection($phpWord, $viewModel);
+        // 依頼BY(2026-09-11): 「○と判定した根拠」(付録、旧addEvidenceSection())
+        // を削除した。CTAが最後のセクションになる ―― PDF版と異なりWordの
+        // セクションは追加の空白ページを作らないため、削除するだけでよい。
         $this->addCallToActionSection($phpWord, $viewModel);
-        // 依頼AY-2(2026-09-07): PDF版と同じく、「○と判定した根拠」は末尾の
-        // 付録として最後に置く(以前はCTAの直前だった)。
-        $this->addEvidenceSection($phpWord, $viewModel);
 
         $tempPath = $this->reservedTempPath('lead-report-', 'docx');
 
@@ -509,59 +509,6 @@ class WordReportGenerator
             'label_only' => '△',
             default => '－',
         };
-    }
-
-    /**
-     * 依頼R(2026-08-26): 「○と判定した根拠」ページ(PDF版lead-pdf.blade.php
-     * と同内容)。$viewModel->selfEvidenceByAxis(ReportViewModelBuilder::
-     * buildSelfEvidenceByAxis()、対比表と同じ軸順・下位要素順、自社の
-     * matched項目のみ・evidenceが空文字の項目は含まない)が唯一の情報源。
-     * 競合サイトの引用・discarded_sub_elements(棄却された引用)はそもそも
-     * このフィールドに含まれない。
-     *
-     * 依頼AY-2(2026-09-07): 末尾の付録として最後(CTAの後)に置くよう移動した
-     * (以前はcomparisonセクションの直後)。見出しに「【付録】」を付け、
-     * 本編ではないことを示す(PDF版と同内容、内容自体は完全に無改修)。
-     *
-     * 空配列(matched=0件、または全項目のevidenceが空文字)の場合は
-     * addSection()自体を呼ばない ―― 見出しだけの空セクション(空のページ)を
-     * 作らない(PDF版の`@if ($viewModel->selfEvidenceByAxis !== [])`と同じ方針)。
-     *
-     * 1軸に複数件、matchedが多いサイト(実測: カヤック16件)で1ページに
-     * 収まらない場合は、Wordの通常の文章送り(page-break-after相当の指定を
-     * 一切していない)により自然に次ページへ続く ―― PDF版と同じ考え方
-     * (.pageに高さを固定しないのと同様、Word側もこのセクション内で明示的な
-     * 改ページを入れない)。
-     */
-    private function addEvidenceSection(PhpWord $phpWord, ReportViewModel $viewModel): void
-    {
-        if ($viewModel->selfEvidenceByAxis === []) {
-            return;
-        }
-
-        $section = $phpWord->addSection();
-        $section->addTitle('【付録】○と判定した根拠', 1);
-        // 依頼AA(2026-08-27): PDF版と同じ出し分け(このレポート内に日本語訳が
-        // 1件でもあるときだけ「(日本語訳を併記しています)」付きの説明文)。
-        $intro = $viewModel->hasQuoteTranslations
-            ? (string) config('brand_wheel.evidence_page_intro_with_translation')
-            : (string) config('brand_wheel.evidence_page_intro');
-        $section->addText($intro, ['size' => 9, 'color' => '6B6767']);
-
-        $translationLabel = (string) config('brand_wheel.quote_translation_label');
-        foreach ($viewModel->selfEvidenceByAxis as $axisGroup) {
-            $section->addTextBreak(1);
-            $section->addText($axisGroup['axis_name'], ['bold' => true, 'size' => 11.5, 'color' => '1D2088']);
-            foreach ($axisGroup['items'] as $item) {
-                $section->addText($item['sub_name'], ['bold' => true, 'size' => 9.5]);
-                $section->addText('「'.$item['evidence'].'」', ['size' => 9]);
-                // 依頼AA: 原文が主・訳が従であることが分かるよう、PDF版の
-                // .quote-translationと同じ考え方(小さく・控えめに)。
-                if (! empty($item['evidence_translation'])) {
-                    $section->addText($translationLabel.'：'.$item['evidence_translation'], ['size' => 8, 'color' => '8A8A8A']);
-                }
-            }
-        }
     }
 
     /**

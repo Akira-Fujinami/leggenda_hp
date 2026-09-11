@@ -87,7 +87,6 @@ class PdfReportGeneratorTest extends TestCase
             improvementMidTermAction: '中長期的には、部署横断プロジェクトの事例をシリーズ化することも検討できます。',
             selfLowContentNotice: null,
             crawlSiteEnabled: false,
-            selfEvidenceByAxis: [],
         );
     }
 
@@ -97,5 +96,115 @@ class PdfReportGeneratorTest extends TestCase
 
         $this->assertStringStartsWith('%PDF-', $pdf);
         $this->assertGreaterThan(1000, strlen($pdf));
+    }
+
+    /**
+     * 依頼BY(2026-09-11): dompdfが実際に生成したPDFバイト列から、ページ
+     * ツリー(/Type /Pages ... /Count N)を読み取って総ページ数を数える。
+     * PDFパース用ライブラリはこのリポジトリに無いため正規表現で取り出すが、
+     * dompdfが常にこの形でページツリーを1箇所だけ出力することを実際の
+     * 出力で確認済み(このファイルの実装時に確認)。
+     */
+    private function countPdfPages(string $pdf): int
+    {
+        $this->assertMatchesRegularExpression('/\/Type\s*\/Pages.*?\/Count\s+(\d+)/s', $pdf, 'PDFのページツリーが見つかりませんでした。');
+        preg_match('/\/Type\s*\/Pages.*?\/Count\s+(\d+)/s', $pdf, $matches);
+
+        return (int) $matches[1];
+    }
+
+    /**
+     * 依頼BY(2026-09-11): 【付録】○と判定した根拠ページを削除した結果、
+     * 本編の6ページ(表紙/前置き/自社/競合/統合診断結果/ご相談)で完結する
+     * こと。CTAページが常に最後になったことで、dompdfの
+     * page-break-after:alwaysの仕様上、末尾に無駄な白紙ページが増える
+     * 事故が最も起きやすい変更のため、Blade文字列(LeadPdfViewTest)だけで
+     * なく実際に生成したPDFバイト列でページ数を数える。
+     */
+    public function test_pdf_has_exactly_six_pages_with_no_trailing_blank_page_when_self_has_evidence(): void
+    {
+        $pdf = app(PdfReportGenerator::class)->generate($this->viewModel());
+
+        $this->assertSame(6, $this->countPdfPages($pdf));
+    }
+
+    /**
+     * 依頼BY(2026-09-11): 自社のmatchedが0件(=旧付録ページが「出ない」側
+     * だった条件)でも、6ページで白紙が増えないこと。付録を削除した今は
+     * この条件で分岐すること自体が無いはずだが、回帰の芽を早く見つける
+     * ため両方のケースを実PDFで確認する。
+     */
+    public function test_pdf_has_exactly_six_pages_with_no_trailing_blank_page_when_self_has_no_evidence(): void
+    {
+        $selfAxes = [
+            ['key' => 'will_activity', 'group' => 'company_appeal', 'name' => '活動的魅力', 'matched_count' => 0, 'max_count' => 4, 'matched_sub_elements' => [], 'label_only_sub_elements' => []],
+        ];
+        $competitorAxes = [
+            ['key' => 'relationship', 'group' => 'company_distance', 'name' => '就業環境', 'matched_count' => 0, 'max_count' => 4, 'matched_sub_elements' => [], 'label_only_sub_elements' => []],
+        ];
+        $comparisonComposer = app(BrandWheelSubElementComparisonComposer::class);
+        $subElementComparison = $comparisonComposer->compose($selfAxes, $competitorAxes);
+
+        $viewModel = new ReportViewModel(
+            companyDisplayName: '株式会社サンプル様',
+            generatedAtLabel: '2026年8月8日',
+            selfWebsiteUrl: 'https://example.com',
+            competitorWebsiteUrl: 'https://competitor.example.com',
+            isPartial: false,
+            brandWheelSelf: [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://example.com/careers',
+                'axes' => $selfAxes,
+                'key_message' => null,
+                'impression' => null,
+                'impression_items' => [],
+                'positive_impression' => null,
+                'negative_impression' => null,
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+            brandWheelCompetitor: [
+                'status' => 'success',
+                'status_message' => null,
+                'analyzed_url' => 'https://competitor.example.com/careers',
+                'axes' => $competitorAxes,
+                'key_message' => null,
+                'impression' => null,
+                'impression_items' => [],
+                'positive_impression' => null,
+                'negative_impression' => null,
+                'source_pages' => ['recruit_page' => 'read', 'home_page' => 'read'],
+            ],
+            brandWheelComparison: [
+                'self_points' => [],
+                'competitor_points' => [],
+                'one_point' => null,
+            ],
+            brandWheelRadarPngSelf: null,
+            brandWheelRadarPngCompetitor: null,
+            brandWheelRadarPngComparison: null,
+            selfTotalMatched: 0,
+            selfTotalMax: 4,
+            competitorTotalMatched: 0,
+            competitorTotalMax: 4,
+            selfTotalLabelOnly: 0,
+            competitorTotalLabelOnly: 0,
+            subElementComparison: $subElementComparison,
+            groupTotals: [],
+            comparisonOverview: [],
+            improvementFocus: null,
+            improvementFocusSelfOnly: app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($subElementComparison),
+            improvementOnePoint: null,
+            improvementRecommendation: null,
+            improvementReason: null,
+            improvementRecommendedContents: [],
+            improvementMidTermAction: null,
+            selfLowContentNotice: null,
+            crawlSiteEnabled: false,
+        );
+
+        $pdf = app(PdfReportGenerator::class)->generate($viewModel);
+
+        $this->assertSame(6, $this->countPdfPages($pdf));
     }
 }

@@ -66,15 +66,17 @@
          全ページ共通の余白から縮小して確保した。 --}}
     .page { width: 297mm; padding: 6mm 16mm 20mm; position: relative; page-break-after: always; }
     {{--
-        依頼AY-2(2026-09-07): 「○と判定した根拠」をCTAページの後ろ(末尾)へ
-        移した。page-break-after:alwaysのまま最後のページに適用すると、
-        dompdfが末尾に無駄な白紙ページをもう1枚追加する(旧実装で.cta自身に
-        .cta{page-break-after:auto}を付けていたのと同じ理由 ―― 当時はCTAが
-        最後のページだった)。「最後のページはauto」という役割を.ctaから
-        付録ページ(.appendix)へ移し、CTA自身は他の中間ページと同じ
-        page-break-after:always(既定)に戻す(CTAの後ろに付録ページが続くため)。
+        依頼BY(2026-09-11): 「○と判定した根拠」(付録)ページを削除し、CTAが
+        常に最後のページになった。page-break-after:alwaysのまま最後の
+        ページに適用すると、dompdfが末尾に無駄な白紙ページをもう1枚
+        追加する(依頼AY-2時点の.page.appendixと同じ理由)。以前は「どの
+        ページが最後か」がselfEvidenceByAxisの有無で変わっていたため
+        専用クラス(.appendix)で出し分けていたが、付録が無くなった今は
+        「常にCTAが最後」で固定のため、admin-comparison-pdf.blade.php
+        (多社比較レポート、依頼AY以前から)と同じ:last-child方式に揃える
+        ―― クラスの付け外しが要らず、将来ページ構成が変わっても追従する。
     --}}
-    .page.appendix { page-break-after: auto; }
+    .page:last-child { page-break-after: auto; }
     h1 { font-size: 24pt; margin: 0 0 6mm; font-weight: normal; }
     {{--
         2026-08-04: width:265mmを明示する ―― `.page`はbox-sizing:border-box+
@@ -1020,13 +1022,12 @@
     $viewModel->generatedAtLabelを参照し、二重管理しない。
 --}}
 {{--
-    依頼AY-2(2026-09-07): 付録(○と判定した根拠)は$viewModel->
-    selfEvidenceByAxisが空配列の場合は出さない(既存方針、空のページを
-    作らない)。その場合CTAページ自身が最後のページになるため、
-    page-break-after:autoを付ける(付けないと末尾に無駄な白紙ページが増える、
-    CSS冒頭の.page.appendixコメントと同じ理由)。
+    依頼BY(2026-09-11): 付録(○と判定した根拠)を削除したため、CTAページは
+    常に最後のページになる(CSS冒頭の.page:last-childが自動でauto扱いに
+    する)。以前ここにあった「付録が無いときだけappendixクラスを付ける」
+    条件分岐は不要になった。
 --}}
-<div class="page cta @if ($viewModel->selfEvidenceByAxis === []) appendix @endif">
+<div class="page cta">
     <div class="ctawrap">
         <img class="ctalogo" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
         <p class="ctah">さらに3〜5社の競合採用サイトと比較し、<br>御社が優先して改善すべき課題を整理しませんか？</p>
@@ -1040,54 +1041,15 @@
 </div>
 
 {{--
-    【付録】○と判定した根拠(依頼R、2026-08-26追加、依頼AY-2(2026-09-07)で
-    末尾の付録へ移動)。
-
-    移動の理由(依頼AY-2): 本編を6ページ(表紙/前置き/自社/競合/統合診断
-    結果/ご相談)で完結させつつ、判定の根拠を検証できる状態は維持する ――
-    「普段は見せず、聞かれたら開く」の位置づけで、CTAページの後ろ(最後)に
-    置く。見出しに「【付録】」を付け、本編ではないことを示す(依頼者指定
-    「文言は提案してよい」)。
-
-    内容は無改修(依頼R時点のまま) ―― 自社サイトのみ(競合サイトの引用は
-    載せない、依頼者指定)。$viewModel->selfEvidenceByAxis(ReportViewModelBuilder::
-    buildSelfEvidenceByAxis()が組み立てる、対比表と同じ軸順・下位要素順の
-    配列)が唯一の情報源で、Bladeから$viewModel->brandWheelSelf['axes']等の
-    生JSONを直接掘らない。「－」の項目は一切参照しない(依頼者指定: 顧客に
-    見せるものではない)。「－」については統合ページ冒頭の凡例(.vslead)で
-    足りている。
-
-    $viewModel->selfEvidenceByAxisが空配列(matched=0件、または全項目の
-    evidenceが空文字)の場合はページ自体を出さない(空のページを作らない)。
-    このページが本編の最後(=CTAページ)の次に置かれる唯一のページのため、
-    class="page appendix"でpage-break-after:autoにする(CSS冒頭のコメント
-    参照 ―― alwaysのままだと末尾に無駄な白紙ページが増える)。
+    依頼BY(2026-09-11): 【付録】○と判定した根拠ページを削除した(依頼R、
+    2026-08-26追加、依頼AY-2で末尾へ移動していたもの)。本編は元から
+    6ページ(表紙/前置き/自社/競合/統合診断結果/ご相談)で完結する設計
+    (依頼AY-2)であり、付録を落としても流れは崩れない(依頼者指定)。
+    evidence自体の収集・保存・翻訳(BrandWheelAnalysisResult・
+    BrandWheelQuoteTranslator)はやめていない ―― 表示をやめるだけ。
+    多社比較レポート(admin-comparison-pdf.blade.php)側の同種ページは
+    このレポートとは別の判断であり、削除していない。
 --}}
-@if ($viewModel->selfEvidenceByAxis !== [])
-<div class="page appendix">
-    <h2>【付録】○と判定した根拠</h2>
-    <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
-    {{-- 依頼AA(2026-08-27): このレポート内に日本語訳が1件でもあるときだけ
-         「(日本語訳を併記しています)」付きの説明文に差し替える。1件も
-         無ければ既存の文言のまま(訳が無いのに「併記しています」と書かない)。 --}}
-    <p class="evidenceintro">{{ $viewModel->hasQuoteTranslations ? config('brand_wheel.evidence_page_intro_with_translation') : config('brand_wheel.evidence_page_intro') }}</p>
-
-    @foreach ($viewModel->selfEvidenceByAxis as $axisGroup)
-        <div class="evidenceaxis">
-            <p class="axisname">{{ $axisGroup['axis_name'] }}</p>
-            @foreach ($axisGroup['items'] as $item)
-                <div class="evidenceitem">
-                    <p class="subname">{{ $item['sub_name'] }}</p>
-                    <p class="quote">「{{ $item['evidence'] }}」</p>
-                    @if (! empty($item['evidence_translation']))
-                        <p class="quote-translation">{{ config('brand_wheel.quote_translation_label') }}：{{ $item['evidence_translation'] }}</p>
-                    @endif
-                </div>
-            @endforeach
-        </div>
-    @endforeach
-</div>
-@endif
 
 </body>
 </html>

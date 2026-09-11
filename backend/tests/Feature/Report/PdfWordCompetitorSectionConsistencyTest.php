@@ -79,7 +79,6 @@ class PdfWordCompetitorSectionConsistencyTest extends TestCase
             'improvementMidTermAction' => null,
             'selfLowContentNotice' => null,
             'crawlSiteEnabled' => false,
-            'selfEvidenceByAxis' => [],
         ];
 
         $values = array_merge($defaults, $overrides);

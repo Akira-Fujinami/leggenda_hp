@@ -658,19 +658,23 @@ return [
 
     /*
     |----------------------------------------------------------------
-    | 「○と判定した根拠」ページ(依頼R、2026-08-26追加)の導入文
+    | 「○」と判定した根拠ページ(依頼R、2026-08-26追加)の導入文
     |----------------------------------------------------------------
-    | ○△－の対比表の直後に独立ページとして追加する、自社サイトのmatched
-    | (○)項目の原文引用ページ(ReportViewModelBuilder::buildSelfEvidenceByAxis()、
-    | BrandWheelEvidenceLookupBuilderが既に持つBrandWheelAnalysisResult.axesの
-    | evidenceをそのまま表示するだけで、AIを新たに呼ばない)。依頼者確定文言・
-    | 原文ママ。
+    | 自社サイトのmatched(○)項目の原文引用ページ(BrandWheelEvidenceLookup
+    | Builderが既に持つBrandWheelAnalysisResult.axesのevidenceをそのまま
+    | 表示するだけで、AIを新たに呼ばない)。依頼者確定文言・原文ママ。
+    |
+    | 依頼BY(2026-09-11): 無料診断レポート(lead-pdf.blade.php/
+    | WordReportGenerator)からはこのページ自体を削除した。このキーは
+    | 現在、多社比較レポート(admin-comparison-pdf.blade.php、
+    | MultiSiteReportViewModelBuilder::buildSelfEvidenceByAxis())が
+    | 引き続き使っているため残す。
     */
     'evidence_page_intro' => '「○」とした項目について、サイト上のどの記述をもとに判断したかを示します。引用は原文のままです。',
 
     /*
     |----------------------------------------------------------------
-    | 「○と判定した根拠」ページの引用1件あたりの文字数上限(依頼R、
+    | 「○」と判定した根拠ページの引用1件あたりの文字数上限(依頼R、
     | 2026-08-26追加)
     |----------------------------------------------------------------
     | BrandWheelTextTruncator::truncateAtSentenceBoundary()(既存、文の途中で
@@ -680,6 +684,9 @@ return [
     | 読み上げられる分量(1〜2文程度)を確保する目的のため。matchedが多い
     | サイト(実測: カヤック16件)でページ数が際限なく増えないよう、値自体は
     | 上限を設ける。env経由で運用しながら調整すること。
+    |
+    | 依頼BY(2026-09-11): evidence_page_introと同じ理由で、現在は多社比較
+    | レポート側(MultiSiteReportViewModelBuilder)のみが使う。
     */
     'evidence_page_quote_max_chars' => (int) env('BRAND_WHEEL_EVIDENCE_PAGE_QUOTE_MAX_CHARS', 200),
 
@@ -688,17 +695,21 @@ return [
     | 引用への日本語訳併記(依頼AA、2026-08-27追加)
     |----------------------------------------------------------------
     | レポート内で「サイト上の原文をそのまま表示している箇所」
-    | (sub_elements.*.evidence・competitor_evidence、いずれもBrandWheelQuoteTranslator
-    | 参照)のうち、日本語でない引用が1件以上ある場合にのみ使う。原文は
-    | 一切書き換えない ―― 訳は原文の直下に補助表示として併記するだけ。
+    | (competitor_evidence、BrandWheelQuoteTranslator参照)のうち、
+    | 日本語でない引用が1件以上ある場合にのみ使う。原文は一切書き換えない
+    | ―― 訳は原文の直下に補助表示として併記するだけ。
     |
-    | evidence_page_intro_with_translation: 「○と判定した根拠」ページ冒頭の
-    | 説明文の、訳が1件でもあるときの差し替え版。訳が0件のレポートでは
-    | 使わず、既存のevidence_page_introのまま(「併記しています」と書かない)。
     | quote_translation_label: 各引用の訳の直前に付けるラベル。訳であることを
-    | 明示し、原文の続きだと誤読されないようにする。
+    | 明示し、原文の続きだと誤読されないようにする。改善提案ページ
+    | (competitor_evidence_translation)で引き続き使う。
+    |
+    | 依頼BY(2026-09-11): evidence_page_intro_with_translation(無料診断
+    | レポートの「○と判定した根拠」ページ冒頭説明文の訳あり版)は、削除した
+    | そのページ以外に参照元が無かったため削除した。多社比較レポート
+    | (admin-comparison-pdf.blade.php)は元々このキーを使っておらず、
+    | evidence_page_introを常に使う(hasQuoteTranslationsによる出し分けを
+    | 最初から行っていない)。
     */
-    'evidence_page_intro_with_translation' => '「○」とした項目について、サイト上のどの記述をもとに判断したかを示します。引用は原文のままです（日本語訳を併記しています）。',
     'quote_translation_label' => '日本語訳',
 
     /*

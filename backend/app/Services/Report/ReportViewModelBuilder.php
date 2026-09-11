@@ -17,7 +17,6 @@ use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
 use App\Services\BrandWheel\BrandWheelQuoteTranslator;
 use App\Services\BrandWheel\BrandWheelRadarSvgBuilder;
 use App\Services\BrandWheel\BrandWheelSubElementComparisonComposer;
-use App\Services\BrandWheel\BrandWheelTextTruncator;
 use App\Support\Report\ReportViewModel;
 use Illuminate\Support\Facades\Log;
 
@@ -176,21 +175,13 @@ class ReportViewModelBuilder
         // 「○△－対比表」「改善提案」の唯一の情報源(2026-08-04)。
         $subElementComparison = $this->subElementComparisonComposer->compose($selfAxes, $competitorAxes);
 
-        // 依頼R(2026-08-26): 「○と判定した根拠」ページ(○△－の対比表の
-        // 直後)の唯一の情報源。自社のBrandWheelAnalysisResult.axes(生の
-        // matched_sub_elements、evidence=原文の抜粋を含む)から組み立てる ――
-        // $brandWheelSelf['axes']は既にBrandWheelLeadResponseComposerが
-        // evidenceを剥がした後の値のため使えない(2026-08-03の非開示方針、
-        // 画面向け)。$evidenceLookupBuilderは既に改善提案ページの競合引用
-        // カード用に存在していた仕組みをそのまま流用する(新しい仕組みを
-        // 作らない)。競合側は一切呼ばない(競合サイトの引用を載せない、
-        // 依頼者指定)。discarded_sub_elements(evidence_not_found等で棄却
-        // された引用)はevidenceLookupBuilderがそもそもmatched_sub_elements
-        // しか読まないため、参照する余地が無い。
-        $selfEvidenceByAxis = $this->buildSelfEvidenceByAxis(
-            $subElementComparison,
-            $this->evidenceLookupBuilder->build($selfBrandWheelRecord),
-        );
+        // 依頼BY(2026-09-11): 「○と判定した根拠」(付録)ページ自体を削除した
+        // ため、自社evidenceをここで組み立てる必要は無くなった
+        // (旧buildSelfEvidenceByAxis()呼び出し・依頼R由来)。evidence自体の
+        // 収集・保存(BrandWheelAnalysisResult)・改善提案(v14)への受け渡しは
+        // 変えていない ―― このクラスが表示用に組み立てるのをやめただけ。
+        // $evidenceLookupBuilderは競合の改善提案カード用(下のbuild()呼び出し)
+        // に引き続き使う。
 
         // 2026-08-17追加: 比較ページ冒頭の比較サマリー・グループ優劣バッジ。
         // 競合が読み取れない場合は意味を持たないため空配列にする(呼び出し側は
@@ -409,22 +400,20 @@ class ReportViewModelBuilder
         );
 
         // 依頼AA(2026-08-27): レポート内で「サイト上の原文をそのまま表示
-        // している箇所」(sub_elements.*.evidence・competitor_evidence、
-        // 依頼AA-1で洗い出した全箇所)のうち、日本語でない引用に日本語訳を
-        // 併記する。1レポート1回のバッチ翻訳にまとめるため、両方の表示
-        // 箇所から翻訳対象(重複除去済み)を先に集め、1回だけ
-        // BrandWheelQuoteTranslator::translate()を呼ぶ(引用ごとに呼ばない、
-        // 依頼者指定)。日本語の引用しか無ければ$translationCandidatesは
-        // 空になり、translate()はAI呼び出し自体を行わない
-        // (BrandWheelQuoteTranslator::translate()のガード参照)。
+        // している箇所」(competitor_evidence、依頼AA-1で洗い出した箇所の
+        // うち改善提案ページに残るもの)のうち、日本語でない引用に日本語訳を
+        // 併記する。1レポート1回のバッチ翻訳にまとめるため、翻訳対象
+        // (重複除去済み)を先に集め、1回だけBrandWheelQuoteTranslator::
+        // translate()を呼ぶ(引用ごとに呼ばない、依頼者指定)。日本語の
+        // 引用しか無ければ$translationCandidatesは空になり、translate()は
+        // AI呼び出し自体を行わない(BrandWheelQuoteTranslator::translate()の
+        // ガード参照)。
+        //
+        // 依頼BY(2026-09-11): 「○と判定した根拠」(付録)ページを削除した
+        // ため、自社evidence(selfEvidenceByAxis)由来の翻訳候補は集めなく
+        // なった ―― 表示先が無い文字列を翻訳しても無駄なため。competitor_
+        // evidence(改善提案ページ)側の翻訳の仕組み自体は変えていない。
         $translationCandidates = [];
-        foreach ($selfEvidenceByAxis as $axisGroup) {
-            foreach ($axisGroup['items'] as $item) {
-                if (! BrandWheelQuoteTranslator::isJapanese($item['evidence'])) {
-                    $translationCandidates[$item['evidence']] = true;
-                }
-            }
-        }
         if ($improvementFocus !== null) {
             foreach ($improvementFocus['items'] as $item) {
                 $evidence = $item['competitor_evidence'] ?? null;
@@ -439,15 +428,6 @@ class ReportViewModelBuilder
         // 完成させる、依頼者指定の必須要件)。
         $quoteTranslations = $this->quoteTranslator->translate(array_keys($translationCandidates));
 
-        $selfEvidenceByAxis = array_map(function (array $axisGroup) use ($quoteTranslations) {
-            $axisGroup['items'] = array_map(
-                fn (array $item) => $item + ['evidence_translation' => $quoteTranslations[$item['evidence']] ?? null],
-                $axisGroup['items'],
-            );
-
-            return $axisGroup;
-        }, $selfEvidenceByAxis);
-
         if ($improvementFocus !== null) {
             $improvementFocus['items'] = array_map(function (array $item) use ($quoteTranslations) {
                 $evidence = $item['competitor_evidence'] ?? null;
@@ -456,8 +436,6 @@ class ReportViewModelBuilder
                 return $item;
             }, $improvementFocus['items']);
         }
-
-        $hasQuoteTranslations = $quoteTranslations !== [];
 
         // 依頼BB-4(2026-09-08): 'unspecified'(既定・大半の診断)では
         // config('brand_wheel.recruitment_track_cover_notice')にキー自体が
@@ -518,58 +496,9 @@ class ReportViewModelBuilder
             improvementMidTermAction: $improvementMidTermAction,
             selfLowContentNotice: $selfLowContentNotice,
             crawlSiteEnabled: $analysis->crawl_site === true,
-            selfEvidenceByAxis: $selfEvidenceByAxis,
-            hasQuoteTranslations: $hasQuoteTranslations,
             improvementFallbackNote: $improvementFallbackNote,
             recruitmentTrackCoverNotice: $recruitmentTrackCoverNotice,
         );
-    }
-
-    /**
-     * 依頼R(2026-08-26): 「○と判定した根拠」ページの唯一の情報源。
-     * $subElementComparison(対比表と同じ軸順・下位要素順)を先頭から走査し、
-     * self_matched===trueの項目についてだけ、$selfEvidenceLookup
-     * (axis_key => sub_key => evidence、BrandWheelEvidenceLookupBuilder::
-     * build()の戻り値)からevidenceを引く。evidenceが空文字(trim後)の項目は
-     * その項目ごと含めない(空の引用符だけが並ぶ状態を作らない、依頼者指定)。
-     * config('brand_wheel.evidence_page_quote_max_chars')でBrandWheelText
-     * Truncator::truncateAtSentenceBoundary()(既存、文の途中で切らない)
-     * により切り詰める ―― 要約・言い換えは一切行わない(原文の一部をそのまま
-     * 削るだけ)。
-     *
-     * 軸は最初に登場した項目の順で並び、1件も無い軸はキー自体が存在しない
-     * ため出力に含まれない(空の軸見出しを作らない)。matched=0件、または
-     * 全項目のevidenceが空文字の場合は空配列を返し、呼び出し側(Blade/
-     * WordReportGenerator)はこの場合ページ自体を出さない。
-     *
-     * @param  list<array{axis_key: string, axis_name: string, group: string, sub_key: string, sub_name: string, definition: string, recommendation: string, self_matched: bool, competitor_matched: bool, self_state: string, competitor_state: string}>  $subElementComparison
-     * @param  array<string, array<string, string>>  $selfEvidenceLookup
-     * @return list<array{axis_name: string, items: list<array{sub_name: string, evidence: string}>}>
-     */
-    private function buildSelfEvidenceByAxis(array $subElementComparison, array $selfEvidenceLookup): array
-    {
-        $maxChars = (int) config('brand_wheel.evidence_page_quote_max_chars');
-
-        $byAxisKey = [];
-        foreach ($subElementComparison as $item) {
-            if (! $item['self_matched']) {
-                continue;
-            }
-
-            $evidence = trim((string) ($selfEvidenceLookup[$item['axis_key']][$item['sub_key']] ?? ''));
-
-            if ($evidence === '') {
-                continue;
-            }
-
-            $byAxisKey[$item['axis_key']]['axis_name'] = $item['axis_name'];
-            $byAxisKey[$item['axis_key']]['items'][] = [
-                'sub_name' => $item['sub_name'],
-                'evidence' => BrandWheelTextTruncator::truncateAtSentenceBoundary($evidence, $maxChars),
-            ];
-        }
-
-        return array_values($byAxisKey);
     }
 
     /**

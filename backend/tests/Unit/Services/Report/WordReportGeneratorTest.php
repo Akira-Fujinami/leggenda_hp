@@ -84,7 +84,6 @@ class WordReportGeneratorTest extends TestCase
             'improvementMidTermAction' => null,
             'selfLowContentNotice' => null,
             'crawlSiteEnabled' => false,
-            'selfEvidenceByAxis' => [],
         ];
         $defaults['improvementFocusSelfOnly'] = app(BrandWheelImprovementFocusComposer::class)->composeSelfOnly($defaults['subElementComparison']);
 
@@ -547,109 +546,41 @@ class WordReportGeneratorTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // ○と判定した根拠(依頼R、2026-08-26新設)。
+    // 依頼BY(2026-09-11): 【付録】○と判定した根拠セクション(依頼R、
+    // 2026-08-26新設)を削除した。ReportViewModelからselfEvidenceByAxis/
+    // hasQuoteTranslationsフィールド自体が無くなったため、これらを操作して
+    // 付録の見え方(軸グルーピング順・XMLエスケープ・日本語訳の出し分け)を
+    // 検証していた以下のテストは、対象のコード自体が無くなったため削除した
+    // (旧test_evidence_section_shows_axis_grouped_quotes_in_config_order/
+    // test_evidence_section_escapes_special_characters_in_the_quote/
+    // test_evidence_section_shows_the_translation_and_switches_the_intro_text/
+    // test_evidence_section_keeps_the_original_intro_text_when_there_are_no_translations)。
+    // 「Word書き出しがXMLとして整形式であること」自体は他の既存テスト
+    // (test_it_generates_a_valid_docx_document_with_correct_japanese_text等)
+    // で引き続き検証されている。
     // ------------------------------------------------------------------
 
-    public function test_evidence_section_is_omitted_when_self_evidence_by_axis_is_empty(): void
+    /**
+     * 依頼BY(2026-09-11): 【付録】○と判定した根拠セクションは、自社
+     * matchedが何件あっても一切出ないこと(addEvidenceSection()自体を
+     * 削除したため、もはや条件で出し分ける対象ではない)。
+     */
+    public function test_appendix_section_is_never_rendered(): void
     {
-        $documentXml = $this->generate($this->viewModel());
+        $documentXml = $this->generate($this->comparisonViewModel());
 
         $this->assertStringNotContainsString('○と判定した根拠', $documentXml);
+        $this->assertStringNotContainsString('【付録】', $documentXml);
     }
 
     /**
-     * 依頼R: matchedが複数軸にまたがるとき、軸ごとにまとめて対比表と
-     * 同じ順序で表示されること。導入文はconfig由来(PDF版と同内容)。
+     * 改善提案セクションの競合引用カードには、引き続きラベル付きの日本語訳が
+     * 表示されること(依頼AA-1: 洗い出した全箇所に一貫して適用する)。
+     * 依頼BY(2026-09-11): hasQuoteTranslationsフィールド自体は削除した
+     * (このセクションの表示はcompetitor_evidence_translationの有無だけで
+     * 決まり、hasQuoteTranslationsを参照していなかったため、削除しても
+     * このテストの検証内容に影響しない)。
      */
-    public function test_evidence_section_shows_axis_grouped_quotes_in_config_order(): void
-    {
-        $selfEvidenceByAxis = [
-            ['axis_name' => '活動的魅力', 'items' => [
-                ['sub_name' => 'パーパス', 'evidence' => 'パーパスの原文抜粋です。'],
-            ]],
-            ['axis_name' => '経営スタイル', 'items' => [
-                ['sub_name' => 'リーダーシップ', 'evidence' => 'リーダーシップの原文抜粋です。'],
-            ]],
-        ];
-
-        $documentXml = $this->generate($this->viewModel(['selfEvidenceByAxis' => $selfEvidenceByAxis]));
-
-        $this->assertStringContainsString('○と判定した根拠', $documentXml);
-        $this->assertStringContainsString(config('brand_wheel.evidence_page_intro'), $documentXml);
-        $this->assertStringContainsString('「パーパスの原文抜粋です。」', $documentXml);
-        $this->assertStringContainsString('「リーダーシップの原文抜粋です。」', $documentXml);
-
-        $posWillActivity = mb_strpos($documentXml, '活動的魅力');
-        $posPersonality = mb_strpos($documentXml, '経営スタイル');
-        $this->assertTrue($posWillActivity < $posPersonality);
-    }
-
-    /**
-     * 依頼R(2026-08-26で判明した既存バグの修正込み): 引用に&が含まれていても
-     * XMLとして正しくエスケープされること。PhpWordは既定(Settings::
-     * $outputEscapingEnabled=false)ではaddText()の内容をエスケープせず、
-     * 生の&を含むテキストがあるとdocument.xml自体が不正なXMLになり
-     * Wordで開けなくなる不具合があった(このメソッド内の全addText()呼び出しに
-     * 及ぶ潜在バグ、依頼Rの実装中に発覚)。DOMDocument::loadXML()で
-     * document.xml自体が整形式(well-formed)であることまで確認する
-     * (文字列に「&amp;」が含まれているかどうかの表面的な確認だけでは、
-     * 実際に不正なXMLになっていないことまでは保証できないため)。
-     */
-    public function test_evidence_section_escapes_special_characters_in_the_quote(): void
-    {
-        $documentXml = $this->generate($this->viewModel([
-            'selfEvidenceByAxis' => [
-                ['axis_name' => '活動的魅力', 'items' => [
-                    ['sub_name' => 'パーパス', 'evidence' => '採用 & 育成'],
-                ]],
-            ],
-        ]));
-
-        libxml_use_internal_errors(true);
-        $dom = new \DOMDocument();
-        $this->assertTrue($dom->loadXML($documentXml), 'document.xmlが整形式のXMLとして読み込めること');
-
-        $this->assertStringNotContainsString('採用 & 育成', $documentXml);
-        $this->assertStringContainsString('採用 &amp; 育成', $documentXml);
-    }
-
-    // ------------------------------------------------------------------
-    // 依頼AA(2026-08-27): 日本語でない引用への日本語訳併記(PDF版と同内容)。
-    // ------------------------------------------------------------------
-
-    public function test_evidence_section_shows_the_translation_and_switches_the_intro_text(): void
-    {
-        $documentXml = $this->generate($this->viewModel([
-            'selfEvidenceByAxis' => [
-                ['axis_name' => '活動的魅力', 'items' => [
-                    ['sub_name' => 'パーパス', 'evidence' => 'We contribute to a better society.', 'evidence_translation' => 'より良い社会に貢献します。'],
-                ]],
-            ],
-            'hasQuoteTranslations' => true,
-        ]));
-
-        $this->assertStringContainsString('「We contribute to a better society.」', $documentXml);
-        $this->assertStringContainsString((string) config('brand_wheel.quote_translation_label'), $documentXml);
-        $this->assertStringContainsString('より良い社会に貢献します。', $documentXml);
-        $this->assertStringContainsString((string) config('brand_wheel.evidence_page_intro_with_translation'), $documentXml);
-        $this->assertStringNotContainsString((string) config('brand_wheel.evidence_page_intro'), $documentXml);
-    }
-
-    public function test_evidence_section_keeps_the_original_intro_text_when_there_are_no_translations(): void
-    {
-        $documentXml = $this->generate($this->viewModel([
-            'selfEvidenceByAxis' => [
-                ['axis_name' => '活動的魅力', 'items' => [
-                    ['sub_name' => 'パーパス', 'evidence' => '弊社は地域社会への貢献を第一に考えています。'],
-                ]],
-            ],
-            'hasQuoteTranslations' => false,
-        ]));
-
-        $this->assertStringContainsString((string) config('brand_wheel.evidence_page_intro'), $documentXml);
-        $this->assertStringNotContainsString('日本語訳を併記しています', $documentXml);
-    }
-
     public function test_improvement_section_shows_the_translation_below_the_competitor_evidence(): void
     {
         $documentXml = $this->generate($this->comparisonViewModel([
@@ -665,7 +596,6 @@ class WordReportGeneratorTest extends TestCase
                 ],
                 'lead_text' => 'テスト用の一文。',
             ],
-            'hasQuoteTranslations' => true,
         ]));
 
         $this->assertStringContainsString('「Meet our diverse team.」', $documentXml);

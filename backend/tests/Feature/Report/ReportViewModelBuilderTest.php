@@ -1913,133 +1913,49 @@ class ReportViewModelBuilderTest extends TestCase
         $this->assertStringNotContainsString('差を埋める', $raw);
     }
 
-    /**
-     * 依頼R(2026-08-26): matchedが6件(複数軸にまたがる)のとき、
-     * 6件すべてがselfEvidenceByAxisに軸ごと・対比表と同じ順序で並び、
-     * evidenceがそのまま(要約・改変なし)含まれること。
-     */
-    public function test_self_evidence_by_axis_groups_matched_items_by_axis_in_config_order(): void
-    {
-        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
-        $project = new Project(['name' => 'テスト']);
-        $project->user_id = User::factory()->create()->id;
-        $project->lead_session_id = $leadSession->id;
-        $project->save();
-
-        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
-        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
-
-        BrandWheelAnalysisResult::factory()->create([
-            'analysis_id' => $analysis->id,
-            'website_analysis_id' => $selfWa->id,
-            'status' => 'success',
-            'axes' => [
-                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
-                    ['key' => 'purpose', 'evidence' => 'パーパスの原文抜粋です。'],
-                    ['key' => 'business_expansion', 'evidence' => '事業内容の原文抜粋です。'],
-                ]],
-                ['axis_key' => 'asset', 'matched_sub_elements' => [
-                    ['key' => 'brand_recognition', 'evidence' => '知名度の原文抜粋です。'],
-                ]],
-                ['axis_key' => 'personality', 'matched_sub_elements' => [
-                    ['key' => 'leadership', 'evidence' => 'リーダーシップの原文抜粋です。'],
-                ]],
-                ['axis_key' => 'relationship', 'matched_sub_elements' => [
-                    ['key' => 'colleagues', 'evidence' => '同僚・先輩像の原文抜粋です。'],
-                ]],
-                ['axis_key' => 'financial_benefit', 'matched_sub_elements' => [
-                    ['key' => 'salary_level', 'evidence' => '給与水準の原文抜粋です。'],
-                ]],
-            ],
-        ]);
-
-        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
-
-        $this->assertSame(6, $viewModel->selfTotalMatched);
-        // config('brand_wheel.axes')の並び順(will_activity→asset→personality→
-        // relationship→...→financial_benefit)のまま5軸ぶんが並ぶこと。
-        $axisOrder = array_column($viewModel->selfEvidenceByAxis, 'axis_name');
-        $this->assertSame(['活動的魅力', '資産的魅力', '経営スタイル', '就業環境', '金銭的便益'], $axisOrder);
-
-        $totalItems = array_sum(array_map(fn (array $g) => count($g['items']), $viewModel->selfEvidenceByAxis));
-        $this->assertSame(6, $totalItems);
-
-        // will_activity軸は2件、対比表と同じ下位要素順(purpose→business_expansion)。
-        $willActivityItems = $viewModel->selfEvidenceByAxis[0]['items'];
-        $this->assertCount(2, $willActivityItems);
-        $this->assertSame('パーパス', $willActivityItems[0]['sub_name']);
-        $this->assertSame('パーパスの原文抜粋です。', $willActivityItems[0]['evidence']);
-        $this->assertSame('展開事業・商品', $willActivityItems[1]['sub_name']);
-        $this->assertSame('事業内容の原文抜粋です。', $willActivityItems[1]['evidence']);
-    }
+    // ------------------------------------------------------------------
+    // 依頼BY(2026-09-11): 【付録】○と判定した根拠ページ(無料診断レポート)
+    // を削除したことに伴う整理。
+    //
+    // ReportViewModelBuilder::buildSelfEvidenceByAxis()・
+    // ReportViewModel::$selfEvidenceByAxis/$hasQuoteTranslationsは、この
+    // ページの表示専用に存在していた(参照検索で確認済み、実装報告参照)。
+    // フィールド自体を削除したため、これらの内部構築ロジック(軸ごとの
+    // グルーピング順序・空evidenceの除外・競合/discarded_sub_elementsを
+    // 含めないこと・文字数切り詰め・自社evidenceへの日本語訳付与)を検証
+    // していた以下のテストは、対象のコード自体が無くなったため削除した
+    // (旧test_self_evidence_by_axis_groups_matched_items_by_axis_in_config_order
+    // /test_self_evidence_by_axis_omits_items_with_empty_evidence/
+    // test_self_evidence_by_axis_is_empty_when_self_has_no_matched_items/
+    // test_self_evidence_by_axis_never_includes_competitor_evidence/
+    // test_self_evidence_by_axis_never_includes_discarded_sub_elements/
+    // test_self_evidence_by_axis_truncates_long_evidence_at_sentence_boundary/
+    // test_self_evidence_translation_is_attached_only_for_non_japanese_quotes)。
+    // 同じアルゴリズム(buildSelfEvidenceByAxis())は多社比較レポート側の
+    // MultiSiteReportViewModelBuilderに別途残っており、
+    // MultiSiteReportViewModelBuilderTest側で引き続き検証されている
+    // (このテストファイルでは変更していない)。
+    //
+    // 「引用がすべて日本語ならAI呼び出しをしないこと」「翻訳失敗時も原文で
+    // レポートが完成すること」という規律自体は引き続き重要なため、
+    // 残る翻訳対象である競合evidence(改善提案ページ)を使う形に書き換えて
+    // 維持する(下のtest_no_ai_call_is_made_when_all_quotes_are_japanese/
+    // test_report_building_succeeds_with_original_text_only_when_translation_fails)。
+    // ------------------------------------------------------------------
 
     /**
-     * 依頼R: evidenceが空文字の項目は、その項目ごとselfEvidenceByAxisに
-     * 含まれないこと(空の引用符だけが並ぶ状態を作らない)。
+     * 依頼AA-2の必須要件: 引用がすべて日本語のレポートでは、AI呼び出しが
+     * 一切発生しないこと(services.brand_wheel_ai.providerをopenaiにして、
+     * 実際にHTTPリクエストが送られないことを確認する)。
+     *
+     * 依頼BY(2026-09-11): 翻訳候補は現在、競合evidence(改善提案ページ)
+     * からのみ集める(自社evidenceの付録ページを削除したため)。
      */
-    public function test_self_evidence_by_axis_omits_items_with_empty_evidence(): void
+    public function test_no_ai_call_is_made_when_all_quotes_are_japanese(): void
     {
-        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
-        $project = new Project(['name' => 'テスト']);
-        $project->user_id = User::factory()->create()->id;
-        $project->lead_session_id = $leadSession->id;
-        $project->save();
+        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
+        \Illuminate\Support\Facades\Http::fake();
 
-        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
-        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
-
-        BrandWheelAnalysisResult::factory()->create([
-            'analysis_id' => $analysis->id,
-            'website_analysis_id' => $selfWa->id,
-            'status' => 'success',
-            'axes' => [
-                ['axis_key' => 'will_activity', 'matched_sub_elements' => [
-                    ['key' => 'purpose', 'evidence' => 'パーパスの原文抜粋です。'],
-                    ['key' => 'business_expansion', 'evidence' => ''],
-                ]],
-            ],
-        ]);
-
-        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
-
-        $items = $viewModel->selfEvidenceByAxis[0]['items'];
-        $this->assertCount(1, $items);
-        $this->assertSame('パーパス', $items[0]['sub_name']);
-    }
-
-    /**
-     * 依頼R最重要: matchedが0件のとき、selfEvidenceByAxisは空配列になり
-     * (呼び出し側=Blade/WordReportGeneratorはこの場合ページ自体を出さない)。
-     */
-    public function test_self_evidence_by_axis_is_empty_when_self_has_no_matched_items(): void
-    {
-        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
-        $project = new Project(['name' => 'テスト']);
-        $project->user_id = User::factory()->create()->id;
-        $project->lead_session_id = $leadSession->id;
-        $project->save();
-
-        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
-        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
-
-        BrandWheelAnalysisResult::factory()->create([
-            'analysis_id' => $analysis->id,
-            'website_analysis_id' => $selfWa->id,
-            'status' => 'success',
-            'axes' => [],
-        ]);
-
-        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
-
-        $this->assertSame(0, $viewModel->selfTotalMatched);
-        $this->assertSame([], $viewModel->selfEvidenceByAxis);
-    }
-
-    /**
-     * 依頼R: 競合サイトの引用は一切含まれないこと(第三者の文章のため)。
-     */
-    public function test_self_evidence_by_axis_never_includes_competitor_evidence(): void
-    {
         $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
         $project = new Project(['name' => 'テスト']);
         $project->user_id = User::factory()->create()->id;
@@ -2055,190 +1971,37 @@ class ReportViewModelBuilderTest extends TestCase
             'website_analysis_id' => $selfWa->id,
             'status' => 'success',
             'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
-                ['key' => 'purpose', 'evidence' => '自社サイトの原文抜粋です。'],
+                ['key' => 'purpose', 'evidence' => '地域社会への貢献を大切にしています。'],
             ]]],
         ]);
         BrandWheelAnalysisResult::factory()->create([
             'analysis_id' => $analysis->id,
             'website_analysis_id' => $competitorWa->id,
             'status' => 'success',
-            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
-                ['key' => 'purpose', 'evidence' => '競合サイトの原文抜粋です。これが出てはならない。'],
-            ]]],
+            // improvementFocusの生成にはcompetitorSufficient(matched>=
+            // comparison_sufficiency_threshold、既定6)が必要なため、
+            // test_competitor_evidence_translation_is_attached_for_non_
+            // japanese_quotesと同じく6件・3軸ぶん用意する(すべて日本語)。
+            'axes' => [
+                ['axis_key' => 'relationship', 'matched_sub_elements' => [
+                    ['key' => 'colleagues', 'evidence' => '雰囲気についての競合サイトの抜粋'],
+                    ['key' => 'atmosphere', 'evidence' => 'また別の競合サイトの抜粋'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'y1'], ['key' => 'competitiveness', 'evidence' => 'y2'],
+                ]],
+                ['axis_key' => 'financial_benefit', 'matched_sub_elements' => [
+                    ['key' => 'salary_level', 'evidence' => 'y3'], ['key' => 'benefits', 'evidence' => 'y4'],
+                ]],
+            ],
         ]);
 
         $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
 
-        $raw = json_encode($viewModel->selfEvidenceByAxis, JSON_UNESCAPED_UNICODE);
-        $this->assertStringContainsString('自社サイトの原文抜粋です。', $raw);
-        $this->assertStringNotContainsString('競合サイトの原文抜粋です', $raw);
-    }
-
-    /**
-     * 依頼R: discarded_sub_elements(AIが挙げた引用が原文照合で棄却された
-     * もの、evidence_not_found等)の内容は一切参照しないこと。
-     */
-    public function test_self_evidence_by_axis_never_includes_discarded_sub_elements(): void
-    {
-        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
-        $project = new Project(['name' => 'テスト']);
-        $project->user_id = User::factory()->create()->id;
-        $project->lead_session_id = $leadSession->id;
-        $project->save();
-
-        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
-        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
-
-        BrandWheelAnalysisResult::factory()->create([
-            'analysis_id' => $analysis->id,
-            'website_analysis_id' => $selfWa->id,
-            'status' => 'success',
-            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
-                ['key' => 'purpose', 'evidence' => '実在する原文抜粋です。'],
-            ], 'discarded_sub_elements' => [
-                ['key' => 'business_expansion', 'reason' => 'evidence_not_found', 'evidence' => 'AIが捏造した抜粋、これが出てはならない。'],
-            ]]],
-        ]);
-
-        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
-
-        $raw = json_encode($viewModel->selfEvidenceByAxis, JSON_UNESCAPED_UNICODE);
-        $this->assertStringNotContainsString('AIが捏造した抜粋', $raw);
-    }
-
-    /**
-     * 依頼R: 引用が長い場合、config('brand_wheel.evidence_page_quote_max_chars')で
-     * BrandWheelTextTruncator::truncateAtSentenceBoundary()により切り詰められる
-     * (文の途中で切らない、句点が上限内に見つかればそこで止める)。
-     */
-    public function test_self_evidence_by_axis_truncates_long_evidence_at_sentence_boundary(): void
-    {
-        config(['brand_wheel.evidence_page_quote_max_chars' => 20]);
-
-        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
-        $project = new Project(['name' => 'テスト']);
-        $project->user_id = User::factory()->create()->id;
-        $project->lead_session_id = $leadSession->id;
-        $project->save();
-
-        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
-        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
-
-        // 20文字以内に句点がある場合 ―― 句点まで残し、「…」は付かない。
-        BrandWheelAnalysisResult::factory()->create([
-            'analysis_id' => $analysis->id,
-            'website_analysis_id' => $selfWa->id,
-            'status' => 'success',
-            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
-                ['key' => 'purpose', 'evidence' => '短い一文です。ここから先は上限を超える長い続きの文章です。'],
-            ]]],
-        ]);
-
-        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
-
-        $evidence = $viewModel->selfEvidenceByAxis[0]['items'][0]['evidence'];
-        $this->assertSame('短い一文です。', $evidence);
-        $this->assertStringNotContainsString('…', $evidence);
-
-        // 句点が無い場合 ―― 上限で切り、末尾に「…」を付ける。
-        // Website.is_primaryはproject単位で高々1件のため、別のProjectを使う
-        // (1つのProjectを使い回すと一意制約違反になる)。
-        $project2 = new Project(['name' => 'テスト2']);
-        $project2->user_id = $project->user_id;
-        $project2->lead_session_id = $leadSession->id;
-        $project2->save();
-        $analysis2 = Analysis::factory()->create(['project_id' => $project2->id, 'status' => AnalysisStatus::Completed]);
-        $selfWa2 = $this->makeWebsiteAnalysis($analysis2, isPrimary: true);
-        BrandWheelAnalysisResult::factory()->create([
-            'analysis_id' => $analysis2->id,
-            'website_analysis_id' => $selfWa2->id,
-            'status' => 'success',
-            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
-                ['key' => 'purpose', 'evidence' => str_repeat('あ', 40)],
-            ]]],
-        ]);
-
-        $viewModel2 = app(ReportViewModelBuilder::class)->build($analysis2, $leadSession);
-        $evidence2 = $viewModel2->selfEvidenceByAxis[0]['items'][0]['evidence'];
-        $this->assertSame(str_repeat('あ', 20).'…', $evidence2);
-    }
-
-    // ------------------------------------------------------------------
-    // 依頼AA(2026-08-27): 日本語でない引用への日本語訳併記。
-    // ------------------------------------------------------------------
-
-    /**
-     * 英語の引用には訳が付き、日本語の引用には付かないこと。原文
-     * (evidence自体)は一切変わらないこと。
-     */
-    public function test_self_evidence_translation_is_attached_only_for_non_japanese_quotes(): void
-    {
-        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
-        $project = new Project(['name' => 'テスト']);
-        $project->user_id = User::factory()->create()->id;
-        $project->lead_session_id = $leadSession->id;
-        $project->save();
-
-        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
-        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
-
-        BrandWheelAnalysisResult::factory()->create([
-            'analysis_id' => $analysis->id,
-            'website_analysis_id' => $selfWa->id,
-            'status' => 'success',
-            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
-                ['key' => 'purpose', 'evidence' => 'We contribute to building a better society.'],
-                ['key' => 'business_expansion', 'evidence' => '地域社会への貢献を大切にしています。'],
-            ]]],
-        ]);
-
-        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
-
-        $items = collect($viewModel->selfEvidenceByAxis[0]['items'])->keyBy('evidence');
-
-        $english = $items['We contribute to building a better society.'];
-        $this->assertSame('We contribute to building a better society.', $english['evidence']);
-        $this->assertNotNull($english['evidence_translation']);
-
-        $japanese = $items['地域社会への貢献を大切にしています。'];
-        $this->assertSame('地域社会への貢献を大切にしています。', $japanese['evidence']);
-        $this->assertNull($japanese['evidence_translation']);
-
-        $this->assertTrue($viewModel->hasQuoteTranslations);
-    }
-
-    /**
-     * 依頼AA-2の必須要件: 引用がすべて日本語のレポートでは、AI呼び出しが
-     * 一切発生しないこと(services.brand_wheel_ai.providerをopenaiにして、
-     * 実際にHTTPリクエストが送られないことを確認する)。
-     */
-    public function test_no_ai_call_is_made_when_all_quotes_are_japanese(): void
-    {
-        config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'test-key']);
-        \Illuminate\Support\Facades\Http::fake();
-
-        $leadSession = LeadSession::factory()->create(['company_name' => '株式会社サンプル']);
-        $project = new Project(['name' => 'テスト']);
-        $project->user_id = User::factory()->create()->id;
-        $project->lead_session_id = $leadSession->id;
-        $project->save();
-
-        $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
-        $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
-
-        BrandWheelAnalysisResult::factory()->create([
-            'analysis_id' => $analysis->id,
-            'website_analysis_id' => $selfWa->id,
-            'status' => 'success',
-            'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
-                ['key' => 'purpose', 'evidence' => '地域社会への貢献を大切にしています。'],
-            ]]],
-        ]);
-
-        $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
-
-        $this->assertFalse($viewModel->hasQuoteTranslations);
-        $this->assertNull($viewModel->selfEvidenceByAxis[0]['items'][0]['evidence_translation']);
+        $this->assertNotNull($viewModel->improvementFocus);
+        foreach ($viewModel->improvementFocus['items'] as $item) {
+            $this->assertNull($item['competitor_evidence_translation']);
+        }
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
 
@@ -2293,13 +2056,14 @@ class ReportViewModelBuilderTest extends TestCase
 
         $japanese = $items['雰囲気についての競合サイトの抜粋'];
         $this->assertNull($japanese['competitor_evidence_translation']);
-
-        $this->assertTrue($viewModel->hasQuoteTranslations);
     }
 
     /**
      * 依頼AA-3の必須要件(最重要): 翻訳の呼び出しが失敗しても、レポートの
      * 生成そのものは成功し、原文だけが表示されること。
+     *
+     * 依頼BY(2026-09-11): 翻訳対象は現在、競合evidence(改善提案ページ)
+     * のみのため、自社evidenceではなく競合evidenceで検証する形に書き換えた。
      */
     public function test_report_building_succeeds_with_original_text_only_when_translation_fails(): void
     {
@@ -2314,20 +2078,40 @@ class ReportViewModelBuilderTest extends TestCase
 
         $analysis = Analysis::factory()->create(['project_id' => $project->id, 'status' => AnalysisStatus::Completed]);
         $selfWa = $this->makeWebsiteAnalysis($analysis, isPrimary: true);
+        $competitorWa = $this->makeWebsiteAnalysis($analysis, isPrimary: false);
 
         BrandWheelAnalysisResult::factory()->create([
             'analysis_id' => $analysis->id,
             'website_analysis_id' => $selfWa->id,
             'status' => 'success',
             'axes' => [['axis_key' => 'will_activity', 'matched_sub_elements' => [
-                ['key' => 'purpose', 'evidence' => 'We contribute to building a better society.'],
+                ['key' => 'purpose', 'evidence' => '自社の抜粋'],
             ]]],
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $competitorWa->id,
+            'status' => 'success',
+            // competitorSufficient(matched>=6)を満たすため6件・3軸ぶん用意する。
+            'axes' => [
+                ['axis_key' => 'relationship', 'matched_sub_elements' => [
+                    ['key' => 'colleagues', 'evidence' => 'We contribute to building a better society.'],
+                    ['key' => 'atmosphere', 'evidence' => '雰囲気についての競合サイトの抜粋'],
+                ]],
+                ['axis_key' => 'asset', 'matched_sub_elements' => [
+                    ['key' => 'brand_recognition', 'evidence' => 'y1'], ['key' => 'competitiveness', 'evidence' => 'y2'],
+                ]],
+                ['axis_key' => 'financial_benefit', 'matched_sub_elements' => [
+                    ['key' => 'salary_level', 'evidence' => 'y3'], ['key' => 'benefits', 'evidence' => 'y4'],
+                ]],
+            ],
         ]);
 
         $viewModel = app(ReportViewModelBuilder::class)->build($analysis, $leadSession);
 
-        $this->assertSame('We contribute to building a better society.', $viewModel->selfEvidenceByAxis[0]['items'][0]['evidence']);
-        $this->assertNull($viewModel->selfEvidenceByAxis[0]['items'][0]['evidence_translation']);
-        $this->assertFalse($viewModel->hasQuoteTranslations);
+        $this->assertNotNull($viewModel->improvementFocus);
+        $item = collect($viewModel->improvementFocus['items'])->firstWhere('competitor_evidence', 'We contribute to building a better society.');
+        $this->assertSame('We contribute to building a better society.', $item['competitor_evidence']);
+        $this->assertNull($item['competitor_evidence_translation']);
     }
 }
