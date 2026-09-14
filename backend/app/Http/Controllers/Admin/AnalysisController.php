@@ -171,10 +171,16 @@ class AnalysisController extends Controller
         try {
             $viewModel = $viewModelBuilder->build($analysis);
             $data = $dataBuilder->build($viewModel);
-            $slideBytes = $slideGenerator->generate($data);
+            // 依頼BZ-2: 説明ページ→比較ページの順で差し込む(説明ページは
+            // 分析結果に依存しない固定内容、AdminComparisonPptxGenerator
+            // ::generateExplanationSlide()参照)。
+            $slideBytesList = [
+                $slideGenerator->generateExplanationSlide(),
+                $slideGenerator->generate($data),
+            ];
 
             $baseDeckPath = Storage::disk('analysis')->path($attachment->storage_path);
-            $mergedPath = $inserter->insert($baseDeckPath, $slideBytes);
+            $mergedPath = $inserter->insert($baseDeckPath, $slideBytesList);
 
             $mergedBytes = (string) file_get_contents($mergedPath);
             $downloadName = pathinfo($attachment->original_filename, PATHINFO_FILENAME).'_比較ページ差し込み.pptx';

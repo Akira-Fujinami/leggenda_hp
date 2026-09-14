@@ -34,13 +34,28 @@ use PhpOffice\PhpPresentation\Writer\PowerPoint2007;
  * 2件しか無ければカードもそのぶん低くなる。抽出条件(過半数)自体は
  * BrandWheelMultiSiteComparisonComposerのまま変更していない。
  *
+ * 依頼BZ(2026-09-15): 差し込みが比較ページ1枚だけだと、ブランド・ホイールを
+ * 知らない商談相手には「活動的魅力」等の軸名が何を指すか伝わらない
+ * (依頼者指摘、実物のPPTXを確認して判明)。説明ページ
+ * (generateExplanationSlide())を追加し、差し込みを2枚にする(説明→比較の
+ * 順、AdminComparisonPptxInserter側で対応)。説明ページの内容は
+ * lead-pdf.blade.php「採用ブランドの捉え方 ―― ブランド・ホイール」ページと
+ * 同じ情報源(config('brand_wheel.axes.*')・axis_unread_caveat)を使い、
+ * 2つの資料が同じ枠組みについて違うことを言わないようにする ―― 3領域の
+ * 区分・一文説明はlead-pdf.blade.phpの該当箇所をそのまま踏襲する(config化
+ * されていないため直書きだが、由来は同じ)。画像(brand-wheel-framework.png)
+ * は使わない ―― extractSingleSlide()がr:embed等の外部参照を検知して
+ * 差し込みを拒否するため、画像パーツの追加は行わない(依頼者指定、この
+ * 依頼の対象外)。分析結果に依存しない固定内容のため、会社名・スコアは
+ * 一切載せない。
+ *
  * 【差し込みの前提、依頼BK/BL/BG由来・変更禁止】
  * - スライドサイズは12192000×6858000EMU固定(setCXにUNIT_INCHで13.333を
  *   渡すと丸め誤差で不正なXMLになるため、EMUを直接指定する)。
  * - schemeClr(テーマ色)を使わない。色は全てColor()経由のsrgbClr(明示RGB)。
  * - フォントはMeiryoを明示指定する(font()参照)。
  * - 画像・グラフ・埋め込みオブジェクトを使わない
- *   (AdminComparisonPptxInserter::extractComparisonSlideParts()が
+ *   (AdminComparisonPptxInserter::extractSingleSlide()が
  *   r:id/r:embed/r:linkの出現を検知して差し込みを中止する)。
  */
 class AdminComparisonPptxGenerator
@@ -162,6 +177,41 @@ class AdminComparisonPptxGenerator
      */
     private const MISSING_ITEMS_BOTTOM_LIMIT_IN = 6.58;
 
+    // ------------------------------------------------------------------
+    // 依頼BZ-1: 説明ページ(ブランド・ホイールの前置き)。分析結果に依存
+    // しない固定レイアウトのため、比較スライドのような可変高計算は行わない
+    // ―― 一度収まる値を決めれば実データによって再びあふれることはない
+    // (lead-pdf.blade.phpの前置きページと同じ考え方、同ファイルのコメント
+    // 参照)。
+    // ------------------------------------------------------------------
+
+    private const EXPL_LEAD_TOP_IN = 1.5;
+
+    private const EXPL_GROUPS_TOP_IN = 1.85;
+
+    private const EXPL_HEADER_HEIGHT_IN = 0.4;
+
+    private const EXPL_DESC_HEIGHT_IN = 0.5;
+
+    private const EXPL_COMPOSITION_TOP_IN = 4.95;
+
+    private const EXPL_CAVEAT_TOP_IN = 5.55;
+
+    /**
+     * 3領域の区分・色・一文説明。lead-pdf.blade.php「採用ブランドの捉え方
+     * ―― ブランド・ホイール」ページ(grouptbl)の直書き文言と、依頼者確定の
+     * 配色(#1D2088/#2C7F96/#C03A28)をそのまま使う ―― config('brand_wheel')
+     * には3領域そのもののレコードが無い(groupはaxes.*.groupの値としてのみ
+     * 存在する)ため、blade側と同じ直書きにする。
+     *
+     * @var list<array{group: string, name: string, description: string, color: string}>
+     */
+    private const EXPLANATION_REGIONS = [
+        ['group' => 'company_appeal', 'name' => '会社の魅力', 'description' => 'その会社が何を目指し、どれだけの実績・規模を持っているか。', 'color' => '1D2088'],
+        ['group' => 'company_distance', 'name' => '会社との距離', 'description' => 'どんな経営で、どんな人たちが、どんな環境で働いているか。', 'color' => '2C7F96'],
+        ['group' => 'job_appeal', 'name' => '仕事の魅力', 'description' => 'その仕事に就くと、何が得られるか。', 'color' => 'C03A28'],
+    ];
+
     /**
      * @param  array{
      *     self_company_name: string,
@@ -187,6 +237,41 @@ class AdminComparisonPptxGenerator
      */
     public function generate(array $data): string
     {
+        return $this->renderSingleSlide(function (Slide $slide) use ($data): void {
+            $this->addKicker($slide);
+            $this->addTitle($slide, '採用ブランド24項目の他社比較');
+            $this->addScoreTiles($slide, $data['companies']);
+            $this->addMatrixSection($slide, $data['companies'], $data['axes']);
+            $this->addSummaryAndMissingItemsCard($slide, $data['summary'], $data['missing_items']);
+            $this->addFooter($slide, $data['source_note'], $data['page_number']);
+        });
+    }
+
+    /**
+     * 依頼BZ-1: ブランド・ホイールの説明ページ。分析結果に依存しない固定の
+     * 内容(会社名・スコアを含まない)。lead-pdf.blade.php「採用ブランドの
+     * 捉え方 ―― ブランド・ホイール」ページと同じ情報源を使う ―― 3領域の
+     * 区分・一文説明はblade側の直書き文言をそのまま踏襲し(config化されて
+     * いない)、6軸の名前・定義はconfig('brand_wheel.axes.*.name_ja'/
+     * 'definition')、24項目の構成の説明はblade側のintrobody文言、
+     * 注意書きはconfig('brand_wheel.axis_unread_caveat')を、いずれも
+     * 文言を書き換えずそのまま使う。
+     */
+    public function generateExplanationSlide(): string
+    {
+        return $this->renderSingleSlide(function (Slide $slide): void {
+            $this->addKicker($slide);
+            $this->addTitle($slide, '採用ブランドの捉え方 ―― ブランド・ホイール');
+            $this->addExplanationLead($slide);
+            $this->addExplanationGroups($slide);
+            $this->addExplanationComposition($slide);
+            $this->addExplanationCaveat($slide);
+            $this->addFooter($slide, 'Leggenda 採用ブランド・ホイール診断', null);
+        });
+    }
+
+    private function renderSingleSlide(callable $buildSlide): string
+    {
         $presentation = new PhpPresentation();
         $presentation->removeSlideByIndex(0);
         $layout = $presentation->getLayout();
@@ -204,12 +289,7 @@ class AdminComparisonPptxGenerator
         $slide = $presentation->createSlide();
         $slide->getBackground();
 
-        $this->addKicker($slide);
-        $this->addTitle($slide);
-        $this->addScoreTiles($slide, $data['companies']);
-        $this->addMatrixSection($slide, $data['companies'], $data['axes']);
-        $this->addSummaryAndMissingItemsCard($slide, $data['summary'], $data['missing_items']);
-        $this->addFooter($slide, $data['source_note'], $data['page_number']);
+        $buildSlide($slide);
 
         $writer = new PowerPoint2007($presentation);
         $tmpPath = tempnam(sys_get_temp_dir(), 'pptx');
@@ -229,11 +309,11 @@ class AdminComparisonPptxGenerator
         $this->font($run, 12, true, self::COPPER);
     }
 
-    private function addTitle(Slide $slide): void
+    private function addTitle(Slide $slide, string $text): void
     {
         $box = $slide->createRichTextShape();
         $this->position($box, self::LEFT_IN, 0.86, self::CONTENT_WIDTH_IN, 0.55);
-        $run = $box->getActiveParagraph()->createTextRun('採用ブランド24項目の他社比較');
+        $run = $box->getActiveParagraph()->createTextRun($text);
         $this->font($run, 25, true, self::NAVY);
     }
 
@@ -574,6 +654,133 @@ class AdminComparisonPptxGenerator
         $this->position($page, 12.33, 6.98, 0.6, 0.3);
         $page->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
         $this->font($page->getActiveParagraph()->createTextRun((string) $pageNumber), 10, false, self::MUTED);
+    }
+
+    /**
+     * 依頼BZ-1: 「採用ブランドは、大きく3つの領域に分けて捉えます。」
+     * (lead-pdf.blade.phpのintrolead、直書き文言をそのまま踏襲)。
+     */
+    private function addExplanationLead(Slide $slide): void
+    {
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, self::EXPL_LEAD_TOP_IN, self::CONTENT_WIDTH_IN, 0.28);
+        $run = $box->getActiveParagraph()->createTextRun('採用ブランドは、大きく3つの領域に分けて捉えます。');
+        $this->font($run, 13, false, self::NAVY);
+    }
+
+    /**
+     * 依頼BZ-1: 3領域を横3列で並べる(依頼者提案のレイアウト、縦積みでは
+     * なくこちらを採用 ―― 横に並べたほうが「3つに分けて捉える」という
+     * リード文とレイアウトが素直に対応するため)。各列は
+     * [色付きヘッダー(領域名) → 一文説明 → 軸1(name_ja+definition) →
+     * 軸2(name_ja+definition)]。画像(brand-wheel-framework.png)は使わず、
+     * 色の区別は塗りの矩形(header)だけで表現する(依頼者指定、BZ-1参照)。
+     */
+    private function addExplanationGroups(Slide $slide): void
+    {
+        $axesByGroup = [];
+        foreach ((array) config('brand_wheel.axes') as $axisConfig) {
+            $axesByGroup[$axisConfig['group']][] = $axisConfig;
+        }
+
+        $gap = 0.3;
+        $width = (self::CONTENT_WIDTH_IN - 2 * $gap) / 3;
+
+        foreach (self::EXPLANATION_REGIONS as $i => $region) {
+            $left = self::LEFT_IN + $i * ($width + $gap);
+            $this->addExplanationGroupColumn($slide, $region, $axesByGroup[$region['group']] ?? [], $left, $width);
+        }
+    }
+
+    /**
+     * @param  array{group: string, name: string, description: string, color: string}  $region
+     * @param  list<array{name_ja: string, definition: string}>  $axes  config('brand_wheel.axes')のうちこのgroupに属する2件(config側の並び順)
+     */
+    private function addExplanationGroupColumn(Slide $slide, array $region, array $axes, float $left, float $width): void
+    {
+        $top = self::EXPL_GROUPS_TOP_IN;
+
+        $header = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($header, $left, $top, $width, self::EXPL_HEADER_HEIGHT_IN);
+        $header->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.$region['color']));
+        $header->getBorder()->setLineStyle(Border::LINE_NONE);
+
+        $headerBox = $slide->createRichTextShape();
+        $this->position($headerBox, $left, $top, $width, self::EXPL_HEADER_HEIGHT_IN);
+        $headerBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $headerBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        $this->font($headerBox->getActiveParagraph()->createTextRun($region['name']), 13, true, self::WHITE);
+
+        $descTop = $top + self::EXPL_HEADER_HEIGHT_IN + 0.08;
+        $descBox = $slide->createRichTextShape();
+        $this->position($descBox, $left, $descTop, $width, self::EXPL_DESC_HEIGHT_IN);
+        $descBox->setWrap(RichText::WRAP_SQUARE);
+        $this->font($descBox->getActiveParagraph()->createTextRun($region['description']), 9, false, self::MUTED);
+
+        $axisTop = $descTop + self::EXPL_DESC_HEIGHT_IN + 0.06;
+        foreach ($axes as $axisConfig) {
+            $axisTop = $this->addExplanationAxisBlock($slide, $axisConfig, $left, $axisTop, $width);
+        }
+    }
+
+    /**
+     * config('brand_wheel.axes.*.name_ja')・definitionを、文言を書き換えず
+     * そのまま表示する。
+     *
+     * @param  array{name_ja: string, definition: string}  $axisConfig
+     * @return float  次の軸ブロックが使える先頭のy座標(in)
+     */
+    private function addExplanationAxisBlock(Slide $slide, array $axisConfig, float $left, float $top, float $width): float
+    {
+        $nameBox = $slide->createRichTextShape();
+        $this->position($nameBox, $left, $top, $width, 0.2);
+        $this->font($nameBox->getActiveParagraph()->createTextRun((string) $axisConfig['name_ja']), 10.5, true, self::NAVY);
+
+        $defTop = $top + 0.21;
+        $defHeight = 0.62;
+        $defBox = $slide->createRichTextShape();
+        $this->position($defBox, $left, $defTop, $width, $defHeight);
+        $defBox->setWrap(RichText::WRAP_SQUARE);
+        $this->font($defBox->getActiveParagraph()->createTextRun((string) $axisConfig['definition']), 8, false, self::BODY_TEXT);
+
+        return $defTop + $defHeight + 0.1;
+    }
+
+    /**
+     * 依頼BZ-1: 24項目の構成の説明。lead-pdf.blade.phpのintrobody文言
+     * (Core Valueの説明を含む段落)をそのまま踏襲する。
+     */
+    private function addExplanationComposition(Slide $slide): void
+    {
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, self::EXPL_COMPOSITION_TOP_IN, self::CONTENT_WIDTH_IN, 0.5);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $run = $box->getActiveParagraph()->createTextRun(
+            '6つの項目にはそれぞれ4つの下位要素があり、合計24項目です。中心のCore Value(約束する価値)は、その24項目を貫く「この会社が候補者に約束するもの」にあたります。'
+        );
+        $this->font($run, 11, false, self::BODY_TEXT);
+    }
+
+    /**
+     * 依頼BZ-1(必須): config('brand_wheel.axis_unread_caveat')
+     * (「読み取れなかった＝魅力が無い、ではない」の主旨)を、文言を一切
+     * 書き換えずそのまま表示する。lead-pdf.blade.phpのコメントに「この一文は
+     * 短縮・削除しない」「ユーザー指定の絶対に消してはいけない文言」と
+     * 明記されており、商談で他社の点数を見せる資料である以上、この但し書き
+     * はPDFよりむしろ必要(依頼者指定)。
+     */
+    private function addExplanationCaveat(Slide $slide): void
+    {
+        $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($rule, self::LEFT_IN, self::EXPL_CAVEAT_TOP_IN, self::CONTENT_WIDTH_IN, 0.01);
+        $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
+        $rule->getBorder()->setLineStyle(Border::LINE_NONE);
+
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, self::EXPL_CAVEAT_TOP_IN + 0.1, self::CONTENT_WIDTH_IN, 0.65);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $run = $box->getActiveParagraph()->createTextRun((string) config('brand_wheel.axis_unread_caveat'));
+        $this->font($run, 9, false, self::MUTED);
     }
 
     /**

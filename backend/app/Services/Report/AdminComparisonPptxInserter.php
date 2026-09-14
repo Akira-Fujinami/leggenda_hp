@@ -6,23 +6,39 @@ use App\Exceptions\Report\ComparisonSlideInsertionException;
 use ZipArchive;
 
 /**
- * 依頼BG: 既存の営業資料(PPTX)に、比較スライド1枚を「参照元」ページの
- * 直前へ差し込む。
+ * 依頼BG: 既存の営業資料(PPTX)に、比較スライドを「参照元」ページの直前へ
+ * 差し込む。
+ *
+ * 依頼BZ-2(2026-09-15): 差し込むスライドを1枚から複数枚(説明ページ→
+ * 比較ページの順)に対応させた。insert()は1枚のPPTXバイト列ではなく、
+ * 差し込む順で並んだ配列(list<string>)を受け取る ―― 各要素は
+ * AdminComparisonPptxGenerator::generate()/generateExplanationSlide()の
+ * 戻り値(スライド1枚だけのPPTX)。
  *
  * 【最重要、依頼BG-1】既存デッキをPhpOffice\PhpPresentationで開いて保存し
  * 直すことは絶対にしない ―― PowerPoint2007リーダーはグラフ・埋め込み
  * ブック・ノート・テーマを扱えず、読み込んで書き戻すとこれらが失われる。
- * PPTXはZIPであるという前提のもと、ZipArchiveで次の3パーツだけを追加・
- * 上書きし、それ以外の既存パーツは1バイトも触らない:
- *   1. ppt/slides/slideN.xml (新規追加)
- *   2. ppt/slides/_rels/slideN.xml.rels (新規追加)
- *   3. [Content_Types].xml (Overrideを1行追加)
- *   4. ppt/_rels/presentation.xml.rels (Relationshipを1行追加)
- *   5. ppt/presentation.xml (sldIdLstに1行挿入)
- * (3〜5は「新規追加」ではなく「既存パーツの上書き」だが、いずれも
- * 既存の内容をそのまま残したうえで1行足すだけの最小差分にする ――
- * DOMDocumentで読み込んで再シリアライズすると無関係な整形が変わりうる
- * ため、文字列操作で該当箇所にだけ挿入する)。
+ * PPTXはZIPであるという前提のもと、ZipArchiveで次の3パーツだけを上書き
+ * (どちらも既存の内容をそのまま残したうえで、スライド1枚につき1行ずつ
+ * 追記する最小差分)し、スライドの枚数ぶんだけ新規パーツ(slideN.xml /
+ * slideN.xml.rels)を追加する。それ以外の既存パーツは1バイトも触らない:
+ *   - ppt/slides/slideN.xml (新規追加、スライド1枚につき1つ)
+ *   - ppt/slides/_rels/slideN.xml.rels (新規追加、スライド1枚につき1つ)
+ *   - [Content_Types].xml (Overrideをスライド枚数ぶん追加)
+ *   - ppt/_rels/presentation.xml.rels (Relationshipをスライド枚数ぶん追加)
+ *   - ppt/presentation.xml (sldIdLstにスライド枚数ぶん挿入)
+ * (DOMDocumentで読み込んで再シリアライズすると無関係な整形が変わりうる
+ * ため、文字列操作で該当箇所にだけ挿入する ―― 書き換えるファイルの数は
+ * 何枚差し込んでも3つのまま増えない)。
+ *
+ * 依頼BZ-2で最も壊れやすかった点: スライド番号・rId・sldIdは、1枚ごとに
+ * 進める必要がある(1回だけ計算して複数枚で使い回すと、同じ番号のパーツが
+ * 衝突し壊れたPPTXになる)。insert()内のループで、各スライドを追加する
+ * 都度、直前までの状態(更新済みのpresentation.xml/rels/[Content_Types].xml
+ * 文字列と、sldIdLstの現在の並び)を次の反復へ引き継ぎ、その時点の最新値
+ * から次の番号を計算し直す(nextSlideNumber/nextRelationshipId/
+ * nextSlideIdをループ内で毎回呼ぶ)。挿入位置も、1枚差し込むたびに
+ * 直後の位置へ進める(説明ページ→比較ページ→参照元、の順を保つため)。
  *
  * 既存スライドのファイル名(slide1.xml等)は一切振り直さない ―― 表示順は
  * sldIdLstの並びだけで決まるため、ファイル番号を詰める必要が無い
@@ -92,11 +108,16 @@ class AdminComparisonPptxInserter
     }
 
     /**
+     * @param  list<string>  $slideBytesList  差し込む順(説明ページ→比較ページ)に並んだ、スライド1枚だけのPPTXバイト列
      * @return string  差し込み後のPPTXを書き出した一時ファイルのパス(呼び出し側が削除すること)
      */
-    public function insert(string $baseDeckPath, string $comparisonSlideBytes): string
+    public function insert(string $baseDeckPath, array $slideBytesList): string
     {
-        [$comparisonSlideXml, ] = $this->extractComparisonSlideParts($comparisonSlideBytes);
+        if ($slideBytesList === []) {
+            throw new ComparisonSlideInsertionException('差し込むスライドが指定されていません。');
+        }
+
+        $slideXmlList = array_map(fn (string $bytes) => $this->extractSingleSlide($bytes), $slideBytesList);
 
         $outputPath = tempnam(sys_get_temp_dir(), 'pptx-merged');
         if (! copy($baseDeckPath, $outputPath)) {
@@ -124,23 +145,45 @@ class AdminComparisonPptxInserter
                 throw new ComparisonSlideInsertionException('挿入位置の隣のスライドが使っているレイアウトを特定できませんでした。');
             }
 
-            $newSlideNumber = $this->nextSlideNumber($zip);
-            $newRId = $this->nextRelationshipId($presentationRelsXml);
-            $newSldId = $this->nextSlideId($sldIds);
+            // 依頼BZ-2: ここから先はループの反復ごとに更新していく「作業中」の
+            // 状態。スライド番号は$nextSlideNumberBaseにインデックスを足す
+            // だけでよい(このinsert()呼び出しの開始時点で存在した最大番号
+            // より後ろを使うため、ループ内で衝突しない)が、rId・sldIdは
+            // 直前の反復で追記した内容(文字列・配列)を見て初めて次の値が
+            // 決まるため、1回だけ計算して使い回すことができない
+            // ―― 毎回、直前までの最新の$presentationRelsXml/$sldIdsから
+            // 計算し直す。挿入位置($insertionIndex)も、1枚追加するたびに
+            // 1つ後ろへ進める(次のスライドを「いま追加した直後」=
+            // 「参照元の直前」へ入れ続けるため)。
+            $nextSlideNumberBase = $this->nextSlideNumber($zip);
 
-            $newSlidePath = "ppt/slides/slide{$newSlideNumber}.xml";
-            $newSlideRelsPath = "ppt/slides/_rels/slide{$newSlideNumber}.xml.rels";
-            $newSlideRelsXml = $this->buildSlideRelsXml($layoutTarget);
+            foreach ($slideXmlList as $i => $slideXml) {
+                $newSlideNumber = $nextSlideNumberBase + $i;
+                $newRId = $this->nextRelationshipId($presentationRelsXml);
+                $newSldId = $this->nextSlideId($sldIds);
 
-            $updatedContentTypesXml = $this->insertContentTypeOverride($contentTypesXml, $newSlidePath);
-            $updatedPresentationRelsXml = $this->insertPresentationRelationship($presentationRelsXml, $newRId, $newSlideNumber);
-            $updatedPresentationXml = $this->insertSldId($presentationXml, $sldIds, $insertionIndex, $newSldId, $newRId);
+                $newSlidePath = "ppt/slides/slide{$newSlideNumber}.xml";
+                $newSlideRelsPath = "ppt/slides/_rels/slide{$newSlideNumber}.xml.rels";
+                $newSlideRelsXml = $this->buildSlideRelsXml($layoutTarget);
 
-            if (! $zip->addFromString($newSlidePath, $comparisonSlideXml)
-                || ! $zip->addFromString($newSlideRelsPath, $newSlideRelsXml)
-                || ! $zip->addFromString('[Content_Types].xml', $updatedContentTypesXml)
-                || ! $zip->addFromString('ppt/_rels/presentation.xml.rels', $updatedPresentationRelsXml)
-                || ! $zip->addFromString('ppt/presentation.xml', $updatedPresentationXml)
+                $contentTypesXml = $this->insertContentTypeOverride($contentTypesXml, $newSlidePath);
+                $presentationRelsXml = $this->insertPresentationRelationship($presentationRelsXml, $newRId, $newSlideNumber);
+                $presentationXml = $this->insertSldId($presentationXml, $sldIds, $insertionIndex, $newSldId, $newRId);
+
+                // insertSldId()は$sldIdsの件数とpresentationXml中の<p:sldId>
+                // 件数が一致することを前提にしている。次の反復でも一致させ
+                // 続けるため、いま追加した1件をここで$sldIdsにも反映する。
+                array_splice($sldIds, $insertionIndex, 0, [['id' => $newSldId, 'rId' => $newRId]]);
+                $insertionIndex++;
+
+                if (! $zip->addFromString($newSlidePath, $slideXml) || ! $zip->addFromString($newSlideRelsPath, $newSlideRelsXml)) {
+                    throw new ComparisonSlideInsertionException('PPTXへの書き込みに失敗しました。');
+                }
+            }
+
+            if (! $zip->addFromString('[Content_Types].xml', $contentTypesXml)
+                || ! $zip->addFromString('ppt/_rels/presentation.xml.rels', $presentationRelsXml)
+                || ! $zip->addFromString('ppt/presentation.xml', $presentationXml)
             ) {
                 throw new ComparisonSlideInsertionException('PPTXへの書き込みに失敗しました。');
             }
@@ -158,29 +201,28 @@ class AdminComparisonPptxInserter
     }
 
     /**
-     * @return array{0: string, 1: string}  [slide1.xmlの中身, slide1.xml.relsの中身]
+     * @return string  slide1.xmlの中身
      */
-    private function extractComparisonSlideParts(string $comparisonSlideBytes): array
+    private function extractSingleSlide(string $slideBytes): string
     {
         $tmpPath = tempnam(sys_get_temp_dir(), 'pptx-src');
-        file_put_contents($tmpPath, $comparisonSlideBytes);
+        file_put_contents($tmpPath, $slideBytes);
 
         $zip = new ZipArchive();
         if ($zip->open($tmpPath) !== true) {
             @unlink($tmpPath);
-            throw new ComparisonSlideInsertionException('比較スライドの生成結果を読み込めませんでした。');
+            throw new ComparisonSlideInsertionException('差し込むスライドの生成結果を読み込めませんでした。');
         }
 
         $slideXml = $zip->getFromName('ppt/slides/slide1.xml');
-        $relsXml = $zip->getFromName('ppt/slides/_rels/slide1.xml.rels');
         $zip->close();
         @unlink($tmpPath);
 
-        if ($slideXml === false || $relsXml === false) {
-            throw new ComparisonSlideInsertionException('比較スライドの生成結果の形式が想定外です。');
+        if ($slideXml === false) {
+            throw new ComparisonSlideInsertionException('差し込むスライドの生成結果の形式が想定外です。');
         }
 
-        // 依頼BG-2: 差し込む比較スライドが画像・グラフ・埋め込みを一切
+        // 依頼BG-2: 差し込むスライドが画像・グラフ・埋め込みを一切
         // 参照していないことを実行時にも確認する(生成側の実装が将来変わり
         // 画像等を持つようになった場合に、無言で欠落した状態で差し込んで
         // しまわないための安全弁)。r:id/r:embed/r:link参照が無いことは
@@ -188,11 +230,11 @@ class AdminComparisonPptxInserter
         // 画像・グラフ・ハイパーリンクを使わない)により保証されている。
         if (preg_match('/\br:(id|embed|link)="/', $slideXml) === 1) {
             throw new ComparisonSlideInsertionException(
-                '比較スライドが画像・グラフ等の外部パーツを参照しているため、この単純な差し込み方式では対応できません。',
+                '差し込むスライドが画像・グラフ等の外部パーツを参照しているため、この単純な差し込み方式では対応できません。',
             );
         }
 
-        return [$slideXml, $relsXml];
+        return $slideXml;
     }
 
     private function readEntry(ZipArchive $zip, string $name): string

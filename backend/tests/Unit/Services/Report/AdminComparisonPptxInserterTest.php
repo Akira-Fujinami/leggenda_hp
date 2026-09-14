@@ -89,6 +89,22 @@ class AdminComparisonPptxInserterTest extends TestCase
     }
 
     /**
+     * 依頼BZ-2: 差し込みは説明ページ→比較ページの2枚になった。
+     */
+    private function explanationSlideBytes(): string
+    {
+        return app(AdminComparisonPptxGenerator::class)->generateExplanationSlide();
+    }
+
+    /**
+     * @return list<string>  insert()に渡す順(説明ページ→比較ページ)の配列
+     */
+    private function twoSlideBytesList(): array
+    {
+        return [$this->explanationSlideBytes(), $this->comparisonSlideBytes()];
+    }
+
+    /**
      * 実物同等のパーツ構成(画像1点・ノート1件・スライドレイアウト2種・
      * スライド複数枚)を持つ自作フィクスチャを組み立てる。
      *
@@ -298,11 +314,16 @@ class AdminComparisonPptxInserterTest extends TestCase
         $this->assertStringNotContainsString('サンプル', $slideXml);
     }
 
-    public function test_inserts_the_comparison_slide_immediately_before_the_reference_page(): void
+    /**
+     * 依頼BZ-2の中心要件: 説明ページ→比較ページ→参照元の順で並ぶこと、
+     * かつスライド番号・rId・sldIdが1枚ごとに進んでいて衝突・使い回しが
+     * 無いこと。
+     */
+    public function test_inserts_both_slides_in_order_immediately_before_the_reference_page(): void
     {
         $deckPath = $this->makeFixtureDeck(['内容1', '内容2', '参照元']);
 
-        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $mergedPath = $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
         $this->tempFiles[] = $mergedPath;
 
         $zip = new ZipArchive;
@@ -311,7 +332,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         $relsXml = $zip->getFromName('ppt/_rels/presentation.xml.rels');
 
         preg_match_all('/<p:sldId\s+id="(\d+)"\s+r:id="(rId\d+)"\s*\/>/', $presentationXml, $sldIdMatches, PREG_SET_ORDER);
-        $this->assertCount(4, $sldIdMatches, '3枚+差し込み1枚=4枚になっていること');
+        $this->assertCount(5, $sldIdMatches, '3枚+差し込み2枚(説明+比較)=5枚になっていること');
 
         preg_match_all('/<Relationship\s+Id="(rId\d+)"[^>]*Target="([^"]+)"/', $relsXml, $relMatches, PREG_SET_ORDER);
         $targetByRid = [];
@@ -321,12 +342,31 @@ class AdminComparisonPptxInserterTest extends TestCase
 
         $orderedTargets = array_map(fn ($m) => $targetByRid[$m[2]] ?? null, $sldIdMatches);
 
-        // 元の3枚(slide1〜3)のうち、slide3(参照元)の直前に新規スライドが
-        // 入っていること。新規スライドのファイル名はslide4.xml(既存の最大+1)。
+        // 元の3枚(slide1〜3)のうち、slide3(参照元)の直前に「説明ページ→
+        // 比較ページ」の順で新規スライドが入っていること。新規スライドの
+        // ファイル名はslide4.xml(説明、既存の最大+1)・slide5.xml
+        // (比較、+2)。
         $this->assertSame('slides/slide1.xml', $orderedTargets[0]);
         $this->assertSame('slides/slide2.xml', $orderedTargets[1]);
-        $this->assertSame('slides/slide4.xml', $orderedTargets[2], '差し込んだスライドは参照元の直前にあること');
-        $this->assertSame('slides/slide3.xml', $orderedTargets[3], '参照元スライド自体はそのまま最後に残ること');
+        $this->assertSame('slides/slide4.xml', $orderedTargets[2], '説明ページが最初に差し込まれていること');
+        $this->assertSame('slides/slide5.xml', $orderedTargets[3], '比較ページが説明ページの直後にあること');
+        $this->assertSame('slides/slide3.xml', $orderedTargets[4], '参照元スライド自体はそのまま最後に残ること');
+
+        // rId・sldIdが1枚ごとに進んでいる(使い回されていない)こと。
+        $newSldIds = array_column(array_slice($sldIdMatches, 2, 2), 1);
+        $newRids = array_column(array_slice($sldIdMatches, 2, 2), 2);
+        $this->assertNotSame($newSldIds[0], $newSldIds[1], '説明ページと比較ページのsldIdが同じ値を使い回していないこと');
+        $this->assertNotSame($newRids[0], $newRids[1], '説明ページと比較ページのrIdが同じ値を使い回していないこと');
+        $this->assertGreaterThan((int) $newSldIds[0], (int) $newSldIds[1], 'sldIdが1枚ごとに進んでいること');
+
+        // 説明ページの中身(slide4.xml)には説明ページ固有の文言、比較ページ
+        // (slide5.xml)には比較ページ固有の文言が入っていること
+        // (取り違えて逆順に書き込んでいないことの確認)。
+        $explanationXml = $zip->getFromName('ppt/slides/slide4.xml');
+        $comparisonXml = $zip->getFromName('ppt/slides/slide5.xml');
+        $this->assertStringContainsString('ブランド・ホイール', $explanationXml);
+        $this->assertStringContainsString('領域別の発信量', $comparisonXml);
+        $this->assertStringNotContainsString('領域別の発信量', $explanationXml);
 
         $zip->close();
     }
@@ -336,7 +376,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         $deckPath = $this->makeFixtureDeck(['内容1', '内容2', '参照元']);
         $beforeHashes = $this->hashAllEntries($deckPath);
 
-        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $mergedPath = $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
         $this->tempFiles[] = $mergedPath;
         $afterHashes = $this->hashAllEntries($mergedPath);
 
@@ -349,19 +389,26 @@ class AdminComparisonPptxInserterTest extends TestCase
             $this->assertSame($hash, $afterHashes[$name] ?? null, "既存パーツ {$name} のバイト列が変わっていないこと");
         }
 
-        // 新規追加された2ファイル以外、エントリ数が増えていないこと。
-        $this->assertCount(count($beforeHashes) + 2, $afterHashes);
+        // 依頼BZ-2/BZ-3: 追加パーツは4件(slide×2、rels×2)だけであること、
+        // 削除は0件であること(全エントリ数の差分で確認)。書き換える3
+        // ファイル([Content_Types].xml/presentation.xml.rels/
+        // presentation.xml)は既存パーツのままエントリ数を増やさない。
+        $this->assertCount(count($beforeHashes) + 4, $afterHashes, '追加パーツが4件(スライド2件+rels2件)だけであること');
     }
 
     public function test_layout_reference_matches_the_neighboring_slide_not_hardcoded(): void
     {
         $deckPath = $this->makeFixtureDeck(['内容1', '内容2', '参照元']);
-        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $mergedPath = $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
         $this->tempFiles[] = $mergedPath;
 
         $zip = new ZipArchive;
         $zip->open($mergedPath);
-        $newSlideRels = $zip->getFromName('ppt/slides/_rels/slide4.xml.rels');
+        // 依頼BZ-2: 2枚とも同じレイアウト(隣接スライードから引く既存方針)
+        // であること。
+        $explanationRels = $zip->getFromName('ppt/slides/_rels/slide4.xml.rels');
+        $this->assertStringContainsString('slideLayouts/slideLayout1.xml', $explanationRels);
+        $newSlideRels = $zip->getFromName('ppt/slides/_rels/slide5.xml.rels');
         $zip->close();
 
         $this->assertStringContainsString('slideLayouts/slideLayout1.xml', $newSlideRels);
@@ -370,16 +417,18 @@ class AdminComparisonPptxInserterTest extends TestCase
     public function test_the_generated_pptx_opens_and_content_types_matches_added_slide(): void
     {
         $deckPath = $this->makeFixtureDeck(['内容1', '参照元']);
-        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $mergedPath = $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
         $this->tempFiles[] = $mergedPath;
 
         $zip = new ZipArchive;
         $openResult = $zip->open($mergedPath, ZipArchive::CHECKCONS);
         $this->assertTrue($openResult === true, 'ZipArchiveで整合性エラー無く開けること');
 
-        $this->assertNotFalse($zip->getFromName('ppt/slides/slide3.xml'), '新規スライドファイルが存在すること');
+        $this->assertNotFalse($zip->getFromName('ppt/slides/slide3.xml'), '新規スライドファイル(説明ページ)が存在すること');
+        $this->assertNotFalse($zip->getFromName('ppt/slides/slide4.xml'), '新規スライドファイル(比較ページ)が存在すること');
         $contentTypes = $zip->getFromName('[Content_Types].xml');
         $this->assertStringContainsString('/ppt/slides/slide3.xml', $contentTypes);
+        $this->assertStringContainsString('/ppt/slides/slide4.xml', $contentTypes);
 
         $dom = new \DOMDocument;
         $this->assertTrue($dom->loadXML($zip->getFromName('ppt/presentation.xml')), 'presentation.xmlが妥当なXMLであること');
@@ -396,7 +445,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         $tempCountBefore = count(glob(sys_get_temp_dir().'/pptx-merged*'));
 
         try {
-            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
             $this->fail('例外が投げられるはず');
         } catch (ComparisonSlideInsertionException $e) {
             $this->assertStringContainsString('参照元', $e->getMessage());
@@ -412,7 +461,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 9144000, sldSzCy: 6858000);
 
         try {
-            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
             $this->fail('例外が投げられるはず');
         } catch (ComparisonSlideInsertionException $e) {
             // 依頼BI-3: 実際の寸法をcmで、分かる場合は比率名(4:3等)も添えて
@@ -439,7 +488,7 @@ class AdminComparisonPptxInserterTest extends TestCase
     {
         $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: self::SLIDE_W - 1200, sldSzCy: self::SLIDE_H - 1200);
 
-        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $mergedPath = $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
         $this->tempFiles[] = $mergedPath;
 
         $this->assertFileExists($mergedPath);
@@ -453,7 +502,7 @@ class AdminComparisonPptxInserterTest extends TestCase
     {
         $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 12191695, sldSzCy: 6858000);
 
-        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $mergedPath = $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
         $this->tempFiles[] = $mergedPath;
 
         $this->assertFileExists($mergedPath);
@@ -469,7 +518,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 9144000, sldSzCy: 6858000);
 
         try {
-            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
             $this->fail('例外が投げられるはず');
         } catch (ComparisonSlideInsertionException $e) {
             $this->assertStringContainsString('4:3', $e->getMessage());
@@ -487,7 +536,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 9144000, sldSzCy: 5715000);
 
         try {
-            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
             $this->fail('例外が投げられるはず');
         } catch (ComparisonSlideInsertionException $e) {
             $this->assertStringContainsString('16:10', $e->getMessage());
@@ -513,7 +562,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 9144000, sldSzCy: 5143500);
 
         try {
-            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
             $this->fail('例外が投げられるはず');
         } catch (ComparisonSlideInsertionException $e) {
             $message = $e->getMessage();
@@ -543,7 +592,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 6858000, sldSzCy: 12192000);
 
         try {
-            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
             $this->fail('例外が投げられるはず');
         } catch (ComparisonSlideInsertionException $e) {
             $message = $e->getMessage();
@@ -569,7 +618,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzCx: 12193500, sldSzCy: 6858000);
 
         try {
-            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
             $this->fail('例外が投げられるはず');
         } catch (ComparisonSlideInsertionException $e) {
             $message = $e->getMessage();
@@ -592,7 +641,7 @@ class AdminComparisonPptxInserterTest extends TestCase
             sldSzXmlOverride: '<p:sldSz type="screen16x9" cx="12192000" cy="6858000"/>',
         );
 
-        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $mergedPath = $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
         $this->tempFiles[] = $mergedPath;
 
         $this->assertFileExists($mergedPath);
@@ -605,7 +654,7 @@ class AdminComparisonPptxInserterTest extends TestCase
             sldSzXmlOverride: '<p:sldSz cy="6858000" cx="12192000"/>',
         );
 
-        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $mergedPath = $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
         $this->tempFiles[] = $mergedPath;
 
         $this->assertFileExists($mergedPath);
@@ -616,7 +665,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         $deckPath = $this->makeFixtureDeck(['内容1', '参照元'], sldSzXmlOverride: '');
 
         try {
-            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
             $this->fail('例外が投げられるはず');
         } catch (ComparisonSlideInsertionException $e) {
             $this->assertStringContainsString('読み取れませんでした', $e->getMessage());
@@ -633,7 +682,7 @@ class AdminComparisonPptxInserterTest extends TestCase
     {
         $deckPath = $this->makeFixtureDeck(['本文中に出典という語を含む説明', '内容2', '参照元一覧']);
 
-        $mergedPath = $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+        $mergedPath = $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
         $this->tempFiles[] = $mergedPath;
 
         $zip = new ZipArchive;
@@ -648,9 +697,12 @@ class AdminComparisonPptxInserterTest extends TestCase
         }
         $orderedTargets = array_map(fn ($rid) => $targetByRid[$rid] ?? null, $sldIdMatches[1]);
 
-        // 新規スライド(slide4.xml)が3番目(=slide3「参照元一覧」の直前)に
-        // 入っていること。slide1の「出典」には一切反応しないこと。
+        // 新規スライド2枚(slide4.xml=説明、slide5.xml=比較)が3・4番目
+        // (=slide3「参照元一覧」の直前)に入っていること。slide1の「出典」
+        // には一切反応しないこと。
         $this->assertSame('slides/slide4.xml', $orderedTargets[2]);
+        $this->assertSame('slides/slide5.xml', $orderedTargets[3]);
+        $this->assertSame('slides/slide3.xml', $orderedTargets[4]);
     }
 
     /**
@@ -668,7 +720,7 @@ class AdminComparisonPptxInserterTest extends TestCase
         ]);
 
         try {
-            $this->inserter()->insert($deckPath, $this->comparisonSlideBytes());
+            $this->inserter()->insert($deckPath, $this->twoSlideBytesList());
             $this->fail('例外が投げられるはず(本文の「出典」に誤って反応してはいけない)');
         } catch (ComparisonSlideInsertionException $e) {
             $this->assertStringContainsString('参照元', $e->getMessage());
