@@ -341,6 +341,12 @@
                         <tr style="background: #FDEEEC;">
                             <td colspan="8" style="padding-top: 0;">
                                 <div style="color: #C2372B; font-size: 13px; font-weight: 600;">&#9940; {{ $criticalWarning['message'] }}</div>
+                                {{-- 依頼CA-3: 理由ごとの「次にすべきこと」一文。既存の
+                                     一文(上)は書き換えず、理由が分かる場合だけ続けて
+                                     出す(理由がnull=既存データのときは出さない)。 --}}
+                                @if ($criticalWarning['reason_hint'] ?? null)
+                                    <div style="color: #C2372B; font-size: 13px;">{{ $criticalWarning['reason_hint'] }}</div>
+                                @endif
                             </td>
                         </tr>
                     @endif

@@ -326,6 +326,13 @@ class CrawlWebsiteJobTest extends TestCase
         $this->assertSame(0, AnalysisCrawledPage::query()->count());
         Queue::assertNotPushed(CrawlWebsitePageJob::class);
         $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+        // 依頼CA-1(2026-09-15): この経路は依頼BVが「2つ」と数え落としていた
+        // 残り2つのうちの1つ ―― smartHRの実例で理由が空のまま画面に出て
+        // いた(依頼者が実データで確認)。CrawlWebsiteJob::
+        // finalizeWithoutCrawling()経由で保存されるようになったことを確認する。
+        $websiteAnalysis->refresh();
+        $this->assertSame('no_seed_urls_found', $websiteAnalysis->crawl_finished_reason);
+        $this->assertNotNull($websiteAnalysis->crawl_finished_at);
     }
 
     /**
@@ -338,6 +345,15 @@ class CrawlWebsiteJobTest extends TestCase
         (new CrawlWebsiteJob($analysis->id, $websiteAnalysis->id))->failed(new \RuntimeException('boom'));
 
         $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+        // 依頼CA-1: 依頼BVが数え落としていたもう1つの経路。
+        // CrawlWebsitePageJob::finalizeCrawl()が使う'failed_exception'
+        // (ページ取得側の例外)とは別の値('seed_job_failed')であること ――
+        // 起点ジョブが落ちたのか、巡回中に落ちたのかを区別できる形にする
+        // (依頼者指定)。
+        $websiteAnalysis->refresh();
+        $this->assertSame('seed_job_failed', $websiteAnalysis->crawl_finished_reason);
+        $this->assertNotSame('failed_exception', $websiteAnalysis->crawl_finished_reason);
+        $this->assertNotNull($websiteAnalysis->crawl_finished_at);
     }
 
     /**

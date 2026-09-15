@@ -31,6 +31,11 @@ use Illuminate\Support\Facades\Log;
  * (CrawlWebsitePageJobへ委譲)。
  *
  * $timeoutは短く保つ(このJob自体はHTTP取得を一切行わない、DB読み書きのみ)。
+ *
+ * 依頼CA-2(2026-09-15): このJobが巡回を開始しないまま終える経路は、
+ * すべてfinalizeWithoutCrawling()を経由する(直接
+ * dispatchBrandWheelAnalysisAfterCrawl()を呼ばない)。詳細は同メソッドの
+ * docblock参照。
  */
 class CrawlWebsiteJob implements ShouldQueue
 {
@@ -97,12 +102,8 @@ class CrawlWebsiteJob implements ShouldQueue
             // 「巡回していません。」としか出せなかった(依頼者が実データ
             // (LINEヤフー)で確認)。上のLog::infoが出しているのと同じ値を
             // そのまま保存する ―― 判定ロジック・ログ出力は変えない、
-            // 記録の追加のみ。
-            WebsiteAnalysis::query()->whereKey($this->websiteAnalysisId)->update([
-                'crawl_finished_reason' => 'robots_txt_unavailable',
-                'crawl_finished_at' => now(),
-            ]);
-            $pipeline->dispatchBrandWheelAnalysisAfterCrawl($this->analysisId, $this->websiteAnalysisId);
+            // 記録の追加のみ(依頼CA-2でfinalizeWithoutCrawling()へ集約)。
+            $this->finalizeWithoutCrawling($pipeline, 'robots_txt_unavailable');
 
             return;
         }
@@ -115,12 +116,9 @@ class CrawlWebsiteJob implements ShouldQueue
                 'website_analysis_id' => $this->websiteAnalysisId,
             ]);
             // 依頼BV-1: 依頼者提案の値('no_allowed_hosts')。上のrobots同様、
-            // finalizeCrawl()を通らないため、ここで記録する。
-            WebsiteAnalysis::query()->whereKey($this->websiteAnalysisId)->update([
-                'crawl_finished_reason' => 'no_allowed_hosts',
-                'crawl_finished_at' => now(),
-            ]);
-            $pipeline->dispatchBrandWheelAnalysisAfterCrawl($this->analysisId, $this->websiteAnalysisId);
+            // finalizeCrawl()を通らないため、ここで記録する
+            // (依頼CA-2でfinalizeWithoutCrawling()へ集約)。
+            $this->finalizeWithoutCrawling($pipeline, 'no_allowed_hosts');
 
             return;
         }
@@ -172,7 +170,13 @@ class CrawlWebsiteJob implements ShouldQueue
             // 巡回対象0件(例: 採用ページが独立マイクロサイトで、サイト内
             // リンクが許可ホストの外(親ブランドドメイン等)にしか無いケース。
             // 依頼D中間測定でSmartHRが実際にこの経路を通ることを確認済み)。
-            $pipeline->dispatchBrandWheelAnalysisAfterCrawl($this->analysisId, $this->websiteAnalysisId);
+            //
+            // 依頼CA-1(2026-09-15): この経路もrobots_txt_unavailable/
+            // no_allowed_hosts同様finalizeCrawl()を通らないため、依頼BVでは
+            // crawl_finished_reasonが保存されず、画面が「巡回していません。」
+            // としか出せなかった(依頼者が実データ(smartHR)で確認 ――
+            // 依頼BVは「巡回が始まらない経路は2つ」と数え落としていた)。
+            $this->finalizeWithoutCrawling($pipeline, 'no_seed_urls_found');
 
             return;
         }
@@ -190,7 +194,38 @@ class CrawlWebsiteJob implements ShouldQueue
             'website_analysis_id' => $this->websiteAnalysisId,
             'exception' => $exception->getMessage(),
         ]);
-        app(AnalysisPipeline::class)->dispatchBrandWheelAnalysisAfterCrawl($this->analysisId, $this->websiteAnalysisId);
+        // 依頼CA-1: 'failed_exception'(CrawlWebsitePageJob::finalizeCrawl()が
+        // 使う、ページ取得側の例外)とは別の値にする ―― こちらは起点(seed)
+        // ジョブ自体が落ちた事象であり、巡回中の失敗とは原因の切り分け方が
+        // 異なる(依頼者指定)。
+        $this->finalizeWithoutCrawling(app(AnalysisPipeline::class), 'seed_job_failed');
+    }
+
+    /**
+     * 依頼CA-2(2026-09-15): CrawlWebsiteJobが巡回を開始しない/開始できない
+     * まま終える経路(robots_txt_unavailable/no_allowed_hosts/
+     * no_seed_urls_found/seed_job_failedの4つ、下記コメント参照)を、
+     * この1箇所に集約する。この4経路はdispatchBrandWheelAnalysisAfterCrawl()
+     * を直接呼ばず、必ずこのメソッド経由にする ―― 依頼BVでは経路を
+     * 数え落とし(「2つ」のつもりが実際は4つあった)、2経路で
+     * crawl_finished_reasonの保存漏れが起きた。呼び出し口を1つに絞ることで、
+     * 将来ここに新しい終了経路が増えても、このメソッドを経由する限り
+     * 保存漏れが起こり得ない形にする(CrawlWebsitePageJob::finalizeCrawl()
+     * と同じ考え方)。判定ロジック・順序には一切影響しない、記録の追加のみ。
+     *
+     * 【現在の4経路、テストで担保(CrawlWebsiteJobTest)】
+     *   1. handle() robots.txt未取得              → 'robots_txt_unavailable'
+     *   2. handle() 許可ホスト0件                  → 'no_allowed_hosts'
+     *   3. handle() seed対象0件($seededCount===0)  → 'no_seed_urls_found'
+     *   4. failed() 想定外の例外でジョブ自体が失敗  → 'seed_job_failed'
+     */
+    private function finalizeWithoutCrawling(AnalysisPipeline $pipeline, string $reason): void
+    {
+        WebsiteAnalysis::query()->whereKey($this->websiteAnalysisId)->update([
+            'crawl_finished_reason' => $reason,
+            'crawl_finished_at' => now(),
+        ]);
+        $pipeline->dispatchBrandWheelAnalysisAfterCrawl($this->analysisId, $this->websiteAnalysisId);
     }
 
     /**

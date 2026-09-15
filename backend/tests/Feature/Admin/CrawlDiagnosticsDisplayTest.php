@@ -300,6 +300,116 @@ class CrawlDiagnosticsDisplayTest extends TestCase
     }
 
     /**
+     * 依頼CA-1: 依頼BVが数え落としていた残り2経路のうちの1つ
+     * ('no_seed_urls_found'、smartHRの実例)。
+     */
+    public function test_no_seed_urls_found_reason_shows_why_the_crawl_did_not_start(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $wa->update(['crawl_finished_reason' => 'no_seed_urls_found', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee('サイト内に巡回できるリンクが見つからず、巡回を行いませんでした');
+        $response->assertDontSee('no_seed_urls_found');
+    }
+
+    /**
+     * 依頼CA-1: 依頼BVが数え落としていたもう1つ('seed_job_failed')。
+     */
+    public function test_seed_job_failed_reason_shows_why_the_crawl_did_not_start(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $wa->update(['crawl_finished_reason' => 'seed_job_failed', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee('予期しないエラーで巡回を開始できませんでした');
+        $response->assertDontSee('seed_job_failed');
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼CA-3: critical_warningに、理由ごとの「次にすべきこと」一文
+    // (reason_hint)を足す。既存の一文はそのまま残す。
+    // ------------------------------------------------------------------
+
+    public function test_reason_hint_is_appended_after_the_existing_critical_warning_sentence(): void
+    {
+        $analysis = $this->makeAnalysis(crawlSite: true);
+        $wa = $this->makeWebsiteAnalysis($analysis, '巡回0件(CA検証)');
+        $wa->update(['crawl_finished_reason' => 'no_seed_urls_found', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        // 既存の一文(書き換え禁止)がそのまま出ていること。
+        $response->assertSee(config('crawl_diagnostics.crawl_not_started_message'));
+        // 理由ごとに足した一文も出ていること。
+        $response->assertSee(config('crawl_diagnostics.crawl_not_started_reason_hints.no_seed_urls_found'));
+    }
+
+    public function test_reason_hint_is_shown_for_robots_txt_unavailable(): void
+    {
+        $analysis = $this->makeAnalysis(crawlSite: true);
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $wa->update(['crawl_finished_reason' => 'robots_txt_unavailable', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee(config('crawl_diagnostics.crawl_not_started_reason_hints.robots_txt_unavailable'));
+    }
+
+    public function test_reason_hint_is_shown_for_no_allowed_hosts(): void
+    {
+        $analysis = $this->makeAnalysis(crawlSite: true);
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $wa->update(['crawl_finished_reason' => 'no_allowed_hosts', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee(config('crawl_diagnostics.crawl_not_started_reason_hints.no_allowed_hosts'));
+    }
+
+    public function test_reason_hint_is_shown_for_seed_job_failed(): void
+    {
+        $analysis = $this->makeAnalysis(crawlSite: true);
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $wa->update(['crawl_finished_reason' => 'seed_job_failed', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee(config('crawl_diagnostics.crawl_not_started_reason_hints.seed_job_failed'));
+    }
+
+    /**
+     * 依頼CA-3(必須): 理由がnull(依頼BV/CA適用前の既存データ)のときは、
+     * 足す一文を出さない ―― 既存の一文だけが出ること。
+     */
+    public function test_reason_hint_is_not_shown_when_finished_reason_is_null(): void
+    {
+        $analysis = $this->makeAnalysis(crawlSite: true);
+        $this->makeWebsiteAnalysis($analysis, '巡回0件・理由null(CA検証)');
+        // crawl_finished_reasonは更新しない(既定でnull)。
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        // 既存の一文は出る。
+        $response->assertSee(config('crawl_diagnostics.crawl_not_started_message'));
+        // 理由ごとの一文はどれも出ない。
+        foreach ((array) config('crawl_diagnostics.crawl_not_started_reason_hints') as $hint) {
+            $response->assertDontSee($hint);
+        }
+    }
+
+    /**
      * 依頼BV-3(この依頼の主目的): crawl_site=trueなのに、多社比較の1社だけ
      * 巡回が1ページも行われなかった場合(LINEヤフーの実例そのもの)、
      * BU-3の3条件とは独立した、資料に出さないよう明示する警告が出る。

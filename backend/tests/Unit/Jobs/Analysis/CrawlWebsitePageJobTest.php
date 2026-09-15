@@ -244,6 +244,37 @@ class CrawlWebsitePageJobTest extends TestCase
 
         Http::assertNothingSent();
         Queue::assertNotPushed(CrawlWebsitePageJob::class);
+        // 依頼CA-2: finalizeCrawl()が実際に使う6種類のうち、このテストだけ
+        // crawl_finished_reasonのアサーションを欠いていた(既存の抜け)。
+        $this->assertSame('max_storage', $websiteAnalysis->fresh()->crawl_finished_reason);
+    }
+
+    /**
+     * robots.txtがseedジョブ時点では取得できていたが、その後読めなくなった
+     * (ストレージ障害等)場合、安全側でクロール自体を打ち切る。依頼CA-2:
+     * finalizeCrawl()が使う6種類のうち、この経路だけテストが1件も無かった
+     * (既存の抜け ―― 依頼BVの数え落としと同じ性質の見落とし)。
+     */
+    public function test_terminates_when_robots_becomes_unavailable_after_seeding(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class, RenderCrawledPageJob::class]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(robots404: false);
+        AnalysisPage::factory()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'page_type' => PageType::Robots,
+            'url' => 'https://example.co.jp/robots.txt',
+            'http_status' => 200,
+            'raw_html_path' => null, // ファイルが読めない状態(ストレージ障害等)を再現する
+        ]);
+        $this->seedPending($websiteAnalysis, 'https://example.co.jp/page-1');
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        Http::assertNothingSent();
+        Queue::assertNotPushed(CrawlWebsitePageJob::class);
+        $this->assertSame(1, BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->count());
+        $this->assertSame('robots_became_unavailable', $websiteAnalysis->fresh()->crawl_finished_reason);
+        $this->assertNotNull($websiteAnalysis->fresh()->crawl_finished_at);
     }
 
     /**

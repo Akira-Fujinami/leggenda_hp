@@ -100,7 +100,16 @@ class CrawlDiagnosticsService
             // 使っていない、多数派)では出さない(誤って大量に警告扱い
             // しないため)。
             'critical_warning' => ($crawlSiteEnabled && ! $hasCrawlData)
-                ? ['key' => 'crawl_not_started', 'message' => (string) config('crawl_diagnostics.crawl_not_started_message', '')]
+                ? [
+                    'key' => 'crawl_not_started',
+                    'message' => (string) config('crawl_diagnostics.crawl_not_started_message', ''),
+                    // 依頼CA-3: 理由ごとの「次にすべきこと」一文。理由が
+                    // null(既存データ)や未知の値の場合はnull ―― blade側は
+                    // nullのとき何も足さない(既存の一文だけを出す)。
+                    'reason_hint' => $reason !== null
+                        ? ((array) config('crawl_diagnostics.crawl_not_started_reason_hints', []))[$reason] ?? null
+                        : null,
+                ]
                 : null,
         ];
     }

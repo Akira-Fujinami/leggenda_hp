@@ -114,6 +114,107 @@ class CrawlDiagnosticsServiceTest extends TestCase
     }
 
     /**
+     * 依頼CA-1: 依頼BVが数え落としていた残り2経路のうちの1つ
+     * ('no_seed_urls_found'、smartHRの実例)。robots_txt_unavailable/
+     * no_allowed_hosts同様、巡回0件でもfinished_reasonに値が入る。
+     */
+    public function test_no_seed_urls_found_reason_is_shown_even_with_zero_crawled_pages(): void
+    {
+        $wa = $this->makeWebsiteAnalysis();
+        $wa->update(['crawl_finished_reason' => 'no_seed_urls_found', 'crawl_finished_at' => now()]);
+
+        $summary = app(CrawlDiagnosticsService::class)->summarize($wa->fresh(), true);
+
+        $this->assertFalse($summary['has_crawl_data']);
+        $this->assertSame('no_seed_urls_found', $summary['finished_reason']);
+        $this->assertSame(config('crawl_diagnostics.finished_reason_labels.no_seed_urls_found'), $summary['finished_reason_label']);
+        $this->assertNotNull($summary['critical_warning']);
+    }
+
+    /**
+     * 依頼CA-1: 依頼BVが数え落としていたもう1つ('seed_job_failed')。
+     * CrawlWebsitePageJob側の'failed_exception'と異なる文言になっていること
+     * も確認する(混ざらない名前にする、依頼者指定)。
+     */
+    public function test_seed_job_failed_reason_is_shown_even_with_zero_crawled_pages(): void
+    {
+        $wa = $this->makeWebsiteAnalysis();
+        $wa->update(['crawl_finished_reason' => 'seed_job_failed', 'crawl_finished_at' => now()]);
+
+        $summary = app(CrawlDiagnosticsService::class)->summarize($wa->fresh(), true);
+
+        $this->assertSame(config('crawl_diagnostics.finished_reason_labels.seed_job_failed'), $summary['finished_reason_label']);
+        $this->assertNotSame(
+            config('crawl_diagnostics.finished_reason_labels.failed_exception'),
+            $summary['finished_reason_label'],
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼CA-3: critical_warningに、理由ごとの「次にすべきこと」一文
+    // (reason_hint)を足す。
+    // ------------------------------------------------------------------
+
+    /**
+     * このリポジトリにデータプロバイダの使用例が無く、PHPUnit 12は
+     * @dataProvider docブロック注記を廃止している(#[DataProvider]属性が
+     * 必要)ため、素直にforeachで4理由ぶんまとめて確認する。
+     */
+    public function test_reason_hint_is_shown_for_each_crawl_not_started_reason(): void
+    {
+        $reasons = ['no_seed_urls_found', 'robots_txt_unavailable', 'no_allowed_hosts', 'seed_job_failed'];
+
+        foreach ($reasons as $reason) {
+            $wa = $this->makeWebsiteAnalysis();
+            $wa->update(['crawl_finished_reason' => $reason, 'crawl_finished_at' => now()]);
+
+            $summary = app(CrawlDiagnosticsService::class)->summarize($wa->fresh(), true);
+
+            $this->assertNotNull($summary['critical_warning'], "reason={$reason}");
+            // 既存の一文(crawl_not_started_message)は書き換えられていないこと。
+            $this->assertSame(config('crawl_diagnostics.crawl_not_started_message'), $summary['critical_warning']['message'], "reason={$reason}");
+            // 理由ごとの一文が足されていること。
+            $this->assertSame(
+                config("crawl_diagnostics.crawl_not_started_reason_hints.{$reason}"),
+                $summary['critical_warning']['reason_hint'],
+                "reason={$reason}",
+            );
+            $this->assertNotNull($summary['critical_warning']['reason_hint'], "reason={$reason}");
+        }
+    }
+
+    /**
+     * 依頼CA-3(必須): 理由がnull(依頼BV/CA適用前の既存データ)のときは、
+     * 足す一文(reason_hint)を出さない。
+     */
+    public function test_reason_hint_is_null_when_finished_reason_is_null(): void
+    {
+        $wa = $this->makeWebsiteAnalysis();
+        // crawl_finished_reasonは更新しない(既定でnull)。
+
+        $summary = app(CrawlDiagnosticsService::class)->summarize($wa->fresh(), true);
+
+        $this->assertNotNull($summary['critical_warning']);
+        $this->assertNull($summary['critical_warning']['reason_hint']);
+        // 既存の一文は変わらず出ること。
+        $this->assertSame(config('crawl_diagnostics.crawl_not_started_message'), $summary['critical_warning']['message']);
+    }
+
+    /**
+     * ここに無い(=巡回が始まった後の)理由がcritical_warning経路に来ても
+     * (通常は起こらないが、既知の値以外は落ちずnullにする安全側の確認)。
+     */
+    public function test_reason_hint_is_null_for_an_unknown_reason(): void
+    {
+        $wa = $this->makeWebsiteAnalysis();
+        $wa->update(['crawl_finished_reason' => 'exhausted', 'crawl_finished_at' => now()]);
+
+        $summary = app(CrawlDiagnosticsService::class)->summarize($wa->fresh(), true);
+
+        $this->assertNull($summary['critical_warning']['reason_hint']);
+    }
+
+    /**
      * 依頼BV-2: 候補0件(render_candidate_count=0)は正常 ―― 静的HTMLで
      * 足りていたことを示すため、rendering_failed警告を出さない。
      */

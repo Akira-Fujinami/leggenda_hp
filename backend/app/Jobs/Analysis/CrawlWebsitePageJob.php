@@ -324,6 +324,17 @@ class CrawlWebsitePageJob implements ShouldQueue
      * フロンティアの終端(上限到達・枯渇・想定外の失敗いずれも)。条件付き
      * レンダリング(依頼D-4)の対象を選び、対象があればRenderCrawledPageJobへ、
      * 無ければ直接ブランド・ホイール分析へ進む。
+     *
+     * 【現在の5経路、テストで担保(CrawlWebsitePageJobTest)】handle()から
+     * max_pages/total_timeout/max_storage/exhausted、failed()から
+     * failed_exception、robots_became_unavailableの計6箇所から呼ばれる。
+     *
+     * 依頼CA-2(2026-09-15): このJobがdispatchBrandWheelAnalysisAfterCrawl()を
+     * 呼ぶのはこのメソッド(下のexhausted安全弁の早期returnを除く一本道)
+     * だけであること ―― 新しい終了経路を追加するときは、直接
+     * dispatchBrandWheelAnalysisAfterCrawl()を呼ばず、必ずこのメソッドに
+     * $reasonを渡す形にすること(CrawlWebsiteJob::finalizeWithoutCrawling()
+     * と同じ考え方。依頼BVでの記録漏れの再発防止)。
      */
     private function finalizeCrawl(AnalysisPipeline $pipeline, HtmlSeoAnalyzer $htmlSeoAnalyzer, string $reason): void
     {
