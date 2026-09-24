@@ -246,8 +246,8 @@ class AdminComparisonPptxInsertTest extends TestCase
         // "<p:sldId "(空白始まり)で絞る ―― "<p:sldIdLst>"(一覧の開始タグ自体)を
         // 誤って1件と数えないようにするため。
         preg_match_all('/<p:sldId\s/', $presentationXml, $m);
-        // 依頼BZ-2: 差し込みは説明ページ→比較ページの2枚になった。
-        $this->assertCount(4, $m[0], '元の2枚+差し込み2枚(説明+比較)=4枚になっていること');
+        // 依頼CB-4: 差し込みは説明→比較→足りないもの→階層図の4枚になった。
+        $this->assertCount(6, $m[0], '元の2枚+差し込み4枚(説明+比較+足りないもの+階層図)=6枚になっていること');
         $zip->close();
         @unlink($tmp);
     }

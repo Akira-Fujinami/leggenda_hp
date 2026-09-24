@@ -7,10 +7,10 @@ use App\Support\Report\MultiSiteReportViewModel;
 
 /**
  * 依頼BG: 既存のMultiSiteReportViewModel(多社比較PDFと同じ唯一の情報源、
- * MultiSiteReportViewModelBuilder参照)を、AdminComparisonPptxGenerator::
- * generate()が期待するデータ形へ変換するだけの薄い変換層。判定・集計
- * ロジックは一切持たない ―― PDF/PPTXが異なる数値を見せることが無いよう、
- * 既存のViewModelが持つ値をそのまま渡す。
+ * MultiSiteReportViewModelBuilder参照)を、AdminComparisonPptxGeneratorが
+ * 期待するデータ形へ変換するだけの薄い変換層。判定・集計ロジックは一切
+ * 持たない ―― PDF/PPTXが異なる数値を見せることが無いよう、既存の
+ * ViewModelが持つ値をそのまま渡す。
  *
  * 依頼BM(2026-09-09): 「競合が伝えていて自社が伝えていない項目」の件数に
  * 依存する構成(該当0件だと下2/3が白紙になる、総合が同点だと前ページの
@@ -20,18 +20,28 @@ use App\Support\Report\MultiSiteReportViewModel;
  * 呼ばない)。MultiSiteReportViewModel.missingFromSelfそのものは多社比較PDF
  * (対象外、依頼者指定)がまだ使うため変更しない。
  *
- * 依頼BO-1(2026-09-09): まとめの帯の下に空く余白が「薄い」との指摘を受け、
- * 「競合が伝えていて自社が伝えていない項目」の項目名一覧を戻した。
- * viewModel.missingFromSelf(件数降順で既に並んでいる)からaxis_name/
- * sub_nameの2フィールドだけを読む ―― quote/quote_translation/
- * representative_company_name/definition/recommendationは一切読まない
- * (依頼BM-4で止めた引用取得の復活を防ぐ、依頼者指定)。
+ * 依頼BO-1(2026-09-09): 「競合が伝えていて自社が伝えていない項目」の項目名
+ * 一覧を追加した。viewModel.missingFromSelf(件数降順で既に並んでいる)から
+ * axis_name/sub_nameの2フィールドだけを読む ―― quote/quote_translation/
+ * representative_company_nameは一切読まない(依頼BM-4で止めた競合引用の
+ * 復活を防ぐ、依頼者指定)。definition/recommendationも読まない ――
+ * 同名の情報が必要な場合(依頼CB-2)は、missingFromSelf経由ではなく
+ * config('brand_wheel.axes')から直接引く(下記buildMissingItems()参照)。
  *
  * 依頼BQ-1(2026-09-11): 抽出条件(BrandWheelMultiSiteComparisonComposer::
  * extractMissingFromSelf())は「競合の少なくとも1社」ではなく「競合の
  * 過半数」だが、見出しの文言がそれを表していなかった(調査で判明、依頼BQの
  * 背景参照)。見出しに「競合N社中M社以上」を出すようにした ―― M は
  * majorityThreshold()から算出し、このクラス側に計算式を複製しない。
+ *
+ * 依頼CB-4(2026-09-24): 差し込みを「説明→比較→足りないもの→階層図→
+ * 参照元」の4枚構成に作り直した。旧「6領域マトリクス+まとめの帯」の
+ * 比較スライド(依頼BM〜BQ)はブランド・ホイール比較スライド(CB-1、
+ * ヘキサゴン)に置き換わったため、その専用データだった buildSummary()・
+ * 'summary'キーを削除した(companies/axesは既存のままCB-1が再利用する
+ * ―― 新しい集計を作らない、依頼者指定)。missing_itemsには、CB-2
+ * 「足りないもの」スライドが必要とする領域名・一文・候補者調査の対応
+ * (config('brand_wheel_candidate_survey'))を追加した。
  */
 class AdminComparisonPptxDataBuilder
 {
@@ -47,13 +57,20 @@ class AdminComparisonPptxDataBuilder
      *         competitor_counts: list<int>,
      *         self_gap: bool,
      *     }>,
-     *     summary: string,
      *     missing_items: array{
      *         heading: string,
      *         empty_text: string,
-     *         items: list<array{axis_name: string, sub_name: string}>,
+     *         items: list<array{
+     *             axis_name: string,
+     *             sub_name: string,
+     *             region: string,
+     *             impact: string,
+     *             candidate_survey: array{item: ?string, percentage: ?float},
+     *         }>,
      *         others_count: int,
      *     },
+     *     candidate_survey_source_note: string,
+     *     recommended_site_flow_names: list<string>,
      *     source_note: string,
      *     page_number: ?string,
      * }
@@ -87,15 +104,15 @@ class AdminComparisonPptxDataBuilder
         }
 
         $axes = $this->buildAxisMatrix($viewModel->comparisonTable, count($viewModel->competitors));
-        $summary = $this->buildSummary($companies, $axes);
         $missingItems = $this->buildMissingItems($viewModel->missingFromSelf, count($viewModel->competitors));
 
         return [
             'self_company_name' => $viewModel->selfCompanyDisplayName,
             'companies' => $companies,
             'axes' => $axes,
-            'summary' => $summary,
             'missing_items' => $missingItems,
+            'candidate_survey_source_note' => (string) config('brand_wheel_candidate_survey.source_note'),
+            'recommended_site_flow_names' => $this->buildRecommendedSiteFlowNames($viewModel->missingFromSelf),
             'source_note' => "Leggenda 採用ブランド・ホイール診断({$viewModel->generatedAtLabel}時点)",
             'page_number' => null,
         ];
@@ -103,11 +120,8 @@ class AdminComparisonPptxDataBuilder
 
     /**
      * 依頼BO-1: 上限(missing_items_max_count)は「これ以上は出さない」という
-     * 天井であり、実際に何件描画できるかはAdminComparisonPptxGenerator側で
-     * まとめの帯の実際の行数(可変)から動的に計算する(このクラスはレイアウト
-     * を一切知らない、依頼BM由来の役割分担を維持)。ここでは上限を超えた分を
-     * 「ほかN件」1件に畳んで、Generatorが常に「項目N件+ほか1件」以下の
-     * 固定件数だけを受け取れば済むようにする。
+     * 天井。超えた分は「ほかN件」1件に畳んで、Generatorが常に「項目N件+
+     * ほか1件」以下の固定件数だけを受け取れば済むようにする。
      *
      * 依頼BQ-1(2026-09-11): 見出しに「競合N社中M社以上」の具体的な数字を
      * 出す。M(過半数の人数)は、抽出条件そのものである
@@ -117,17 +131,30 @@ class AdminComparisonPptxDataBuilder
      * このクラス側に複製すると、将来どちらか片方だけ変更されて定義が
      * 割れる恐れがある)。
      *
+     * 依頼CB-2(2026-09-24): 「足りないもの」スライドの各行に、項目名・
+     * sub_name以外に3つを追加した。いずれもmissingFromSelf側の
+     * definition/recommendation/quote系フィールドは読まず(依頼BM-4を
+     * 維持)、axis_name/sub_nameからconfig('brand_wheel.axes')・
+     * config('brand_wheel_candidate_survey')を逆引きして得る:
+     *   - region: 3領域の区分名(会社の魅力/会社との距離/仕事の魅力)。
+     *     AdminComparisonPptxGenerator::regionName()(依頼BZ-1の
+     *     EXPLANATION_REGIONSを再利用、新しい3領域表をここに複製しない)。
+     *   - impact: 「伝わっていないと何が起きるか」の一文。
+     *     config('brand_wheel.axes.*.sub_element_definitions')(その項目の
+     *     定義、既存の確定済み文言)を
+     *     admin_comparison_pptx.missing_item_impact_templateへ埋め込む。
+     *   - candidate_survey: 対応する候補者調査の項目名・割合
+     *     (config('brand_wheel_candidate_survey.mapping')。「該当なし」の
+     *     項目はitem/percentageともnull ―― 数字を捏造しない、依頼者指定)。
+     *
      * @param  list<array{axis_name: string, sub_name: string, competitor_matched_count: int}>  $missingFromSelf  件数降順で既に並んでいる(BrandWheelMultiSiteComparisonComposer::extractMissingFromSelf())
-     * @return array{heading: string, empty_text: string, items: list<array{axis_name: string, sub_name: string}>, others_count: int}
+     * @return array{heading: string, empty_text: string, items: list<array{axis_name: string, sub_name: string, region: string, impact: string, candidate_survey: array{item: ?string, percentage: ?float}}>, others_count: int}
      */
     private function buildMissingItems(array $missingFromSelf, int $competitorCount): array
     {
         $maxCount = (int) config('admin_comparison_pptx.missing_items_max_count');
 
-        $items = array_map(fn (array $item) => [
-            'axis_name' => $item['axis_name'],
-            'sub_name' => $item['sub_name'],
-        ], $missingFromSelf);
+        $items = array_map(fn (array $item) => $this->enrichMissingItem($item['axis_name'], $item['sub_name']), $missingFromSelf);
 
         $othersCount = 0;
         if (count($items) > $maxCount) {
@@ -144,6 +171,98 @@ class AdminComparisonPptxDataBuilder
             'items' => $items,
             'others_count' => $othersCount,
         ];
+    }
+
+    /**
+     * @return array{axis_name: string, sub_name: string, region: string, impact: string, candidate_survey: array{item: ?string, percentage: ?float}}
+     */
+    private function enrichMissingItem(string $axisName, string $subName): array
+    {
+        $keys = $this->resolveAxisSubKeys($axisName, $subName);
+        if ($keys === null) {
+            // config('brand_wheel.axes')に無い組み合わせ(理論上到達しない
+            // ―― missingFromSelf自体がconfig('brand_wheel.axes')の順で
+            // 組み立てられているため)。フォールバックとして空欄にする
+            // (捏造しない・例外で全体を落とさない、既存方針)。
+            return [
+                'axis_name' => $axisName,
+                'sub_name' => $subName,
+                'region' => '',
+                'impact' => '',
+                'candidate_survey' => ['item' => null, 'percentage' => null],
+            ];
+        }
+
+        [$axisKey, $subKey] = $keys;
+        $axisConfig = (array) config("brand_wheel.axes.{$axisKey}");
+        $definition = (string) ($axisConfig['sub_element_definitions'][$subKey] ?? '');
+        $mapping = (array) config("brand_wheel_candidate_survey.mapping.{$axisKey}.{$subKey}", []);
+
+        return [
+            'axis_name' => $axisName,
+            'sub_name' => $subName,
+            'region' => AdminComparisonPptxGenerator::regionName((string) ($axisConfig['group'] ?? '')),
+            'impact' => sprintf((string) config('admin_comparison_pptx.missing_item_impact_template'), $definition),
+            'candidate_survey' => [
+                'item' => $mapping['survey_item'] ?? null,
+                'percentage' => isset($mapping['percentage']) ? (float) $mapping['percentage'] : null,
+            ],
+        ];
+    }
+
+    /**
+     * 依頼CB-3: 「足りないもの」(CB-2の表示上限より前、missingFromSelf
+     * 全件)に対応するサイトの導線名を、重複を除いて出現順に返す。
+     * config('brand_wheel_candidate_survey.mapping.*.site_flow_name')が
+     * null(該当なし)の項目は含めない ―― 存在しない導線名を「推奨」として
+     * 出さないため。
+     *
+     * @param  list<array{axis_name: string, sub_name: string}>  $missingFromSelf
+     * @return list<string>
+     */
+    private function buildRecommendedSiteFlowNames(array $missingFromSelf): array
+    {
+        $names = [];
+        foreach ($missingFromSelf as $item) {
+            $keys = $this->resolveAxisSubKeys($item['axis_name'], $item['sub_name']);
+            if ($keys === null) {
+                continue;
+            }
+            [$axisKey, $subKey] = $keys;
+            $siteFlowName = config("brand_wheel_candidate_survey.mapping.{$axisKey}.{$subKey}.site_flow_name");
+            if (is_string($siteFlowName) && $siteFlowName !== '' && ! in_array($siteFlowName, $names, true)) {
+                $names[] = $siteFlowName;
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * axis_name(name_ja)・sub_name(表示名)から、config('brand_wheel.axes')の
+     * axis_key/sub_keyを逆引きする。BrandWheelMultiSiteComparisonComposer::
+     * compose()の出力(MultiSiteReportViewModel::missingFromSelf)は
+     * axis_key/sub_key自体を持つが、依頼BM-4の設計判断によりこのクラスは
+     * その配列からはaxis_name/sub_nameの2フィールドしか読まない
+     * (buildMissingItems()のdocblock参照) ―― そのため、config側を
+     * name_ja/表示名で逆引きする。
+     *
+     * @return array{0: string, 1: string}|null  [axisKey, subKey]
+     */
+    private function resolveAxisSubKeys(string $axisName, string $subName): ?array
+    {
+        foreach ((array) config('brand_wheel.axes') as $axisKey => $axisConfig) {
+            if (($axisConfig['name_ja'] ?? null) !== $axisName) {
+                continue;
+            }
+            foreach ((array) ($axisConfig['sub_elements'] ?? []) as $subKey => $name) {
+                if ($name === $subName) {
+                    return [$axisKey, $subKey];
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -197,57 +316,5 @@ class AdminComparisonPptxDataBuilder
         }
 
         return $axes;
-    }
-
-    /**
-     * 依頼BM-2で導入、依頼BN-1(2026-09-09)で全面的に書き直した。まとめの
-     * 帯を、網かけ件数・総合順位から機械的に組み立てる(固定文にしない、
-     * 依頼者指定)。2文構成にする(総合の文+領域の文) ―― 読点でつないだ
-     * 1文だと、終止形へ読点を続ける不自然な文になっていた(実機画像化で
-     * 発覚、依頼BN-1の報告参照)。領域名は表に既に出ているaxis_captions
-     * を繰り返さず、名前も「と」でつなげず「」を隣接させる。件数が
-     * gap_axis_list_thresholdを超えるときは名前を列挙せず件数だけ述べ、
-     * 6領域全てが該当するときは専用の文言(6領域すべて)にする。
-     *
-     * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
-     * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
-     */
-    private function buildSummary(array $companies, array $axes): string
-    {
-        $selfTotal = $companies[0]['matched'];
-        $competitorTotals = array_column(array_slice($companies, 1), 'matched');
-        $maxCompetitorTotal = $competitorTotals === [] ? 0 : max($competitorTotals);
-
-        $templates = (array) config('admin_comparison_pptx.summary_templates');
-
-        $isBehind = $selfTotal < $maxCompetitorTotal;
-        $rankSentence = match (true) {
-            $selfTotal > $maxCompetitorTotal => $templates['total_rank_ahead'],
-            $selfTotal === $maxCompetitorTotal => $templates['total_rank_tied'],
-            default => $templates['total_rank_behind'],
-        };
-
-        $gapAxes = array_values(array_filter($axes, fn (array $axis) => $axis['self_gap']));
-
-        if ($gapAxes === []) {
-            return $rankSentence.$templates['no_gap_axes'];
-        }
-
-        if (count($gapAxes) === count($axes)) {
-            return $rankSentence.$templates['gap_axes_all'];
-        }
-
-        $listThreshold = (int) config('admin_comparison_pptx.gap_axis_list_threshold');
-
-        if (count($gapAxes) <= $listThreshold) {
-            $namesJoined = implode('', array_map(fn (array $axis) => "「{$axis['name']}」", $gapAxes));
-            $template = $isBehind ? $templates['gap_axes_named_behind'] : $templates['gap_axes_named_other'];
-
-            return $rankSentence.sprintf($template, $namesJoined, count($gapAxes));
-        }
-
-        $template = $isBehind ? $templates['gap_axes_unnamed_behind'] : $templates['gap_axes_unnamed_other'];
-
-        return $rankSentence.sprintf($template, count($gapAxes));
     }
 }

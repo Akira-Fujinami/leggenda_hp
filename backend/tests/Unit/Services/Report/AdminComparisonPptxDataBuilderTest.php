@@ -159,125 +159,6 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
         $this->assertFalse($byName['経営スタイル']['self_gap']);
     }
 
-    /**
-     * 依頼BM-2: 網かけが0件のとき、専用の文言に切り替わること
-     * (空欄にしない、依頼者指定)。
-     */
-    public function test_summary_uses_the_no_gap_template_when_nothing_is_below_competitors(): void
-    {
-        $table = $this->comparisonTable(
-            ['活動的魅力' => 4, '資産的魅力' => 4, '経営スタイル' => 4, '就業環境' => 4, '情緒的便益' => 4, '金銭的便益' => 4],
-            [['活動的魅力' => 2]],
-        );
-        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['comparisonTable' => $table, 'competitors' => [['name' => '競合A社', 'url' => 'https://a.example.com']], 'competitorCount' => 1]));
-
-        $this->assertSame(
-            config('admin_comparison_pptx.summary_templates.total_rank_ahead')
-                .config('admin_comparison_pptx.summary_templates.no_gap_axes'),
-            $data['summary'],
-        );
-    }
-
-    /**
-     * 依頼BN-1: 網かけが1件以上・閾値(既定2)以内のとき、下回っている
-     * 領域名を「」を隣接させて列挙すること(「と」でつながない)。
-     * axis_captions(表に既に出ている補足)を繰り返さないこと。2文構成
-     * (総合の文+領域の文)で、読点で1文につながないこと。
-     */
-    public function test_summary_names_gap_axes_when_within_the_list_threshold(): void
-    {
-        $table = $this->comparisonTable(
-            ['活動的魅力' => 4, '資産的魅力' => 4, '経営スタイル' => 1, '就業環境' => 4, '情緒的便益' => 4, '金銭的便益' => 1],
-            [['経営スタイル' => 3, '金銭的便益' => 3]],
-        );
-        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['comparisonTable' => $table, 'competitors' => [['name' => '競合A社', 'url' => 'https://a.example.com']], 'competitorCount' => 1, 'selfTotalMatched' => 18, 'selfTotalMax' => 24]));
-
-        $expected = config('admin_comparison_pptx.summary_templates.total_rank_ahead')
-            .sprintf(config('admin_comparison_pptx.summary_templates.gap_axes_named_other'), '「経営スタイル」「金銭的便益」', 2);
-        $this->assertSame($expected, $data['summary']);
-        // 表に既に出ている捕捉(axis_captions)を繰り返さないこと。
-        $this->assertStringNotContainsString('理念・組織・意思決定', $data['summary']);
-        // 終止形へ読点を続けていないこと(1文目は「。」で終わること)。
-        $this->assertStringNotContainsString('ます、', $data['summary']);
-        $this->assertStringNotContainsString('と「', $data['summary']);
-    }
-
-    /**
-     * 依頼BN-1: 総合が下回るときは「とくに」、並ぶ/上回るときは「ただし」
-     * で領域の文を始めること。
-     */
-    public function test_summary_uses_a_different_connector_when_the_total_is_behind(): void
-    {
-        $table = $this->comparisonTable(
-            ['活動的魅力' => 1, '資産的魅力' => 1],
-            [['活動的魅力' => 4, '資産的魅力' => 4]],
-        );
-        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['comparisonTable' => $table, 'competitors' => [['name' => '競合A社', 'url' => 'https://a.example.com']], 'competitorCount' => 1, 'selfTotalMatched' => 2, 'selfTotalMax' => 24]));
-
-        $this->assertStringContainsString('とくに', $data['summary']);
-        $this->assertStringStartsWith(config('admin_comparison_pptx.summary_templates.total_rank_behind'), $data['summary']);
-    }
-
-    /**
-     * 依頼BN-1で導入、依頼BO-2で閾値を2→4へ引き上げた際に更新。閾値を
-     * 超える件数(6領域中5領域、gap_axes_all(全6領域)とは別のケース)の
-     * ときは、領域名を列挙せず件数だけを述べること。
-     */
-    public function test_summary_omits_axis_names_beyond_the_list_threshold(): void
-    {
-        $table = $this->comparisonTable(
-            ['活動的魅力' => 1, '資産的魅力' => 1, '経営スタイル' => 1, '就業環境' => 1, '情緒的便益' => 1, '金銭的便益' => 4],
-            [['活動的魅力' => 3, '資産的魅力' => 3, '経営スタイル' => 3, '就業環境' => 3, '情緒的便益' => 3]],
-        );
-        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['comparisonTable' => $table, 'competitors' => [['name' => '競合A社', 'url' => 'https://a.example.com']], 'competitorCount' => 1, 'selfTotalMatched' => 9, 'selfTotalMax' => 24]));
-
-        $expected = config('admin_comparison_pptx.summary_templates.total_rank_behind')
-            .sprintf(config('admin_comparison_pptx.summary_templates.gap_axes_unnamed_behind'), 5);
-        $this->assertSame($expected, $data['summary']);
-        $this->assertStringNotContainsString('「', $data['summary']);
-    }
-
-    /**
-     * 依頼BO-2: 閾値を4へ引き上げた境界値。ちょうど4領域は、名前を
-     * 「」で隣接させて列挙すること(5領域からは列挙しない)。
-     */
-    public function test_summary_names_gap_axes_at_the_new_threshold_boundary_of_four(): void
-    {
-        $table = $this->comparisonTable(
-            ['活動的魅力' => 1, '資産的魅力' => 1, '経営スタイル' => 1, '就業環境' => 1, '情緒的便益' => 4, '金銭的便益' => 4],
-            [['活動的魅力' => 3, '資産的魅力' => 3, '経営スタイル' => 3, '就業環境' => 3]],
-        );
-        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['comparisonTable' => $table, 'competitors' => [['name' => '競合A社', 'url' => 'https://a.example.com']], 'competitorCount' => 1, 'selfTotalMatched' => 20, 'selfTotalMax' => 24]));
-
-        $expected = config('admin_comparison_pptx.summary_templates.total_rank_ahead')
-            .sprintf(config('admin_comparison_pptx.summary_templates.gap_axes_named_other'), '「活動的魅力」「資産的魅力」「経営スタイル」「就業環境」', 4);
-        $this->assertSame($expected, $data['summary']);
-    }
-
-    /**
-     * 依頼BN-1: 6領域すべてが該当するときは、専用の文言(6領域すべて)に
-     * なること(件数を列挙する一般ルートを通らないこと)。
-     */
-    public function test_summary_uses_the_all_axes_template_when_every_axis_is_a_gap(): void
-    {
-        $table = $this->comparisonTable(
-            ['活動的魅力' => 1, '資産的魅力' => 1, '経営スタイル' => 1, '就業環境' => 1, '情緒的便益' => 1, '金銭的便益' => 1],
-            [['活動的魅力' => 3, '資産的魅力' => 3, '経営スタイル' => 3, '就業環境' => 3, '情緒的便益' => 3, '金銭的便益' => 3]],
-        );
-        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['comparisonTable' => $table, 'competitors' => [['name' => '競合A社', 'url' => 'https://a.example.com']], 'competitorCount' => 1, 'selfTotalMatched' => 6, 'selfTotalMax' => 24]));
-
-        $expected = config('admin_comparison_pptx.summary_templates.total_rank_behind')
-            .config('admin_comparison_pptx.summary_templates.gap_axes_all');
-        $this->assertSame($expected, $data['summary']);
-    }
-
-    public function test_summary_never_empty(): void
-    {
-        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel());
-
-        $this->assertNotSame('', trim($data['summary']));
-    }
-
     public function test_source_note_includes_the_generated_at_label(): void
     {
         $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['generatedAtLabel' => '2026年1月1日']));
@@ -322,13 +203,8 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
         ];
         $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['missingFromSelf' => $missingFromSelf]));
 
-        $this->assertSame(
-            [
-                ['axis_name' => '金銭的便益', 'sub_name' => '福利厚生'],
-                ['axis_name' => '活動的魅力', 'sub_name' => '社員インタビュー'],
-            ],
-            $data['missing_items']['items'],
-        );
+        $this->assertSame(['金銭的便益', '活動的魅力'], array_column($data['missing_items']['items'], 'axis_name'));
+        $this->assertSame(['福利厚生', '社員インタビュー'], array_column($data['missing_items']['items'], 'sub_name'));
         $this->assertSame(0, $data['missing_items']['others_count']);
 
         foreach ($data['missing_items']['items'] as $item) {
@@ -343,6 +219,77 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
         $this->assertStringNotContainsString('DUMMY QUOTE', (string) $encoded);
         $this->assertStringNotContainsString('DUMMY TRANSLATION', (string) $encoded);
         $this->assertStringNotContainsString('DUMMY COMPANY', (string) $encoded);
+        // missingFromSelf側のdefinition/recommendationフィールド
+        // (DUMMY DEFINITION/DUMMY RECOMMENDATION)も読んでいないこと ――
+        // impactはconfig('brand_wheel.axes')から独立に引いたもの。
+        $this->assertStringNotContainsString('DUMMY DEFINITION', (string) $encoded);
+        $this->assertStringNotContainsString('DUMMY RECOMMENDATION', (string) $encoded);
+    }
+
+    /**
+     * 依頼CB-2(2026-09-24): 各行に、領域名・「伝わっていないと何が起きるか」
+     * の一文(config('brand_wheel.axes.*.sub_element_definitions')ベース)・
+     * 候補者調査の対応(config('brand_wheel_candidate_survey'))が追加されて
+     * いること。
+     */
+    public function test_missing_items_are_enriched_with_region_impact_and_candidate_survey(): void
+    {
+        $missingFromSelf = [$this->missingFromSelfItem('金銭的便益', '福利厚生', 3)];
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['missingFromSelf' => $missingFromSelf]));
+
+        $item = $data['missing_items']['items'][0];
+        $this->assertSame('仕事の魅力', $item['region']);
+        $definition = config('brand_wheel.axes.financial_benefit.sub_element_definitions.benefits');
+        $this->assertSame(sprintf((string) config('admin_comparison_pptx.missing_item_impact_template'), $definition), $item['impact']);
+        $this->assertSame(['item' => '福利厚生', 'percentage' => 12.4], $item['candidate_survey']);
+    }
+
+    /**
+     * 依頼CB-2必須: 対応表(config('brand_wheel_candidate_survey'))で
+     * 「該当なし」の項目は、候補者調査の項目名・割合ともnullにすること
+     * (数字を捏造しない)。
+     */
+    public function test_missing_items_candidate_survey_is_null_when_the_mapping_has_no_match(): void
+    {
+        // 優越感(emotional_benefit.superiority)は対応表でsurvey_item/
+        // percentageともnull(別添の素案どおり)。
+        $missingFromSelf = [$this->missingFromSelfItem('情緒的便益', '優越感', 3)];
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['missingFromSelf' => $missingFromSelf]));
+
+        $this->assertSame(['item' => null, 'percentage' => null], $data['missing_items']['items'][0]['candidate_survey']);
+    }
+
+    /**
+     * 依頼CB-2必須: 出典(config('brand_wheel_candidate_survey.source_note'))
+     * を必ず出力に含めること。
+     */
+    public function test_candidate_survey_source_note_comes_from_config(): void
+    {
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel());
+
+        $this->assertSame(config('brand_wheel_candidate_survey.source_note'), $data['candidate_survey_source_note']);
+        $this->assertNotSame('', trim($data['candidate_survey_source_note']));
+    }
+
+    /**
+     * 依頼CB-3: 「足りないもの」に対応するサイトの導線名(対応表の
+     * site_flow_name)を、重複を除いて返すこと。該当なし(null)の項目は
+     * 含めないこと(存在しない導線名を推奨しない)。
+     */
+    public function test_recommended_site_flow_names_are_deduplicated_and_exclude_unmapped_items(): void
+    {
+        $missingFromSelf = [
+            // 同僚・先輩像(colleagues)とpride(誇りに思える)はどちらも
+            // site_flow_name「社員を知る」―― 重複除去を確認する。
+            $this->missingFromSelfItem('就業環境', '同僚・先輩像', 3),
+            $this->missingFromSelfItem('情緒的便益', '誇りに思える', 2),
+            // 優越感はsite_flow_nameもnull(該当なし) ―― 含めない。
+            $this->missingFromSelfItem('情緒的便益', '優越感', 1),
+        ];
+
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['missingFromSelf' => $missingFromSelf]));
+
+        $this->assertSame(['社員を知る'], $data['recommended_site_flow_names']);
     }
 
     /**

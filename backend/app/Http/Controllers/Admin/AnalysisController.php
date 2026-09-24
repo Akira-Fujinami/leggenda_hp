@@ -14,6 +14,7 @@ use App\Services\Admin\CrawlDiagnosticsService;
 use App\Services\Report\AdminComparisonPptxDataBuilder;
 use App\Services\Report\AdminComparisonPptxGenerator;
 use App\Services\Report\AdminComparisonPptxInserter;
+use App\Services\Report\AdminComparisonSiteHierarchyBuilder;
 use App\Services\Report\MultiSiteReportViewModelBuilder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -156,12 +157,13 @@ class AnalysisController extends Controller
         Analysis $analysis,
         MultiSiteReportViewModelBuilder $viewModelBuilder,
         AdminComparisonPptxDataBuilder $dataBuilder,
+        AdminComparisonSiteHierarchyBuilder $hierarchyBuilder,
         AdminComparisonPptxGenerator $slideGenerator,
         AdminComparisonPptxInserter $inserter,
     ): StreamedResponse|RedirectResponse {
         abort_if($analysis->source_analysis_id === null, 404);
 
-        $analysis->loadMissing('attachments');
+        $analysis->loadMissing(['attachments', 'websiteAnalyses.website']);
         $attachment = $analysis->attachments->first();
         abort_if($attachment === null || $attachment->extension !== 'pptx', 404);
         abort_unless(Storage::disk('analysis')->exists($attachment->storage_path), 404);
@@ -171,12 +173,24 @@ class AnalysisController extends Controller
         try {
             $viewModel = $viewModelBuilder->build($analysis);
             $data = $dataBuilder->build($viewModel);
-            // 依頼BZ-2: 説明ページ→比較ページの順で差し込む(説明ページは
-            // 分析結果に依存しない固定内容、AdminComparisonPptxGenerator
-            // ::generateExplanationSlide()参照)。
+
+            // 依頼CB-3: 階層図は自社(is_primary)のWebsiteAnalysisの
+            // analysis_crawled_pagesから組み立てる ―― ViewModel/$dataは
+            // URLの階層情報を持たないため、別に取得する。
+            $selfWebsiteAnalysis = $analysis->websiteAnalyses->first(fn ($wa) => (bool) $wa->website?->is_primary);
+            $hierarchy = $selfWebsiteAnalysis !== null
+                ? $hierarchyBuilder->build($selfWebsiteAnalysis)
+                : ['origin_url' => '', 'branches' => [], 'other_branch_count' => 0];
+
+            // 依頼CB-4: 説明→比較(CB-1)→足りないもの(CB-2)→階層図(CB-3)→
+            // 参照元、の順で差し込む(説明ページは分析結果に依存しない
+            // 固定内容、AdminComparisonPptxGenerator::
+            // generateExplanationSlide()参照)。
             $slideBytesList = [
                 $slideGenerator->generateExplanationSlide(),
                 $slideGenerator->generate($data),
+                $slideGenerator->generateMissingItemsSlide($data),
+                $slideGenerator->generateSiteHierarchySlide($data, $hierarchy),
             ];
 
             $baseDeckPath = Storage::disk('analysis')->path($attachment->storage_path);
