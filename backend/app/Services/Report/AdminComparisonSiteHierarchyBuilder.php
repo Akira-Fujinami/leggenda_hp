@@ -6,6 +6,7 @@ use App\Enums\PageType;
 use App\Models\AnalysisCrawledPage;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
+use Illuminate\Support\Collection;
 
 /**
  * 依頼CB-3(2026-09-24): 営業資料へ差し込む「自社サイトの階層図」スライドの
@@ -24,52 +25,51 @@ use App\Models\WebsiteAnalysis;
  * ―― この機能が「採用ブランド」の営業資料であり、CB-3の依頼書の例
  * (「起点 .../recruit/」)も採用ページを起点にしているため。採用ページの
  * 行が無い場合はトップページ、それも無ければWebsite.urlへ順にfallbackする。
+ *
+ * 依頼CC-3(2026-09-25): 本番の実例(NTTデータ)で、巡回50件中47件が起点URL
+ * (採用ページ)の外(許可ホストがホスト単位のため、同じホストのIR・
+ * ニュース等へ自由に漏れ出していた)だったことが判明した。「階層図が薄い」
+ * のではなく「起点の外の材料しか無かった」ことがスライド上のどこにも
+ * 書かれていなかったため、countWithinOrigin()を追加した ―― build()と
+ * 同じ起点解決・ホスト/パス一致判定を共有し(resolveScope()/isWithinScope())、
+ * 二重に実装しない。巡回の範囲(許可ホストの解決・起点パスでの絞り込み)
+ * 自体はこの依頼の対象外(依頼者指定、別途相談) ―― ここではあくまで
+ * 「気づけるようにする」ための集計のみ行う。
  */
 class AdminComparisonSiteHierarchyBuilder
 {
     /**
-     * @return array{origin_url: string, branches: list<array{name: string, page_count: int, sample_pages: list<string>}>, other_branch_count: int}
+     * @return array{origin_url: string, branches: list<array{name: string, page_count: int, sample_pages: list<string>, name_is_url_segment: bool}>, other_branch_count: int, total_fetched_pages: int, pages_within_origin: int}
      */
     public function build(WebsiteAnalysis $selfWebsiteAnalysis): array
     {
-        $originUrl = $this->resolveOriginUrl($selfWebsiteAnalysis);
-        if ($originUrl === null || $originUrl === '') {
-            return ['origin_url' => '', 'branches' => [], 'other_branch_count' => 0];
-        }
+        $pages = $this->fetchedPages($selfWebsiteAnalysis);
+        $totalFetchedPages = $pages->count();
 
-        $originParts = parse_url($originUrl);
-        $originHost = strtolower((string) ($originParts['host'] ?? ''));
-        $originPath = $this->normalizeDirectoryPath((string) ($originParts['path'] ?? '/'));
-
-        if ($originHost === '') {
-            return ['origin_url' => $originUrl, 'branches' => [], 'other_branch_count' => 0];
+        $scope = $this->resolveScope($selfWebsiteAnalysis);
+        if ($scope === null) {
+            return [
+                'origin_url' => '',
+                'branches' => [],
+                'other_branch_count' => 0,
+                'total_fetched_pages' => $totalFetchedPages,
+                'pages_within_origin' => 0,
+            ];
         }
 
         $sampleLimit = (int) config('admin_comparison_pptx.site_hierarchy_sample_pages_per_branch');
 
-        $pages = AnalysisCrawledPage::query()
-            ->where('website_analysis_id', $selfWebsiteAnalysis->id)
-            ->where('status', AnalysisCrawledPage::STATUS_FETCHED)
-            ->get(['url', 'final_url', 'title']);
-
         /** @var array<string, array{count: int, index_title: ?string, labels: list<string>}> $branches */
         $branches = [];
+        $pagesWithinOrigin = 0;
 
         foreach ($pages as $page) {
-            $effectiveUrl = (string) ($page->final_url ?? $page->url);
-            $parts = parse_url($effectiveUrl);
-            $host = strtolower((string) ($parts['host'] ?? ''));
-            if ($host !== $originHost) {
+            if (! $this->isWithinScope($page, $scope)) {
                 continue;
             }
+            $pagesWithinOrigin++;
 
-            $path = (string) ($parts['path'] ?? '');
-            if (! str_starts_with($path, $originPath)) {
-                continue;
-            }
-
-            $remainder = substr($path, strlen($originPath));
-            $segments = array_values(array_filter(explode('/', $remainder), fn (string $s) => $s !== ''));
+            $segments = $this->pathSegmentsBelowOrigin($page, $scope);
             if ($segments === []) {
                 continue;
             }
@@ -97,6 +97,11 @@ class AdminComparisonSiteHierarchyBuilder
                 'name' => $info['index_title'] ?? $segment,
                 'page_count' => $info['count'],
                 'sample_pages' => $info['labels'],
+                // 依頼CC-3③: ページ名を捏造しない ―― インデックスページを
+                // 巡回できておらずURLのパスセグメントのまま枝名にしている
+                // 場合、その旨をGenerator側で分かる形にする(捏造しない、
+                // かつ「これが正式なページ名だ」と誤解させないため)。
+                'name_is_url_segment' => $info['index_title'] === null,
             ];
         }
 
@@ -109,10 +114,106 @@ class AdminComparisonSiteHierarchyBuilder
         $branchList = array_slice($branchList, 0, $limit);
 
         return [
-            'origin_url' => $originUrl,
+            'origin_url' => $scope['origin_url'],
             'branches' => $branchList,
             'other_branch_count' => $otherBranchCount,
+            'total_fetched_pages' => $totalFetchedPages,
+            'pages_within_origin' => $pagesWithinOrigin,
         ];
+    }
+
+    /**
+     * 依頼CC-3②(2026-09-25): 管理画面「巡回の実績」(CrawlDiagnosticsService)
+     * が、営業資料を出す前に「起点URL配下の取得件数」を出せるようにする
+     * ための、build()より軽い集計だけの入口。枝の組み立ては行わない。
+     *
+     * @return array{origin_url: ?string, total_fetched: int, within_origin: int}
+     */
+    public function countWithinOrigin(WebsiteAnalysis $websiteAnalysis): array
+    {
+        $pages = $this->fetchedPages($websiteAnalysis);
+        $totalFetched = $pages->count();
+
+        $scope = $this->resolveScope($websiteAnalysis);
+        if ($scope === null) {
+            return ['origin_url' => $scope['origin_url'] ?? null, 'total_fetched' => $totalFetched, 'within_origin' => 0];
+        }
+
+        $withinOrigin = 0;
+        foreach ($pages as $page) {
+            if ($this->isWithinScope($page, $scope)) {
+                $withinOrigin++;
+            }
+        }
+
+        return ['origin_url' => $scope['origin_url'], 'total_fetched' => $totalFetched, 'within_origin' => $withinOrigin];
+    }
+
+    /**
+     * @return Collection<int, AnalysisCrawledPage>
+     */
+    private function fetchedPages(WebsiteAnalysis $websiteAnalysis): Collection
+    {
+        return AnalysisCrawledPage::query()
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('status', AnalysisCrawledPage::STATUS_FETCHED)
+            ->get(['url', 'final_url', 'title']);
+    }
+
+    /**
+     * 起点URLをホスト・パスに分解する。起点URLが無い、またはホストが
+     * 読み取れない場合はnull(呼び出し側は「配下0件」として扱う)。
+     *
+     * @return array{origin_url: string, host: string, path: string}|null
+     */
+    private function resolveScope(WebsiteAnalysis $websiteAnalysis): ?array
+    {
+        $originUrl = $this->resolveOriginUrl($websiteAnalysis);
+        if ($originUrl === null || $originUrl === '') {
+            return null;
+        }
+
+        $originParts = parse_url($originUrl);
+        $originHost = strtolower((string) ($originParts['host'] ?? ''));
+        if ($originHost === '') {
+            return ['origin_url' => $originUrl, 'host' => '', 'path' => '/'];
+        }
+
+        return [
+            'origin_url' => $originUrl,
+            'host' => $originHost,
+            'path' => $this->normalizeDirectoryPath((string) ($originParts['path'] ?? '/')),
+        ];
+    }
+
+    /**
+     * @param  array{host: string, path: string}  $scope
+     */
+    private function isWithinScope(AnalysisCrawledPage $page, array $scope): bool
+    {
+        if ($scope['host'] === '') {
+            return false;
+        }
+
+        $parts = parse_url((string) ($page->final_url ?? $page->url));
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        if ($host !== $scope['host']) {
+            return false;
+        }
+
+        return str_starts_with((string) ($parts['path'] ?? ''), $scope['path']);
+    }
+
+    /**
+     * @param  array{host: string, path: string}  $scope
+     * @return list<string>
+     */
+    private function pathSegmentsBelowOrigin(AnalysisCrawledPage $page, array $scope): array
+    {
+        $path = (string) (parse_url((string) ($page->final_url ?? $page->url))['path'] ?? '');
+        $remainder = substr($path, strlen($scope['path']));
+
+        return array_values(array_filter(explode('/', $remainder), fn (string $s) => $s !== ''));
     }
 
     private function resolveOriginUrl(WebsiteAnalysis $websiteAnalysis): ?string

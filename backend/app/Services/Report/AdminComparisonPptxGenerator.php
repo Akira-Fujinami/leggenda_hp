@@ -95,39 +95,79 @@ class AdminComparisonPptxGenerator
     private const GAP_TEXT = 'A85B1E';
 
     // ------------------------------------------------------------------
-    // 依頼CB-1: ブランド・ホイール比較(各社のヘキサゴン)。
+    // 依頼CB-1/CC-1: ブランド・ホイール比較(各社のヘキサゴン)。
     // ------------------------------------------------------------------
 
     /** 自社ヘキサゴンの名前・総合点ラベルの上端。 */
-    private const WHEEL_SELF_LABEL_TOP_IN = 1.5;
+    private const WHEEL_SELF_LABEL_TOP_IN = 1.6;
 
-    private const WHEEL_SELF_NAME_HEIGHT_IN = 0.32;
+    private const WHEEL_SELF_NAME_HEIGHT_IN = 0.3;
 
     private const WHEEL_SELF_SCORE_HEIGHT_IN = 0.22;
 
     /**
-     * 0.7inにすると、自社ラベル(0.54in)+ヘキサゴン(直径1.4in)+競合行
-     * (ラベル0.42in+直径0.8in)+領域別数値表(見出し0.28in+ヘッダー0.24in+
-     * 6行×0.24in=1.44in)の合計がfooterの出典行(y=6.62in)ちょうどに達し、
-     * 余白ゼロで接してしまう(競合社数に関わらず高さの合計は一定 ――
-     * 競合行は横幅だけがN社で変わり、縦の高さは変わらないため)。0.62inに
-     * 縮め、footerまで約0.16inの余白を持たせる(実機画像化で確認)。
+     * 依頼CC-1(2026-09-25): 「六角形のどの頂点が何の領域か分からない」
+     * (依頼者指摘)ため、自社ヘキサゴンの外側に6領域のラベルを置く
+     * (addWheelAxisLabels())ことにした。頂点の外側にラベル1行ぶんの
+     * 余白(WHEEL_LABEL_RESERVE_IN)が要るため、半径を0.62in→0.5inへ縮めた。
+     *
+     * 【実機画像化で見つかった不具合、必ず読むこと】当初、頂点ラベルを
+     * 「ヘキサゴンの半径+WHEEL_LABEL_MARGIN_IN」の位置(hexVertex()で算出)
+     * にだけ置き、名前・総合点ラベルとヘキサゴンの間の縦の余白を増やして
+     * いなかった。半径を縮めても、ヘキサゴンの中心位置(hexCenterY)自体は
+     * 変えていなかったため、「中心から半径+マージン離れた」上頂点ラベルの
+     * 位置が、名前・総合点ラベルのすぐ下(=総合点の数字とほぼ同じ場所)に
+     * 来てしまい、頂点ラベル「活動的魅力」と総合点「6 / 24」が重なって
+     * 表示された(実機画像化で発見、自動テストでは検知できない見た目だけの
+     * 不具合)。
+     *
+     * 直しかた: ヘキサゴンの上頂点自体の位置(hexTopVertexY)を、名前・
+     * 総合点ラベルの下端からWHEEL_LABEL_RESERVE_IN(頂点ラベル1行ぶん+
+     * 余白)だけ下げた位置に置き直した(addWheelCompanyTile参照)。下側の
+     * 頂点ラベルについても、その下端をaddWheelCompanyTile()の戻り値
+     * (=このタイルが実際に使う一番下のY)に含め、競合行がラベルの下端より
+     * 上に来ないようにした。
      */
-    private const WHEEL_SELF_RADIUS_IN = 0.62;
+    private const WHEEL_SELF_RADIUS_IN = 0.5;
 
     private const WHEEL_SELF_TILE_WIDTH_IN = 3.6;
 
-    /** 自社ヘキサゴンと競合ヘキサゴン列との縦の間隔。 */
-    private const WHEEL_ROW_GAP_IN = 0.14;
+    /** 自社ヘキサゴン(ラベル込み)と競合ヘキサゴン列との縦の間隔。 */
+    private const WHEEL_ROW_GAP_IN = 0.12;
 
-    private const WHEEL_COMPETITOR_NAME_HEIGHT_IN = 0.24;
+    private const WHEEL_COMPETITOR_NAME_HEIGHT_IN = 0.22;
 
-    private const WHEEL_COMPETITOR_SCORE_HEIGHT_IN = 0.18;
+    private const WHEEL_COMPETITOR_SCORE_HEIGHT_IN = 0.16;
 
-    private const WHEEL_COMPETITOR_RADIUS_IN = 0.4;
+    private const WHEEL_COMPETITOR_RADIUS_IN = 0.32;
 
     /** ヘキサゴン列と、その下の領域別数値表との間隔。 */
     private const WHEEL_TABLE_GAP_IN = 0.14;
+
+    /**
+     * 依頼CC-1: 軸ラベル(自社ヘキサゴンのみ)。頂点から半径方向に
+     * WHEEL_LABEL_MARGIN_INだけ外側へ置く。競合ヘキサゴンには置かない
+     * (依頼者指定「潰れるなら出さなくてよい」の判断 ―― 競合図は半径
+     * 0.32inと小さく、6方向のラベルを置くと重なる)。代わりに、競合図の
+     * 軸の並びが自社図と同じであることをaddLegend()の一文で示す。
+     */
+    private const WHEEL_LABEL_MARGIN_IN = 0.16;
+
+    private const WHEEL_LABEL_WIDTH_IN = 1.1;
+
+    private const WHEEL_LABEL_HEIGHT_IN = 0.14;
+
+    private const WHEEL_LABEL_FONT_SIZE = 7.0;
+
+    /**
+     * 自社ヘキサゴンの上下に、頂点ラベル1行ぶんを確保するための予約高
+     * (margin+ラベル高さ+ラベル自身の内側の余白0.02in+外側の安全マージン
+     * 0.06in)。addWheelCompanyTile()が、名前・総合点ラベルの下端からこの
+     * 高さぶん下げた位置にヘキサゴンの上頂点を置き、戻り値(次のブロックが
+     * 使える一番上のY)にも同じ高さを下側の頂点ラベル分として加える
+     * (WHEEL_SELF_RADIUS_INのdocblock参照)。
+     */
+    private const WHEEL_LABEL_RESERVE_IN = self::WHEEL_LABEL_MARGIN_IN + self::WHEEL_LABEL_HEIGHT_IN + 0.08;
 
     // ------------------------------------------------------------------
     // 依頼CB-1: 領域別の数値表(旧「領域別の発信量」マトリクス、依頼BM〜BQ)。
@@ -136,35 +176,52 @@ class AdminComparisonPptxGenerator
     // ------------------------------------------------------------------
 
     /** ヘッダー行の高さ。社名は1行運用にする(表を小さくするため2行は許さない)。 */
-    private const TABLE_HEADER_HEIGHT_IN = 0.24;
+    private const TABLE_HEADER_HEIGHT_IN = 0.19;
 
-    private const TABLE_ROW_HEIGHT_IN = 0.24;
+    private const TABLE_ROW_HEIGHT_IN = 0.19;
 
     private const AREA_COL_WIDTH_IN = 2.4;
 
     // ------------------------------------------------------------------
-    // 依頼CB-2: 「足りないもの」スライド。
+    // 依頼CB-2/CC-2: 「足りないもの」スライド。
     // ------------------------------------------------------------------
 
     private const MISSING_HEADING_TOP_IN = 1.5;
 
-    private const MISSING_ROWS_TOP_IN = 1.9;
+    /** 依頼CC-2②: 冒頭の説明(missing_items_intro)の高さ。最大2行を見込む。 */
+    private const MISSING_INTRO_HEIGHT_IN = 0.42;
+
+    private const MISSING_ROWS_TOP_IN = 2.34;
 
     /**
-     * 1件あたりの高さ(項目名+領域タグ0.2in/一文(最大2行)0.28in/候補者調査行
-     * 0.14in、計0.62in)。missing_items_max_count(既定6)×(0.62+0.08)を
-     * MISSING_ROWS_TOP_INに足しても、footer(citation、6.42in開始)より
-     * 上で終わる(1.9+6×0.7=6.1in)ことを実機画像化で確認した。
+     * 依頼CC-2①(必須): 本番の出力で、候補者調査の行(3行目)に区切り線が
+     * 突き抜けて見える不具合があった(依頼者指摘、実機画像化で確認して
+     * 特定 ―― 自動テストでは検知できない)。原因は各行内3ブロックの高さの
+     * 見積もり(旧: 名前0.2in/一文0.28in/候補者調査0.14in)が、Meiryoの
+     * 実際の行送りより小さすぎたこと。estimateLineCount/
+     * SUMMARY_LINE_HEIGHT_IN(依頼BO由来、11ptで実測0.23in/行=0.021in/pt)
+     * と同じ換算で引き直した:
+     *   - 名前+領域タグ(11.5pt、1行): 0.021×11.5≒0.24in → 0.26in
+     *   - 一文(9pt、最大2行): 0.021×9×2≒0.38in → 0.40in
+     *   - 候補者調査(8.5pt、1行): 0.021×8.5≒0.18in → 0.22in
+     *   計0.88in(旧0.62inから+0.26in)。
+     * さらに、区切り線を行の直下(旧: 行末-0.008in、実質すきま無し)では
+     * なく、行間の余白の中央に置き直した(addMissingItemsRows参照) ――
+     * 万一テキストが1〜2pt分オーバーフローしても線と重ならないための
+     * 二重の安全策。
      */
-    private const MISSING_ROW_HEIGHT_IN = 0.62;
+    private const MISSING_ROW_HEIGHT_IN = 0.88;
 
-    private const MISSING_ROW_GAP_IN = 0.08;
+    private const MISSING_ROW_GAP_IN = 0.1;
 
     // ------------------------------------------------------------------
     // 依頼CB-3: 「自社サイトの階層図」スライド。
     // ------------------------------------------------------------------
 
     private const HIERARCHY_ORIGIN_TOP_IN = 1.5;
+
+    /** 依頼CC-3①: 「巡回したN件のうち起点URL配下はM件」の一文。 */
+    private const HIERARCHY_SCOPE_NOTE_TOP_IN = 1.83;
 
     private const HIERARCHY_BRANCHES_TOP_IN = 2.05;
 
@@ -252,32 +309,37 @@ class AdminComparisonPptxGenerator
         $selfCompany = $companies[0];
         $selfCx = self::LEFT_IN + self::CONTENT_WIDTH_IN / 2;
 
-        $selfHexTop = $this->addWheelCompanyTile(
+        // 依頼CC-1: addWheelCompanyTile()は「次のブロックが使える一番上の
+        // Y」を返すよう統一した(自社は下側の頂点ラベルの下端まで含む、
+        // 競合はヘキサゴンの下端まで)。旧実装は「ヘキサゴンの上端」を返し
+        // 呼び出し側で+2×半径して下端を計算していたが、自社側は頂点ラベルの
+        // 分だけ下端がさらに下がるため、この計算では下端を数え落としていた
+        // (WHEEL_SELF_RADIUS_INのdocblock参照、実機画像化で発覚した不具合)。
+        $selfBottom = $this->addWheelCompanyTile(
             $slide, $selfCompany, $axes, null, $selfCx,
             self::WHEEL_SELF_LABEL_TOP_IN, self::WHEEL_SELF_TILE_WIDTH_IN,
             self::WHEEL_SELF_NAME_HEIGHT_IN, self::WHEEL_SELF_SCORE_HEIGHT_IN, self::WHEEL_SELF_RADIUS_IN,
             true,
         );
-        $selfHexBottom = $selfHexTop + 2 * self::WHEEL_SELF_RADIUS_IN;
 
         $competitors = array_slice($companies, 1);
         $n = count($competitors);
         $tileWidth = $n > 0 ? self::CONTENT_WIDTH_IN / $n : self::CONTENT_WIDTH_IN;
-        $rowTop = $selfHexBottom + self::WHEEL_ROW_GAP_IN;
+        $rowTop = $selfBottom + self::WHEEL_ROW_GAP_IN;
 
-        $competitorHexBottom = $rowTop;
+        $competitorBottom = $rowTop;
         foreach ($competitors as $i => $company) {
             $cx = self::LEFT_IN + $tileWidth * $i + $tileWidth / 2;
-            $hexTop = $this->addWheelCompanyTile(
+            $bottom = $this->addWheelCompanyTile(
                 $slide, $company, $axes, $i, $cx,
                 $rowTop, $tileWidth - 0.1,
                 self::WHEEL_COMPETITOR_NAME_HEIGHT_IN, self::WHEEL_COMPETITOR_SCORE_HEIGHT_IN, self::WHEEL_COMPETITOR_RADIUS_IN,
                 false,
             );
-            $competitorHexBottom = max($competitorHexBottom, $hexTop + 2 * self::WHEEL_COMPETITOR_RADIUS_IN);
+            $competitorBottom = max($competitorBottom, $bottom);
         }
 
-        return $competitorHexBottom + self::WHEEL_TABLE_GAP_IN;
+        return $competitorBottom + self::WHEEL_TABLE_GAP_IN;
     }
 
     /**
@@ -287,7 +349,9 @@ class AdminComparisonPptxGenerator
      * 処理を作らない、依頼者指定)。
      *
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
-     * @return float  ヘキサゴンの上端y(in)
+     * @return float  このタイルが実際に使う一番下のY(次のブロックがここから
+     *                描き始められる)。自社は下側の頂点ラベルの下端まで、
+     *                競合はヘキサゴンの下端まで(ラベルを描かないため)。
      */
     private function addWheelCompanyTile(
         Slide $slide,
@@ -320,8 +384,15 @@ class AdminComparisonPptxGenerator
         $scoreRun = $scoreBox->getActiveParagraph()->createTextRun("{$company['matched']} / {$company['total']}");
         $this->font($scoreRun, $scoreSize, true, $isSelf ? self::COPPER : self::MUTED);
 
-        $hexTop = $scoreTop + $scoreHeight;
-        $hexCenterY = $hexTop + $radius;
+        $scoreBottom = $scoreTop + $scoreHeight;
+        // 依頼CC-1(必須、実機画像化で発見した不具合の修正): 自社は
+        // ヘキサゴンの上頂点自体を、総合点ラベルの下端からさらに
+        // WHEEL_LABEL_RESERVE_INだけ下げる ―― ここを名前・総合点ラベルの
+        // 直下(=旧実装、$scoreBottomそのもの)にすると、頂点ラベルが
+        // 総合点の数字の上に重なって表示される(WHEEL_SELF_RADIUS_INの
+        // docblock参照)。競合はラベルを描かないため、そのままでよい。
+        $hexTopVertexY = $isSelf ? $scoreBottom + self::WHEEL_LABEL_RESERVE_IN : $scoreBottom;
+        $hexCenterY = $hexTopVertexY + $radius;
 
         $axisCounts = array_map(fn (array $axis) => [
             $isSelf ? $axis['self_count'] : ($axis['competitor_counts'][$competitorIndex] ?? 0),
@@ -330,7 +401,61 @@ class AdminComparisonPptxGenerator
 
         $this->drawBrandWheelHexagon($slide, $cx, $hexCenterY, $radius, $axisCounts, $isSelf ? self::NAVY : self::COPPER, $isSelf ? 2.0 : 1.0);
 
-        return $hexTop;
+        // 依頼CC-1(必須): 自社(大きい図)には必ず軸のラベルを出す。競合
+        // (小さい図)には出さない判断(addLegend()の一文で代える、
+        // WHEEL_LABEL_MARGIN_INのdocblock参照)。
+        if ($isSelf) {
+            $this->addWheelAxisLabels($slide, $cx, $hexCenterY, $radius, array_column($axes, 'name'));
+
+            // 下側の頂点ラベルの下端まで、このタイルの領域として確保する
+            // (競合行がラベルに重ならないようにする、WHEEL_ROW_GAP_INの
+            // docblock参照)。
+            return $hexCenterY + $radius + self::WHEEL_LABEL_RESERVE_IN;
+        }
+
+        return $hexCenterY + $radius;
+    }
+
+    /**
+     * 依頼CC-1(必須): 六角形の外側に6領域のラベルを置く。ラベルは
+     * config('brand_wheel.axes.*.name_ja')由来の$axisNames(直書きしない、
+     * AdminComparisonPptxDataBuilder::buildAxisMatrix()がconfig('brand_wheel.
+     * axes')の順で組み立てた$data['axes']をそのまま使う)。頂点の並び順は
+     * drawBrandWheelHexagon()のhexVertex()と全く同じ($axisNames[k]が
+     * 頂点kに対応する)ため、下の領域別数値表の行順(同じ$axesをそのまま
+     * 使う)と必ず一致する
+     * (test_wheel_axis_label_order_matches_the_matrix_table_row_orderで担保)。
+     *
+     * @param  list<string>  $axisNames  6領域ぶん、config('brand_wheel.axes')の順
+     */
+    private function addWheelAxisLabels(Slide $slide, float $cx, float $cy, float $radius, array $axisNames): void
+    {
+        $labelRadius = $radius + self::WHEEL_LABEL_MARGIN_IN;
+
+        foreach ($axisNames as $k => $name) {
+            [$x, $y] = $this->hexVertex($cx, $cy, $labelRadius, $k);
+            $box = $slide->createRichTextShape();
+
+            // k=0(真上)は中央揃えで上、k=3(真下)は中央揃えで下、それ以外は
+            // 頂点が左右どちら側にあるかで揃えを変え、文字が図に重ならず
+            // 外側へ伸びるようにする。
+            if ($k === 0) {
+                $this->position($box, $x - self::WHEEL_LABEL_WIDTH_IN / 2, $y - self::WHEEL_LABEL_HEIGHT_IN - 0.02, self::WHEEL_LABEL_WIDTH_IN, self::WHEEL_LABEL_HEIGHT_IN);
+                $align = Alignment::HORIZONTAL_CENTER;
+            } elseif ($k === 3) {
+                $this->position($box, $x - self::WHEEL_LABEL_WIDTH_IN / 2, $y + 0.02, self::WHEEL_LABEL_WIDTH_IN, self::WHEEL_LABEL_HEIGHT_IN);
+                $align = Alignment::HORIZONTAL_CENTER;
+            } elseif ($x > $cx) {
+                $this->position($box, $x, $y - self::WHEEL_LABEL_HEIGHT_IN / 2, self::WHEEL_LABEL_WIDTH_IN, self::WHEEL_LABEL_HEIGHT_IN);
+                $align = Alignment::HORIZONTAL_LEFT;
+            } else {
+                $this->position($box, $x - self::WHEEL_LABEL_WIDTH_IN, $y - self::WHEEL_LABEL_HEIGHT_IN / 2, self::WHEEL_LABEL_WIDTH_IN, self::WHEEL_LABEL_HEIGHT_IN);
+                $align = Alignment::HORIZONTAL_RIGHT;
+            }
+
+            $box->getActiveParagraph()->getAlignment()->setHorizontal($align);
+            $this->font($box->getActiveParagraph()->createTextRun($name), self::WHEEL_LABEL_FONT_SIZE, true, self::NAVY);
+        }
     }
 
     /**
@@ -537,7 +662,11 @@ class AdminComparisonPptxGenerator
         $this->font($para->createTextRun('■'), 7, false, self::GAP_TEXT);
         $this->font($para->createTextRun(' 自社が競合の最高値未達　'), 7, false, self::MUTED);
         $this->font($para->createTextRun('■'), 7, true, self::NAVY);
-        $this->font($para->createTextRun(' 競合内の最高値'), 7, false, self::MUTED);
+        $this->font($para->createTextRun(' 競合内の最高値　'), 7, false, self::MUTED);
+        // 依頼CC-1: 競合(小さい図)には軸のラベルを置かないため
+        // (addWheelCompanyTile参照)、軸の並びが自社の図と同じであることを
+        // ここで示す。
+        $this->font($para->createTextRun('／軸の並びは自社の図と共通'), 7, false, self::MUTED);
     }
 
     /**
@@ -705,6 +834,14 @@ class AdminComparisonPptxGenerator
         if ($missingItems['items'] === []) {
             $this->font($para->createTextRun($missingItems['empty_text']), 13, false, self::MUTED);
         }
+
+        // 依頼CC-2②(必須): 何と何を突き合わせているかが分かる説明を冒頭に
+        // 置く(依頼者指摘、旧版は各行にconfigの数字だけが並び、突き合わせの
+        // 主旨が書かれていなかった)。
+        $introBox = $slide->createRichTextShape();
+        $this->position($introBox, self::LEFT_IN, self::MISSING_HEADING_TOP_IN + 0.32, self::CONTENT_WIDTH_IN, self::MISSING_INTRO_HEIGHT_IN);
+        $introBox->setWrap(RichText::WRAP_SQUARE);
+        $this->font($introBox->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.missing_items_intro')), 10, false, self::MUTED);
     }
 
     /**
@@ -715,30 +852,51 @@ class AdminComparisonPptxGenerator
         $rowStep = self::MISSING_ROW_HEIGHT_IN + self::MISSING_ROW_GAP_IN;
         $textWidth = self::CONTENT_WIDTH_IN - 0.1;
 
+        // 依頼CC-2①: 行内の3ブロックの高さ配分(名前0.26in/一文0.40in/
+        // 候補者調査0.22in、計0.88in=MISSING_ROW_HEIGHT_IN)。区切り線は
+        // 行の直下ではなく、行間の余白(MISSING_ROW_GAP_IN)の中央に置く
+        // ―― 万一テキストがブロックの高さを超えて伸びても、線までの
+        // 距離だけ余分に確保できる(定数のdocblock参照)。
+        $nameHeight = 0.26;
+        $impactTop = 0.28;
+        $impactHeight = 0.4;
+        $surveyTop = $impactTop + $impactHeight;
+        $surveyHeight = 0.22;
+
         foreach ($missingItems['items'] as $i => $item) {
             $top = self::MISSING_ROWS_TOP_IN + $i * $rowStep;
 
+            $ruleY = $top + self::MISSING_ROW_HEIGHT_IN + self::MISSING_ROW_GAP_IN / 2;
             $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-            $this->position($rule, self::LEFT_IN, $top + self::MISSING_ROW_HEIGHT_IN - 0.008, self::CONTENT_WIDTH_IN, 0.008);
+            $this->position($rule, self::LEFT_IN, $ruleY, self::CONTENT_WIDTH_IN, 0.008);
             $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
             $rule->getBorder()->setLineStyle(Border::LINE_NONE);
 
             $nameBox = $slide->createRichTextShape();
-            $this->position($nameBox, self::LEFT_IN, $top, $textWidth, 0.2);
+            $this->position($nameBox, self::LEFT_IN, $top, $textWidth, $nameHeight);
             $namePara = $nameBox->getActiveParagraph();
             $this->font($namePara->createTextRun($item['sub_name']), 11.5, true, self::NAVY);
             $this->font($namePara->createTextRun('　［'.$item['region'].'］'), 8.5, false, self::MUTED);
 
             $impactBox = $slide->createRichTextShape();
-            $this->position($impactBox, self::LEFT_IN, $top + 0.2, $textWidth, 0.28);
+            $this->position($impactBox, self::LEFT_IN, $top + $impactTop, $textWidth, $impactHeight);
             $impactBox->setWrap(RichText::WRAP_SQUARE);
             $this->font($impactBox->getActiveParagraph()->createTextRun($item['impact']), 9, false, self::BODY_TEXT);
 
             $surveyBox = $slide->createRichTextShape();
-            $this->position($surveyBox, self::LEFT_IN, $top + 0.48, $textWidth, 0.14);
+            $this->position($surveyBox, self::LEFT_IN, $top + $surveyTop, $textWidth, $surveyHeight);
+            $surveyBox->setWrap(RichText::WRAP_SQUARE);
+            // 依頼CC-2①②: 「〇〇%の求職者が求めているが、自社サイトでは
+            // 確認できなかった」の順で因果が分かる形にする(依頼者指定)。
+            // 該当なし(該当する候補者調査項目が無い)の行は、重要でないという
+            // 意味ではないことを添える一言(missing_item_survey_none_text)。
             $surveyText = $item['candidate_survey']['item'] !== null
-                ? sprintf('候補者調査：「%s」を重視する求職者　%s%%', $item['candidate_survey']['item'], rtrim(rtrim(number_format((float) $item['candidate_survey']['percentage'], 1), '0'), '.'))
-                : '候補者調査：対応する項目なし';
+                ? sprintf(
+                    (string) config('admin_comparison_pptx.missing_item_survey_template'),
+                    $item['candidate_survey']['item'],
+                    rtrim(rtrim(number_format((float) $item['candidate_survey']['percentage'], 1), '0'), '.'),
+                )
+                : (string) config('admin_comparison_pptx.missing_item_survey_none_text');
             $this->font($surveyBox->getActiveParagraph()->createTextRun($surveyText), 8.5, false, self::COPPER);
         }
 
@@ -760,7 +918,7 @@ class AdminComparisonPptxGenerator
      * (「巡回した範囲では...見つかりませんでした」)を使う。
      *
      * @param  array{recommended_site_flow_names: list<string>}  $data
-     * @param  array{origin_url: string, branches: list<array{name: string, page_count: int, sample_pages: list<string>}>, other_branch_count: int}  $hierarchy
+     * @param  array{origin_url: string, branches: list<array{name: string, page_count: int, sample_pages: list<string>, name_is_url_segment: bool}>, other_branch_count: int, total_fetched_pages: int, pages_within_origin: int}  $hierarchy
      */
     public function generateSiteHierarchySlide(array $data, array $hierarchy): string
     {
@@ -768,6 +926,7 @@ class AdminComparisonPptxGenerator
             $this->addKicker($slide);
             $this->addTitle($slide, '自社サイトの階層図');
             $this->addHierarchyOrigin($slide, $hierarchy['origin_url']);
+            $this->addHierarchyScopeNote($slide, $hierarchy['total_fetched_pages'], $hierarchy['pages_within_origin']);
             $bottom = $this->addHierarchyBranches($slide, $hierarchy['branches'], $hierarchy['other_branch_count'], $hierarchy['origin_url']);
             $this->addHierarchyRecommendations($slide, $data['recommended_site_flow_names'], $bottom);
             // 依頼CB-3必須: footerには、通常の出典行(addFooter())ではなく
@@ -790,7 +949,22 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * @param  list<array{name: string, page_count: int, sample_pages: list<string>}>  $branches
+     * 依頼CC-3①(必須): 「巡回したN件のうち、起点URL配下にあったのはM件」を
+     * 事実として1行添える。実データから算出する
+     * (AdminComparisonSiteHierarchyBuilder::build())。警告のような見た目に
+     * しない(依頼者指定、通常の本文と同じ色・太さにする)。
+     */
+    private function addHierarchyScopeNote(Slide $slide, int $totalFetchedPages, int $pagesWithinOrigin): void
+    {
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, self::HIERARCHY_SCOPE_NOTE_TOP_IN, self::CONTENT_WIDTH_IN, 0.22);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $text = sprintf((string) config('admin_comparison_pptx.site_hierarchy_scope_note'), $totalFetchedPages, $pagesWithinOrigin);
+        $this->font($box->getActiveParagraph()->createTextRun($text), 9, false, self::MUTED);
+    }
+
+    /**
+     * @param  list<array{name: string, page_count: int, sample_pages: list<string>, name_is_url_segment: bool}>  $branches
      * @return float  この下に描く「追加を検討したい導線」の上端y(in)
      */
     private function addHierarchyBranches(Slide $slide, array $branches, int $otherBranchCount, string $originUrl): float
@@ -819,6 +993,14 @@ class AdminComparisonPptxGenerator
             $this->position($nameBox, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, 0.22);
             $namePara = $nameBox->getActiveParagraph();
             $this->font($namePara->createTextRun('├ '.$branch['name']), 11, true, self::NAVY);
+            // 依頼CC-3③: インデックスページを巡回できておらず、URLの
+            // パスセグメントをそのまま枝名にしている場合、それと分かる印を
+            // 添える(依頼者指定「判断して提案する」への回答) ―― ページ名を
+            // 無理に日本語へ変換しない(捏造しない)代わりに、これが正式な
+            // ページ名ではないことを商談相手にも伝わる形にする。
+            if ($branch['name_is_url_segment']) {
+                $this->font($namePara->createTextRun('　(ページ名未取得)'), 8, false, self::DIM);
+            }
             $this->font($namePara->createTextRun("　（{$branch['page_count']}ページ）"), 9, false, self::MUTED);
 
             if ($branch['sample_pages'] !== []) {

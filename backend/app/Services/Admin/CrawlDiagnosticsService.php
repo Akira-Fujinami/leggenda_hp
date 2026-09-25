@@ -4,6 +4,7 @@ namespace App\Services\Admin;
 
 use App\Models\AnalysisCrawledPage;
 use App\Models\WebsiteAnalysis;
+use App\Services\Report\AdminComparisonSiteHierarchyBuilder;
 
 /**
  * 依頼BU(2026-09-11): 診断詳細画面の「サイトごとの巡回実績」向けに、
@@ -15,9 +16,22 @@ use App\Models\WebsiteAnalysis;
  * crawl_site=falseの診断や、巡回未実施の診断ではanalysis_crawled_pagesに
  * 行が無い ―― その場合はhasCrawlData=falseとして返し、呼び出し側
  * (blade)が「巡回していません」の表示に倒せるようにする。
+ *
+ * 依頼CC-3②(2026-09-25): 本番で、巡回50件中47件が起点URL(採用ページ)の
+ * 外(許可ホストがホスト単位のため、同じホストのIR・ニュース等へ自由に
+ * 漏れ出していた)だったことが、営業資料(CB-3の階層図)を出すまで誰も
+ * 気づけなかった(依頼者指摘)。「起点URL配下の取得件数」をこの表に足し、
+ * 資料を出す前に気づけるようにする。起点の解決・ホスト/パス一致判定は
+ * AdminComparisonSiteHierarchyBuilder(CB-3の階層図と同じロジック)を
+ * そのまま使い、ここで別の判定を作らない。既存の表示・警告・終了理由・
+ * 閾値は変更しない(依頼者指定、足すだけ)。
  */
 class CrawlDiagnosticsService
 {
+    public function __construct(
+        private readonly AdminComparisonSiteHierarchyBuilder $hierarchyBuilder,
+    ) {}
+
     /**
      * @param  bool  $crawlSiteEnabled  依頼BV-3: 親Analysis.crawl_siteの値。
      *                                  「巡回0件」が機能自体を使っていない
@@ -74,6 +88,11 @@ class CrawlDiagnosticsService
         // 扱いしない。
         $candidateCount = $websiteAnalysis->render_candidate_count;
 
+        // 依頼CC-3②: 起点URL(採用ページ)配下の取得件数。巡回0件のサイトで
+        // 計算しても意味が無い(常に0/0になる)ため、hasCrawlDataのときだけ
+        // 計算する。
+        $originScope = $hasCrawlData ? $this->hierarchyBuilder->countWithinOrigin($websiteAnalysis) : null;
+
         return [
             'has_crawl_data' => $hasCrawlData,
             'fetched_count' => $fetchedCount,
@@ -93,7 +112,11 @@ class CrawlDiagnosticsService
             'duration_seconds' => $durationSeconds,
             'failed_urls' => $failedUrls,
             'failed_urls_overflow_count' => $failedUrlsOverflowCount,
-            'warnings' => $this->warnings($hasCrawlData, $reason, $fetchedCount, $failedCount, $candidateCount, $renderedCount),
+            // 依頼CC-3②: origin_scopeはhasCrawlData=falseのときnull ――
+            // blade側は「巡回していません。」の1行(colspan)に倒すため、
+            // この列自体を描画しない。
+            'origin_scope' => $originScope,
+            'warnings' => $this->warnings($hasCrawlData, $reason, $fetchedCount, $failedCount, $candidateCount, $renderedCount, $originScope),
             // 依頼BV-3(この依頼の主目的): BU-3の3条件より一段重い、独立した
             // 警告。crawl_site=trueなのにこのサイトだけ巡回が1ページも
             // 行われなかった場合にのみ出す ―― crawl_site=false(機能自体を
@@ -123,9 +146,10 @@ class CrawlDiagnosticsService
      * 巡回していないだけのサイトを誤って警告扱いしてしまうのを防ぐ ――
      * この場合はcritical_warning側で一段重く扱う)。
      *
+     * @param  array{origin_url: ?string, total_fetched: int, within_origin: int}|null  $originScope
      * @return list<array{key: string, message: string}>
      */
-    private function warnings(bool $hasCrawlData, ?string $reason, int $fetchedCount, int $failedCount, ?int $candidateCount, int $renderedCount): array
+    private function warnings(bool $hasCrawlData, ?string $reason, int $fetchedCount, int $failedCount, ?int $candidateCount, int $renderedCount, ?array $originScope): array
     {
         if (! $hasCrawlData) {
             return [];
@@ -154,6 +178,21 @@ class CrawlDiagnosticsService
         // candidateCount===null(依頼BV適用前の既存データ)は対象外。
         if ($candidateCount !== null && $candidateCount > 0 && $renderedCount === 0) {
             $warnings[] = ['key' => 'rendering_failed', 'message' => $messages['rendering_failed'] ?? ''];
+        }
+
+        // 依頼CC-3②(この依頼の主目的): 起点URL(採用ページ)配下の取得件数が
+        // 少ない場合に警告する。少数サンプル(取得件数がlow_fetched_
+        // page_count_threshold未満)では比率が意味を持たないため、既存の
+        // low_fetched_page_count_thresholdをそのまま「最小件数」の判定にも
+        // 流用する(新しい閾値を増やさない)。分母はorigin_scope側の
+        // total_fetched(AdminComparisonSiteHierarchyBuilderが数えた値)を
+        // 使う ―― このメソッドの$fetchedCountと同じ集計だが、比率の分子
+        // (within_origin)と同じ計算元に揃えるため。
+        if ($originScope !== null && $originScope['total_fetched'] >= $lowFetchedThreshold) {
+            $ratioThreshold = (float) config('crawl_diagnostics.origin_scope_ratio_warning_threshold', 0.3);
+            if (($originScope['within_origin'] / $originScope['total_fetched']) < $ratioThreshold) {
+                $warnings[] = ['key' => 'low_origin_scope_ratio', 'message' => $messages['low_origin_scope_ratio'] ?? ''];
+            }
         }
 
         return $warnings;

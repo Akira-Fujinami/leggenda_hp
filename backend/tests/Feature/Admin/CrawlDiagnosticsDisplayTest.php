@@ -531,11 +531,11 @@ class CrawlDiagnosticsDisplayTest extends TestCase
     }
 
     /**
-     * 依頼BW-1: 巡回の実績テーブルは8列なのに、全幅の行(critical_warning・
-     * warnings・失敗したURL)のcolspanが7になっており1列ぶん足りな
-     * かった(依頼者指摘、依頼BU由来のバグ)。8列ぶんに直したことを確認する。
-     * 「巡回していません。」の行(サイト列+残り7列)のcolspanが6→7に
-     * 直っていることもあわせて確認する。
+     * 依頼BW-1: 巡回の実績テーブルは9列(依頼CC-3②で「起点URL配下」列を
+     * 追加し8列→9列になった)なのに、全幅の行(critical_warning・
+     * warnings・失敗したURL)のcolspanが1列ぶん足りなかった、という同種の
+     * 不具合を再発させないことを確認する。「巡回していません。」の行
+     * (サイト列+残り8列)のcolspanが8になっていることもあわせて確認する。
      */
     public function test_colspan_matches_the_number_of_columns_in_the_crawl_table(): void
     {
@@ -561,10 +561,92 @@ class CrawlDiagnosticsDisplayTest extends TestCase
 
         $response->assertOk();
         $content = $response->getContent();
-        // 「巡回していません。」の行(サイト列+残り7列 = colspan 7)。
-        $this->assertStringContainsString('colspan="7"', $content);
-        // critical_warning・warnings・失敗したURLの全幅行(8列)。
+        // 「巡回していません。」の行(サイト列+残り8列 = colspan 8)。
         $this->assertStringContainsString('colspan="8"', $content);
-        $this->assertStringNotContainsString('colspan="6"', $content, '巡回していません行のcolspanが1列足りないままです。');
+        // critical_warning・warnings・失敗したURLの全幅行(9列)。
+        $this->assertStringContainsString('colspan="9"', $content);
+        $this->assertStringNotContainsString('colspan="7"', $content, '巡回していません行のcolspanが1列足りないままです。');
+    }
+
+    /**
+     * @param  list<string>  $paths  起点URLのホストに対する絶対パス(例: '/careers/page1')
+     */
+    private function seedCrawledPagesOnWebsiteHost(WebsiteAnalysis $wa, array $paths): void
+    {
+        $host = parse_url((string) $wa->website?->url, PHP_URL_HOST);
+        foreach ($paths as $path) {
+            AnalysisCrawledPage::factory()->create([
+                'website_analysis_id' => $wa->id,
+                'url' => "https://{$host}{$path}",
+                'status' => AnalysisCrawledPage::STATUS_FETCHED,
+            ]);
+        }
+    }
+
+    /**
+     * 依頼CC-3②(この依頼の主目的): 「起点URL配下」列が、実データ
+     * (within_origin/total_fetched)と一致する形で表示されること。
+     */
+    public function test_origin_scope_column_shows_the_within_origin_and_total_counts(): void
+    {
+        $analysis = $this->makeAnalysis(crawlSite: true);
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        // このWebsiteAnalysisにはAnalysisPage(採用ページ・トップページ)が
+        // 無いため起点URLはWebsite.urlへfallbackする。ホストが一致する
+        // 20件すべてが起点URL配下として数えられる(20/20)。
+        $this->seedCrawledPagesOnWebsiteHost($wa, array_map(fn ($i) => "/page{$i}", range(1, 20)));
+        $wa->update(['crawl_finished_reason' => 'exhausted', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee('20/20', false);
+    }
+
+    /**
+     * 依頼CC-3②(必須): 既存の警告・終了理由・件数の表示は変わっていない
+     * こと(「足すだけ」であることの確認)。
+     */
+    public function test_adding_the_origin_scope_column_does_not_change_existing_warnings_or_counts(): void
+    {
+        $analysis = $this->makeAnalysis(crawlSite: true);
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $this->seedCrawledPagesOnWebsiteHost($wa, array_map(fn ($i) => "/page{$i}", range(1, 20)));
+        $wa->update(['crawl_finished_reason' => 'exhausted', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee('>20<', false);
+        $response->assertSee('リンクをたどり切って終了(正常)');
+        $response->assertDontSee(config('crawl_diagnostics.warning_messages.low_fetched_page_count'));
+    }
+
+    /**
+     * 依頼CC-3②(この依頼の主目的): 起点URL配下の取得件数の比率が低いとき
+     * (本番のNTTデータの実例に近い形)、新しい警告が出ること。
+     */
+    public function test_warning_shows_when_origin_scope_ratio_is_low(): void
+    {
+        config(['crawl_diagnostics.origin_scope_ratio_warning_threshold' => 0.3]);
+        $analysis = $this->makeAnalysis(crawlSite: true);
+        $wa = $this->makeWebsiteAnalysis($analysis);
+        $host = parse_url((string) $wa->website?->url, PHP_URL_HOST);
+        // 採用ページ(起点)は/careers/配下だが、実際に取得できたページは
+        // 同じホストの別セクション(/news/等)にしかない ―― 本番の実例
+        // (NTTデータ、50件中47件が起点の外)を小さく再現する。
+        \App\Models\AnalysisPage::factory()->create([
+            'website_analysis_id' => $wa->id,
+            'page_type' => \App\Enums\PageType::Recruit,
+            'url' => "https://{$host}/careers/",
+        ]);
+        $this->seedCrawledPagesOnWebsiteHost($wa, array_map(fn ($i) => "/news/page{$i}", range(1, 20)));
+        $wa->update(['crawl_finished_reason' => 'exhausted', 'crawl_finished_at' => now()]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee(config('crawl_diagnostics.warning_messages.low_origin_scope_ratio'));
+        $response->assertSee('0/20', false);
     }
 }

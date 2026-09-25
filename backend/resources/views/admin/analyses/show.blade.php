@@ -284,6 +284,11 @@
                     <th>除外(パターン/robots/対象外/新卒キャリア)</th>
                     <th>未処理</th>
                     <th>レンダリング</th>
+                    {{-- 依頼CC-3②: 起点URL(採用ページ)配下の取得件数。許可
+                         ホストがホスト単位のため、起点URLの外(同じホストの
+                         別セクション)も取得してしまうことがあり、資料を
+                         出す前にここで気づけるようにする(依頼者指定)。 --}}
+                    <th>起点URL配下</th>
                     <th>終了理由</th>
                     <th>所要時間</th>
                 </tr>
@@ -320,11 +325,12 @@
                             @endif
                         </td>
                         @if (! $hasCrawlData)
-                            {{-- 依頼BW-1: このテーブルは8列(サイト+7)なのに
-                                 colspanが6になっており1列ぶん足りなかった
-                                 (依頼者指摘、依頼BU由来のバグ)。サイト列を
-                                 除いた残り7列ぶんに修正する。 --}}
-                            <td colspan="7" style="{{ $criticalWarning ? 'color: #C2372B; font-weight: 600;' : 'color: var(--muted); font-size: 13px;' }}">
+                            {{-- 依頼BW-1: このテーブルは9列(サイト+8、依頼
+                                 CC-3②で「起点URL配下」列を追加)なのに
+                                 colspanが1列ぶん足りないと同じ不具合を
+                                 再発させないよう、サイト列を除いた残り
+                                 8列ぶんにする。 --}}
+                            <td colspan="8" style="{{ $criticalWarning ? 'color: #C2372B; font-weight: 600;' : 'color: var(--muted); font-size: 13px;' }}">
                                 巡回していません。@if ($crawlSummary['finished_reason'] !== null)({{ $crawlSummary['finished_reason_label'] }})@endif
                             </td>
                         @else
@@ -333,13 +339,20 @@
                             <td>{{ $crawlSummary['excluded_counts']['by_pattern'] }}/{{ $crawlSummary['excluded_counts']['by_robots'] }}/{{ $crawlSummary['excluded_counts']['by_scope'] }}/{{ $crawlSummary['excluded_counts']['by_track'] }}</td>
                             <td>{{ $crawlSummary['pending_count'] }}</td>
                             <td>{{ $renderLabel }}</td>
+                            <td>
+                                @if ($crawlSummary['origin_scope'])
+                                    {{ $crawlSummary['origin_scope']['within_origin'] }}/{{ $crawlSummary['origin_scope']['total_fetched'] }}
+                                @else
+                                    —
+                                @endif
+                            </td>
                             <td>{{ $crawlSummary['finished_reason_label'] }}</td>
                             <td>{{ $durationLabel ?? '—' }}</td>
                         @endif
                     </tr>
                     @if ($criticalWarning)
                         <tr style="background: #FDEEEC;">
-                            <td colspan="8" style="padding-top: 0;">
+                            <td colspan="9" style="padding-top: 0;">
                                 <div style="color: #C2372B; font-size: 13px; font-weight: 600;">&#9940; {{ $criticalWarning['message'] }}</div>
                                 {{-- 依頼CA-3: 理由ごとの「次にすべきこと」一文。既存の
                                      一文(上)は書き換えず、理由が分かる場合だけ続けて
@@ -352,7 +365,7 @@
                     @endif
                     @if ($hasWarning)
                         <tr style="background: #FFF8EC;">
-                            <td colspan="8" style="padding-top: 0;">
+                            <td colspan="9" style="padding-top: 0;">
                                 @foreach ($crawlSummary['warnings'] as $warning)
                                     <div style="color: #7a5c00; font-size: 13px;">&#9888; {{ $warning['message'] }}</div>
                                 @endforeach
@@ -361,7 +374,7 @@
                     @endif
                     @if ($hasCrawlData && count($crawlSummary['failed_urls']) > 0)
                         <tr>
-                            <td colspan="8" style="padding-top: 0;">
+                            <td colspan="9" style="padding-top: 0;">
                                 <details>
                                     <summary style="cursor: pointer; font-size: 13px; color: #4B5563;">失敗したURL({{ $crawlSummary['failed_count'] }}件)を見る</summary>
                                     <table class="list" style="margin-top: 8px;">

@@ -96,9 +96,11 @@ class AdminComparisonPptxInserterTest extends TestCase
         return [
             'origin_url' => 'https://example.com/recruit/',
             'branches' => [
-                ['name' => 'careers', 'page_count' => 5, 'sample_pages' => ['インタビュー01', 'インタビュー02']],
+                ['name' => 'careers', 'page_count' => 5, 'sample_pages' => ['インタビュー01', 'インタビュー02'], 'name_is_url_segment' => false],
             ],
             'other_branch_count' => 0,
+            'total_fetched_pages' => 8,
+            'pages_within_origin' => 5,
         ];
     }
 
@@ -354,6 +356,44 @@ class AdminComparisonPptxInserterTest extends TestCase
     }
 
     /**
+     * 依頼CC-1必須: 六角形の外側に6領域のラベルが出ること(自社のみ)。
+     * ラベルはconfig('brand_wheel.axes.*.name_ja')から取り(直書きしない)、
+     * 頂点の並び順が下の領域別数値表の行順と一致すること ―― 両方とも
+     * generate()内の同じ$data['axes']をそのまま渡している
+     * (AdminComparisonPptxGenerator::addWheelHexagons()/addMatrixSection())
+     * ため、XML上での出現順(ラベルは表より先に描画される)で検証する。
+     */
+    public function test_wheel_axis_labels_are_present_and_their_order_matches_the_matrix_table_row_order(): void
+    {
+        $bytes = $this->comparisonSlideBytes();
+        $tmp = $this->reservedTempPath('slide', 'pptx');
+        $this->tempFiles[] = $tmp;
+        file_put_contents($tmp, $bytes);
+
+        $zip = new ZipArchive;
+        $zip->open($tmp);
+        $slideXml = $zip->getFromName('ppt/slides/slide1.xml');
+        $zip->close();
+
+        $axisNames = array_column((array) config('brand_wheel.axes'), 'name_ja');
+        $this->assertCount(6, $axisNames);
+
+        $firstOffsets = [];
+        foreach ($axisNames as $name) {
+            $this->assertStringContainsString($name, $slideXml, "軸名「{$name}」がラベルとして出ること");
+            $firstOffsets[$name] = strpos($slideXml, $name);
+        }
+
+        // 頂点のラベルはヘキサゴン(addWheelHexagons())の中で、下の領域別
+        // 数値表(addMatrixSection())より先に描画される。各軸名の最初の
+        // 出現(=頂点ラベル)が、config('brand_wheel.axes')の順(=表の行順)
+        // どおりに並んでいることを、XML中の出現位置で確認する。
+        $sortedByOffset = $firstOffsets;
+        asort($sortedByOffset);
+        $this->assertSame($axisNames, array_keys($sortedByOffset), '頂点ラベルの並び順が領域別数値表の行順(config順)と一致していること');
+    }
+
+    /**
      * 依頼CB-1必須: 競合3社・4社・5社のいずれでも崩れないこと(実機画像化で
      * 3社を確認済み。ここではヘキサゴンの輪郭本数(自社+競合N社の
      * (N+1)社×12本)と外部参照ゼロで、4社・5社でも例外なく生成できることを
@@ -399,8 +439,8 @@ class AdminComparisonPptxInserterTest extends TestCase
     }
 
     /**
-     * 依頼CB-2: 「足りないもの」スライドの外部参照ゼロ・内容(項目名・
-     * 領域タグ・一文・候補者調査の対応・出典)を確認する。
+     * 依頼CB-2/CC-2: 「足りないもの」スライドの外部参照ゼロ・内容(冒頭の
+     * 説明・項目名・領域タグ・一文・候補者調査の対応・出典)を確認する。
      */
     public function test_missing_items_slide_has_no_external_refs_and_shows_region_impact_and_survey(): void
     {
@@ -419,12 +459,22 @@ class AdminComparisonPptxInserterTest extends TestCase
         $this->assertGreaterThan(0, substr_count($slideXml, 'Meiryo'));
 
         $this->assertStringContainsString('足りないもの', $slideXml);
+        // 依頼CC-2②(必須): 何と何を突き合わせているかの説明が冒頭に出ること。
+        $this->assertStringContainsString(
+            htmlspecialchars((string) config('admin_comparison_pptx.missing_items_intro'), ENT_QUOTES | ENT_XML1),
+            $slideXml,
+        );
         $this->assertStringContainsString('競合が伝えていて、自社が伝えていない項目', $slideXml);
         $this->assertStringContainsString('リーダーシップ', $slideXml);
         $this->assertStringContainsString('会社との距離', $slideXml, '領域タグが出ること');
         $this->assertStringContainsString('経営者・幹部の考え方や意思決定スタイルについての記述。', $slideXml, '一文(定義文ベース)が出ること');
         $this->assertStringContainsString('代表・経営層のインタビュー', $slideXml, '候補者調査の対応項目名が出ること');
         $this->assertStringContainsString('13.4', $slideXml, '候補者調査の割合が出ること');
+        // 依頼CC-2①②: 「〇〇%の求職者が求めているが、自社サイトでは
+        // 確認できなかった」の順で因果が分かる文になっていること
+        // (旧文言「候補者調査：「〇〇」を重視する求職者　N%」ではないこと)。
+        $expectedSurveyText = sprintf((string) config('admin_comparison_pptx.missing_item_survey_template'), '代表・経営層のインタビュー', '13.4');
+        $this->assertStringContainsString(htmlspecialchars($expectedSurveyText, ENT_QUOTES | ENT_XML1), $slideXml);
         // 出典(config('brand_wheel_candidate_survey.source_note'))が必ず
         // 出ること。
         $this->assertStringContainsString('OTOGI', $slideXml);
@@ -468,7 +518,12 @@ class AdminComparisonPptxInserterTest extends TestCase
         $slideXml2 = $zip->getFromName('ppt/slides/slide1.xml');
         $zip->close();
 
-        $this->assertStringContainsString('対応する項目なし', $slideXml2);
+        // 依頼CC-2②: 「該当なし」の一言(重要でないという意味ではないことが
+        // 伝わる文言、config('admin_comparison_pptx.missing_item_survey_none_text'))。
+        $this->assertStringContainsString(
+            htmlspecialchars((string) config('admin_comparison_pptx.missing_item_survey_none_text'), ENT_QUOTES | ENT_XML1),
+            $slideXml2,
+        );
         $this->assertStringNotContainsString('％', $slideXml2);
     }
 
@@ -518,6 +573,10 @@ class AdminComparisonPptxInserterTest extends TestCase
 
         $this->assertStringContainsString('自社サイトの階層図', $slideXml);
         $this->assertStringContainsString('https://example.com/recruit/', $slideXml);
+        // 依頼CC-3①(必須): 「巡回したN件のうち起点URL配下はM件」の一文
+        // (hierarchyData()はtotal_fetched_pages=8, pages_within_origin=5)。
+        $expectedScopeNote = sprintf((string) config('admin_comparison_pptx.site_hierarchy_scope_note'), 8, 5);
+        $this->assertStringContainsString(htmlspecialchars($expectedScopeNote, ENT_QUOTES | ENT_XML1), $slideXml);
         $this->assertStringContainsString('careers', $slideXml);
         $this->assertStringContainsString('5ページ', $slideXml);
         $this->assertStringContainsString('インタビュー01', $slideXml);
@@ -531,13 +590,53 @@ class AdminComparisonPptxInserterTest extends TestCase
     }
 
     /**
+     * 依頼CC-3③: インデックスページを巡回できておらずURLのパスセグメント
+     * のまま枝名にしている場合、それと分かる印が出ること(ページ名を
+     * 捏造しない代わりに、正式なページ名ではないことを示す)。
+     */
+    public function test_hierarchy_slide_marks_branch_names_that_are_raw_url_segments(): void
+    {
+        $hierarchy = $this->hierarchyData();
+        $hierarchy['branches'][0]['name_is_url_segment'] = true;
+        $bytes = app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide($this->comparisonData(), $hierarchy);
+        $tmp = $this->reservedTempPath('slide', 'pptx');
+        $this->tempFiles[] = $tmp;
+        file_put_contents($tmp, $bytes);
+
+        $zip = new ZipArchive;
+        $zip->open($tmp);
+        $slideXml = $zip->getFromName('ppt/slides/slide1.xml');
+        $zip->close();
+
+        $this->assertStringContainsString('ページ名未取得', $slideXml);
+    }
+
+    /**
+     * 正式なtitleを取得できている枝には、URLのまま印が出ないこと。
+     */
+    public function test_hierarchy_slide_does_not_mark_branches_with_a_real_title(): void
+    {
+        $bytes = $this->hierarchySlideBytes();
+        $tmp = $this->reservedTempPath('slide', 'pptx');
+        $this->tempFiles[] = $tmp;
+        file_put_contents($tmp, $bytes);
+
+        $zip = new ZipArchive;
+        $zip->open($tmp);
+        $slideXml = $zip->getFromName('ppt/slides/slide1.xml');
+        $zip->close();
+
+        $this->assertStringNotContainsString('ページ名未取得', $slideXml);
+    }
+
+    /**
      * 依頼CB-3必須: 巡回した範囲に1階層目の枝が1件も無いとき、ページが
      * 崩れず(空文字列や例外にならない)、「見つかりませんでした」の
      * 文言(「ありません」ではない)になること。
      */
     public function test_hierarchy_slide_handles_zero_branches_without_asserting_nonexistence(): void
     {
-        $hierarchy = ['origin_url' => 'https://example.com/recruit/', 'branches' => [], 'other_branch_count' => 0];
+        $hierarchy = ['origin_url' => 'https://example.com/recruit/', 'branches' => [], 'other_branch_count' => 0, 'total_fetched_pages' => 0, 'pages_within_origin' => 0];
         $bytes = app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide($this->comparisonData(), $hierarchy);
         $tmp = $this->reservedTempPath('slide', 'pptx');
         $this->tempFiles[] = $tmp;

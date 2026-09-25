@@ -377,4 +377,92 @@ class CrawlDiagnosticsServiceTest extends TestCase
 
         $this->assertContains('total_timeout', array_column($summary['warnings'], 'key'));
     }
+
+    // ------------------------------------------------------------------
+    // 依頼CC-3②(この依頼の主目的): 起点URL配下の取得件数
+    // (AdminComparisonSiteHierarchyBuilder::countWithinOrigin()と同じ
+    // ロジックをそのまま使う)。
+    // ------------------------------------------------------------------
+
+    /**
+     * @param  list<string>  $paths
+     */
+    private function seedCrawledPagesOnWebsiteHost(WebsiteAnalysis $wa, array $paths): void
+    {
+        $host = parse_url((string) $wa->website?->url, PHP_URL_HOST);
+        foreach ($paths as $path) {
+            AnalysisCrawledPage::factory()->create([
+                'website_analysis_id' => $wa->id,
+                'url' => "https://{$host}{$path}",
+                'status' => AnalysisCrawledPage::STATUS_FETCHED,
+            ]);
+        }
+    }
+
+    public function test_origin_scope_is_null_when_there_is_no_crawl_data(): void
+    {
+        $wa = $this->makeWebsiteAnalysis();
+
+        $summary = app(CrawlDiagnosticsService::class)->summarize($wa, true);
+
+        $this->assertNull($summary['origin_scope']);
+    }
+
+    public function test_origin_scope_counts_pages_within_the_origin_url(): void
+    {
+        $wa = $this->makeWebsiteAnalysis();
+        // AnalysisPage(採用ページ)が無いためWebsite.urlへfallbackし、
+        // 同じホストの5件すべてが起点URL配下として数えられる。
+        $this->seedCrawledPagesOnWebsiteHost($wa, ['/a', '/b', '/c', '/d', '/e']);
+
+        $summary = app(CrawlDiagnosticsService::class)->summarize($wa, true);
+
+        $this->assertNotNull($summary['origin_scope']);
+        $this->assertSame(5, $summary['origin_scope']['total_fetched']);
+        $this->assertSame(5, $summary['origin_scope']['within_origin']);
+    }
+
+    public function test_low_origin_scope_ratio_warning_is_not_shown_below_the_minimum_sample_size(): void
+    {
+        config(['crawl_diagnostics.low_fetched_page_count_threshold' => 10, 'crawl_diagnostics.origin_scope_ratio_warning_threshold' => 0.3]);
+        $wa = $this->makeWebsiteAnalysis();
+        // 取得0件(起点の外)が9件のみ ―― low_fetched_page_count_threshold
+        // (10)未満のため、比率が低くてもlow_origin_scope_ratioは出さない
+        // (少数サンプルでは比率が意味を持たないため、依頼者指定)。
+        AnalysisCrawledPage::factory()->count(9)->create(['website_analysis_id' => $wa->id, 'status' => AnalysisCrawledPage::STATUS_FETCHED]);
+
+        $summary = app(CrawlDiagnosticsService::class)->summarize($wa, true);
+
+        $this->assertNotContains('low_origin_scope_ratio', array_column($summary['warnings'], 'key'));
+    }
+
+    public function test_low_origin_scope_ratio_warning_uses_the_configured_threshold(): void
+    {
+        config(['crawl_diagnostics.low_fetched_page_count_threshold' => 10, 'crawl_diagnostics.origin_scope_ratio_warning_threshold' => 0.3]);
+        $wa = $this->makeWebsiteAnalysis();
+        // 10件すべてが起点URLの外(ホストが一致しないURL) ―― 比率0%。
+        foreach (range(1, 10) as $i) {
+            AnalysisCrawledPage::factory()->create([
+                'website_analysis_id' => $wa->id,
+                'status' => AnalysisCrawledPage::STATUS_FETCHED,
+                'url' => "https://outside.example.com/x{$i}",
+            ]);
+        }
+
+        $summary = app(CrawlDiagnosticsService::class)->summarize($wa, true);
+
+        $this->assertSame(0, $summary['origin_scope']['within_origin']);
+        $this->assertContains('low_origin_scope_ratio', array_column($summary['warnings'], 'key'));
+    }
+
+    public function test_low_origin_scope_ratio_warning_is_not_shown_when_the_ratio_is_high(): void
+    {
+        config(['crawl_diagnostics.low_fetched_page_count_threshold' => 10, 'crawl_diagnostics.origin_scope_ratio_warning_threshold' => 0.3]);
+        $wa = $this->makeWebsiteAnalysis();
+        $this->seedCrawledPagesOnWebsiteHost($wa, array_map(fn ($i) => "/page{$i}", range(1, 10)));
+
+        $summary = app(CrawlDiagnosticsService::class)->summarize($wa, true);
+
+        $this->assertNotContains('low_origin_scope_ratio', array_column($summary['warnings'], 'key'));
+    }
 }

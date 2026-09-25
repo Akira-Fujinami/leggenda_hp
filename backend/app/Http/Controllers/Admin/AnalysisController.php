@@ -180,7 +180,7 @@ class AnalysisController extends Controller
             $selfWebsiteAnalysis = $analysis->websiteAnalyses->first(fn ($wa) => (bool) $wa->website?->is_primary);
             $hierarchy = $selfWebsiteAnalysis !== null
                 ? $hierarchyBuilder->build($selfWebsiteAnalysis)
-                : ['origin_url' => '', 'branches' => [], 'other_branch_count' => 0];
+                : ['origin_url' => '', 'branches' => [], 'other_branch_count' => 0, 'total_fetched_pages' => 0, 'pages_within_origin' => 0];
 
             // 依頼CB-4: 説明→比較(CB-1)→足りないもの(CB-2)→階層図(CB-3)→
             // 参照元、の順で差し込む(説明ページは分析結果に依存しない
