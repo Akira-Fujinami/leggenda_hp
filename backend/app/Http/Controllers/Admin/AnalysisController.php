@@ -11,6 +11,7 @@ use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
 use App\Models\Report;
 use App\Services\Admin\CrawlDiagnosticsService;
+use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
 use App\Services\Report\AdminComparisonPptxDataBuilder;
 use App\Services\Report\AdminComparisonPptxGenerator;
 use App\Services\Report\AdminComparisonPptxInserter;
@@ -62,6 +63,7 @@ class AnalysisController extends Controller
 
         $brandWheelResults = BrandWheelAnalysisResult::query()
             ->where('analysis_id', $analysis->id)
+            ->with('websiteAnalysis.website')
             ->orderByDesc('id')
             ->get()
             ->unique('website_analysis_id');
@@ -73,9 +75,34 @@ class AnalysisController extends Controller
         $crawlSummaries = $analysis->websiteAnalyses
             ->mapWithKeys(fn ($wa) => [$wa->id => $crawlDiagnostics->summarize($wa, (bool) $analysis->crawl_site)]);
 
+        // 依頼CE-2(2026-09-28): 「0点だった」のか「判定していない」のかが
+        // 画面から区別できなかった(生のstatus文字列 ―― 'insufficient_input'
+        // 等の内部値 ―― をそのまま出していただけ、依頼者指摘)。
+        // BrandWheelLeadResponseComposer::resolveStatus()は既にsuccess以外の
+        // 5状態を判別済みで、compose()はリード向け画面と同じ確定済み文言
+        // (config('brand_wheel.status_messages'))をstatus_messageとして
+        // 返す ―― ここではその結果を管理画面表示用に読むだけで、新しい
+        // 判定ロジックは一切作らない(resolveStatus()の畳み込み・API応答
+        // 形状も変更しない)。自社・競合を問わず全行に適用する。
+        $brandWheelStatusInfo = $brandWheelResults->mapWithKeys(function (BrandWheelAnalysisResult $result) {
+            $website = $result->websiteAnalysis?->website;
+            if ($website === null) {
+                return [$result->id => null];
+            }
+
+            $composed = app(BrandWheelLeadResponseComposer::class)->compose($result, $website);
+
+            return [$result->id => [
+                'status' => $composed['status'],
+                'label' => (string) config("admin_brand_wheel_status.status_labels.{$composed['status']}", $composed['status']),
+                'reason' => $composed['status_message'],
+            ]];
+        });
+
         return view('admin.analyses.show', [
             'analysis' => $analysis,
             'brandWheelResults' => $brandWheelResults,
+            'brandWheelStatusInfo' => $brandWheelStatusInfo,
             'crawlSummaries' => $crawlSummaries,
         ]);
     }

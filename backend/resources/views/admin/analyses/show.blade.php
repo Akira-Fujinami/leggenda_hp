@@ -408,19 +408,32 @@
         <p class="empty">Brand Wheel分析結果がありません。</p>
     @else
         <table class="list">
-            <thead><tr><th>サイト</th><th>状態</th><th>エラー</th></tr></thead>
+            <thead><tr><th>サイト</th><th>状態</th><th>理由</th><th>エラー</th></tr></thead>
             <tbody>
                 @foreach ($brandWheelResults as $result)
                     @php
+                        // 依頼CE-2: 管理画面表示用に解決済みの状態
+                        // (BrandWheelLeadResponseComposer::resolveStatus()、
+                        // success以外の5状態を判別する既存の唯一の定義元)を
+                        // 使う。Admin\AnalysisController::show()が
+                        // $brandWheelStatusInfoとして事前に計算済み
+                        // (新しい判定ロジックをここで作らない)。
+                        $statusInfo = $brandWheelStatusInfo[$result->id] ?? null;
+
                         // 依頼CD-3: 自社(is_primary)の判定がsuccess以外
                         // (=比較スライドのヘキサゴン・数値がconfig
                         // ('admin_comparison_pptx.self_data_unavailable_notice')
                         // の文言に置き換わる状態、AdminComparisonPptxGenerator
                         // 参照)のとき、差し込み前にここで気づけるよう
                         // crawlSummariesのcritical_warning(BV-3)と同じ赤系で
-                        // 強調する ―― 新しい判定ロジックはここでは作らず、
-                        // 既存のstatus文字列をそのまま使う。
-                        $isSelfUnreadable = (bool) $result->websiteAnalysis?->website?->is_primary && $result->status !== 'success';
+                        // 強調する。依頼CE-2で解決済みstatusが使えるように
+                        // なったため、生のDBステータス(success以外にも
+                        // no_matched_content等が起こりうる)ではなく、
+                        // 比較PPTXのself_readable判定と同じ解決済みstatusで
+                        // 判定するよう精度を上げた(表示・配色の仕組み自体は
+                        // 変えていない)。
+                        $isSelfUnreadable = (bool) $result->websiteAnalysis?->website?->is_primary
+                            && ($statusInfo['status'] ?? $result->status) !== 'success';
                     @endphp
                     <tr style="{{ $isSelfUnreadable ? 'background: #FDEEEC;' : '' }}">
                         <td>
@@ -429,7 +442,8 @@
                                 <span title="自社サイトのブランド・ホイール判定が成立していません(営業資料への差し込み時は専用の文言に置き換わります)" style="color: #C2372B;">&#9940;</span>
                             @endif
                         </td>
-                        <td style="{{ $isSelfUnreadable ? 'color: #C2372B; font-weight: 600;' : '' }}">{{ $result->status }}</td>
+                        <td style="{{ $isSelfUnreadable ? 'color: #C2372B; font-weight: 600;' : '' }}">{{ $statusInfo['label'] ?? $result->status }}</td>
+                        <td>{{ $statusInfo['reason'] ?? '—' }}</td>
                         <td>{{ $result->error_message ?? '—' }}</td>
                     </tr>
                 @endforeach
