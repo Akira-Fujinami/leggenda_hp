@@ -61,6 +61,8 @@ class AdminComparisonSiteHierarchyBuilder
 
         /** @var array<string, array{count: int, index_title: ?string, labels: list<string>}> $branches */
         $branches = [];
+        /** @var list<string> $flatPageLabels 依頼CD-5参照 */
+        $flatPageLabels = [];
         $pagesWithinOrigin = 0;
 
         foreach ($pages as $page) {
@@ -74,8 +76,31 @@ class AdminComparisonSiteHierarchyBuilder
                 continue;
             }
 
-            $branchKey = $segments[0];
             $title = trim((string) $page->title);
+
+            // 依頼CD-5: 起点URLの直下にディレクトリを介さずファイルが
+            // 直接置かれているサイト(例: .../recruit/qa.html、
+            // .../recruit/flow.html)では、count($segments)===1のページが
+            // 「そのディレクトリの代表ページ」ではなく、それ自体が独立した
+            // 1ページに過ぎない。この2つを区別しないと、ファイル名の
+            // セグメント(拡張子付き、例: "qa.html")がそのまま枝キーになり、
+            // ページ1件だけの「枝」が乱立する(タイトルが取れていない場合は
+            // 全てが「(ページ名未取得)」の壁になる、依頼者指摘の不具合)。
+            //
+            // 見分け方: セグメントが1つだけ、かつそのセグメントが
+            // ファイル名らしい("."を含む ―― normalizeDirectoryPath()と
+            // 同じ既存の判定基準、新しい規則を増やさない)場合だけを
+            // 「起点直下の単独ページ」として扱い、枝には積まない。
+            // セグメントが1つでも"."を含まない場合(例: "culture" のような
+            // ディレクトリ形式のURL)は、従来どおりその枝自身のインデックス
+            // ページとして扱う(依頼CB-3由来の既存動作、変更しない)。
+            if (count($segments) === 1 && str_contains($segments[0], '.')) {
+                $flatPageLabels[] = $title !== '' ? $title : $segments[0];
+
+                continue;
+            }
+
+            $branchKey = $segments[0];
             $branches[$branchKey]['count'] = ($branches[$branchKey]['count'] ?? 0) + 1;
             $branches[$branchKey]['index_title'] ??= null;
 
@@ -102,6 +127,21 @@ class AdminComparisonSiteHierarchyBuilder
                 // 場合、その旨をGenerator側で分かる形にする(捏造しない、
                 // かつ「これが正式なページ名だ」と誤解させないため)。
                 'name_is_url_segment' => $info['index_title'] === null,
+            ];
+        }
+
+        // 依頼CD-5: 起点直下の単独ページ(上記で枝から外したもの)を、1件の
+        // 集計行として枝の一覧に加える。見出し(name)はページ名ではなく
+        // 「起点直下のページ」という区分自体の説明文言(捏造ではない、
+        // config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'))。
+        // 各ページの実名はsample_pages側にのみ出す(タイトルがあればタイトル、
+        // 無ければファイル名 ―― 日本語名を捏造しない、依頼者指定)。
+        if ($flatPageLabels !== []) {
+            $branchList[] = [
+                'name' => (string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'),
+                'page_count' => count($flatPageLabels),
+                'sample_pages' => array_slice($flatPageLabels, 0, $sampleLimit),
+                'name_is_url_segment' => false,
             ];
         }
 

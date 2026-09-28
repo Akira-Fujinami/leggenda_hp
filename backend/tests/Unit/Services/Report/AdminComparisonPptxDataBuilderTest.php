@@ -85,6 +85,50 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
         $this->assertSame(['name' => 'テスト株式会社', 'matched' => 10, 'total' => 24, 'is_self' => true], $data['companies'][0]);
     }
 
+    /**
+     * 依頼CD-2: 自社のブランド・ホイール判定が空(selfTotalMax=0、
+     * selfTotalMatched=0)のとき、旧実装は自社の'total'にselfTotalMax
+     * (=0)をそのまま使っていたため、比較スライドの総合表示が「0/0」に
+     * なる一方、下段のマトリクス(buildAxisMatrix())の分母は必ず
+     * config由来の4×6=24になっており、同じスライド内で「総合0/0」
+     * 「表側0/4が6行」という食い違いが生じていた(依頼者報告の不具合①②)。
+     * 自社の'total'は、競合と同じ$totalItems(comparisonTableの件数、
+     * 常に24)を使うべきで、selfTotalMaxの値に一切左右されないこと。
+     */
+    public function test_self_company_total_always_matches_the_competitor_total_even_when_self_data_is_empty(): void
+    {
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'selfReadable' => false,
+            'selfTotalMatched' => 0,
+            'selfTotalMax' => 0,
+        ]));
+
+        $this->assertSame(24, $data['companies'][0]['total']);
+        $this->assertSame(24, $data['companies'][1]['total']);
+        $this->assertSame($data['companies'][0]['total'], $data['companies'][1]['total']);
+
+        // マトリクス側の分母合計(4×6=24)と、総合表示の分母が必ず一致する
+        // こと(構造そのものを検証する ―― CD-1の原因を直せば自然に
+        // 解消する場合でも、食い違いが起きうる構造自体を潰すこと、
+        // 依頼者指定)。
+        $matrixDenominatorSum = array_sum(array_column($data['axes'], 'denominator'));
+        $this->assertSame($matrixDenominatorSum, $data['companies'][0]['total']);
+    }
+
+    /**
+     * 依頼CD-3: self_readable(MultiSiteReportViewModel::selfReadable、
+     * status==='success' && axes!==[]で既に算出済みの唯一の情報源)を
+     * そのまま通すこと ―― ここで新しい判定を作らない。
+     */
+    public function test_self_readable_is_passed_through_from_the_view_model(): void
+    {
+        $readable = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['selfReadable' => true]));
+        $this->assertTrue($readable['self_readable']);
+
+        $unreadable = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['selfReadable' => false]));
+        $this->assertFalse($unreadable['self_readable']);
+    }
+
     public function test_competitor_matched_counts_are_summed_from_the_comparison_table_by_index(): void
     {
         $table = $this->comparisonTable([], [

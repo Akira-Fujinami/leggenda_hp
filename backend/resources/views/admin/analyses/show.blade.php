@@ -411,9 +411,25 @@
             <thead><tr><th>サイト</th><th>状態</th><th>エラー</th></tr></thead>
             <tbody>
                 @foreach ($brandWheelResults as $result)
-                    <tr>
-                        <td>{{ $result->websiteAnalysis?->website?->name }}</td>
-                        <td>{{ $result->status }}</td>
+                    @php
+                        // 依頼CD-3: 自社(is_primary)の判定がsuccess以外
+                        // (=比較スライドのヘキサゴン・数値がconfig
+                        // ('admin_comparison_pptx.self_data_unavailable_notice')
+                        // の文言に置き換わる状態、AdminComparisonPptxGenerator
+                        // 参照)のとき、差し込み前にここで気づけるよう
+                        // crawlSummariesのcritical_warning(BV-3)と同じ赤系で
+                        // 強調する ―― 新しい判定ロジックはここでは作らず、
+                        // 既存のstatus文字列をそのまま使う。
+                        $isSelfUnreadable = (bool) $result->websiteAnalysis?->website?->is_primary && $result->status !== 'success';
+                    @endphp
+                    <tr style="{{ $isSelfUnreadable ? 'background: #FDEEEC;' : '' }}">
+                        <td>
+                            {{ $result->websiteAnalysis?->website?->name }}
+                            @if ($isSelfUnreadable)
+                                <span title="自社サイトのブランド・ホイール判定が成立していません(営業資料への差し込み時は専用の文言に置き換わります)" style="color: #C2372B;">&#9940;</span>
+                            @endif
+                        </td>
+                        <td style="{{ $isSelfUnreadable ? 'color: #C2372B; font-weight: 600;' : '' }}">{{ $result->status }}</td>
                         <td>{{ $result->error_message ?? '—' }}</td>
                     </tr>
                 @endforeach

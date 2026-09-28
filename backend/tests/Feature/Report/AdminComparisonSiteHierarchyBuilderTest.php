@@ -209,4 +209,98 @@ class AdminComparisonSiteHierarchyBuilderTest extends TestCase
         $result2 = $this->builder()->build($waNoPages);
         $this->assertSame($waNoPages->website?->url, $result2['origin_url']);
     }
+
+    /**
+     * 依頼CD-5(2026-09-28): 起点URL直下にディレクトリを介さずファイルが
+     * 直接置かれているサイト(実例: .../recruit/qa.html、
+     * .../recruit/flow.html)では、従来は1ファイルごとに1件の「枝」が
+     * 乱立していた(枝名がファイル名そのもの)。この依頼で、そのような
+     * ページは枝に積まず、1つの集計行(flat_pages_heading)にまとめること。
+     */
+    public function test_flat_files_directly_under_the_origin_are_grouped_into_a_single_summary_row_instead_of_one_branch_each(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        $this->crawledPage($wa, 'https://example.com/recruit/qa.html', 'よくある質問');
+        $this->crawledPage($wa, 'https://example.com/recruit/flow.html', '選考の流れ');
+        $this->crawledPage($wa, 'https://example.com/recruit/privacy.html', null);
+
+        $result = $this->builder()->build($wa);
+
+        $this->assertCount(1, $result['branches'], 'ファイル1件ごとに枝が乱立しないこと');
+        $flatEntry = $result['branches'][0];
+        $this->assertSame((string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'), $flatEntry['name']);
+        $this->assertSame(3, $flatEntry['page_count']);
+        // タイトルが取れているページはタイトル、取れていないページは
+        // ファイル名(捏造しない)。
+        $this->assertContains('よくある質問', $flatEntry['sample_pages']);
+        $this->assertContains('選考の流れ', $flatEntry['sample_pages']);
+        $this->assertContains('privacy.html', $flatEntry['sample_pages']);
+        // 見出し自体は特定のページ名を名乗るものではないため、既存の
+        // 「(ページ名未取得)」印は付けない(壁を作らないための集約行)。
+        $this->assertFalse($flatEntry['name_is_url_segment']);
+    }
+
+    /**
+     * 依頼CD-5必須: ディレクトリ構成のサイト(依頼CB-3以来の既存挙動)は、
+     * この変更の影響を受けないこと ―― 起点直下に単独ファイルが1つも
+     * 無ければ、従来どおり枝の一覧だけが返ること。
+     */
+    public function test_directory_structured_sites_are_unaffected_by_the_flat_page_handling(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/interview/01.html', 'インタビュー01');
+        $this->crawledPage($wa, 'https://example.com/recruit/culture/about.html', 'カルチャー');
+
+        $result = $this->builder()->build($wa);
+
+        $byName = collect($result['branches'])->keyBy('name');
+        $this->assertSame(1, $byName['careers']['page_count']);
+        $this->assertSame(1, $byName['culture']['page_count']);
+        $this->assertCount(2, $result['branches'], '起点直下の集約行(flat_pages_heading)が余計に増えないこと');
+    }
+
+    /**
+     * ディレクトリ配下のページと、起点直下の単独ファイルが混在する場合、
+     * 両方とも失わずに表示されること(ディレクトリの枝+単独ページの
+     * 集約行の両方が返る)。
+     */
+    public function test_mixed_sites_show_both_directory_branches_and_the_flat_page_summary_row(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/interview/01.html', 'インタビュー01');
+        $this->crawledPage($wa, 'https://example.com/recruit/privacy.html', null);
+
+        $result = $this->builder()->build($wa);
+
+        $names = array_column($result['branches'], 'name');
+        $this->assertContains('careers', $names);
+        $this->assertContains((string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'), $names);
+        $this->assertCount(2, $result['branches']);
+    }
+
+    /**
+     * 依頼CB-3の既存動作: 「.」を含まない単一セグメント(ディレクトリ形式の
+     * URL、例 .../recruit/culture/)は、従来どおりその枝自身のインデックス
+     * ページとして扱うこと(CD-5のファイル判定〈"."を含む〉に巻き込まれて
+     * 集約行に混ざらないこと)。
+     */
+    public function test_extensionless_single_segment_pages_still_become_their_own_branch_index_page(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        $this->crawledPage($wa, 'https://example.com/recruit/culture', 'カルチャー・社風');
+
+        $result = $this->builder()->build($wa);
+
+        $this->assertCount(1, $result['branches']);
+        $this->assertSame('カルチャー・社風', $result['branches'][0]['name']);
+        $this->assertNotSame((string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'), $result['branches'][0]['name']);
+    }
 }

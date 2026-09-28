@@ -275,6 +275,7 @@ class AdminComparisonPptxGenerator
      *
      * @param  array{
      *     self_company_name: string,
+     *     self_readable: bool,
      *     companies: list<array{name: string, matched: int, total: int, is_self: bool}>,
      *     axes: list<array{
      *         name: string,
@@ -290,11 +291,17 @@ class AdminComparisonPptxGenerator
      */
     public function generate(array $data): string
     {
-        return $this->renderSingleSlide(function (Slide $slide) use ($data): void {
+        // 依頼CD-3: self_readable(MultiSiteReportViewModel::selfReadable、
+        // 唯一の情報源)がfalseのとき、自社のヘキサゴン・数値表セルを
+        // 「0/24」等の数字ではなく専用の文言に差し替える(config
+        // ('admin_comparison_pptx.self_data_unavailable_notice')docblock参照)。
+        $selfReadable = $data['self_readable'] ?? true;
+
+        return $this->renderSingleSlide(function (Slide $slide) use ($data, $selfReadable): void {
             $this->addKicker($slide);
             $this->addTitle($slide, 'ブランド・ホイール比較');
-            $tableTop = $this->addWheelHexagons($slide, $data['companies'], $data['axes']);
-            $this->addMatrixSection($slide, $data['companies'], $data['axes'], $tableTop);
+            $tableTop = $this->addWheelHexagons($slide, $data['companies'], $data['axes'], $selfReadable);
+            $this->addMatrixSection($slide, $data['companies'], $data['axes'], $tableTop, $selfReadable);
             $this->addFooter($slide, $data['source_note'], $data['page_number']);
         });
     }
@@ -304,7 +311,7 @@ class AdminComparisonPptxGenerator
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
      * @return float  この下に描く領域別数値表の上端y(in)
      */
-    private function addWheelHexagons(Slide $slide, array $companies, array $axes): float
+    private function addWheelHexagons(Slide $slide, array $companies, array $axes, bool $selfReadable = true): float
     {
         $selfCompany = $companies[0];
         $selfCx = self::LEFT_IN + self::CONTENT_WIDTH_IN / 2;
@@ -319,7 +326,7 @@ class AdminComparisonPptxGenerator
             $slide, $selfCompany, $axes, null, $selfCx,
             self::WHEEL_SELF_LABEL_TOP_IN, self::WHEEL_SELF_TILE_WIDTH_IN,
             self::WHEEL_SELF_NAME_HEIGHT_IN, self::WHEEL_SELF_SCORE_HEIGHT_IN, self::WHEEL_SELF_RADIUS_IN,
-            true,
+            true, $selfReadable,
         );
 
         $competitors = array_slice($companies, 1);
@@ -365,6 +372,7 @@ class AdminComparisonPptxGenerator
         float $scoreHeight,
         float $radius,
         bool $isSelf,
+        bool $selfReadable = true,
     ): float {
         $nameSize = $isSelf ? 11.0 : 8.0;
         $scoreSize = $isSelf ? 13.0 : 9.5;
@@ -378,12 +386,6 @@ class AdminComparisonPptxGenerator
         $this->renderBalancedLines($nameBox->getActiveParagraph(), $nameText, $tileWidth, $nameSize, true, $isSelf ? self::NAVY : self::MUTED);
 
         $scoreTop = $labelTop + $nameHeight;
-        $scoreBox = $slide->createRichTextShape();
-        $this->position($scoreBox, $left, $scoreTop, $tileWidth, $scoreHeight);
-        $scoreBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $scoreRun = $scoreBox->getActiveParagraph()->createTextRun("{$company['matched']} / {$company['total']}");
-        $this->font($scoreRun, $scoreSize, true, $isSelf ? self::COPPER : self::MUTED);
-
         $scoreBottom = $scoreTop + $scoreHeight;
         // 依頼CC-1(必須、実機画像化で発見した不具合の修正): 自社は
         // ヘキサゴンの上頂点自体を、総合点ラベルの下端からさらに
@@ -393,6 +395,31 @@ class AdminComparisonPptxGenerator
         // docblock参照)。競合はラベルを描かないため、そのままでよい。
         $hexTopVertexY = $isSelf ? $scoreBottom + self::WHEEL_LABEL_RESERVE_IN : $scoreBottom;
         $hexCenterY = $hexTopVertexY + $radius;
+
+        // 依頼CD-3(必須): 自社のブランド・ホイール判定が成立していない
+        // (selfReadable===false)とき、総合点の数字("0 / 24")・ヘキサゴン・
+        // 軸ラベルを一切描かず、この領域全体を専用の文言1つに置き換える
+        // ―― 0という数字を判定結果であるかのように見せないため
+        // (config('admin_comparison_pptx.self_data_unavailable_notice')
+        // docblock参照)。競合側は影響を受けない(このメソッドは競合には
+        // $selfReadable=trueのデフォルトのまま呼ばれる)。
+        if ($isSelf && ! $selfReadable) {
+            $noticeBox = $slide->createRichTextShape();
+            $this->position($noticeBox, $left, $scoreTop, $tileWidth, ($hexCenterY + $radius + self::WHEEL_LABEL_RESERVE_IN) - $scoreTop);
+            $noticeBox->setWrap(RichText::WRAP_SQUARE);
+            $noticeBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $noticePara = $noticeBox->getActiveParagraph();
+            $noticePara->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $this->font($noticePara->createTextRun((string) config('admin_comparison_pptx.self_data_unavailable_notice')), 10.5, true, self::GAP_TEXT);
+
+            return $hexCenterY + $radius + self::WHEEL_LABEL_RESERVE_IN;
+        }
+
+        $scoreBox = $slide->createRichTextShape();
+        $this->position($scoreBox, $left, $scoreTop, $tileWidth, $scoreHeight);
+        $scoreBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        $scoreRun = $scoreBox->getActiveParagraph()->createTextRun("{$company['matched']} / {$company['total']}");
+        $this->font($scoreRun, $scoreSize, true, $isSelf ? self::COPPER : self::MUTED);
 
         $axisCounts = array_map(fn (array $axis) => [
             $isSelf ? $axis['self_count'] : ($axis['competitor_counts'][$competitorIndex] ?? 0),
@@ -619,7 +646,7 @@ class AdminComparisonPptxGenerator
      * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
      */
-    private function addMatrixSection(Slide $slide, array $companies, array $axes, float $tableTop): void
+    private function addMatrixSection(Slide $slide, array $companies, array $axes, float $tableTop, bool $selfReadable = true): void
     {
         $heading = $slide->createRichTextShape();
         $this->position($heading, self::LEFT_IN, $tableTop - 0.28, self::CONTENT_WIDTH_IN, 0.24);
@@ -637,7 +664,7 @@ class AdminComparisonPptxGenerator
 
         foreach ($axes as $i => $axis) {
             $top = $tableTop + self::TABLE_HEADER_HEIGHT_IN + $i * self::TABLE_ROW_HEIGHT_IN;
-            $this->addMatrixRow($slide, $axis, $companies, $colWidth, $top, $i % 2 === 1);
+            $this->addMatrixRow($slide, $axis, $companies, $colWidth, $top, $i % 2 === 1, $selfReadable);
         }
     }
 
@@ -702,7 +729,7 @@ class AdminComparisonPptxGenerator
      * @param  array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}  $axis
      * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
      */
-    private function addMatrixRow(Slide $slide, array $axis, array $companies, float $colWidth, float $top, bool $isBanded): void
+    private function addMatrixRow(Slide $slide, array $axis, array $companies, float $colWidth, float $top, bool $isBanded, bool $selfReadable = true): void
     {
         if ($isBanded) {
             $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
@@ -727,7 +754,15 @@ class AdminComparisonPptxGenerator
             $left = self::LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
             $count = $company['is_self'] ? $axis['self_count'] : ($axis['competitor_counts'][$i - 1] ?? 0);
 
-            if ($company['is_self'] && $axis['self_gap']) {
+            // 依頼CD-3(必須): 自社が判定不能(selfReadable===false)のとき、
+            // このセルは「0 / 4」という数字ではなく「－」を出す ―― 0を
+            // 判定結果であるかのように見せないため。自社が競合の最高値
+            // 未達を示すオレンジの網かけ(self_gap)も、実際には判定していない
+            // ため付けない(「未達」自体が判定結果の一種であり、判定不能とは
+            // 意味が異なる)。
+            if ($company['is_self'] && ! $selfReadable) {
+                [$bg, $fg] = [null, self::DIM];
+            } elseif ($company['is_self'] && $axis['self_gap']) {
                 [$bg, $fg] = [self::GAP_BG, self::GAP_TEXT];
             } elseif ($company['is_self']) {
                 [$bg, $fg] = [self::SELF_TINT, self::NAVY];
@@ -748,7 +783,8 @@ class AdminComparisonPptxGenerator
             $this->position($cell, $left, $top, $colWidth, self::TABLE_ROW_HEIGHT_IN);
             $cell->setVerticalAlignCenter(RichText::VALIGN_CENTER);
             $cell->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $this->font($cell->getActiveParagraph()->createTextRun("{$count} / {$axis['denominator']}"), 9, true, $fg);
+            $cellText = ($company['is_self'] && ! $selfReadable) ? '－' : "{$count} / {$axis['denominator']}";
+            $this->font($cell->getActiveParagraph()->createTextRun($cellText), 9, true, $fg);
         }
     }
 
@@ -798,6 +834,7 @@ class AdminComparisonPptxGenerator
      * 文言を出す(依頼BO由来の既存方針を維持)。
      *
      * @param  array{
+     *     self_readable: bool,
      *     missing_items: array{
      *         heading: string,
      *         empty_text: string,
@@ -814,10 +851,43 @@ class AdminComparisonPptxGenerator
         return $this->renderSingleSlide(function (Slide $slide) use ($data): void {
             $this->addKicker($slide);
             $this->addTitle($slide, '足りないもの');
+
+            // 依頼CD-3(必須): missing_items['items']はBrandWheelMultiSite
+            // ComparisonComposer::extractMissingFromSelf()が
+            // 「!self_matched && 競合が過半数一致」で抽出したものだが、
+            // 自社が判定不能(self_readable===false)のときself_matchedは
+            // 24項目すべてfalseになるため、この抽出条件をそのまま表示すると
+            // 「自社に足りない項目」として実質ほぼ全項目が並ぶ、意味の異なる
+            // 誤解を招く一覧になってしまう(抽出条件自体は変更しない、
+            // 依頼者指定 ―― ここでは単に表示しないだけ)。専用の文言に
+            // 差し替える。
+            if (! ($data['self_readable'] ?? true)) {
+                $this->addSelfUnavailableNotice($slide);
+                $this->addNoteFooter($slide, $data['candidate_survey_source_note']);
+
+                return;
+            }
+
             $this->addMissingItemsHeading($slide, $data['missing_items']);
             $this->addMissingItemsRows($slide, $data['missing_items']);
             $this->addNoteFooter($slide, $data['candidate_survey_source_note']);
         });
+    }
+
+    /**
+     * 依頼CD-3: 自社のブランド・ホイール判定が成立していないことを伝える
+     * 文言を、タイトル下いっぱいに1つだけ表示する(config
+     * ('admin_comparison_pptx.self_data_unavailable_notice')docblock参照)。
+     */
+    private function addSelfUnavailableNotice(Slide $slide): void
+    {
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, 2.6, self::CONTENT_WIDTH_IN, 1.2);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $para = $box->getActiveParagraph();
+        $para->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        $this->font($para->createTextRun((string) config('admin_comparison_pptx.self_data_unavailable_notice')), 14, true, self::GAP_TEXT);
     }
 
     /**

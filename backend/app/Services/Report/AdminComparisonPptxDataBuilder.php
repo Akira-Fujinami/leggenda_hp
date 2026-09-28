@@ -48,6 +48,7 @@ class AdminComparisonPptxDataBuilder
     /**
      * @return array{
      *     self_company_name: string,
+     *     self_readable: bool,
      *     companies: list<array{name: string, matched: int, total: int, is_self: bool}>,
      *     axes: list<array{
      *         name: string,
@@ -81,9 +82,18 @@ class AdminComparisonPptxDataBuilder
 
         $companies = [];
         $companies[] = [
+            // 依頼CD-2: 自社の'total'は$viewModel->selfTotalMax(自社の
+            // ブランド・ホイール判定が空のとき0になる値)ではなく、競合と
+            // 同じ$totalItems(config('brand_wheel.axes')の項目数、常に24)を
+            // 使う。同じスライドの下段マトリクス(buildAxisMatrix()、
+            // 分母は必ずconfigのsub_elements件数=24から出す)と分母の
+            // 出どころを1つに揃えることで、「総合0/0・表側0/4×6行」という
+            // 食い違いが自社データの状態によらず構造的に起こらないようにする
+            // (依頼者指定 ―― 原因を直せば自然に解消する場合でも、食い違いが
+            // 起きうる構造そのものを潰すこと)。
             'name' => $viewModel->selfCompanyDisplayName,
             'matched' => $viewModel->selfTotalMatched,
-            'total' => $viewModel->selfTotalMax,
+            'total' => $totalItems,
             'is_self' => true,
         ];
 
@@ -108,6 +118,14 @@ class AdminComparisonPptxDataBuilder
 
         return [
             'self_company_name' => $viewModel->selfCompanyDisplayName,
+            // 依頼CD-3: 自社のブランド・ホイール判定が実際には行えていない
+            // (status!=='success'またはaxesが空)状態を、Generator側が
+            // 「0/24」等の数字ではなく専用の文言として扱えるようにする。
+            // 新しい判定ロジックをここで作らず、既にMultiSiteReportViewModel
+            // Builderが算出済みのselfReadable(status==='success' &&
+            // selfAxes!==[])をそのまま通すだけ(唯一の情報源を保つ、
+            // このクラスの既存方針)。
+            'self_readable' => $viewModel->selfReadable,
             'companies' => $companies,
             'axes' => $axes,
             'missing_items' => $missingItems,
