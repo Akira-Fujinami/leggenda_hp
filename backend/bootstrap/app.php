@@ -1,10 +1,12 @@
 <?php
 
+use App\Console\Commands\PurgeExpiredLeadSessions;
 use App\Exceptions\Analysis\AnalysisAlreadyRunningException;
 use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\EnsureAdminAuthenticated;
 use App\Http\Middleware\ResolveLeadToken;
 use Illuminate\Auth\AuthenticationException;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -20,6 +22,31 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    ->withSchedule(function (Schedule $schedule): void {
+        // 依頼CF-6(2026-09-29): このアプリのスケジューラ登録は、これが
+        // 最初の1件(依頼者指摘 ―― routes/console.php・このファイルの
+        // どちらにも登録が無く、lead:purge-expired-sessionsは一度も
+        // 自動実行されていなかった)。トリガー自体(schedule:workを常駐
+        // させるschedulerサービス)は既存のcompose.yaml/compose.prod.yaml
+        // に既にあり、ここへ登録するだけで動き出す。
+        //
+        // --executeは付けない(常にdry-run、依頼者指定 ―― 実際に削除する
+        // 判断は別の依頼で行う)。このコマンド自体がconfig('lead.
+        // retention_days_after_expiry')を過ぎたLeadSessionだけを対象にする
+        // ため、dry-runでも件数・解放見込み容量をログに残す意味がある
+        // (PurgeExpiredLeadSessions::handle()参照)。
+        //
+        // 実行時刻: 19:00 UTC(=JST翌4:00)。App.timezoneはUTC固定
+        // (config('app.timezone')参照)のため、dailyAt()もUTC基準になる。
+        // 巡回(CrawlWebsitePageJob等)は管理画面からの操作に応じて動く
+        // オンデマンドのジョブであり、日本の営業時間帯(概ね9-20時JST=
+        // 0-11時UTC)に実行されることが最も多いと見込まれる。JST深夜
+        // (4時)はこの時間帯から最も離れており、巡回・診断実行のジョブ
+        // キューと重なる可能性が最も低い。
+        $schedule->command(PurgeExpiredLeadSessions::class)
+            ->dailyAt('19:00')
+            ->withoutOverlapping();
+    })
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
         // 障害調査時にBackendログとFrontendのエラー表示を突き合わせられるよう、

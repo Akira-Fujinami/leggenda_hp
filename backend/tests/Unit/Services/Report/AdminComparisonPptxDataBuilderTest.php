@@ -289,6 +289,34 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
     }
 
     /**
+     * 依頼CF-5①(2026-09-29): impact(定義の行)とcandidate_survey(候補者調査の
+     * 行)が、同じ「自社サイトでは確認できない」旨を重複して言わないこと
+     * (実物のPPTXで3件すべて同義反復になっていた不具合の再発防止)。
+     * 候補者調査の行(割合の数字がある方)にこの文言を残す判断とした
+     * ―― impact側にはもう含まれないこと。
+     */
+    public function test_missing_item_impact_no_longer_duplicates_the_not_confirmed_phrase(): void
+    {
+        $missingFromSelf = [$this->missingFromSelfItem('金銭的便益', '福利厚生', 3)];
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['missingFromSelf' => $missingFromSelf]));
+
+        $item = $data['missing_items']['items'][0];
+        $definition = (string) config('brand_wheel.axes.financial_benefit.sub_element_definitions.benefits');
+
+        $this->assertSame($definition, $item['impact'], 'impactは定義文そのものであり、余計な接尾辞を付け足さないこと');
+        $this->assertStringNotContainsString('確認でき', $item['impact']);
+
+        // 候補者調査の行には引き続き「確認できません」の趣旨が残ること
+        // (依頼者の判断: 割合の数字がある方を残す)。
+        $surveyText = sprintf(
+            (string) config('admin_comparison_pptx.missing_item_survey_template'),
+            $item['candidate_survey']['item'],
+            $item['candidate_survey']['percentage'],
+        );
+        $this->assertStringContainsString('確認でき', $surveyText);
+    }
+
+    /**
      * 依頼CB-2必須: 対応表(config('brand_wheel_candidate_survey'))で
      * 「該当なし」の項目は、候補者調査の項目名・割合ともnullにすること
      * (数字を捏造しない)。
@@ -359,10 +387,17 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
     /**
      * 依頼BO-1: missing_items_max_countを超える件数のときは、末尾を
      * 「ほかN件」1件に畳み、上限を超えた項目名を出力に含めないこと。
+     *
+     * 依頼CF-4(2026-09-29): 超過時に実際に表示する件数は
+     * missing_items_overflow_display_count(config、$maxCount-1という
+     * 暗黙の計算式ではなく明示的な別のconfigキー)から読むこと ――
+     * この2つの数値が食い違わない(=設定値が実際の挙動を表す)ことの
+     * 確認を兼ねる。
      */
     public function test_missing_items_folds_the_tail_into_others_count_beyond_the_max(): void
     {
         $maxCount = (int) config('admin_comparison_pptx.missing_items_max_count');
+        $overflowDisplayCount = (int) config('admin_comparison_pptx.missing_items_overflow_display_count');
         $missingFromSelf = [];
         for ($i = 0; $i < $maxCount + 3; $i++) {
             $missingFromSelf[] = $this->missingFromSelfItem('活動的魅力', "項目{$i}", $maxCount + 3 - $i);
@@ -370,10 +405,10 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
 
         $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['missingFromSelf' => $missingFromSelf]));
 
-        $this->assertCount($maxCount - 1, $data['missing_items']['items']);
-        $this->assertSame(4, $data['missing_items']['others_count']);
+        $this->assertCount($overflowDisplayCount, $data['missing_items']['items']);
+        $this->assertSame(($maxCount + 3) - $overflowDisplayCount, $data['missing_items']['others_count']);
         $this->assertSame('項目0', $data['missing_items']['items'][0]['sub_name']);
-        $this->assertSame('項目'.($maxCount - 2), $data['missing_items']['items'][$maxCount - 2]['sub_name'] ?? null);
+        $this->assertSame('項目'.($overflowDisplayCount - 1), $data['missing_items']['items'][$overflowDisplayCount - 1]['sub_name'] ?? null);
     }
 
     /**
@@ -392,6 +427,28 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
 
         $this->assertCount($maxCount, $data['missing_items']['items']);
         $this->assertSame(0, $data['missing_items']['others_count']);
+    }
+
+    /**
+     * 依頼CF-4必須: 該当が0件・1件・上限ちょうど・上限超過のいずれでも、
+     * 表示件数+「ほかN件」が該当総数と一致すること(件数が食い違わない)。
+     */
+    public function test_missing_items_displayed_count_plus_others_count_always_equals_the_total(): void
+    {
+        $maxCount = (int) config('admin_comparison_pptx.missing_items_max_count');
+
+        foreach ([0, 1, $maxCount, $maxCount + 5] as $total) {
+            $missingFromSelf = [];
+            for ($i = 0; $i < $total; $i++) {
+                $missingFromSelf[] = $this->missingFromSelfItem('活動的魅力', "項目{$i}", $total - $i);
+            }
+
+            $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['missingFromSelf' => $missingFromSelf]));
+
+            $displayed = count($data['missing_items']['items']);
+            $others = $data['missing_items']['others_count'];
+            $this->assertSame($total, $displayed + $others, "該当{$total}件のとき、表示件数({$displayed})+ほか件数({$others})が総数と一致しないこと");
+        }
     }
 
     /**

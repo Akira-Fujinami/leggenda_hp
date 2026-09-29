@@ -9,6 +9,7 @@ use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\CrawlLinkExtractor;
+use App\Services\Analysis\CrawlOriginScopeResolver;
 use App\Services\Analysis\CrawlPolicyResolver;
 use App\Services\Analysis\HtmlSeoAnalyzer;
 use App\Services\Analysis\PageHtmlResolver;
@@ -59,6 +60,7 @@ class CrawlWebsitePageJob implements ShouldQueue
         HtmlSeoAnalyzer $htmlSeoAnalyzer,
         PageHtmlResolver $htmlResolver,
         RecruitmentTrackPageFilter $trackFilter,
+        CrawlOriginScopeResolver $originScopeResolver,
     ): void {
         $maxPages = (int) config('brand_wheel.crawl_max_pages', 50);
         $fetchedCount = $this->pages()->where('status', AnalysisCrawledPage::STATUS_FETCHED)->count();
@@ -84,11 +86,7 @@ class CrawlWebsitePageJob implements ShouldQueue
             return;
         }
 
-        $next = $this->pages()
-            ->where('status', AnalysisCrawledPage::STATUS_PENDING)
-            ->orderBy('depth')
-            ->orderBy('id')
-            ->first();
+        $next = $this->selectNextPendingPage($originScopeResolver);
 
         if ($next === null) {
             $this->finalizeCrawl($pipeline, $htmlSeoAnalyzer, 'exhausted');
@@ -230,6 +228,85 @@ class CrawlWebsitePageJob implements ShouldQueue
     }
 
     /**
+     * 依頼CF-1(2026-09-29)/CF追補(2026-09-30、必須修正): 起点URL(採用
+     * ページ)配下のpendingページを、配下の外のpendingページより先に選ぶ。
+     * 範囲(許可ホスト・crawl_domain_scope・crawl_max_pages)は一切変えず、
+     * 同じpendingの集合の中で「どれを次に取得するか」の順序だけを変える
+     * ―― 配下を取り切れば、これまでどおり外側(depth→id順)へ広がる。
+     *
+     * config('brand_wheel.crawl_prioritize_origin_scope')がfalseなら、
+     * この依頼より前と完全に同じ順序(orderBy('depth')->orderBy('id')の
+     * 先頭)に戻る。起点URLが解決できない場合も同様にフォールバックする
+     * (階層図側がscope=nullのとき「配下0件」として扱うのと同じ判断)。
+     *
+     * 決定性: DBの並び順(depth→id、既存と同じ)以外の要素(乱数・現在時刻等)
+     * を一切使わないため、同じサイトを2回巡回すれば同じ順になる。
+     *
+     * 【CF追補で必須修正】依頼CFでは`limit($scanLimit)->get()`で先頭
+     * $scanLimit件だけを見ていたが、これは誤りだった ―― 起点配下の
+     * ページがdepth 2〜3にしか無く、かつ上位のdepthに配下の外のリンクが
+     * $scanLimit件以上あるサイトでは、優先が「静かに」無効化され、
+     * しかもそれが誰にも分からない(依頼者指摘、コメント「巡回できる
+     * ページの集合・件数には一切影響しない」も、選ばれる50件の中身が
+     * 変わる以上は誤りだった)。isWithinScope()のパス正規化(起点URLの
+     * ディレクトリ正規化・末尾スラッシュの扱い等、CrawlOriginScopeResolver
+     * 参照)をSQL側(orderByRaw等)で再現するのは、Postgresの文字列関数
+     * だけで既存のnormalizeDirectoryPath()相当を組み直す必要がありPHP側
+     * ロジックとの二重実装になる(「同じ判定を2箇所に持たせない」という
+     * 依頼CF-1自体の方針に反する)ため、chunk()でpending全件を尽きるまで
+     * 走査する方式にした ―― メモリはchunkサイズぶんしか使わないため
+     * 安全弁の目的(1ページのリンク数に上限が無く、pending件数が極端に
+     * 膨らむ場合への備え)は保たれたまま、取りこぼしが無くなる。
+     *
+     * chunk()はorderBy('depth')->orderBy('id')による複合ソートを保った
+     * オフセットページングのため、実行中に他プロセスが同じwebsite_analysis_id
+     * 配下のpending行を書き換えると理論上ページ飛びが起きうるが、この
+     * ジョブの実行中に他のプロセスがこの1サイトのanalysis_crawled_pagesを
+     * 同時に書き換えることは無い(依頼D-1由来、1ジョブ=1ページの直列連鎖
+     * という設計そのものが前提)。
+     */
+    private function selectNextPendingPage(CrawlOriginScopeResolver $originScopeResolver): ?AnalysisCrawledPage
+    {
+        $defaultOrder = fn () => $this->pages()
+            ->where('status', AnalysisCrawledPage::STATUS_PENDING)
+            ->orderBy('depth')
+            ->orderBy('id');
+
+        if (! (bool) config('brand_wheel.crawl_prioritize_origin_scope', true)) {
+            return $defaultOrder()->first();
+        }
+
+        $websiteAnalysis = $this->websiteAnalysisForTrackFilter();
+        $scope = $websiteAnalysis !== null ? $originScopeResolver->resolveScope($websiteAnalysis) : null;
+
+        if ($scope === null) {
+            return $defaultOrder()->first();
+        }
+
+        $chunkSize = (int) config('brand_wheel.crawl_origin_priority_chunk_size', 200);
+        $firstPage = null;
+        $withinOrigin = null;
+
+        $defaultOrder()->chunk($chunkSize, function ($chunk) use (&$firstPage, &$withinOrigin, $originScopeResolver, $scope) {
+            $firstPage ??= $chunk->first();
+
+            $match = $chunk->first(
+                fn (AnalysisCrawledPage $page) => $originScopeResolver->isWithinScope($page->url, $page->final_url, $scope)
+            );
+
+            if ($match !== null) {
+                $withinOrigin = $match;
+
+                return false; // 見つかり次第、以降のchunkは読まない。
+            }
+        });
+
+        // pending全件を走査しても配下のページが1件も無ければ、先頭行
+        // (=優先を無効化した場合と同じ、depth→id順の最初の行)を返す。
+        return $withinOrigin ?? $firstPage;
+    }
+
+    /**
      * 依頼BB-2: 新卒／キャリア除外判定・安全弁に必要な情報(recruitment_track・
      * 起点URL・安全弁発動済みフラグ)をまとめて取得する。他のジョブ間で
      * 状態を共有しない設計(クラスdocblock参照)に合わせ、毎回DBから引く
@@ -344,6 +421,14 @@ class CrawlWebsitePageJob implements ShouldQueue
             'website_analysis_id' => $this->websiteAnalysisId,
             'reason' => $reason,
             'counts' => $counts,
+            // 依頼CF追補(2026-09-30、必須): 起点URL配下優先(依頼CF-1)が
+            // 有効だったかどうかを事後にログだけで確認できるようにする
+            // (依頼者指定)。フォールバック(配下0件で先頭行を選んだ回)
+            // 自体は1回の巡回で数十回起きるのが正常であり毎回ログにすると
+            // ノイズになるため出さない ―― 配下を何件取れたかは階層図の
+            // site_hierarchy_scope_note(このログとは別に既に出している)
+            // で分かる。
+            'crawl_prioritize_origin_scope' => (bool) config('brand_wheel.crawl_prioritize_origin_scope', true),
         ]);
 
         // 依頼BB-2の安全弁: フロンティアが自然に枯渇した('exhausted')ときに

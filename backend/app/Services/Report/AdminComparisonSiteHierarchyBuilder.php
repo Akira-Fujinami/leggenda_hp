@@ -2,10 +2,9 @@
 
 namespace App\Services\Report;
 
-use App\Enums\PageType;
 use App\Models\AnalysisCrawledPage;
-use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
+use App\Services\Analysis\CrawlOriginScopeResolver;
 use Illuminate\Support\Collection;
 
 /**
@@ -35,18 +34,36 @@ use Illuminate\Support\Collection;
  * 二重に実装しない。巡回の範囲(許可ホストの解決・起点パスでの絞り込み)
  * 自体はこの依頼の対象外(依頼者指定、別途相談) ―― ここではあくまで
  * 「気づけるようにする」ための集計のみ行う。
+ *
+ * 依頼CF-1(2026-09-29): 起点URLの解決・配下判定(旧resolveScope()/
+ * isWithinScope())はApp\Services\Analysis\CrawlOriginScopeResolverへ
+ * 抜き出した ―― CrawlWebsitePageJobの取得順序も同じ判定を必要と
+ * するようになったため(同じ判定を2箇所に持たない、依頼者指定)。
+ *
+ * 依頼CF-2(2026-09-29): 枝が少ないサイト(実例: 信金中央金庫、起点URL配下
+ * 5件で枝1本)で、階層図スライドの下半分が空白のまま残る不具合を実機で
+ * 確認した(依頼者指摘)。数字・ページ名を捏造せず、実データから出せる
+ * 材料だけで埋める ―― (1)代表ページの件数を増やす
+ * (site_hierarchy_sample_pages_per_branch、3→5)、(2)起点URL配下の
+ * 「外」にあった実データを「参考」として要約する(buildOutsideOriginBreakdown()、
+ * 枝の組み立て(build()本体)とは別枠 ―― 階層図そのものではない、と明確に
+ * 分けるため)。プライバシーポリシー等、枝の中身の判断材料にならない
+ * ページは巡回対象からは外さず(crawl_excluded_path_patternsは変更しない)、
+ * 代表ページとして選ぶ優先順位だけを下げる(deprioritizeSamplePages())。
  */
 class AdminComparisonSiteHierarchyBuilder
 {
+    public function __construct(private readonly CrawlOriginScopeResolver $scopeResolver) {}
+
     /**
-     * @return array{origin_url: string, branches: list<array{name: string, page_count: int, sample_pages: list<string>, name_is_url_segment: bool}>, other_branch_count: int, total_fetched_pages: int, pages_within_origin: int}
+     * @return array{origin_url: string, branches: list<array{name: string, page_count: int, sample_pages: list<string>, name_is_url_segment: bool}>, other_branch_count: int, total_fetched_pages: int, pages_within_origin: int, outside_origin_breakdown: list<array{name: string, page_count: int}>, outside_origin_other_count: int}
      */
     public function build(WebsiteAnalysis $selfWebsiteAnalysis): array
     {
         $pages = $this->fetchedPages($selfWebsiteAnalysis);
         $totalFetchedPages = $pages->count();
 
-        $scope = $this->resolveScope($selfWebsiteAnalysis);
+        $scope = $this->scopeResolver->resolveScope($selfWebsiteAnalysis);
         if ($scope === null) {
             return [
                 'origin_url' => '',
@@ -54,19 +71,28 @@ class AdminComparisonSiteHierarchyBuilder
                 'other_branch_count' => 0,
                 'total_fetched_pages' => $totalFetchedPages,
                 'pages_within_origin' => 0,
+                'outside_origin_breakdown' => [],
+                'outside_origin_other_count' => 0,
             ];
         }
 
         $sampleLimit = (int) config('admin_comparison_pptx.site_hierarchy_sample_pages_per_branch');
 
-        /** @var array<string, array{count: int, index_title: ?string, labels: list<string>}> $branches */
+        /** @var array<string, array{count: int, index_title: ?string, labels: list<array{label: string, deprioritized: bool}>}> $branches */
         $branches = [];
-        /** @var list<string> $flatPageLabels 依頼CD-5参照 */
+        /** @var list<array{label: string, deprioritized: bool}> $flatPageLabels 依頼CD-5参照 */
         $flatPageLabels = [];
         $pagesWithinOrigin = 0;
+        /** @var array<string, int> $outsideCounts 依頼CF-2: 起点URL配下の外にあったページの、パス第1セグメントごとの件数(参考用)。 */
+        $outsideCounts = [];
 
         foreach ($pages as $page) {
-            if (! $this->isWithinScope($page, $scope)) {
+            if (! $this->scopeResolver->isWithinScope($page->url, $page->final_url, $scope)) {
+                $outsideKey = $this->outsideTopSegment($page);
+                if ($outsideKey !== null) {
+                    $outsideCounts[$outsideKey] = ($outsideCounts[$outsideKey] ?? 0) + 1;
+                }
+
                 continue;
             }
             $pagesWithinOrigin++;
@@ -95,7 +121,8 @@ class AdminComparisonSiteHierarchyBuilder
             // ディレクトリ形式のURL)は、従来どおりその枝自身のインデックス
             // ページとして扱う(依頼CB-3由来の既存動作、変更しない)。
             if (count($segments) === 1 && str_contains($segments[0], '.')) {
-                $flatPageLabels[] = $title !== '' ? $title : $segments[0];
+                $label = $title !== '' ? $title : $segments[0];
+                $flatPageLabels[] = ['label' => $label, 'deprioritized' => $this->isDeprioritizedSampleLabel($label)];
 
                 continue;
             }
@@ -111,9 +138,12 @@ class AdminComparisonSiteHierarchyBuilder
             }
 
             $label = $title !== '' ? $title : end($segments);
-            if (count($branches[$branchKey]['labels'] ?? []) < $sampleLimit) {
-                $branches[$branchKey]['labels'][] = $label;
-            }
+            // 依頼CF-2: sampleLimitでの打ち切りはここでは行わない
+            // (deprioritizeSamplePages()で優先度順に並べ替えたあとに
+            // 打ち切る ―― そうしないと、たまたま先に見つかった
+            // privacypolicy等が優先枠を占有し、あとから見つかった
+            // 判断材料になるページが弾かれてしまう)。
+            $branches[$branchKey]['labels'][] = ['label' => $label, 'deprioritized' => $this->isDeprioritizedSampleLabel($label)];
         }
 
         $branchList = [];
@@ -121,7 +151,7 @@ class AdminComparisonSiteHierarchyBuilder
             $branchList[] = [
                 'name' => $info['index_title'] ?? $segment,
                 'page_count' => $info['count'],
-                'sample_pages' => $info['labels'],
+                'sample_pages' => $this->deprioritizeSamplePages($info['labels'], $sampleLimit),
                 // 依頼CC-3③: ページ名を捏造しない ―― インデックスページを
                 // 巡回できておらずURLのパスセグメントのまま枝名にしている
                 // 場合、その旨をGenerator側で分かる形にする(捏造しない、
@@ -140,7 +170,7 @@ class AdminComparisonSiteHierarchyBuilder
             $branchList[] = [
                 'name' => (string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'),
                 'page_count' => count($flatPageLabels),
-                'sample_pages' => array_slice($flatPageLabels, 0, $sampleLimit),
+                'sample_pages' => $this->deprioritizeSamplePages($flatPageLabels, $sampleLimit),
                 'name_is_url_segment' => false,
             ];
         }
@@ -153,13 +183,98 @@ class AdminComparisonSiteHierarchyBuilder
         $otherBranchCount = max(0, count($branchList) - $limit);
         $branchList = array_slice($branchList, 0, $limit);
 
+        [$outsideBreakdown, $outsideOtherCount] = $this->summarizeOutsideOriginBreakdown($outsideCounts);
+
         return [
             'origin_url' => $scope['origin_url'],
             'branches' => $branchList,
             'other_branch_count' => $otherBranchCount,
             'total_fetched_pages' => $totalFetchedPages,
             'pages_within_origin' => $pagesWithinOrigin,
+            'outside_origin_breakdown' => $outsideBreakdown,
+            'outside_origin_other_count' => $outsideOtherCount,
         ];
+    }
+
+    /**
+     * 依頼CF-2: 代表ページの優先度を下げる語(config
+     * ('admin_comparison_pptx.site_hierarchy_deprioritized_sample_keywords'))を
+     * 含むラベル(タイトルまたはファイル名)かどうか。巡回対象からは外さない
+     * (crawl_excluded_path_patternsは変更しない)―― あくまで代表ページとして
+     * 選ぶ優先順位だけを下げる。
+     */
+    private function isDeprioritizedSampleLabel(string $label): bool
+    {
+        foreach ((array) config('admin_comparison_pptx.site_hierarchy_deprioritized_sample_keywords', []) as $keyword) {
+            if ($keyword !== '' && mb_stripos($label, (string) $keyword) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 依頼CF-2: 優先度が高い(deprioritized=false)ラベルを先に、その中では
+     * 発見順を保ったまま(stable)$sampleLimit件まで選ぶ。優先度の高いものが
+     * $sampleLimit件に満たない場合は、優先度が低いものから順に埋める ――
+     * 「除外した結果その枝の代表ページが0件になるなら、外さずに出す」
+     * (依頼者指定)をそのまま満たす(そもそも除外していないため)。
+     *
+     * @param  list<array{label: string, deprioritized: bool}>  $labels
+     * @return list<string>
+     */
+    private function deprioritizeSamplePages(array $labels, int $sampleLimit): array
+    {
+        $prioritized = array_values(array_filter($labels, fn (array $l) => ! $l['deprioritized']));
+        $deprioritized = array_values(array_filter($labels, fn (array $l) => $l['deprioritized']));
+
+        $ordered = [...$prioritized, ...$deprioritized];
+
+        return array_column(array_slice($ordered, 0, $sampleLimit), 'label');
+    }
+
+    /**
+     * 依頼CF-2: 起点URL配下の「外」にあったページ(host一致、pathが
+     * scope外)を、パスの第1セグメントで集計する(参考用、枝の一覧
+     * (branches)とは別枠 ―― 「これは階層図そのものではない」ことを
+     * Generator側でも明確に分けて出す)。ホストが異なる(そもそも許可
+     * ホストの外)ページは対象外(nullを返す) ―― 巡回の範囲自体は
+     * この依頼で変更しないため、許可ホストの外のページを集計に混ぜない。
+     */
+    private function outsideTopSegment(AnalysisCrawledPage $page): ?string
+    {
+        $parts = parse_url((string) ($page->final_url ?? $page->url));
+        $path = (string) ($parts['path'] ?? '');
+        $segments = array_values(array_filter(explode('/', $path), fn (string $s) => $s !== ''));
+
+        return $segments[0] ?? null;
+    }
+
+    /**
+     * @param  array<string, int>  $outsideCounts
+     * @return array{0: list<array{name: string, page_count: int}>, 1: int}
+     */
+    private function summarizeOutsideOriginBreakdown(array $outsideCounts): array
+    {
+        if ($outsideCounts === []) {
+            return [[], 0];
+        }
+
+        $rows = [];
+        foreach ($outsideCounts as $segment => $count) {
+            $rows[] = ['name' => $segment, 'page_count' => $count];
+        }
+        usort($rows, fn (array $a, array $b) => $b['page_count'] <=> $a['page_count']);
+
+        $limit = (int) config('admin_comparison_pptx.site_hierarchy_outside_breakdown_limit');
+        $otherCount = 0;
+        if (count($rows) > $limit) {
+            $otherCount = array_sum(array_column(array_slice($rows, $limit), 'page_count'));
+            $rows = array_slice($rows, 0, $limit);
+        }
+
+        return [$rows, $otherCount];
     }
 
     /**
@@ -174,14 +289,14 @@ class AdminComparisonSiteHierarchyBuilder
         $pages = $this->fetchedPages($websiteAnalysis);
         $totalFetched = $pages->count();
 
-        $scope = $this->resolveScope($websiteAnalysis);
+        $scope = $this->scopeResolver->resolveScope($websiteAnalysis);
         if ($scope === null) {
-            return ['origin_url' => $scope['origin_url'] ?? null, 'total_fetched' => $totalFetched, 'within_origin' => 0];
+            return ['origin_url' => null, 'total_fetched' => $totalFetched, 'within_origin' => 0];
         }
 
         $withinOrigin = 0;
         foreach ($pages as $page) {
-            if ($this->isWithinScope($page, $scope)) {
+            if ($this->scopeResolver->isWithinScope($page->url, $page->final_url, $scope)) {
                 $withinOrigin++;
             }
         }
@@ -201,50 +316,6 @@ class AdminComparisonSiteHierarchyBuilder
     }
 
     /**
-     * 起点URLをホスト・パスに分解する。起点URLが無い、またはホストが
-     * 読み取れない場合はnull(呼び出し側は「配下0件」として扱う)。
-     *
-     * @return array{origin_url: string, host: string, path: string}|null
-     */
-    private function resolveScope(WebsiteAnalysis $websiteAnalysis): ?array
-    {
-        $originUrl = $this->resolveOriginUrl($websiteAnalysis);
-        if ($originUrl === null || $originUrl === '') {
-            return null;
-        }
-
-        $originParts = parse_url($originUrl);
-        $originHost = strtolower((string) ($originParts['host'] ?? ''));
-        if ($originHost === '') {
-            return ['origin_url' => $originUrl, 'host' => '', 'path' => '/'];
-        }
-
-        return [
-            'origin_url' => $originUrl,
-            'host' => $originHost,
-            'path' => $this->normalizeDirectoryPath((string) ($originParts['path'] ?? '/')),
-        ];
-    }
-
-    /**
-     * @param  array{host: string, path: string}  $scope
-     */
-    private function isWithinScope(AnalysisCrawledPage $page, array $scope): bool
-    {
-        if ($scope['host'] === '') {
-            return false;
-        }
-
-        $parts = parse_url((string) ($page->final_url ?? $page->url));
-        $host = strtolower((string) ($parts['host'] ?? ''));
-        if ($host !== $scope['host']) {
-            return false;
-        }
-
-        return str_starts_with((string) ($parts['path'] ?? ''), $scope['path']);
-    }
-
-    /**
      * @param  array{host: string, path: string}  $scope
      * @return list<string>
      */
@@ -254,53 +325,5 @@ class AdminComparisonSiteHierarchyBuilder
         $remainder = substr($path, strlen($scope['path']));
 
         return array_values(array_filter(explode('/', $remainder), fn (string $s) => $s !== ''));
-    }
-
-    private function resolveOriginUrl(WebsiteAnalysis $websiteAnalysis): ?string
-    {
-        $recruit = AnalysisPage::query()
-            ->where('website_analysis_id', $websiteAnalysis->id)
-            ->where('page_type', PageType::Recruit)
-            ->first();
-        $recruitUrl = $recruit !== null ? ($recruit->final_url ?? $recruit->url) : null;
-        if ($recruitUrl !== null && $recruitUrl !== '') {
-            return $recruitUrl;
-        }
-
-        $homepage = AnalysisPage::query()
-            ->where('website_analysis_id', $websiteAnalysis->id)
-            ->where('page_type', PageType::Homepage)
-            ->first();
-        $homepageUrl = $homepage !== null ? ($homepage->final_url ?? $homepage->url) : null;
-        if ($homepageUrl !== null && $homepageUrl !== '') {
-            return $homepageUrl;
-        }
-
-        return $websiteAnalysis->website?->url;
-    }
-
-    /**
-     * 起点URLのパスを、ディレクトリとして扱える形(末尾"/")に正規化する。
-     * 末尾がファイル名らしい(最後のセグメントに"."を含む)場合は、その
-     * ファイル名を取り除いた1つ上のディレクトリまでにする。
-     */
-    private function normalizeDirectoryPath(string $path): string
-    {
-        if ($path === '') {
-            return '/';
-        }
-
-        if (str_ends_with($path, '/')) {
-            return $path;
-        }
-
-        $lastSlash = strrpos($path, '/');
-        $lastSegment = $lastSlash === false ? $path : substr($path, $lastSlash + 1);
-
-        if (str_contains($lastSegment, '.')) {
-            return $lastSlash === false ? '/' : substr($path, 0, $lastSlash + 1);
-        }
-
-        return $path.'/';
     }
 }

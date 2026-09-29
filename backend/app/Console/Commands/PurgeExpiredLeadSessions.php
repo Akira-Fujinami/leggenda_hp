@@ -78,6 +78,48 @@ class PurgeExpiredLeadSessions extends Command
         }
         $totalStorageBytes = array_sum(array_column($storageTargets, 'size'));
 
+        // 依頼CF-6(2026-09-29): このコマンドがスケジューラ未登録で一度も
+        // 自動実行されていなかった(依頼者指摘)。この依頼ではdry-runの
+        // 登録のみを行う(--executeは入れない、別依頼で判断)ため、まずは
+        // 「削除予定の件数・解放見込み容量」「ディスク使用量」をログへ
+        // 必ず残す ―― Renderのダッシュボードを見なくても、ログだけで
+        // 逼迫しているかどうかを判断できるようにする(依頼者指定)。
+        // リードの個人情報(会社名・担当者名・メール・電話番号・トークン)は
+        // 一切含めない ―― 件数と容量のみ。
+        Log::info('lead:purge-expired-sessions: dry-run summary', [
+            'execute' => $execute,
+            'retention_days' => $retentionDays,
+            'expired_lead_session_count' => $targets->count(),
+            'cascaded_project_count' => $projectCount,
+            'report_file_count' => $reportCount,
+            'analysis_storage_directory_count' => count($storageTargets),
+            'analysis_storage_bytes_to_free' => $totalStorageBytes,
+        ]);
+
+        $diskRoot = (string) config('filesystems.disks.analysis.root');
+        if ($diskRoot !== '' && is_dir($diskRoot)) {
+            // 依頼CF-6: 保存先ディレクトリ(analysisディスク全体)の合計
+            // サイズ・空き容量。ディスク逼迫が依頼CE-1で見つけた
+            // 「status=fetchedなのにファイルが読めない」現象の候補に
+            // 挙がっているため、これが分かれば本番ログだけで逼迫の有無を
+            // 判断できる(依頼者指定)。
+            //
+            // 合計サイズはPHPで1ファイルずつSPLで数え上げず`du -sb`を使う
+            // ―― 実測9.8GBの既存データに対し全ファイルをstat()すると
+            // 毎日のスケジュール実行のたびに時間がかかる(このディレクトリは
+            // 上のstorageTargetsの集計対象〈期限切れセッションぶんのみ〉
+            // よりずっと広い、ディスク全体が対象のため)。duはファイル
+            // システム側の集計を使うため大幅に速い。
+            $diskUsedBytes = $this->directorySizeBytes($diskRoot);
+            $diskFreeBytes = disk_free_space($diskRoot);
+
+            Log::info('lead:purge-expired-sessions: analysis disk usage', [
+                'disk_root' => $diskRoot,
+                'used_bytes' => $diskUsedBytes,
+                'free_bytes' => $diskFreeBytes !== false ? (int) $diskFreeBytes : null,
+            ]);
+        }
+
         $this->line('=== 対象件数 ===');
         $this->line("有効期限切れから{$retentionDays}日以上経過したLeadSession: {$targets->count()}件");
         $this->line("連鎖削除されるProject(Website/Analysis等を含む): {$projectCount}件");
@@ -171,6 +213,24 @@ class PurgeExpiredLeadSessions extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * 依頼CF-6: `du -sb`(バイト単位の合計サイズ)を使う。コマンドが
+     * 使えない/失敗した環境(du自体が無い等)ではnullを返し、呼び出し元の
+     * ログには'used_bytes'を出さない ―― 失敗を握りつぶして0等の誤った
+     * 数字を記録しないため。
+     */
+    private function directorySizeBytes(string $dir): ?int
+    {
+        $output = @shell_exec('du -sb '.escapeshellarg($dir).' 2>/dev/null');
+        if ($output === null || $output === false || trim($output) === '') {
+            return null;
+        }
+
+        $bytes = (int) strtok(trim($output), "\t ");
+
+        return $bytes > 0 ? $bytes : null;
     }
 
     private function formatBytes(int|float $bytes): string

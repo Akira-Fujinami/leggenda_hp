@@ -225,4 +225,68 @@ class PurgeExpiredLeadSessionsTest extends TestCase
         Storage::disk('analysis')->assertExists("{$dir}/raw/homepage.html");
         $this->assertDatabaseCount('lead_sessions', 1);
     }
+
+    /**
+     * 依頼CF-6(2026-09-29): 削除予定の件数・解放見込み容量をログに残すこと。
+     * リードの個人情報(会社名・担当者名・メール・電話番号・トークン)は
+     * 一切含めないこと。
+     */
+    public function test_dry_run_logs_the_summary_without_leaking_lead_pii(): void
+    {
+        Storage::fake('analysis');
+        Log::spy();
+
+        $session = $this->makeExpiredSessionWithProject();
+        $project = $session->projects->first();
+        $analysis = Analysis::factory()->create(['project_id' => $project->id]);
+        $dir = app(AnalysisStoragePaths::class)->analysisDir($analysis->id);
+        Storage::disk('analysis')->put("{$dir}/raw/homepage.html", str_repeat('x', 100));
+
+        $this->artisan('lead:purge-expired-sessions')->assertSuccessful();
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message, array $context) {
+                if ($message !== 'lead:purge-expired-sessions: dry-run summary') {
+                    return false;
+                }
+
+                $this->assertArrayHasKey('expired_lead_session_count', $context);
+                $this->assertArrayHasKey('analysis_storage_bytes_to_free', $context);
+                $this->assertFalse($context['execute']);
+
+                $encoded = json_encode($context, JSON_UNESCAPED_UNICODE);
+                $this->assertStringNotContainsString('@', (string) $encoded, 'メールアドレスらしき文字列を含まないこと');
+
+                return true;
+            })
+            ->once();
+    }
+
+    /**
+     * 依頼CF-6必須: ディスク使用量(保存先ディレクトリの合計サイズ・
+     * 空き容量)もログに出すこと。
+     */
+    public function test_dry_run_logs_analysis_disk_usage(): void
+    {
+        Storage::fake('analysis');
+        Log::spy();
+
+        $this->makeExpiredSessionWithProject();
+
+        $this->artisan('lead:purge-expired-sessions')->assertSuccessful();
+
+        Log::shouldHaveReceived('info')
+            ->withArgs(function (string $message, array $context) {
+                if ($message !== 'lead:purge-expired-sessions: analysis disk usage') {
+                    return false;
+                }
+
+                $this->assertArrayHasKey('disk_root', $context);
+                $this->assertArrayHasKey('used_bytes', $context);
+                $this->assertArrayHasKey('free_bytes', $context);
+
+                return true;
+            })
+            ->once();
+    }
 }

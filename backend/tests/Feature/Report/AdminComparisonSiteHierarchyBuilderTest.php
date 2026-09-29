@@ -22,7 +22,11 @@ class AdminComparisonSiteHierarchyBuilderTest extends TestCase
 
     private function builder(): AdminComparisonSiteHierarchyBuilder
     {
-        return new AdminComparisonSiteHierarchyBuilder;
+        // 依頼CF-1: 起点URLの解決・配下判定はCrawlOriginScopeResolverへ
+        // 抜き出したため、コンストラクタ経由で注入する(app()経由でコンテナに
+        // 解決させる ―― CrawlOriginScopeResolver自体に依存が無いため
+        // 手動でnewしても差はないが、他の新しいBuilder系テストと同じ流儀に揃える)。
+        return app(AdminComparisonSiteHierarchyBuilder::class);
     }
 
     private function crawledPage(WebsiteAnalysis $wa, string $url, ?string $title, string $status = AnalysisCrawledPage::STATUS_FETCHED): AnalysisCrawledPage
@@ -302,5 +306,109 @@ class AdminComparisonSiteHierarchyBuilderTest extends TestCase
         $this->assertCount(1, $result['branches']);
         $this->assertSame('カルチャー・社風', $result['branches'][0]['name']);
         $this->assertNotSame((string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'), $result['branches'][0]['name']);
+    }
+
+    /**
+     * 依頼CF-2(2026-09-29): プライバシーポリシー等、枝の中身の判断材料に
+     * ならないページは、代表ページとして選ぶ優先順位を下げること(除外は
+     * しない ―― 巡回対象からは外さない、crawl_excluded_path_patternsは
+     * 変更しない)。
+     */
+    public function test_deprioritized_pages_are_pushed_to_the_end_of_the_sample_pages(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        // privacypolicyを先に発見(id順で先)、その後に本来の代表ページに
+        // なるべき2件を発見する ―― サンプル上限(既定5)を超える件数にし、
+        // 優先度を付けなければprivacypolicyが先着で選ばれてしまう状況にする。
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/privacypolicy.html', null);
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/a.html', 'インタビューA');
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/b.html', 'インタビューB');
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/c.html', 'インタビューC');
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/d.html', 'インタビューD');
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/e.html', 'インタビューE');
+
+        $result = $this->builder()->build($wa);
+
+        $samplePages = $result['branches'][0]['sample_pages'];
+        $limit = (int) config('admin_comparison_pptx.site_hierarchy_sample_pages_per_branch');
+        $this->assertCount($limit, $samplePages);
+        $this->assertNotContains('privacypolicy.html', $samplePages, '優先度の高いページが十分にあるとき、privacypolicyは代表ページに出ないこと');
+    }
+
+    /**
+     * 依頼CF-2必須: 除外した結果その枝の代表ページが0件になるなら、
+     * 外さずに出すこと(デプライオリティは除外ではない)。
+     */
+    public function test_deprioritized_page_still_shows_when_it_is_the_only_candidate(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/privacypolicy.html', null);
+
+        $result = $this->builder()->build($wa);
+
+        $this->assertSame(['privacypolicy.html'], $result['branches'][0]['sample_pages']);
+    }
+
+    /**
+     * 依頼CF-2(2026-09-29): 起点URL配下の「外」にあったページを、パスの
+     * 第1セグメントで集計すること(参考用、実データから出す、捏造しない)。
+     */
+    public function test_outside_origin_breakdown_summarizes_pages_outside_the_origin_by_top_segment(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        $this->crawledPage($wa, 'https://example.com/ir/report.html', null);
+        $this->crawledPage($wa, 'https://example.com/ir/notice.html', null);
+        $this->crawledPage($wa, 'https://example.com/news/2026-topics.html', null);
+        // 起点配下(参考の対象外)。
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/a.html', 'A');
+
+        $result = $this->builder()->build($wa);
+
+        $byName = collect($result['outside_origin_breakdown'])->keyBy('name');
+        $this->assertSame(2, $byName['ir']['page_count']);
+        $this->assertSame(1, $byName['news']['page_count']);
+        $this->assertSame(0, $result['outside_origin_other_count']);
+    }
+
+    /**
+     * 上限を超えた区分は件数を合算して「ほか」にまとめること。
+     */
+    public function test_outside_origin_breakdown_folds_the_tail_into_other_count(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        $limit = (int) config('admin_comparison_pptx.site_hierarchy_outside_breakdown_limit');
+        for ($i = 0; $i < $limit + 2; $i++) {
+            $this->crawledPage($wa, "https://example.com/segment{$i}/page.html", null);
+        }
+
+        $result = $this->builder()->build($wa);
+
+        $this->assertCount($limit, $result['outside_origin_breakdown']);
+        $this->assertSame(2, $result['outside_origin_other_count']);
+    }
+
+    /**
+     * 起点配下にしかページが無いサイトでは、「参考」の内訳は0件
+     * (空配列)であること ―― セクションごと出ない(Generator側)ことの
+     * 前提。
+     */
+    public function test_outside_origin_breakdown_is_empty_when_everything_is_within_origin(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+        $this->crawledPage($wa, 'https://example.com/recruit/careers/a.html', 'A');
+
+        $result = $this->builder()->build($wa);
+
+        $this->assertSame([], $result['outside_origin_breakdown']);
+        $this->assertSame(0, $result['outside_origin_other_count']);
     }
 }

@@ -171,13 +171,19 @@ class AdminComparisonPptxDataBuilder
     private function buildMissingItems(array $missingFromSelf, int $competitorCount): array
     {
         $maxCount = (int) config('admin_comparison_pptx.missing_items_max_count');
+        // 依頼CF-4: 超過時に実際に表示する件数を、$maxCount-1という暗黙の
+        // 計算式ではなく、config側の別の値としてそのまま読む(config上の
+        // 数値が実際の挙動と食い違わないようにする、config
+        // ('admin_comparison_pptx.missing_items_overflow_display_count')
+        // docblock参照)。
+        $overflowDisplayCount = (int) config('admin_comparison_pptx.missing_items_overflow_display_count');
 
         $items = array_map(fn (array $item) => $this->enrichMissingItem($item['axis_name'], $item['sub_name']), $missingFromSelf);
 
         $othersCount = 0;
         if (count($items) > $maxCount) {
-            $othersCount = count($items) - ($maxCount - 1);
-            $items = array_slice($items, 0, max(0, $maxCount - 1));
+            $othersCount = count($items) - $overflowDisplayCount;
+            $items = array_slice($items, 0, max(0, $overflowDisplayCount));
         }
 
         $majorityThreshold = (new BrandWheelMultiSiteComparisonComposer)->majorityThreshold($competitorCount);

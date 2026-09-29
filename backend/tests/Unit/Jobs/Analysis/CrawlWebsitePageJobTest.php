@@ -17,6 +17,7 @@ use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
 use App\Services\Analysis\CrawlLinkExtractor;
+use App\Services\Analysis\CrawlOriginScopeResolver;
 use App\Services\Analysis\CrawlPolicyResolver;
 use App\Services\Analysis\HtmlSeoAnalyzer;
 use App\Services\Analysis\PageHtmlResolver;
@@ -98,6 +99,7 @@ class CrawlWebsitePageJobTest extends TestCase
             app(HtmlSeoAnalyzer::class),
             app(PageHtmlResolver::class),
             app(RecruitmentTrackPageFilter::class),
+            app(CrawlOriginScopeResolver::class),
         );
     }
 

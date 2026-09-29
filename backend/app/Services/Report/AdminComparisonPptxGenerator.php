@@ -98,8 +98,19 @@ class AdminComparisonPptxGenerator
     // 依頼CB-1/CC-1: ブランド・ホイール比較(各社のヘキサゴン)。
     // ------------------------------------------------------------------
 
-    /** 自社ヘキサゴンの名前・総合点ラベルの上端。 */
-    private const WHEEL_SELF_LABEL_TOP_IN = 1.6;
+    /**
+     * 自社ヘキサゴンの名前・総合点ラベルの上端。
+     *
+     * 依頼CF-3(2026-09-29): 自社ヘキサゴンの半径(WHEEL_SELF_RADIUS_IN)を
+     * 0.5→0.65inへ拡大する分の縦の余白を、この値・WHEEL_ROW_GAP_IN・
+     * WHEEL_TABLE_GAP_INの3箇所を切り詰めて確保した(タイトル
+     * (addTitle、下端y=1.41)の直後まで詰める)。表の行の高さ
+     * (TABLE_ROW_HEIGHT_IN、CC-2で詰めたばかり)自体は変えておらず、
+     * tableTop(領域別数値表の上端)の値も変更前と完全に同一
+     * (下記WHEEL_SELF_RADIUS_INのdocblock参照) ―― 表・競合行の位置は
+     * 一切動いていない。
+     */
+    private const WHEEL_SELF_LABEL_TOP_IN = 1.43;
 
     private const WHEEL_SELF_NAME_HEIGHT_IN = 0.3;
 
@@ -127,13 +138,35 @@ class AdminComparisonPptxGenerator
      * 頂点ラベルについても、その下端をaddWheelCompanyTile()の戻り値
      * (=このタイルが実際に使う一番下のY)に含め、競合行がラベルの下端より
      * 上に来ないようにした。
+     *
+     * 依頼CF-3(2026-09-29): 実機画像化で「塗りの無い輪郭(PhpPresentationが
+     * custGeomを書き出せない既知の制約、依頼者了承済み)では、1インチ角
+     * (半径0.5in)では6軸の凹凸が読み取れない」ことを確認した(依頼者指摘)。
+     * 半径を0.5→0.65inへ拡大した(直径+0.3in、面積は約1.69倍)。
+     *
+     * 【honestyのための制約】ラダーチャート(このヘキサゴン)は「中心からの
+     * 距離が軸間で比較可能であること」が前提のため、X/Yで異なる半径に
+     * 引き伸ばす(横だけ広げる)案は採らなかった ―― 同じ4/4の値でも軸に
+     * よって突き出方が変わって見えてしまい、実際のデータではなく形状の
+     * 歪みで差があるかのように誤解させるため(hexVertex()は今回も単一の
+     * radiusのまま、正六角形の比例を保っている)。「横の空白を使う」は、
+     * 横方向には11.5inの帯のうちヘキサゴンが1.3in(新半径0.65in×2)しか
+     * 使っておらず全く余裕があること自体が、半径を拡大しても左右にはみ出す
+     * 心配が無いという判断材料として働いた、という意味で反映している。
+     *
+     * 縦方向は、表・競合行の位置(tableTop)を変えないことを優先したため、
+     * 半径+0.15in(0.5→0.65)ぶんの余白を、WHEEL_SELF_LABEL_TOP_IN・
+     * WHEEL_ROW_GAP_IN・WHEEL_TABLE_GAP_INを切り詰めて確保した(3箇所
+     * 合計で0.30in切り詰め=半径の上下ぶん0.30inを相殺)。実際に
+     * addWheelHexagons()を通した計算・実機画像化で、tableTopが変更前
+     * (5.16in)と完全に一致することを確認済み。
      */
-    private const WHEEL_SELF_RADIUS_IN = 0.5;
+    private const WHEEL_SELF_RADIUS_IN = 0.65;
 
     private const WHEEL_SELF_TILE_WIDTH_IN = 3.6;
 
-    /** 自社ヘキサゴン(ラベル込み)と競合ヘキサゴン列との縦の間隔。 */
-    private const WHEEL_ROW_GAP_IN = 0.12;
+    /** 自社ヘキサゴン(ラベル込み)と競合ヘキサゴン列との縦の間隔。依頼CF-3参照。 */
+    private const WHEEL_ROW_GAP_IN = 0.06;
 
     private const WHEEL_COMPETITOR_NAME_HEIGHT_IN = 0.22;
 
@@ -141,8 +174,8 @@ class AdminComparisonPptxGenerator
 
     private const WHEEL_COMPETITOR_RADIUS_IN = 0.32;
 
-    /** ヘキサゴン列と、その下の領域別数値表との間隔。 */
-    private const WHEEL_TABLE_GAP_IN = 0.14;
+    /** ヘキサゴン列と、その下の領域別数値表との間隔。依頼CF-3参照。 */
+    private const WHEEL_TABLE_GAP_IN = 0.08;
 
     /**
      * 依頼CC-1: 軸ラベル(自社ヘキサゴンのみ)。頂点から半径方向に
@@ -225,11 +258,67 @@ class AdminComparisonPptxGenerator
 
     private const HIERARCHY_BRANCHES_TOP_IN = 2.05;
 
-    private const HIERARCHY_ROW_HEIGHT_IN = 0.42;
+    /**
+     * 依頼CF-2(2026-09-29): site_hierarchy_sample_pages_per_branchを
+     * 3→5へ増やした分、代表ページの行が最大2行に折り返せるよう
+     * 0.42→0.50inへ増やした(旧: 名前行0.22in+代表ページ1行0.18in+
+     * 余白0.02in、新: 名前行0.22in+代表ページ最大2行0.26in+余白0.02in)。
+     */
+    private const HIERARCHY_ROW_HEIGHT_IN = 0.50;
 
     private const HIERARCHY_ROW_GAP_IN = 0.06;
 
     private const HIERARCHY_RECOMMENDED_GAP_IN = 0.18;
+
+    /** 依頼CF-2: 「参考：起点URL配下の外にあったページの内訳」との間隔。 */
+    private const HIERARCHY_OUTSIDE_BREAKDOWN_GAP_IN = 0.14;
+
+    /**
+     * 依頼CF追補(2026-09-30): 「参考：起点URL配下の外にあったページの
+     * 内訳」は、枝が少ないときの空白を埋めるための追加要素であり必須の
+     * コンテンツではない ―― 枝が多いサイトでは下記
+     * HIERARCHY_AXIS_CAVEAT_RULE_TOP_IN(axis_unread_caveatの固定位置)と
+     * 衝突しうるため、この安全ラインを超える場合は描かない(0件のときに
+     * セクションごと消す既存方針と同じ考え方: 「入らないものを無理に
+     * 詰め込んで壊す」より「収まる分だけ出す」を優先する)。
+     *
+     * 【CF追補で名前・意味を変更】依頼CFでは"HIERARCHY_CONTENT_SAFE_
+     * BOTTOM_IN"としてaxis_unread_caveatにも同じ安全ラインを適用して
+     * いたが、「枝が多いサイトではaxis_unread_caveatが資料のどこにも
+     * 出ない」不具合につながった(依頼者指摘 ―― 良いサイトほど免責文が
+     * 消える逆向きの挙動になっていた)。axis_unread_caveatは可変レイアウト
+     * (枝・推奨導線・参考内訳)の外の固定位置に移し(下記参照)、この定数は
+     * 「参考」内訳だけが従う安全ラインに限定した。
+     */
+    private const HIERARCHY_OUTSIDE_BREAKDOWN_SAFE_BOTTOM_IN = 5.65;
+
+    /**
+     * 依頼CF追補(2026-09-30、必須修正): axis_unread_caveat
+     * (config('brand_wheel.axis_unread_caveat')、4か所で共有している
+     * 「絶対に消してはいけない文言」)は、可変レイアウト(枝・推奨導線・
+     * 参考内訳)の後ろに続けて描く方式だと、それらが多いときに描画自体を
+     * 省略せざるを得なくなり、「枝が多い(=サイトが充実している健全な
+     * ケース)ほど免責文が消える」という逆向きの不具合になっていた
+     * (依頼者指摘)。実データによらず必ず描かれるよう、footer
+     * (site_hierarchy_crawl_scope_note、y6.42)の直前の固定位置に置き、
+     * 可変コンテンツがどれだけ増えても動かない・省略されないようにした。
+     *
+     * 収まらない場合は、可変コンテンツ側(site_hierarchy_branch_limit)を
+     * 6→4へ引き下げて場所を確保した ―― 枝は「ほかN」に畳めるので情報が
+     * 失われないが、この注意書きは畳めない・省略できないため、削るべきは
+     * 枝の表示数の方(依頼者指定の方針)。4件までなら、枝の上限超過
+     * (otherBranchCount>0による「ほかN」行、+0.2in)・推奨導線
+     * (addHierarchyRecommendations、+0.68in)が両方とも最大の場合でも、
+     * 2.05(HIERARCHY_BRANCHES_TOP_IN)+4×0.56(rowStep)+0.2+0.18
+     * (HIERARCHY_RECOMMENDED_GAP_IN)+0.68=5.35inで、この固定位置(5.75)の
+     * 手前0.40inの余白を残して収まることを計算・実機画像化で確認した
+     * (旧6件では最大5.91inとなり、5.75inのこの位置と衝突していた)。
+     */
+    private const HIERARCHY_AXIS_CAVEAT_RULE_TOP_IN = 5.75;
+
+    private const HIERARCHY_AXIS_CAVEAT_BOX_TOP_IN = 5.85;
+
+    private const HIERARCHY_AXIS_CAVEAT_BOX_HEIGHT_IN = 0.5;
 
     // ------------------------------------------------------------------
     // 依頼BZ-1: 説明ページ(ブランド・ホイールの前置き)。分析結果に依存
@@ -248,8 +337,6 @@ class AdminComparisonPptxGenerator
     private const EXPL_DESC_HEIGHT_IN = 0.5;
 
     private const EXPL_COMPOSITION_TOP_IN = 4.95;
-
-    private const EXPL_CAVEAT_TOP_IN = 5.55;
 
     /**
      * 3領域の区分・色・一文説明。lead-pdf.blade.php「採用ブランドの捉え方
@@ -569,9 +656,15 @@ class AdminComparisonPptxGenerator
      * 捉え方 ―― ブランド・ホイール」ページと同じ情報源を使う ―― 3領域の
      * 区分・一文説明はblade側の直書き文言をそのまま踏襲し(config化されて
      * いない)、6軸の名前・定義はconfig('brand_wheel.axes.*.name_ja'/
-     * 'definition')、24項目の構成の説明はblade側のintrobody文言、
-     * 注意書きはconfig('brand_wheel.axis_unread_caveat')を、いずれも
+     * 'definition')、24項目の構成の説明はblade側のintrobody文言を、
      * 文言を書き換えずそのまま使う。
+     *
+     * 依頼CF-5②(2026-09-29): 注意書き(config('brand_wheel.
+     * axis_unread_caveat'))は、以前このページの末尾に置いていたが、
+     * 「24項目の説明ページ」という文脈でこの一文(診断結果に対する断り書き)
+     * を読んでも何の話か伝わらなかった(依頼者指摘、実機画像化で確認)。
+     * generateSiteHierarchySlide()(4枚目、実質最後の内容ページ)の末尾へ
+     * 移した(addAxisUnreadCaveat()参照) ―― 文言自体は変更していない。
      */
     public function generateExplanationSlide(): string
     {
@@ -581,7 +674,6 @@ class AdminComparisonPptxGenerator
             $this->addExplanationLead($slide);
             $this->addExplanationGroups($slide);
             $this->addExplanationComposition($slide);
-            $this->addExplanationCaveat($slide);
             $this->addFooter($slide, 'Leggenda 採用ブランド・ホイール診断', null);
         });
     }
@@ -988,7 +1080,7 @@ class AdminComparisonPptxGenerator
      * (「巡回した範囲では...見つかりませんでした」)を使う。
      *
      * @param  array{recommended_site_flow_names: list<string>}  $data
-     * @param  array{origin_url: string, branches: list<array{name: string, page_count: int, sample_pages: list<string>, name_is_url_segment: bool}>, other_branch_count: int, total_fetched_pages: int, pages_within_origin: int}  $hierarchy
+     * @param  array{origin_url: string, branches: list<array{name: string, page_count: int, sample_pages: list<string>, name_is_url_segment: bool}>, other_branch_count: int, total_fetched_pages: int, pages_within_origin: int, outside_origin_breakdown: list<array{name: string, page_count: int}>, outside_origin_other_count: int}  $hierarchy
      */
     public function generateSiteHierarchySlide(array $data, array $hierarchy): string
     {
@@ -998,7 +1090,21 @@ class AdminComparisonPptxGenerator
             $this->addHierarchyOrigin($slide, $hierarchy['origin_url']);
             $this->addHierarchyScopeNote($slide, $hierarchy['total_fetched_pages'], $hierarchy['pages_within_origin']);
             $bottom = $this->addHierarchyBranches($slide, $hierarchy['branches'], $hierarchy['other_branch_count'], $hierarchy['origin_url']);
-            $this->addHierarchyRecommendations($slide, $data['recommended_site_flow_names'], $bottom);
+            $bottom = $this->addHierarchyRecommendations($slide, $data['recommended_site_flow_names'], $bottom);
+            // 依頼CF-2: 枝が少ないサイトで下半分が空白のまま残る不具合の
+            // 対応。起点URL配下の「外」にあった実データの内訳を「参考」
+            // として要約する(実データから出せる材料のみ、捏造しない)。
+            $this->addHierarchyOutsideBreakdown($slide, $hierarchy['outside_origin_breakdown'] ?? [], $hierarchy['outside_origin_other_count'] ?? 0, $bottom);
+            // 依頼CF-5②/CF追補: config('brand_wheel.axis_unread_caveat')
+            // (「本分析は...サイトの記述のみを拝見しています」という
+            // 診断結果全体への断り書き)は、24項目の説明ページ(1枚目)では
+            // 何の話か伝わらなかった(依頼者指摘、実機画像化で確認)。
+            // 差し込み4枚のうち実質最後の内容ページであるこの階層図
+            // スライドの末尾、可変レイアウトの外の固定位置へ移した
+            // (CF追補で「枝が多いと描かれないことがある」不具合を修正、
+            // HIERARCHY_AXIS_CAVEAT_RULE_TOP_INのdocblock参照)。
+            // $bottomは渡さない ―― 可変コンテンツの量に一切左右されない。
+            $this->addAxisUnreadCaveat($slide);
             // 依頼CB-3必須: footerには、通常の出典行(addFooter())ではなく
             // 巡回範囲についての注記を出す ―― この1枚の内容が「巡回できた
             // 範囲」に限られることを、必ず読める位置に置くため
@@ -1059,10 +1165,18 @@ class AdminComparisonPptxGenerator
             $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
             $rule->getBorder()->setLineStyle(Border::LINE_NONE);
 
+            // 依頼CF-2: 枝記号を直書きせずconfigから出す。最後の枝には
+            // 別の記号(既定'└ ')を使い、枝の一覧がそこで終わることが
+            // 見た目でも伝わるようにする。
+            $isLastBranch = $i === count($branches) - 1;
+            $symbol = (string) config($isLastBranch
+                ? 'admin_comparison_pptx.site_hierarchy_last_branch_symbol'
+                : 'admin_comparison_pptx.site_hierarchy_branch_symbol');
+
             $nameBox = $slide->createRichTextShape();
             $this->position($nameBox, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, 0.22);
             $namePara = $nameBox->getActiveParagraph();
-            $this->font($namePara->createTextRun('├ '.$branch['name']), 11, true, self::NAVY);
+            $this->font($namePara->createTextRun($symbol.$branch['name']), 11, true, self::NAVY);
             // 依頼CC-3③: インデックスページを巡回できておらず、URLの
             // パスセグメントをそのまま枝名にしている場合、それと分かる印を
             // 添える(依頼者指定「判断して提案する」への回答) ―― ページ名を
@@ -1074,8 +1188,11 @@ class AdminComparisonPptxGenerator
             $this->font($namePara->createTextRun("　（{$branch['page_count']}ページ）"), 9, false, self::MUTED);
 
             if ($branch['sample_pages'] !== []) {
+                // 依頼CF-2: site_hierarchy_sample_pages_per_branchを3→5へ
+                // 増やした分、最大2行までの折り返しを見込む高さにした
+                // (HIERARCHY_ROW_HEIGHT_INのdocblock参照)。
                 $sampleBox = $slide->createRichTextShape();
-                $this->position($sampleBox, self::LEFT_IN + 0.2, $top + 0.22, self::CONTENT_WIDTH_IN - 0.2, 0.18);
+                $this->position($sampleBox, self::LEFT_IN + 0.2, $top + 0.22, self::CONTENT_WIDTH_IN - 0.2, 0.26);
                 $sampleBox->setWrap(RichText::WRAP_SQUARE);
                 $sampleText = implode('　/　', $branch['sample_pages']);
                 $this->font($sampleBox->getActiveParagraph()->createTextRun($sampleText), 8.5, false, self::MUTED);
@@ -1103,11 +1220,12 @@ class AdminComparisonPptxGenerator
      * 別途必ず出す(generateSiteHierarchySlide()参照)。
      *
      * @param  list<string>  $recommendedSiteFlowNames
+     * @return float  この下に描く次のブロックが使える上端y(in)。0件のときは$topをそのまま返す。
      */
-    private function addHierarchyRecommendations(Slide $slide, array $recommendedSiteFlowNames, float $top): void
+    private function addHierarchyRecommendations(Slide $slide, array $recommendedSiteFlowNames, float $top): float
     {
         if ($recommendedSiteFlowNames === []) {
-            return;
+            return $top;
         }
 
         $headingBox = $slide->createRichTextShape();
@@ -1119,6 +1237,71 @@ class AdminComparisonPptxGenerator
         $listBox->setWrap(RichText::WRAP_SQUARE);
         $listText = implode('　/　', $recommendedSiteFlowNames);
         $this->font($listBox->getActiveParagraph()->createTextRun($listText), 10, false, self::GAP_TEXT);
+
+        return $top + 0.24 + 0.3 + self::HIERARCHY_OUTSIDE_BREAKDOWN_GAP_IN;
+    }
+
+    /**
+     * 依頼CF-2(2026-09-29): 起点URL配下の「外」にあった実データの内訳を
+     * 「参考」として要約する(AdminComparisonSiteHierarchyBuilder::
+     * summarizeOutsideOriginBreakdown()が実データから算出、捏造しない)。
+     * 0件(起点の外に何も無かった、または起点自体が解決できなかった)の
+     * ときは何も描かない ―― 無理に空欄の節を残さない。枝が多く$topが
+     * 既にaxis_unread_caveatの固定位置に近い場合も描かない
+     * (HIERARCHY_OUTSIDE_BREAKDOWN_SAFE_BOTTOM_IN参照 ―― この「参考」節
+     * だけが対象で、axis_unread_caveat自体は別の固定位置に必ず描く、
+     * CF追補で分離)。
+     *
+     * @param  list<array{name: string, page_count: int}>  $breakdown
+     * @return float  この下に描く次のブロックが使える上端y(in)。描かなかった場合は$topをそのまま返す。
+     */
+    private function addHierarchyOutsideBreakdown(Slide $slide, array $breakdown, int $otherCount, float $top): float
+    {
+        $neededHeight = 0.24 + 0.4 + self::HIERARCHY_OUTSIDE_BREAKDOWN_GAP_IN;
+        if ($breakdown === [] || $top + $neededHeight > self::HIERARCHY_OUTSIDE_BREAKDOWN_SAFE_BOTTOM_IN) {
+            return $top;
+        }
+
+        $headingBox = $slide->createRichTextShape();
+        $this->position($headingBox, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, 0.22);
+        $this->font($headingBox->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_outside_breakdown_heading')), 10.5, true, self::MUTED);
+
+        $items = array_map(fn (array $row) => "{$row['name']}（{$row['page_count']}）", $breakdown);
+        if ($otherCount > 0) {
+            $items[] = "ほか（{$otherCount}）";
+        }
+
+        $listBox = $slide->createRichTextShape();
+        $this->position($listBox, self::LEFT_IN, $top + 0.24, self::CONTENT_WIDTH_IN, 0.4);
+        $listBox->setWrap(RichText::WRAP_SQUARE);
+        $this->font($listBox->getActiveParagraph()->createTextRun(implode('　/　', $items)), 9, false, self::MUTED);
+
+        return $top + $neededHeight;
+    }
+
+    /**
+     * 依頼CF-5②/CF追補(2026-09-30、必須): config('brand_wheel.
+     * axis_unread_caveat')(4か所で共有している「絶対に消してはいけない
+     * 文言」、文言自体は変更しない)を、可変レイアウト(枝・推奨導線・
+     * 参考内訳)の量に関わらず必ず描く。固定位置
+     * (HIERARCHY_AXIS_CAVEAT_RULE_TOP_IN)に置くことで、枝が多いサイト
+     * (=充実している健全なケース)ほど免責文が消えるという、CF-5②実装
+     * 直後に依頼者が指摘した逆向きの不具合を解消した。収まらない場合は
+     * 呼び出し元より前(site_hierarchy_branch_limit=4への引き下げ)で
+     * 場所を確保済みのため、ここでは条件分岐せず常に描く。
+     */
+    private function addAxisUnreadCaveat(Slide $slide): void
+    {
+        $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($rule, self::LEFT_IN, self::HIERARCHY_AXIS_CAVEAT_RULE_TOP_IN, self::CONTENT_WIDTH_IN, 0.01);
+        $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
+        $rule->getBorder()->setLineStyle(Border::LINE_NONE);
+
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, self::HIERARCHY_AXIS_CAVEAT_BOX_TOP_IN, self::CONTENT_WIDTH_IN, self::HIERARCHY_AXIS_CAVEAT_BOX_HEIGHT_IN);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $run = $box->getActiveParagraph()->createTextRun((string) config('brand_wheel.axis_unread_caveat'));
+        $this->font($run, 9, false, self::MUTED);
     }
 
     /**
@@ -1226,27 +1409,6 @@ class AdminComparisonPptxGenerator
         $this->font($run, 11, false, self::BODY_TEXT);
     }
 
-    /**
-     * 依頼BZ-1(必須): config('brand_wheel.axis_unread_caveat')
-     * (「読み取れなかった＝魅力が無い、ではない」の主旨)を、文言を一切
-     * 書き換えずそのまま表示する。lead-pdf.blade.phpのコメントに「この一文は
-     * 短縮・削除しない」「ユーザー指定の絶対に消してはいけない文言」と
-     * 明記されており、商談で他社の点数を見せる資料である以上、この但し書き
-     * はPDFよりむしろ必要(依頼者指定)。
-     */
-    private function addExplanationCaveat(Slide $slide): void
-    {
-        $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-        $this->position($rule, self::LEFT_IN, self::EXPL_CAVEAT_TOP_IN, self::CONTENT_WIDTH_IN, 0.01);
-        $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
-        $rule->getBorder()->setLineStyle(Border::LINE_NONE);
-
-        $box = $slide->createRichTextShape();
-        $this->position($box, self::LEFT_IN, self::EXPL_CAVEAT_TOP_IN + 0.1, self::CONTENT_WIDTH_IN, 0.65);
-        $box->setWrap(RichText::WRAP_SQUARE);
-        $run = $box->getActiveParagraph()->createTextRun((string) config('brand_wheel.axis_unread_caveat'));
-        $this->font($run, 9, false, self::MUTED);
-    }
 
     /**
      * wrapOrEllipsizeForLines・estimateLineCount・splitBalancedForTwoLinesが

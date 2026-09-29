@@ -101,6 +101,8 @@ class AdminComparisonPptxInserterTest extends TestCase
             'other_branch_count' => 0,
             'total_fetched_pages' => 8,
             'pages_within_origin' => 5,
+            'outside_origin_breakdown' => [],
+            'outside_origin_other_count' => 0,
         ];
     }
 
@@ -528,6 +530,22 @@ class AdminComparisonPptxInserterTest extends TestCase
     }
 
     /**
+     * 依頼CF追補(2026-09-30、必須修正): missing_item_impact_templateを
+     * '%s'(定義文のみ)にしたこと(依頼CF-5①)で、候補者調査「該当なし」の
+     * 行から「自社サイトでは確認できなかった」旨が消えていた不具合の
+     * 再発防止。この行だけは、impact(定義)・survey_none_textの2つを
+     * 合わせて読んでも「確認できなかった」旨と「重要でないという意味では
+     * ない」旨の両方が残っていること。
+     */
+    public function test_missing_item_survey_none_text_still_conveys_not_confirmed_and_not_unimportant(): void
+    {
+        $noneText = (string) config('admin_comparison_pptx.missing_item_survey_none_text');
+
+        $this->assertStringContainsString('確認でき', $noneText, '「自社サイトでは確認できなかった」旨が残っていること');
+        $this->assertStringContainsString('重要でない', $noneText, '「重要でないという意味ではない」旨が残っていること');
+    }
+
+    /**
      * 依頼CB-2必須: 上限を超えたとき「ほかN件」が出ること。
      */
     public function test_missing_items_slide_shows_others_count_when_over_the_limit(): void
@@ -587,6 +605,133 @@ class AdminComparisonPptxInserterTest extends TestCase
 
         // 依頼CB-3必須: 「ありません」と断定する文言が無いこと。
         $this->assertStringNotContainsString('ありません', $slideXml);
+    }
+
+    /**
+     * 依頼CF-2(2026-09-29): 枝記号がconfigから出ること。hierarchyData()は
+     * 枝1本だけなので、その1本が「最後の枝」でもあり、last_branch_symbol
+     * (既定'└ ')になること。
+     */
+    public function test_hierarchy_slide_uses_the_configured_branch_symbol(): void
+    {
+        $slideXml = $this->slideXmlOf($this->hierarchySlideBytes());
+
+        $lastSymbol = (string) config('admin_comparison_pptx.site_hierarchy_last_branch_symbol');
+        $this->assertStringContainsString(htmlspecialchars($lastSymbol, ENT_QUOTES | ENT_XML1), $slideXml);
+    }
+
+    /**
+     * 依頼CF-5②(2026-09-29): axis_unread_caveat(依頼BZ-1由来、「絶対に
+     * 消してはいけない文言」)が、この階層図スライド(実質最後の内容
+     * ページ)の末尾に出ること ―― 説明ページ(1枚目)からは移した
+     * (AdminComparisonPptxExplanationSlideTest参照)。文言自体は
+     * 変更していない。
+     */
+    public function test_hierarchy_slide_shows_the_axis_unread_caveat(): void
+    {
+        $slideXml = $this->slideXmlOf($this->hierarchySlideBytes());
+
+        $caveat = (string) config('brand_wheel.axis_unread_caveat');
+        $this->assertNotSame('', $caveat);
+        $this->assertStringContainsString(htmlspecialchars($caveat, ENT_QUOTES | ENT_XML1), $slideXml);
+    }
+
+    /**
+     * 依頼CF追補(2026-09-30、必須修正の再発防止): 枝が上限いっぱい
+     * (site_hierarchy_branch_limit)・枝の上限超過(「ほかN」行)・推奨導線
+     * (「追加を検討したい導線」)が同時に最大になる、最も可変コンテンツが
+     * 多いケースでも、axis_unread_caveatは必ず描かれること ―― 依頼CFでは
+     * 「収まらなければ描かない」設計にしていたため、枝が多いサイト(=充実
+     * している健全なケース)ほど免責文が消える不具合になっていた
+     * (依頼者指摘)。固定位置に移し、site_hierarchy_branch_limitを6→4へ
+     * 下げて場所を確保したことで、このケースでも消えないことを確認する。
+     */
+    public function test_hierarchy_slide_shows_the_axis_unread_caveat_even_at_the_worst_case_branch_load(): void
+    {
+        $limit = (int) config('admin_comparison_pptx.site_hierarchy_branch_limit');
+        $branches = [];
+        for ($i = 0; $i < $limit; $i++) {
+            $branches[] = [
+                'name' => "セクション{$i}",
+                'page_count' => 10 - $i,
+                'sample_pages' => ["ページ{$i}-1", "ページ{$i}-2", "ページ{$i}-3", "ページ{$i}-4", "ページ{$i}-5"],
+                'name_is_url_segment' => false,
+            ];
+        }
+        $hierarchy = [
+            'origin_url' => 'https://example.com/recruit/',
+            'branches' => $branches,
+            'other_branch_count' => 2, // 上限超過の「ほかN」行も同時に出す。
+            'total_fetched_pages' => 50,
+            'pages_within_origin' => 40,
+            'outside_origin_breakdown' => [],
+            'outside_origin_other_count' => 0,
+        ];
+        // comparisonData()のmissing_itemsに対応するsite_flow_nameがあり、
+        // 「追加を検討したい導線」も同時に出る状態にする(hierarchyData()の
+        // 既定と同じ'トップメッセージ'が既にcomparisonData()側に設定済み)。
+        $bytes = app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide($this->comparisonData(), $hierarchy);
+        $slideXml = $this->slideXmlOf($bytes);
+
+        $this->assertStringContainsString('セクション'.($limit - 1), $slideXml, '枝が上限いっぱい描かれていること(前提の確認)');
+        $this->assertStringContainsString('ほか2', $slideXml, '上限超過の「ほかN」行が同時に出ていること(前提の確認)');
+        $this->assertStringContainsString('トップメッセージ', $slideXml, '推奨導線が同時に出ていること(前提の確認)');
+
+        $caveat = (string) config('brand_wheel.axis_unread_caveat');
+        $this->assertStringContainsString(htmlspecialchars($caveat, ENT_QUOTES | ENT_XML1), $slideXml, '可変コンテンツが最大でも、免責文は必ず出ること');
+    }
+
+    /**
+     * 依頼CF-2必須: 起点URL配下の外にあったページの内訳を「参考」として
+     * 出すこと。数値は実データ(AdminComparisonSiteHierarchyBuilderが渡す
+     * outside_origin_breakdown)をそのまま使い、捏造しないこと。
+     */
+    public function test_hierarchy_slide_shows_the_outside_origin_breakdown_as_reference(): void
+    {
+        $hierarchy = $this->hierarchyData();
+        $hierarchy['outside_origin_breakdown'] = [
+            ['name' => 'ir', 'page_count' => 12],
+            ['name' => 'news', 'page_count' => 8],
+        ];
+        $hierarchy['outside_origin_other_count'] = 3;
+        $bytes = app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide($this->comparisonData(), $hierarchy);
+        $slideXml = $this->slideXmlOf($bytes);
+
+        $this->assertStringContainsString((string) config('admin_comparison_pptx.site_hierarchy_outside_breakdown_heading'), $slideXml);
+        $this->assertStringContainsString('ir', $slideXml);
+        $this->assertStringContainsString('12', $slideXml);
+        $this->assertStringContainsString('news', $slideXml);
+        $this->assertStringContainsString('8', $slideXml);
+        $this->assertStringContainsString('ほか', $slideXml);
+        $this->assertStringContainsString('3', $slideXml);
+    }
+
+    /**
+     * 0件(起点の外に何も無かった)のときは「参考」節ごと出ないこと
+     * (空欄のセクションを残さない、既存方針と同じ考え方)。
+     */
+    public function test_hierarchy_slide_omits_the_outside_origin_breakdown_when_empty(): void
+    {
+        $slideXml = $this->slideXmlOf($this->hierarchySlideBytes());
+
+        $this->assertStringNotContainsString((string) config('admin_comparison_pptx.site_hierarchy_outside_breakdown_heading'), $slideXml);
+    }
+
+    /**
+     * @return string  slide1.xmlの中身
+     */
+    private function slideXmlOf(string $bytes): string
+    {
+        $tmp = $this->reservedTempPath('slide', 'pptx');
+        $this->tempFiles[] = $tmp;
+        file_put_contents($tmp, $bytes);
+
+        $zip = new ZipArchive;
+        $zip->open($tmp);
+        $slideXml = $zip->getFromName('ppt/slides/slide1.xml');
+        $zip->close();
+
+        return $slideXml;
     }
 
     /**

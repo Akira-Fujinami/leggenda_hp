@@ -96,17 +96,22 @@ class AdminComparisonPptxExplanationSlideTest extends TestCase
     }
 
     /**
-     * 依頼BZ-1(必須): axis_unread_caveatは「絶対に消してはいけない文言」
-     * (lead-pdf.blade.phpのコメント参照)。文言を短縮・書き換えず、
-     * configの値と一字一句一致すること。
+     * 依頼CF-5②(2026-09-29): axis_unread_caveatは「絶対に消してはいけない
+     * 文言」(lead-pdf.blade.phpのコメント参照)だが、この説明ページ
+     * (24項目の定義を説明する文脈)に置くと何の話か伝わらなかった
+     * (依頼者指摘、実機画像化で確認)。generateSiteHierarchySlide()
+     * (4枚目)の末尾へ移した ―― この説明ページからは消えていること
+     * (AdminComparisonPptxSelfUnreadableTest等、階層図側のテストで
+     * 出現することを別途確認する)。文言自体は変更していないため、
+     * config側の値自体が空でないことは引き続き確認する。
      */
-    public function test_it_shows_the_axis_unread_caveat_matching_config_verbatim(): void
+    public function test_it_no_longer_shows_the_axis_unread_caveat_on_this_slide(): void
     {
         [$slideXml, ] = $this->explanationSlideXml();
 
         $caveat = (string) config('brand_wheel.axis_unread_caveat');
         $this->assertNotSame('', $caveat, 'テスト自体が空文字と比較して常に成功する事態を避ける');
-        $this->assertStringContainsString(htmlspecialchars($caveat, ENT_QUOTES | ENT_XML1), $slideXml);
+        $this->assertStringNotContainsString(htmlspecialchars($caveat, ENT_QUOTES | ENT_XML1), $slideXml);
     }
 
     /**
