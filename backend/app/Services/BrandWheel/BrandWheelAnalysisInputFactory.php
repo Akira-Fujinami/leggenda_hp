@@ -6,6 +6,7 @@ use App\Enums\PageType;
 use App\Models\AnalysisCrawledPage;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
+use App\Services\Analysis\CrawlOriginScopeResolver;
 use App\Services\Analysis\HtmlSeoAnalyzer;
 use App\Services\Analysis\PageHtmlResolver;
 use App\Services\BrandWheel\Data\BrandWheelAnalysisInput;
@@ -123,6 +124,7 @@ class BrandWheelAnalysisInputFactory
     public function __construct(
         private readonly HtmlSeoAnalyzer $htmlSeoAnalyzer,
         private readonly PageHtmlResolver $htmlResolver,
+        private readonly CrawlOriginScopeResolver $originScopeResolver,
     ) {}
 
     public function build(WebsiteAnalysis $websiteAnalysis): BrandWheelAnalysisInput
@@ -188,9 +190,16 @@ class BrandWheelAnalysisInputFactory
         // 構造そのものでtoArray()のバイト単位一致(最重要の不変条件)を
         // 担保する。
         $crawlEnabled = $websiteAnalysis->analysis?->crawl_site === true;
+        // 依頼CG-1(2026-09-30): 採用された段落の起点URL配下/外の内訳を
+        // ログに出すため、起点URLの解決(App\Services\Analysis\
+        // CrawlOriginScopeResolver、依頼CF-1由来 ―― 同じ判定を3箇所目に
+        // 実装しない)もcrawl_site=trueのときだけ行う(最重要の不変条件
+        // 「crawl_site=falseのとき、クロール関連の処理を一切行わない」を
+        // 保つ)。
         $crawlPools = $crawlEnabled
             ? $this->buildClusterPools($websiteAnalysis, $recruitBodyText, $homepageBodyText)
-            : ['recruit' => [], 'homepage' => []];
+            : ['recruit' => [], 'homepage' => [], 'page_urls' => []];
+        $originScope = $crawlEnabled ? $this->originScopeResolver->resolveScope($websiteAnalysis) : null;
 
         [$keptRecruitBody, $keptHomepageBody, $keptLabels, $truncated] = $this->applyTokenLimit(
             websiteAnalysisId: $websiteAnalysis->id,
@@ -202,6 +211,7 @@ class BrandWheelAnalysisInputFactory
             homepageTitle: $homepage?->title,
             labels: $businessLinkLabels,
             crawlPools: $crawlPools,
+            originScope: $originScope,
         );
 
         return new BrandWheelAnalysisInput(
@@ -326,7 +336,12 @@ class BrandWheelAnalysisInputFactory
      *    呼び出し元のapplyTokenLimit()が行う(トークン予算の配分と一体の
      *    処理のため、こちらでは候補プールを用意するところまでを担う)。
      *
-     * @return array{recruit: list<array{text: string, length: int, page_order: int, para_order: int}>, homepage: list<array{text: string, length: int, page_order: int, para_order: int}>}
+     * 依頼CG-1(2026-09-30): 戻り値に'page_urls'(page_order => 解決済みURL、
+     * final_url優先)を追加した。採用された段落がどのページ由来かを
+     * 事後にログへ出すための対応表であり、選定ロジック(長さ順ソート・
+     * 重複除去・クラスタ分類)自体には一切影響しない、純粋な追加情報。
+     *
+     * @return array{recruit: list<array{text: string, length: int, page_order: int, para_order: int}>, homepage: list<array{text: string, length: int, page_order: int, para_order: int}>, page_urls: array<int, string>}
      */
     private function buildClusterPools(WebsiteAnalysis $websiteAnalysis, string $recruitBodyText, string $homepageBodyText): array
     {
@@ -344,6 +359,7 @@ class BrandWheelAnalysisInputFactory
             ->get();
 
         $pools = ['recruit' => [], 'homepage' => []];
+        $pageUrls = [];
         $pagesRead = 0;
         $pagesUnreadable = 0;
         $paragraphsSeen = 0;
@@ -361,6 +377,7 @@ class BrandWheelAnalysisInputFactory
             $html = Storage::disk('analysis')->get($resolved['path']);
             $body = $this->htmlSeoAnalyzer->extractBodyText($html, excludeNavigation: true);
             $pagesRead++;
+            $pageUrls[$pageOrder] = (string) ($page->final_url ?? $page->url);
 
             $cluster = $this->htmlSeoAnalyzer->isRecruitPageUrl($page->final_url ?? $page->url) ? 'recruit' : 'homepage';
 
@@ -403,7 +420,7 @@ class BrandWheelAnalysisInputFactory
             'homepage_cluster_pool_count' => count($pools['homepage']),
         ]);
 
-        return $pools;
+        return [...$pools, 'page_urls' => $pageUrls];
     }
 
     /**
@@ -456,7 +473,8 @@ class BrandWheelAnalysisInputFactory
      * @param  list<array{level: int, text: string}>  $recruitHeadings
      * @param  list<array{level: int, text: string}>  $homepageHeadings
      * @param  list<string>  $labels
-     * @param  array{recruit: list<array{text: string, length: int, page_order: int, para_order: int}>, homepage: list<array{text: string, length: int, page_order: int, para_order: int}>}  $crawlPools
+     * @param  array{recruit: list<array{text: string, length: int, page_order: int, para_order: int}>, homepage: list<array{text: string, length: int, page_order: int, para_order: int}>, page_urls: array<int, string>}  $crawlPools
+     * @param  array{origin_url: string, host: string, path: string}|null  $originScope  依頼CG-1: ログの起点URL配下/外の内訳判定にのみ使う(選定ロジックには使わない)
      * @return array{0: string, 1: string, 2: list<string>, 3: bool}
      */
     private function applyTokenLimit(
@@ -469,6 +487,7 @@ class BrandWheelAnalysisInputFactory
         ?string $homepageTitle,
         array $labels,
         array $crawlPools,
+        ?array $originScope = null,
     ): array {
         $maxInputTokens = config('services.ai.max_input_tokens');
         $hasCrawlContent = $crawlPools['recruit'] !== [] || $crawlPools['homepage'] !== [];
@@ -549,7 +568,7 @@ class BrandWheelAnalysisInputFactory
             return [$keptRecruitBody, $keptHomepageBody, $keptLabels, $seedTruncated];
         }
 
-        [$recruitCrawlText, $homepageCrawlText, $crawlTruncated, $crawlCharsUsed] = $this->allocateCrawlBudget($crawlPools, $remainingForCrawl);
+        [$recruitCrawlText, $homepageCrawlText, $crawlTruncated, $crawlCharsUsed] = $this->allocateCrawlBudget($crawlPools, $remainingForCrawl, $websiteAnalysisId, $originScope);
 
         $truncated = $seedTruncated || $crawlTruncated;
 
@@ -590,10 +609,11 @@ class BrandWheelAnalysisInputFactory
      *    キャップより小さかった)場合、その余りをもう一方のクラスタの
      *    残り候補(自分のキャップで採用しきれなかった分)へ回す。
      *
-     * @param  array{recruit: list<array{text: string, length: int, page_order: int, para_order: int}>, homepage: list<array{text: string, length: int, page_order: int, para_order: int}>}  $crawlPools
+     * @param  array{recruit: list<array{text: string, length: int, page_order: int, para_order: int}>, homepage: list<array{text: string, length: int, page_order: int, para_order: int}>, page_urls: array<int, string>}  $crawlPools
+     * @param  array{origin_url: string, host: string, path: string}|null  $originScope
      * @return array{0: string, 1: string, 2: bool, 3: int} [recruit用クロールテキスト, homepage用クロールテキスト, 切り詰めが発生したか, 実際に使った文字数]
      */
-    private function allocateCrawlBudget(array $crawlPools, int $budget): array
+    private function allocateCrawlBudget(array $crawlPools, int $budget, int $websiteAnalysisId, ?array $originScope): array
     {
         $budget = max(0, $budget);
         $half = intdiv($budget, 2);
@@ -602,6 +622,7 @@ class BrandWheelAnalysisInputFactory
         $selected = ['recruit' => [], 'homepage' => []];
         $leftoverQueues = [];
         $usedChars = [];
+        $partialCutCount = 0;
         $cutOffByBudget = false;
 
         foreach (['recruit', 'homepage'] as $cluster) {
@@ -610,8 +631,10 @@ class BrandWheelAnalysisInputFactory
             $leftoverQueues[$cluster] = $rest;
             $usedChars[$cluster] = $used;
             $cutOffByBudget = $cutOffByBudget || $cutOff;
+            $partialCutCount += $cutOff ? 1 : 0;
         }
 
+        $reallocated = ['recruit' => 0, 'homepage' => 0];
         foreach (['recruit' => 'homepage', 'homepage' => 'recruit'] as $donor => $receiver) {
             $unused = $caps[$donor] - $usedChars[$donor];
             if ($unused <= 0 || $leftoverQueues[$receiver] === []) {
@@ -622,7 +645,9 @@ class BrandWheelAnalysisInputFactory
             $selected[$receiver] = [...$selected[$receiver], ...$extra];
             $leftoverQueues[$receiver] = $rest;
             $usedChars[$receiver] += $used;
+            $reallocated[$receiver] += $used;
             $cutOffByBudget = $cutOffByBudget || $cutOff;
+            $partialCutCount += $cutOff ? 1 : 0;
         }
 
         // 手順4〜5(依頼E-3): 予算内に選ばれた段落だけを、元のページ順・
@@ -635,7 +660,135 @@ class BrandWheelAnalysisInputFactory
         // それも切り詰め扱いにする。
         $truncated = $cutOffByBudget || $leftoverQueues['recruit'] !== [] || $leftoverQueues['homepage'] !== [];
 
+        // 依頼CG-1(2026-09-30、実装してよいのはこのログだけ): 「34,570文字
+        // 入った」だけでは中身が一切分からなかった(依頼者指摘、本番ログ
+        // analysis_id=145の実例)。選定ロジック(長さ順・予算配分・
+        // トークン見積もり)は一切変更せず、その結果を見えるようにするだけ。
+        $this->logCrawlSelectionBreakdown(
+            websiteAnalysisId: $websiteAnalysisId,
+            crawlPools: $crawlPools,
+            originScope: $originScope,
+            caps: $caps,
+            usedChars: $usedChars,
+            reallocated: $reallocated,
+            selected: $selected,
+            partialCutCount: $partialCutCount,
+        );
+
         return [$recruitText, $homepageText, $truncated, mb_strlen($recruitText) + mb_strlen($homepageText)];
+    }
+
+    /**
+     * 依頼CG-1(2026-09-30): AIへの入力に実際に何が採用され、何が捨てられた
+     * かを見えるようにする。本文・段落のテキストそのものは一切出さない
+     * (URL・件数・文字数のみ)。crawl_site=trueかつクロール由来の候補が
+     * 実在するとき(=allocateCrawlBudget()が呼ばれるとき)にのみ、
+     * 1回のLog::info呼び出しで出す(1診断1社あたり最大1行、ページ別の
+     * 寄与は上位10件に絞る ―― 運用に耐える量にする、依頼者指定)。
+     *
+     * @param  array{recruit: list<array{text: string, length: int, page_order: int, para_order: int}>, homepage: list<array{text: string, length: int, page_order: int, para_order: int}>, page_urls: array<int, string>}  $crawlPools
+     * @param  array{origin_url: string, host: string, path: string}|null  $originScope
+     * @param  array{recruit: int, homepage: int}  $caps
+     * @param  array{recruit: int, homepage: int}  $usedChars
+     * @param  array{recruit: int, homepage: int}  $reallocated  相手クラスタの余りを回されて追加で使った文字数
+     * @param  array{recruit: list<array{text: string, page_order: int, para_order: int, length?: int}>, homepage: list<array{text: string, page_order: int, para_order: int, length?: int}>}  $selected
+     */
+    private function logCrawlSelectionBreakdown(
+        int $websiteAnalysisId,
+        array $crawlPools,
+        ?array $originScope,
+        array $caps,
+        array $usedChars,
+        array $reallocated,
+        array $selected,
+        int $partialCutCount,
+    ): void {
+        $pageUrls = $crawlPools['page_urls'];
+        $allSelected = [...$selected['recruit'], ...$selected['homepage']];
+
+        // (1) ページ別の寄与(段落数・文字数)。本文そのものは持たない。
+        $byPage = [];
+        foreach ($allSelected as $paragraph) {
+            $length = $paragraph['length'] ?? mb_strlen($paragraph['text']);
+            $url = $pageUrls[$paragraph['page_order']] ?? '(不明)';
+            $byPage[$url]['paragraph_count'] = ($byPage[$url]['paragraph_count'] ?? 0) + 1;
+            $byPage[$url]['chars'] = ($byPage[$url]['chars'] ?? 0) + $length;
+        }
+        uasort($byPage, fn (array $a, array $b) => $b['chars'] <=> $a['chars']);
+        $topPages = [];
+        foreach (array_slice($byPage, 0, 10, true) as $url => $stats) {
+            $topPages[] = ['url' => $url, 'paragraph_count' => $stats['paragraph_count'], 'chars' => $stats['chars']];
+        }
+
+        // (2) 起点URL配下/外の文字数比率。CrawlOriginScopeResolver(依頼CF-1
+        // 由来)を再利用する ―― 同じ判定を3箇所目に実装しない(依頼者指定)。
+        $originChars = 0;
+        $outsideChars = 0;
+        foreach ($allSelected as $paragraph) {
+            $length = $paragraph['length'] ?? mb_strlen($paragraph['text']);
+            $url = $pageUrls[$paragraph['page_order']] ?? null;
+            $isWithinOrigin = $url !== null && $originScope !== null
+                && $this->originScopeResolver->isWithinScope($url, null, $originScope);
+            if ($isWithinOrigin) {
+                $originChars += $length;
+            } else {
+                $outsideChars += $length;
+            }
+        }
+        $totalSelectedChars = $originChars + $outsideChars;
+
+        // (4) 採用された段落の長さの分布。0件(予算0で1段落も採用されな
+        // かった場合等)でもログ自体は壊れず、null/0を出す。
+        $lengths = array_map(fn (array $p) => $p['length'] ?? mb_strlen($p['text']), $allSelected);
+        sort($lengths);
+        $count = count($lengths);
+        if ($count === 0) {
+            $lengthMax = null;
+            $lengthMin = null;
+            $median = null;
+        } else {
+            $lengthMax = end($lengths);
+            $lengthMin = $lengths[0];
+            $median = $count % 2 === 1
+                ? $lengths[intdiv($count, 2)]
+                : (int) round(($lengths[$count / 2 - 1] + $lengths[$count / 2]) / 2);
+        }
+
+        // (5) 捨てられた段落(プール全体 − 採用分)。
+        $poolCount = count($crawlPools['recruit']) + count($crawlPools['homepage']);
+        $poolChars = array_sum(array_column($crawlPools['recruit'], 'length')) + array_sum(array_column($crawlPools['homepage'], 'length'));
+        $discardedCount = max(0, $poolCount - $count);
+        $discardedChars = max(0, $poolChars - $totalSelectedChars);
+
+        // joinInOriginalOrder()は選ばれた段落を"\n"で連結する(クラスタごとに
+        // 段落数-1個の区切り文字)。'top_pages_by_chars'/'origin_chars'等は
+        // 段落自身の文字数のみを集計しており区切り文字を含まないため、
+        // 「ページ別の寄与の合計」を既存のcrawl_chars_added
+        // (mb_strlen($recruitText)+mb_strlen($homepageText)、区切り文字を
+        // 含む)とそのまま比較すると一致しない。区切り文字の総数を別途
+        // 明示して、'top_pages_by_chars'の合計+この値=crawl_chars_addedに
+        // なるようにする(依頼CG-1必須の「合計が合うこと」を満たす)。
+        $separatorChars = max(0, count($selected['recruit']) - 1) + max(0, count($selected['homepage']) - 1);
+
+        Log::info('Brand wheel analysis input: crawl selection breakdown', [
+            'website_analysis_id' => $websiteAnalysisId,
+            'top_pages_by_chars' => $topPages,
+            'origin_chars' => $originChars,
+            'outside_chars' => $outsideChars,
+            'origin_ratio' => $totalSelectedChars > 0 ? round($originChars / $totalSelectedChars, 3) : null,
+            'clusters' => [
+                'recruit' => ['cap' => $caps['recruit'], 'used_chars' => $usedChars['recruit'], 'paragraph_count' => count($selected['recruit']), 'reallocated_in_chars' => $reallocated['recruit']],
+                'homepage' => ['cap' => $caps['homepage'], 'used_chars' => $usedChars['homepage'], 'paragraph_count' => count($selected['homepage']), 'reallocated_in_chars' => $reallocated['homepage']],
+            ],
+            'selected_paragraph_length' => ['max' => $lengthMax, 'median' => $median, 'min' => $lengthMin, 'count' => $count],
+            'discarded_paragraph_count' => $discardedCount,
+            'discarded_chars' => $discardedChars,
+            'partially_cut_paragraph_count' => $partialCutCount,
+            // 'top_pages_by_chars'の合計 + この値 = 既存ログ(truncated due
+            // to AI_MAX_INPUT_TOKENS)のcrawl_chars_addedと一致する
+            // (上のdocblock参照)。
+            'paragraph_separator_chars' => $separatorChars,
+        ]);
     }
 
     /**
@@ -645,7 +798,7 @@ class BrandWheelAnalysisInputFactory
      * 方針)。
      *
      * @param  list<array{text: string, length: int, page_order: int, para_order: int}>  $queue
-     * @return array{0: list<array{text: string, page_order: int, para_order: int}>, 1: list<array{text: string, length: int, page_order: int, para_order: int}>, 2: int, 3: bool} [採用した段落, 未処理のまま残ったキュー, 使った文字数, 段落の途中でキャップが尽きたか]
+     * @return array{0: list<array{text: string, length: int, page_order: int, para_order: int}>, 1: list<array{text: string, length: int, page_order: int, para_order: int}>, 2: int, 3: bool} [採用した段落, 未処理のまま残ったキュー, 使った文字数, 段落の途中でキャップが尽きたか]
      */
     private function takeParagraphsUpTo(array $queue, int $cap): array
     {
@@ -666,7 +819,9 @@ class BrandWheelAnalysisInputFactory
 
             $partial = mb_substr($paragraph['text'], 0, $remainingCap);
             if ($partial !== '') {
-                $taken[] = ['text' => $partial, 'page_order' => $paragraph['page_order'], 'para_order' => $paragraph['para_order']];
+                // 依頼CG-1: 'length'も持たせる(部分採用後の実際の文字数、
+                // logCrawlSelectionBreakdown()の長さ分布集計に使う)。
+                $taken[] = ['text' => $partial, 'length' => mb_strlen($partial), 'page_order' => $paragraph['page_order'], 'para_order' => $paragraph['para_order']];
                 $used += mb_strlen($partial);
             }
             $cutOff = true;
