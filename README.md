@@ -479,6 +479,32 @@ FRONTEND_ORIGIN=https://<frontend-service>.onrender.com
     理由で、**先にマイグレーションだけを適用しても旧コードの動作には
     一切影響しない**(新設テーブルであり、旧コードはその存在を知らないため)
     ―― この順序(マイグレーション→コード)が安全である。
+  - **[2026-10-01追加・依頼CJ] 次の2本のマイグレーションを、コードの
+    デプロイより先に適用すること**。
+    - `2026_10_01_020000_add_kind_to_analyses_table`(`analyses.kind`列の
+      追加+既存データのbackfill)。新しいコードは「比較かどうか」を
+      `source_analysis_id`の有無ではなく、この`kind`列で判定する
+      (`App\Enums\AnalysisKind`)。**このマイグレーションのbackfill文
+      (既存のsource_analysis_idが非nullな行をadmin_comparisonへ更新する
+      部分)を省略/スキップしてはならない** ―― 省略すると、既存の
+      起点ありの比較がすべて既定値(lead_diagnosis)のまま誤分類され、
+      ダッシュボードの件数(診断企業数・再診断企業数・本日/今月の診断数)・
+      比較一覧(admin.comparisons.index)・診断詳細画面の「3〜5社で比較する」
+      ボタンの表示が壊れる(比較なのに無料診断として扱われてしまう)。
+      マイグレーション自体は新しい列の追加+既存データへの一度きりの
+      backfillのみで、旧コードはこの列の存在を知らず参照も書き込みも
+      しないため、**先にマイグレーションだけを適用しても旧コードの動作には
+      一切影響しない**。
+    - `2026_10_01_030000_make_lead_company_contact_fields_nullable`
+      (`lead_companies.primary_contact_name`/`primary_contact_email`を
+      nullableへ変更)。無料診断を経由しない比較作成(依頼CJ-2、
+      `AdminComparisonService::createStandalone()`)は担当者名・メール
+      アドレスを収集しないため、この2列にnullを書き込む。マイグレーション
+      未適用のままこのコードが動くと、新規企業の登録がNOT NULL制約違反の
+      SQLエラーで失敗する。既存データへの変更は伴わないため、**先に
+      マイグレーションだけを適用しても旧コードの動作には一切影響しない**
+      (旧コードはこの2列に常に値を入れるため、nullable化そのものは
+      無害)。
 
 ## テスト
 

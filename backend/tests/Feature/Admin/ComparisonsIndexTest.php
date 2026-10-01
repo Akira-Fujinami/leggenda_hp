@@ -45,6 +45,9 @@ class ComparisonsIndexTest extends TestCase
         $comparison = Analysis::factory()->for($project)->create([
             'created_by' => $sentinel->id,
             'source_analysis_id' => $source->id,
+            // 依頼CJ-1: 「比較かどうか」はkindで判定するようになったため、
+            // source_analysis_idと一緒にkindも明示的に設定する。
+            'kind' => \App\Enums\AnalysisKind::AdminComparison,
             'status' => AnalysisStatus::Completed,
             'created_at' => $createdAt ?? now(),
         ]);

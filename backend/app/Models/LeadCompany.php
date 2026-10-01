@@ -22,17 +22,23 @@ class LeadCompany extends Model
     use HasFactory;
 
     /**
-     * analyses_min_created_at/analyses_max_created_at は実カラムではなく
-     * withMin/withMax('analyses', 'created_at')(App\Services\Admin\
+     * analyses_min_created_at/analyses_max_created_at/last_diagnosed_at は
+     * 実カラムではなくwithMin/withMax(App\Services\Admin\
      * LeadCompanyQueryService/DashboardMetricsService)が付与する集計値。
      * Eloquentはこれらをデフォルトでは生の文字列のまま返すため、Bladeで
-     * ->format()を呼べるようdatetimeにキャストする。
+     * ->format()/->diffForHumans()を呼べるようdatetimeにキャストする。
+     *
+     * 依頼CJ-3(2026-10-01): last_diagnosed_atはDashboardMetricsService::
+     * recentCompanies()/notableCompanies()が
+     * withMax(['analyses as last_diagnosed_at' => ...], 'created_at')で
+     * 付与する(比較を含めず、kind=LeadDiagnosisのみの最終診断日)。
      */
     protected function casts(): array
     {
         return [
             'analyses_min_created_at' => 'datetime',
             'analyses_max_created_at' => 'datetime',
+            'last_diagnosed_at' => 'datetime',
         ];
     }
 

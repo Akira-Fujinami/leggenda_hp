@@ -81,6 +81,34 @@ class LeadCompanyResolver
         });
     }
 
+    /**
+     * 依頼CJ-2(2026-10-01): 無料診断を経由しない比較作成(管理者が直接、
+     * 見込み企業の比較を作る)でのLeadCompany解決。resolveForDiagnosis()とは
+     * 異なり、一致した既存企業のcompany_name・ドメイン・担当者情報は
+     * 一切上書きしない(依頼者の必須要件 ―― このフローはメールを収集
+     * しないため、誤った上書きで無料診断由来の正しい担当者情報を消す
+     * 恐れがある)。メールドメインでの照合も行わない(メールが無いため、
+     * 依頼者指定でドメイン→会社名の2段のみ)。新規作成時はprimary_contact_name/
+     * primary_contact_emailをnullのままにする(データを持たないため ――
+     * 2026_10_01_030000でこの2列をnullable化済み)。
+     */
+    public function resolveForStandaloneComparison(string $companyName, string $selfUrl): LeadCompany
+    {
+        $domain = $this->extractDomain($selfUrl);
+
+        return DB::transaction(function () use ($companyName, $domain) {
+            return $this->findByDomain($domain)
+                ?? $this->findByCompanyName($companyName)
+                ?? LeadCompany::query()->create([
+                    'company_name' => $companyName,
+                    'normalized_domain' => $domain,
+                    'primary_contact_name' => null,
+                    'primary_contact_email' => null,
+                    'sales_status' => 'uncontacted',
+                ]);
+        });
+    }
+
     public function extractDomain(?string $url): ?string
     {
         if ($url === null || trim($url) === '') {

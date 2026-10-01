@@ -2,6 +2,7 @@
 
 namespace App\Jobs\Report;
 
+use App\Enums\AnalysisKind;
 use App\Enums\ReportFormat;
 use App\Enums\ReportGenerationStatus;
 use App\Models\Analysis;
@@ -22,8 +23,9 @@ use Throwable;
  * 依頼AC(2026-08-27): 管理者向け多社比較レポート(PDFのみ)を生成する。
  * 既存のGenerateLeadReportJob(リード向け、Word+PDF、LeadSession必須)とは
  * 完全に独立したJob ―― こちらはFinalizeAnalysisJobから
- * $analysis->source_analysis_idが非nullの場合にのみdispatchされる
- * (App\Jobs\Analysis\FinalizeAnalysisJob参照)。
+ * $analysis->kind===AnalysisKind::AdminComparisonの場合にのみdispatchされる
+ * (App\Jobs\Analysis\FinalizeAnalysisJob参照、依頼CJ-1でsource_analysis_id
+ * ベースの判定から置き換え済み)。
  *
  * (analysis_id, format='pdf')ごとに1行のReportを持つ点はGenerateLeadReportJobと
  * 同じ仕組み(既存のReportモデル・enumをそのまま再利用、新しいテーブル・
@@ -80,10 +82,10 @@ class GenerateAdminComparisonReportJob implements ShouldBeUnique, ShouldQueue
             return;
         }
 
-        // 比較Analysis(source_analysis_idが非null)以外からは、このJobは
+        // 比較Analysis(kind=AdminComparison)以外からは、このJobは
         // 絶対にdispatchされない想定だが、二重の安全弁として何もしない
         // (通常のリード診断に多社比較レポートを生成しない)。
-        if ($analysis->source_analysis_id === null) {
+        if ($analysis->kind !== AnalysisKind::AdminComparison) {
             return;
         }
 

@@ -322,11 +322,50 @@ class FinalizeAnalysisJobTest extends TestCase
             'project_id' => $project->id,
             'status' => AnalysisStatus::Running,
             'source_analysis_id' => $sourceAnalysis->id,
+            // 依頼CJ-1: 「比較かどうか」はkindで判定するようになったため、
+            // source_analysis_idと一緒にkindも明示的に設定する。
+            'kind' => \App\Enums\AnalysisKind::AdminComparison,
         ]);
         $website = Website::factory()->create(['project_id' => $project->id, 'is_primary' => true]);
         WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id, 'status' => $selfStatus]);
 
         return $analysis;
+    }
+
+    /**
+     * 依頼CJ-2(2026-10-01): 無料診断を経由しない比較(起点が無い、
+     * source_analysis_idがnullのまま)。
+     */
+    private function makeStandaloneComparisonAnalysis(WebsiteAnalysisStatus $selfStatus = WebsiteAnalysisStatus::Completed): Analysis
+    {
+        $company = LeadCompany::factory()->create();
+
+        $project = new Project(['name' => '比較']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_company_id = $company->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create([
+            'project_id' => $project->id,
+            'status' => AnalysisStatus::Running,
+            'kind' => \App\Enums\AnalysisKind::AdminComparison,
+        ]);
+        $website = Website::factory()->create(['project_id' => $project->id, 'is_primary' => true]);
+        WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $website->id, 'status' => $selfStatus]);
+
+        return $analysis;
+    }
+
+    public function test_it_dispatches_admin_comparison_report_generation_for_a_standalone_comparison_analysis(): void
+    {
+        Queue::fake([GenerateAdminComparisonReportJob::class, GenerateLeadReportJob::class]);
+        $analysis = $this->makeStandaloneComparisonAnalysis();
+
+        (new FinalizeAnalysisJob($analysis->id))->handle(app(AnalysisPipeline::class));
+
+        $this->assertSame(AnalysisStatus::Completed, $analysis->fresh()->status);
+        Queue::assertPushed(GenerateAdminComparisonReportJob::class, 1);
+        Queue::assertNotPushed(GenerateLeadReportJob::class);
     }
 
     public function test_it_dispatches_admin_comparison_report_generation_for_a_completed_comparison_analysis(): void

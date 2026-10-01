@@ -26,6 +26,15 @@
     選んだ診断IDをhidden inputで復元する ―― これは通常のold()と同じ
     1往復だけのセッションフラッシュであり、「中断された下書きが溜まる」
     仕組みとは別物(禁止されているのは後者)。
+
+    依頼CJ-2(2026-10-01): 「無料診断なしで新しく作る」を追加した。新しい
+    GET画面・新しい<form>は増やさない ―― この同じ画面・同じ<form>を、
+    STEP0で選んだflow_mode(hidden input)に応じてJSだけでSTEP1・2を
+    スキップし、送信先をadmin.comparisons.standalone.storeへ切り替える。
+    STEP3(自社URL・競合表)・STEP4(営業資料)・STEP5(確認)は両モードで
+    共有する(複製しない、依頼者指定)。standaloneモードのみ、STEP3の
+    先頭に自社企業名の入力欄を追加表示する(起点の診断が無く、企業名を
+    自動で引き継げないため)。
 --}}
 
 @section('content')
@@ -102,15 +111,20 @@
     </p>
 
     <div class="steps" id="wizard-steps">
-        <i data-step="1">1 会社</i><i data-step="2">2 診断</i><i data-step="3">3 競合</i><i data-step="4">4 営業資料</i><i data-step="5">5 確認</i>
+        <i data-step="0">入口</i><i data-step="1">1 会社</i><i data-step="2">2 診断</i><i data-step="3">3 競合</i><i data-step="4">4 営業資料</i><i data-step="5">5 確認</i>
     </div>
 
     @php
-        $hasCompetitorErrors = $errors->has('competitor_urls') || $errors->has('competitor_urls.*') || $errors->has('competitor_names.*') || $errors->has('self_url') || $errors->has('source_analysis_id');
+        $hasCompetitorErrors = $errors->has('competitor_urls') || $errors->has('competitor_urls.*') || $errors->has('competitor_names.*') || $errors->has('self_url') || $errors->has('source_analysis_id') || $errors->has('self_company_name');
         $hasSalesDeckErrors = $errors->has('sales_deck');
 
-        $initialStep = 1;
-        if ($selectedAnalysis) {
+        // 依頼CJ-2(2026-10-01): flow_modeのold()で、前回どちらを選んでいたか
+        // を復元する(company_query/source_analysis_idと同じ1往復old()
+        // パターン)。
+        $flowMode = old('flow_mode', 'from_diagnosis');
+
+        $initialStep = 0;
+        if ($selectedAnalysis || $flowMode === 'standalone') {
             $initialStep = 3;
         }
         if ($hasCompetitorErrors) {
@@ -144,14 +158,43 @@
             'analyzed_at' => $selectedAnalysis->created_at?->format('Y年n月j日'),
             'status' => $selectedAnalysis->status->value,
         ] : null;
+
+        // 依頼CJ-2: standaloneモードでは起点のAnalysisが無いため、
+        // admin.comparisons.standalone.storeへ送る。
+        $formAction = $flowMode === 'standalone'
+            ? route('admin.comparisons.standalone.store', [], false)
+            : ($selectedAnalysis ? route('admin.analyses.compare.store', $selectedAnalysis->id, false) : '#');
     @endphp
 
     <form method="POST"
-          action="{{ $selectedAnalysis ? route('admin.analyses.compare.store', $selectedAnalysis->id, false) : '#' }}"
+          action="{{ $formAction }}"
           enctype="multipart/form-data" id="wizard-form">
         @csrf
         <input type="hidden" name="company_query" id="company_query_hidden" value="{{ old('company_query') }}">
         <input type="hidden" name="source_analysis_id" id="source_analysis_id_hidden" value="{{ old('source_analysis_id', $selectedAnalysis->id ?? '') }}">
+        {{-- 依頼CJ-2(2026-10-01): 「無料診断から選ぶ」/「無料診断なしで
+             作る」のどちらを選んだかを、company_query/source_analysis_idと
+             同じ1往復old()パターンで保持する。 --}}
+        <input type="hidden" name="flow_mode" id="flow_mode_hidden" value="{{ old('flow_mode', 'from_diagnosis') }}">
+
+        {{-- STEP 0: どちらで比較を作るか(依頼CJ-2で新設) --}}
+        <div class="qa" id="step-0">
+            <div class="row"><div class="av">L</div><div class="bub">
+                <div class="q">どちらで比較を作りますか？</div>
+            </div></div>
+
+            <div class="card" id="step-0-input">
+                <p>
+                    <button type="button" class="btn" id="flow-from-diagnosis-btn">無料診断から選ぶ</button>
+                    <button type="button" class="btn secondary" id="flow-standalone-btn" style="margin-left:8px;">無料診断なしで新しく作る</button>
+                </p>
+                <p class="hint">無料診断をまだ受けていない見込み企業について、先に比較を作りたい場合は「無料診断なしで新しく作る」を選んでください。</p>
+            </div>
+            <div class="row me" id="step-0-answer">
+                <div class="av">担当</div>
+                <div class="bub"><span id="step-0-answer-text"></span><a class="edit" data-goto="0">変更</a></div>
+            </div>
+        </div>
 
         {{-- STEP 1: 会社名 --}}
         <div class="qa" id="step-1">
@@ -217,6 +260,14 @@
             </div></div>
 
             <div class="card" id="step-3-input">
+                {{-- 依頼CJ-2(2026-10-01): 無料診断なしで作る場合のみ表示する
+                     自社企業名の入力欄(起点の診断が無いため、企業名を
+                     自動で引き継げない)。 --}}
+                <div id="self_company_name_field" style="margin-bottom:16px; display:{{ $flowMode === 'standalone' ? '' : 'none' }};">
+                    <div style="font-size:13px;font-weight:700;margin-bottom:5px;">自社企業名</div>
+                    <input type="text" name="self_company_name" id="self_company_name_input" value="{{ old('self_company_name') }}">
+                    <p class="hint">比較レポートの表と、ダッシュボードの企業一覧に使います。</p>
+                </div>
                 <div style="margin-bottom:16px;">
                     <div style="font-size:13px;font-weight:700;margin-bottom:5px;">自社サイトURL</div>
                     <input type="text" name="self_url" id="self_url_input" value="{{ old('self_url', $selfUrl) }}">
@@ -332,8 +383,12 @@
     var STEP_COUNT = 5;
     var currentStep = {{ $initialStep }};
     var selected = @json($selectedAnalysisForJs);
+    // 依頼CJ-2(2026-10-01): 「無料診断から選ぶ」/「無料診断なしで作る」の
+    // どちらで進んでいるか。
+    var flowMode = @json($flowMode);
     var searchUrl = @json(route('admin.comparisons.search', [], false));
     var storeUrlTemplate = @json(route('admin.analyses.compare.store', ['analysis' => '__ID__'], false));
+    var standaloneStoreUrl = @json(route('admin.comparisons.standalone.store', [], false));
     // 依頼BX-3(2026-09-11): 診断状態の表示文言はconfigに集約し(直書きしない、
     // 依頼者指定)、search()のJSONレスポンス自体には新しいフィールドを
     // 足さない(依頼BX-1で認められた3つ以外を増やさない、依頼者指定)ため、
@@ -365,10 +420,13 @@
             if (n < currentStep) { pills[p].classList.add('done'); }
             if (n === currentStep) { pills[p].classList.add('now'); }
         }
-        for (var i = 1; i <= STEP_COUNT; i++) {
+        for (var i = 0; i <= STEP_COUNT; i++) {
             var qa = el('step-' + i);
             if (!qa) { continue; }
-            qa.style.display = (i > currentStep) ? 'none' : '';
+            // 依頼CJ-2: 無料診断なしで作る場合、STEP1(会社名検索)・
+            // STEP2(診断選択)は常に非表示にする(起点の診断自体が無いため)。
+            var skip = (flowMode === 'standalone' && (i === 1 || i === 2));
+            qa.style.display = (skip || i > currentStep) ? 'none' : '';
 
             var inputBlock = el('step-' + i + '-input');
             var answerBlock = el('step-' + i + '-answer');
@@ -381,6 +439,28 @@
     function goTo(n) {
         currentStep = n;
         renderSteps();
+    }
+
+    // ------------------------------------------------------------------
+    // STEP 0: 無料診断から選ぶ/無料診断なしで作る。
+    // ------------------------------------------------------------------
+    function setFlowMode(mode) {
+        flowMode = mode;
+        el('flow_mode_hidden').value = mode;
+        el('self_company_name_field').style.display = (mode === 'standalone') ? '' : 'none';
+        el('step-0-answer-text').textContent = (mode === 'standalone') ? '無料診断なしで新しく作る' : '無料診断から選ぶ';
+        el('wizard-form').action = (mode === 'standalone')
+            ? standaloneStoreUrl
+            : (selected ? storeUrlTemplate.replace('__ID__', selected.id) : '#');
+        currentStep = (mode === 'standalone') ? 3 : 1;
+        renderSteps();
+    }
+
+    el('flow-from-diagnosis-btn').addEventListener('click', function () { setFlowMode('from_diagnosis'); });
+    el('flow-standalone-btn').addEventListener('click', function () { setFlowMode('standalone'); });
+
+    if (currentStep > 0) {
+        el('step-0-answer-text').textContent = (flowMode === 'standalone') ? '無料診断なしで新しく作る' : '無料診断から選ぶ';
     }
 
     var editLinks = document.querySelectorAll('.edit[data-goto]');
@@ -553,8 +633,17 @@
     // STEP 5: 確認。
     // ------------------------------------------------------------------
     function renderStep5() {
-        el('summary-source').textContent = selected ? ('#' + selected.id + '　' + (selected.company_name || '')) : '—';
-        el('summary-self').textContent = selected ? (selected.self_host || '—') : '—';
+        if (flowMode === 'standalone') {
+            el('summary-source').textContent = '無料診断なし（新規作成）';
+            var companyNameVal = el('self_company_name_input').value.trim();
+            var selfUrlVal = el('self_url_input').value.trim();
+            el('summary-self').textContent = companyNameVal
+                ? (companyNameVal + (selfUrlVal ? '（' + selfUrlVal + '）' : ''))
+                : (selfUrlVal || '—');
+        } else {
+            el('summary-source').textContent = selected ? ('#' + selected.id + '　' + (selected.company_name || '')) : '—';
+            el('summary-self').textContent = selected ? (selected.self_host || '—') : '—';
+        }
 
         var rows = collectCompetitors();
         el('summary-competitors').textContent = rows.length

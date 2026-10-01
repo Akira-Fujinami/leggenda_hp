@@ -77,10 +77,17 @@
                     {{ $analysis->created_at->format('Y/n/j H:i') }}
                     <span class="badge status-{{ $analysis->status->value }}">{{ $analysis->status->value }}</span>
                     {{-- 依頼AB-2: 無料診断と比較を一覧で見分けられるようにする
-                         (source_analysis_idの有無で明示的に判断、サイト数からの
-                         推測はしない)。 --}}
-                    @if ($analysis->source_analysis_id)
-                        <span class="badge">比較(#{{ $analysis->source_analysis_id }}から作成)</span>
+                         (kindで明示的に判断、サイト数からの推測はしない。
+                         依頼CJ-1でsource_analysis_idの有無から置き換え済み)。
+                         依頼CJ-4(2026-10-01): 無料診断を経由しない比較
+                         (依頼CJ-2)は起点が無いため、バッジを「単独で作成」に
+                         分ける。 --}}
+                    @if ($analysis->kind === \App\Enums\AnalysisKind::AdminComparison)
+                        @if ($analysis->source_analysis_id)
+                            <span class="badge">比較(#{{ $analysis->source_analysis_id }}から作成)</span>
+                        @else
+                            <span class="badge">{{ config('analysis.admin_comparison.standalone_badge_label') }}</span>
+                        @endif
                     @endif
                 </div>
                 <dl>

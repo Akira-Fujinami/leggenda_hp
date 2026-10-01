@@ -92,7 +92,10 @@ class AdminComparisonWizardTest extends TestCase
             $sourceProject->save();
             $sourceAnalysis = Analysis::factory()->for($sourceProject)->create(['created_by' => $sentinel->id]);
 
+            // 依頼CJ-1: 「比較かどうか」はkindで判定するようになったため、
+            // source_analysis_idと一緒にkindも明示的に設定する。
             $analysis->source_analysis_id = $sourceAnalysis->id;
+            $analysis->kind = \App\Enums\AnalysisKind::AdminComparison;
             $analysis->save();
         }
 

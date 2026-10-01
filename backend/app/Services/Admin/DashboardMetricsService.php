@@ -2,6 +2,7 @@
 
 namespace App\Services\Admin;
 
+use App\Enums\AnalysisKind;
 use App\Models\Analysis;
 use App\Models\BrandWheelAnalysisResult;
 use App\Models\LeadCompany;
@@ -39,7 +40,15 @@ class DashboardMetricsService
     private const RECENT_COMPARISONS_LIMIT = 5;
 
     /**
-     * @return array{today_count: int, month_count: int, company_count: int, re_diagnosed_count: int, consultation_count: int, needs_attention_count: int}
+     * 依頼CJ-3(2026-10-01): company_count/re_diagnosed_count/today_count/
+     * month_countは、無料診断(kind=LeadDiagnosis)のみを対象にする ――
+     * 以前はsource_analysis_id/kindの区別自体が無く、管理者起点の比較
+     * (依頼AB)も無料診断として数えてしまっていた(既存のバグ、この依頼で
+     * 修正)。company_countの定義変更に伴い、比較だけで登録された企業数を
+     * comparison_only_company_countとして新設する(依頼CJ-2で、無料診断を
+     * 経由しない比較がLeadCompanyを作れるようになったため)。
+     *
+     * @return array{today_count: int, month_count: int, company_count: int, comparison_only_company_count: int, re_diagnosed_count: int, consultation_count: int, needs_attention_count: int}
      */
     public function kpis(): array
     {
@@ -49,8 +58,19 @@ class DashboardMetricsService
                 ->whereYear('analyses.created_at', now()->year)
                 ->whereMonth('analyses.created_at', now()->month)
                 ->count(),
-            'company_count' => LeadCompany::query()->count(),
-            're_diagnosed_count' => LeadCompany::query()->has('analyses', '>=', 2)->count(),
+            'company_count' => LeadCompany::query()
+                ->whereHas('analyses', fn ($q) => $q->where('kind', AnalysisKind::LeadDiagnosis))
+                ->count(),
+            'comparison_only_company_count' => LeadCompany::query()
+                ->whereDoesntHave('analyses', fn ($q) => $q->where('kind', AnalysisKind::LeadDiagnosis))
+                ->count(),
+            // 依頼CJ-3: 比較を「再診断」としてカウントしないよう、
+            // lead_diagnosis種別のAnalysisが2件以上の企業のみを数える
+            // (has('analyses', '>=', 2)だと、診断1件+比較1件の企業も
+            // 誤って再診断企業としてカウントしてしまう)。
+            're_diagnosed_count' => LeadCompany::query()
+                ->whereHas('analyses', fn ($q) => $q->where('kind', AnalysisKind::LeadDiagnosis), '>=', 2)
+                ->count(),
             // 既存のlead_sessions.consultation_requested_atをそのまま再利用する
             // (依頼#4「既存テーブル・イベントがあれば再利用」)。
             'consultation_count' => LeadSession::query()->whereNotNull('consultation_requested_at')->count(),
@@ -59,30 +79,38 @@ class DashboardMetricsService
     }
 
     /**
-     * @return Collection<int, array{company_id: int, company_name: string, diagnosis_count: int, last_diagnosed_at: \Illuminate\Support\Carbon, sales_status: string}>
+     * 依頼CJ-3(2026-10-01): diagnosis_count/last_diagnosed_atは、比較
+     * (kind=AdminComparison)を含めず、無料診断(kind=LeadDiagnosis)のみを
+     * 集計する(以前のwithCount('analyses')/withMax('analyses', ...)は
+     * 比較も診断として数えていた、既存のバグ)。一覧自体は「無料診断を
+     * 1件以上持つ企業」のまま(比較のみの企業はここには出さない ――
+     * 依頼CJ-3の「最近の診断企業」の対象を変えないため)。
+     *
+     * @return Collection<int, array{company_id: int, company_name: string, diagnosis_count: int, last_diagnosed_at: ?\Illuminate\Support\Carbon, sales_status: string}>
      */
     public function recentCompanies(): Collection
     {
         return LeadCompany::query()
-            ->withCount('analyses')
-            ->withMax('analyses', 'created_at')
-            ->has('analyses')
-            ->orderByDesc('analyses_max_created_at')
+            ->withCount(['analyses as diagnosis_count' => fn ($q) => $q->where('kind', AnalysisKind::LeadDiagnosis)])
+            ->withMax(['analyses as last_diagnosed_at' => fn ($q) => $q->where('kind', AnalysisKind::LeadDiagnosis)], 'created_at')
+            ->whereHas('analyses', fn ($q) => $q->where('kind', AnalysisKind::LeadDiagnosis))
+            ->orderByDesc('last_diagnosed_at')
             ->limit(self::RECENT_COMPANIES_LIMIT)
             ->get()
             ->map(fn (LeadCompany $company) => [
                 'company_id' => $company->id,
                 'company_name' => $company->company_name,
-                'diagnosis_count' => (int) $company->analyses_count,
-                'last_diagnosed_at' => $company->analyses_max_created_at,
+                'diagnosis_count' => (int) $company->diagnosis_count,
+                'last_diagnosed_at' => $company->last_diagnosed_at,
                 'sales_status' => $company->sales_status,
             ]);
     }
 
     /**
      * 依頼BW-3(2026-09-11): ダッシュボード上部「作成中・最近の比較」。
-     * BW-2の一覧(admin.comparisons.index)と同じ対象(source_analysis_idが
-     * 非null)を、直近5件だけ新しい順で返す。N+1を避けるため、一覧表示に
+     * BW-2の一覧(admin.comparisons.index)と同じ対象(kind=AdminComparison、
+     * 依頼CJ-1でsource_analysis_idベースの判定から置き換え済み)を、
+     * 直近5件だけ新しい順で返す。N+1を避けるため、一覧表示に
      * 必要な関連をすべてwith()で先読みする(BW-2のindex()と同じ考え方)。
      *
      * @return Collection<int, array{id: int, company_name: ?string, status: string, created_at: \Illuminate\Support\Carbon}>
@@ -90,7 +118,7 @@ class DashboardMetricsService
     public function recentComparisons(): Collection
     {
         return Analysis::query()
-            ->whereNotNull('source_analysis_id')
+            ->where('kind', AnalysisKind::AdminComparison)
             ->with(['project.leadCompany'])
             ->orderByDesc('created_at')
             ->limit(self::RECENT_COMPARISONS_LIMIT)
@@ -107,22 +135,25 @@ class DashboardMetricsService
      * 再診断企業(diagnosis_count >= 2)を診断回数の多い順に(依頼#18、
      * AIスコアリングは行わない機械的な件数順)。
      *
-     * @return Collection<int, array{company_id: int, company_name: string, diagnosis_count: int, last_diagnosed_at: \Illuminate\Support\Carbon}>
+     * 依頼CJ-3(2026-10-01): recentCompanies()と同じ理由で、比較
+     * (kind=AdminComparison)を診断回数・最終診断日に含めない。
+     *
+     * @return Collection<int, array{company_id: int, company_name: string, diagnosis_count: int, last_diagnosed_at: ?\Illuminate\Support\Carbon}>
      */
     public function notableCompanies(): Collection
     {
         return LeadCompany::query()
-            ->withCount('analyses')
-            ->withMax('analyses', 'created_at')
-            ->has('analyses', '>=', 2)
-            ->orderByDesc('analyses_count')
+            ->withCount(['analyses as diagnosis_count' => fn ($q) => $q->where('kind', AnalysisKind::LeadDiagnosis)])
+            ->withMax(['analyses as last_diagnosed_at' => fn ($q) => $q->where('kind', AnalysisKind::LeadDiagnosis)], 'created_at')
+            ->whereHas('analyses', fn ($q) => $q->where('kind', AnalysisKind::LeadDiagnosis), '>=', 2)
+            ->orderByDesc('diagnosis_count')
             ->limit(self::NOTABLE_COMPANIES_LIMIT)
             ->get()
             ->map(fn (LeadCompany $company) => [
                 'company_id' => $company->id,
                 'company_name' => $company->company_name,
-                'diagnosis_count' => (int) $company->analyses_count,
-                'last_diagnosed_at' => $company->analyses_max_created_at,
+                'diagnosis_count' => (int) $company->diagnosis_count,
+                'last_diagnosed_at' => $company->last_diagnosed_at,
             ]);
     }
 
@@ -215,10 +246,16 @@ class DashboardMetricsService
     }
 
     /**
+     * 依頼CJ-3(2026-10-01): kind=LeadDiagnosisのみを対象にする ――
+     * 以前はsource_analysis_id/kindの区別が無く、管理者起点の比較も
+     * today_count/month_countに混入していた(既存のバグ、この依頼で修正)。
+     *
      * @return \Illuminate\Database\Eloquent\Builder<Analysis>
      */
     private function leadAnalysesQuery(): \Illuminate\Database\Eloquent\Builder
     {
-        return Analysis::query()->whereHas('project', fn ($q) => $q->whereNotNull('lead_company_id'));
+        return Analysis::query()
+            ->where('kind', AnalysisKind::LeadDiagnosis)
+            ->whereHas('project', fn ($q) => $q->whereNotNull('lead_company_id'));
     }
 }

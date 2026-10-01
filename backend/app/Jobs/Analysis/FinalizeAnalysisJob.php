@@ -3,6 +3,7 @@
 namespace App\Jobs\Analysis;
 
 use App\Enums\AnalysisErrorCode;
+use App\Enums\AnalysisKind;
 use App\Enums\AnalysisStatus;
 use App\Enums\JobType;
 use App\Jobs\Analysis\Concerns\LogsJobFailures;
@@ -100,14 +101,17 @@ class FinalizeAnalysisJob implements ShouldBeUnique, ShouldQueue
                 ]);
             }
 
-            // 依頼AC(2026-08-27): 管理者起点の多社比較(source_analysis_idが
-            // 非null)がcompleted/partialに到達した時点で、多社比較レポート
+            // 依頼AC(2026-08-27): 管理者起点の多社比較(kind=AdminComparison)が
+            // completed/partialに到達した時点で、多社比較レポート
             // (PDFのみ)の生成を起動する。上のLeadReportDispatchServiceとは
             // 完全に独立した経路 ―― 比較Analysisはlead_session_idを持たない
             // ためLeadReportDispatchService側は素通りする(dispatchIfReportable()
             // 参照)。同じ理由(このJob本来の責務を失敗扱いにしない)で
             // 独立したtry/catchに包む。
-            if ($analysis->source_analysis_id !== null && in_array($status, [AnalysisStatus::Completed, AnalysisStatus::Partial], true)) {
+            // 依頼CJ-1(2026-10-01): source_analysis_idの有無による判定は、
+            // 無料診断を経由しない比較(依頼CJ-2、source_analysis_idがnullの
+            // まま)を見逃すため、明示的なkind列に置き換えた。
+            if ($analysis->kind === AnalysisKind::AdminComparison && in_array($status, [AnalysisStatus::Completed, AnalysisStatus::Partial], true)) {
                 try {
                     // 依頼AE(2026-08-27): GenerateAdminComparisonReportJobの
                     // クラス既定(public $queue = 'reports')と同じ値を、

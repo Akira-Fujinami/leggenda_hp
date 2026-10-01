@@ -55,6 +55,13 @@
         <div class="value">{{ $kpis['company_count'] }}</div>
     </div>
     <div class="kpi-card">
+        {{-- 依頼CJ-3(2026-10-01): 無料診断を経由しない比較(依頼CJ-2)で
+             登録された企業は、上の「診断企業数」に含まれない ―― その内訳を
+             別カードで示す。 --}}
+        <div class="label">{{ config('analysis.admin_comparison.comparison_only_company_count_label') }}</div>
+        <div class="value">{{ $kpis['comparison_only_company_count'] }}</div>
+    </div>
+    <div class="kpi-card">
         <div class="label">再診断企業数</div>
         <div class="value">{{ $kpis['re_diagnosed_count'] }}</div>
     </div>

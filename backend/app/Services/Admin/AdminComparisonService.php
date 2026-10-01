@@ -2,6 +2,7 @@
 
 namespace App\Services\Admin;
 
+use App\Enums\AnalysisKind;
 use App\Enums\AnalysisStatus;
 use App\Exceptions\InvalidUrlException;
 use App\Models\Analysis;
@@ -11,6 +12,7 @@ use App\Models\Website;
 use App\Services\Analysis\AnalysisService;
 use App\Services\Lead\LeadCompanyResolver;
 use App\Services\UrlNormalizer;
+use App\Support\Admin\StandaloneComparisonResult;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -65,24 +67,11 @@ class AdminComparisonService
      */
     public function createFromSourceAnalysis(Analysis $sourceAnalysis, ?string $selfUrl, array $competitorUrls, array $competitorNames = []): Analysis
     {
-        // 依頼AB-3: 管理者起点の比較は同時に1件まで。サイト数からの推測では
-        // なく、source_analysis_idが非nullの実行中Analysisの有無で判定する
-        // (=「比較であること」を明示的に表すこの依頼の設計そのものを、
-        // 同時実行ガードにもそのまま使う)。
-        $inProgress = Analysis::query()
-            ->whereNotNull('source_analysis_id')
-            ->whereIn('status', [AnalysisStatus::Pending, AnalysisStatus::Queued, AnalysisStatus::Running])
-            ->exists();
-
-        if ($inProgress) {
-            throw ValidationException::withMessages([
-                'competitor_urls' => ['他の比較が実行中です。完了してから開始してください(管理者起点の比較は同時に1件までです)。'],
-            ]);
-        }
+        $this->assertNoComparisonInProgress();
 
         // 比較の起点にできるのは、比較でも比較の起点でもない通常の無料診断
         // (企業に紐づくもの)のみ。比較から比較は作れない。
-        if ($sourceAnalysis->source_analysis_id !== null) {
+        if ($sourceAnalysis->kind === AnalysisKind::AdminComparison) {
             throw ValidationException::withMessages([
                 'source_analysis_id' => ['比較を起点に、さらに比較を作ることはできません。'],
             ]);
@@ -95,26 +84,7 @@ class AdminComparisonService
             ]);
         }
 
-        $min = (int) config('analysis.admin_comparison.min_competitors', 3);
-        $max = (int) config('analysis.admin_comparison.max_competitors', 5);
-
-        // 依頼AC: competitor_namesはcompetitor_urlsと同じ添字に対応する
-        // (フォームの並び順)。空URLを間引く際、名前も同じ添字集合で
-        // 間引いて対応関係を保つ(単純にarray_valuesし直すと片方だけ
-        // ずれて誤った企業名がURLに紐づく恐れがあるため)。
-        $trimmedUrls = array_map('trim', $competitorUrls);
-        $nonEmptyKeys = array_keys(array_filter($trimmedUrls, fn (string $u) => $u !== ''));
-        $competitorUrls = array_values(array_map(fn ($k) => $trimmedUrls[$k], $nonEmptyKeys));
-        $competitorNames = array_values(array_map(
-            fn ($k) => trim((string) ($competitorNames[$k] ?? '')),
-            $nonEmptyKeys,
-        ));
-
-        if (count($competitorUrls) < $min || count($competitorUrls) > $max) {
-            throw ValidationException::withMessages([
-                'competitor_urls' => ["競合サイトは{$min}〜{$max}件で入力してください。"],
-            ]);
-        }
+        [$competitorUrls, $competitorNames] = $this->normalizeCompetitors($competitorUrls, $competitorNames);
 
         $resolvedSelfUrl = $selfUrl !== null && trim($selfUrl) !== ''
             ? $selfUrl
@@ -130,68 +100,205 @@ class AdminComparisonService
         // 管理者入力だからといって省かない)+ 正規化ホストでの重複検出
         // (自社・競合すべてを合わせて、同一ホストの重複を弾く)。
         $normalizedSelfUrl = $this->normalizeOrFail($resolvedSelfUrl, 'self_url');
-        $allUrls = array_merge([$normalizedSelfUrl], array_map(
+        $normalizedCompetitorUrls = array_map(
             fn (string $u, int $i) => $this->normalizeOrFail($u, "competitor_urls.{$i}"),
             $competitorUrls,
             array_keys($competitorUrls),
-        ));
-
-        $hosts = array_map(fn (string $u) => (string) parse_url($u, PHP_URL_HOST), $allUrls);
-        if (count($hosts) !== count(array_unique($hosts))) {
-            throw ValidationException::withMessages([
-                'competitor_urls' => ['同一ホストのURLが重複しています(自社・競合を含む)。'],
-            ]);
-        }
+        );
+        $this->assertNoDuplicateHosts($normalizedSelfUrl, $normalizedCompetitorUrls);
 
         return DB::transaction(function () use ($sourceAnalysis, $leadCompanyId, $normalizedSelfUrl, $resolvedSelfUrl, $competitorUrls, $competitorNames) {
-            $sentinelUser = $this->sentinelUser();
-
-            $project = new Project(['name' => "比較: {$sourceAnalysis->project?->leadCompany?->company_name}"]);
-            $project->user_id = $sentinelUser->id;
-            $project->lead_company_id = $leadCompanyId;
-            // lead_session_idは意図的に設定しない(クラスdocblock参照)。
-            $project->save();
-
-            Website::query()->create([
-                'project_id' => $project->id,
-                'name' => '自社サイト',
-                'url' => trim($resolvedSelfUrl),
-                'normalized_url' => $normalizedSelfUrl,
-                'is_primary' => true,
-                'display_order' => 0,
-            ]);
-
-            foreach (array_values($competitorUrls) as $i => $rawUrl) {
-                Website::query()->create([
-                    'project_id' => $project->id,
-                    'name' => $this->competitorLabel($competitorNames[$i] ?? '', $rawUrl, $i),
-                    'url' => trim($rawUrl),
-                    'normalized_url' => $this->urlNormalizer->normalize($rawUrl),
-                    'is_primary' => false,
-                    // 依頼AB-3: display_orderを入力順のまま保持する(レポートの
-                    // 列順に使う、依頼者指定)。自社=0、競合=1始まり。
-                    'display_order' => $i + 1,
-                ]);
-            }
-
-            $analysis = $this->analyses->start($project, [
-                // 依頼AB-3: config('analysis.max_websites_per_analysis')
-                // (既定5)は自社+競合5社の合計6件より小さいことがあるため、
-                // ここで明示的に渡す(既存のconfig既定値は変更しない)。
-                'max_websites' => $project->websites()->count(),
-                'skip_lighthouse' => false,
-                'skip_screenshots' => false,
-                // ブランド・ホイールは必ず実行する(比較の中核のため)。
-                'skip_brand_wheel' => false,
-                // 依頼W-1の調査結果を踏まえ、既定はconfig('lead.crawl_site')に
-                // 揃える(リード向けと同じ巡回方針)。
-                'crawl_site' => (bool) config('lead.crawl_site'),
-            ], $sentinelUser);
+            $analysis = $this->createComparisonAnalysisRow(
+                $leadCompanyId,
+                $sourceAnalysis->project?->leadCompany?->company_name,
+                $resolvedSelfUrl,
+                $normalizedSelfUrl,
+                $competitorUrls,
+                $competitorNames,
+            );
 
             $analysis->update(['source_analysis_id' => $sourceAnalysis->id]);
 
             return $analysis->fresh(['websiteAnalyses', 'project.websites']);
         });
+    }
+
+    /**
+     * 依頼CJ-2(2026-10-01): 無料診断を経由せず、管理者が直接3〜5社比較を
+     * 作成する。起点のAnalysisが存在しないため、自社企業名を明示的に
+     * 受け取る(createFromSourceAnalysis()は起点の無料診断から企業名を
+     * 引き継ぐが、ここにはそれが無い)。createFromSourceAnalysis()との
+     * 共通処理(同時実行ガード・競合URLの検証・Project/Website/Analysisの
+     * 作成)はすべて共有のprivateメソッドへ抽出済み(下記)。
+     *
+     * @param  list<string>  $competitorUrls
+     * @param  list<string|null>  $competitorNames
+     */
+    public function createStandalone(string $selfCompanyName, string $selfUrl, array $competitorUrls, array $competitorNames = []): StandaloneComparisonResult
+    {
+        $this->assertNoComparisonInProgress();
+
+        [$competitorUrls, $competitorNames] = $this->normalizeCompetitors($competitorUrls, $competitorNames);
+
+        $normalizedSelfUrl = $this->normalizeOrFail($selfUrl, 'self_url');
+        $normalizedCompetitorUrls = array_map(
+            fn (string $u, int $i) => $this->normalizeOrFail($u, "competitor_urls.{$i}"),
+            $competitorUrls,
+            array_keys($competitorUrls),
+        );
+        $this->assertNoDuplicateHosts($normalizedSelfUrl, $normalizedCompetitorUrls);
+
+        return DB::transaction(function () use ($selfCompanyName, $selfUrl, $normalizedSelfUrl, $competitorUrls, $competitorNames) {
+            $company = $this->leadCompanyResolver->resolveForStandaloneComparison($selfCompanyName, $selfUrl);
+
+            $analysis = $this->createComparisonAnalysisRow(
+                $company->id,
+                $selfCompanyName,
+                $selfUrl,
+                $normalizedSelfUrl,
+                $competitorUrls,
+                $competitorNames,
+            );
+
+            return new StandaloneComparisonResult(
+                $analysis->fresh(['websiteAnalyses', 'project.websites']),
+                matchedExistingCompany: ! $company->wasRecentlyCreated,
+            );
+        });
+    }
+
+    /**
+     * 依頼AB-3: 管理者起点の比較は同時に1件まで(起点あり・起点なしの
+     * 両方を合わせて1件まで ―― 依頼CJ-2でも同じ制約を維持する)。
+     * サイト数からの推測ではなく、kind=AdminComparisonの実行中Analysisの
+     * 有無で判定する。
+     */
+    private function assertNoComparisonInProgress(): void
+    {
+        $inProgress = Analysis::query()
+            ->where('kind', AnalysisKind::AdminComparison)
+            ->whereIn('status', [AnalysisStatus::Pending, AnalysisStatus::Queued, AnalysisStatus::Running])
+            ->exists();
+
+        if ($inProgress) {
+            throw ValidationException::withMessages([
+                'competitor_urls' => ['他の比較が実行中です。完了してから開始してください(管理者起点の比較は同時に1件までです)。'],
+            ]);
+        }
+    }
+
+    /**
+     * 依頼AC: competitor_namesはcompetitor_urlsと同じ添字に対応する
+     * (フォームの並び順)。空URLを間引く際、名前も同じ添字集合で
+     * 間引いて対応関係を保つ(単純にarray_valuesし直すと片方だけ
+     * ずれて誤った企業名がURLに紐づく恐れがあるため)。
+     *
+     * @param  list<string|null>  $competitorUrls
+     * @param  list<string|null>  $competitorNames
+     * @return array{0: list<string>, 1: list<string>}
+     */
+    private function normalizeCompetitors(array $competitorUrls, array $competitorNames): array
+    {
+        $min = (int) config('analysis.admin_comparison.min_competitors', 3);
+        $max = (int) config('analysis.admin_comparison.max_competitors', 5);
+
+        $trimmedUrls = array_map('trim', $competitorUrls);
+        $nonEmptyKeys = array_keys(array_filter($trimmedUrls, fn (string $u) => $u !== ''));
+        $urls = array_values(array_map(fn ($k) => $trimmedUrls[$k], $nonEmptyKeys));
+        $names = array_values(array_map(
+            fn ($k) => trim((string) ($competitorNames[$k] ?? '')),
+            $nonEmptyKeys,
+        ));
+
+        if (count($urls) < $min || count($urls) > $max) {
+            throw ValidationException::withMessages([
+                'competitor_urls' => ["競合サイトは{$min}〜{$max}件で入力してください。"],
+            ]);
+        }
+
+        return [$urls, $names];
+    }
+
+    /**
+     * @param  list<string>  $normalizedCompetitorUrls
+     */
+    private function assertNoDuplicateHosts(string $normalizedSelfUrl, array $normalizedCompetitorUrls): void
+    {
+        $hosts = array_map(
+            fn (string $u) => (string) parse_url($u, PHP_URL_HOST),
+            array_merge([$normalizedSelfUrl], $normalizedCompetitorUrls),
+        );
+
+        if (count($hosts) !== count(array_unique($hosts))) {
+            throw ValidationException::withMessages([
+                'competitor_urls' => ['同一ホストのURLが重複しています(自社・競合を含む)。'],
+            ]);
+        }
+    }
+
+    /**
+     * 依頼AB/CJ-2共通の「核」: sentinelユーザー・Project・Websiteを作り、
+     * AnalysisService::start()でAnalysis(kind=AdminComparison)を起動する。
+     * source_analysis_idの設定(起点ありの場合のみ)は呼び出し元が行う。
+     * DB::transaction()は呼び出し元が張る(ここではネストしない)。
+     *
+     * @param  list<string>  $competitorUrls
+     * @param  list<string>  $competitorNames
+     */
+    private function createComparisonAnalysisRow(
+        int $leadCompanyId,
+        ?string $companyLabel,
+        string $rawSelfUrl,
+        string $normalizedSelfUrl,
+        array $competitorUrls,
+        array $competitorNames,
+    ): Analysis {
+        $sentinelUser = $this->sentinelUser();
+
+        $project = new Project(['name' => "比較: {$companyLabel}"]);
+        $project->user_id = $sentinelUser->id;
+        $project->lead_company_id = $leadCompanyId;
+        // lead_session_idは意図的に設定しない(クラスdocblock参照)。
+        $project->save();
+
+        Website::query()->create([
+            'project_id' => $project->id,
+            'name' => '自社サイト',
+            'url' => trim($rawSelfUrl),
+            'normalized_url' => $normalizedSelfUrl,
+            'is_primary' => true,
+            'display_order' => 0,
+        ]);
+
+        foreach (array_values($competitorUrls) as $i => $rawUrl) {
+            Website::query()->create([
+                'project_id' => $project->id,
+                'name' => $this->competitorLabel($competitorNames[$i] ?? '', $rawUrl, $i),
+                'url' => trim($rawUrl),
+                'normalized_url' => $this->urlNormalizer->normalize($rawUrl),
+                'is_primary' => false,
+                // 依頼AB-3: display_orderを入力順のまま保持する(レポートの
+                // 列順に使う、依頼者指定)。自社=0、競合=1始まり。
+                'display_order' => $i + 1,
+            ]);
+        }
+
+        return $this->analyses->start($project, [
+            // 依頼AB-3: config('analysis.max_websites_per_analysis')
+            // (既定5)は自社+競合5社の合計6件より小さいことがあるため、
+            // ここで明示的に渡す(既存のconfig既定値は変更しない)。
+            'max_websites' => $project->websites()->count(),
+            'skip_lighthouse' => false,
+            'skip_screenshots' => false,
+            // ブランド・ホイールは必ず実行する(比較の中核のため)。
+            'skip_brand_wheel' => false,
+            // 依頼W-1の調査結果を踏まえ、既定はconfig('lead.crawl_site')に
+            // 揃える(リード向けと同じ巡回方針)。
+            'crawl_site' => (bool) config('lead.crawl_site'),
+            // 依頼CJ-1: 起点あり・起点なしのどちらの比較も、kind列で
+            // 明示的にAdminComparisonと記録する。
+            'kind' => AnalysisKind::AdminComparison,
+        ], $sentinelUser);
     }
 
     /**

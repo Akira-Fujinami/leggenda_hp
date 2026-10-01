@@ -2,6 +2,7 @@
 
 namespace App\Services\Analysis;
 
+use App\Enums\AnalysisKind;
 use App\Enums\AnalysisStatus;
 use App\Exceptions\Analysis\AnalysisAlreadyRunningException;
 use App\Jobs\Analysis\StartAnalysisJob;
@@ -14,7 +15,7 @@ use Illuminate\Validation\ValidationException;
 class AnalysisService
 {
     /**
-     * @param  array{website_ids?: array<int, int>, max_websites?: int, skip_lighthouse?: bool, skip_screenshots?: bool, skip_brand_wheel?: bool, crawl_site?: bool, recruitment_track?: ?string}  $data
+     * @param  array{website_ids?: array<int, int>, max_websites?: int, skip_lighthouse?: bool, skip_screenshots?: bool, skip_brand_wheel?: bool, crawl_site?: bool, recruitment_track?: ?string, kind?: AnalysisKind}  $data
      */
     public function start(Project $project, array $data, User $user): Analysis
     {
@@ -37,6 +38,10 @@ class AnalysisService
             $analysis = Analysis::query()->create([
                 'project_id' => $lockedProject->id,
                 'created_by' => $user->id,
+                // 依頼CJ-1: 他の呼び出し元はkindを渡さないため既定の
+                // lead_diagnosisのまま(既存挙動は変わらない)。
+                // AdminComparisonServiceのみ明示的にAdminComparisonを渡す。
+                'kind' => $data['kind'] ?? AnalysisKind::LeadDiagnosis,
                 'status' => AnalysisStatus::Pending,
                 'progress' => 0,
                 // リード向け簡易分析(LeadAnalysisController)のみtrueを渡す。

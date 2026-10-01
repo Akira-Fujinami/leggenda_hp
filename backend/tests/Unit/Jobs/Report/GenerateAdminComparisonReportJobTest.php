@@ -55,6 +55,48 @@ class GenerateAdminComparisonReportJobTest extends TestCase
             'project_id' => $project->id,
             'status' => AnalysisStatus::Completed,
             'source_analysis_id' => $sourceAnalysis->id,
+            // 依頼CJ-1: 「比較かどうか」はkindで判定するようになったため、
+            // source_analysis_idと一緒にkindも明示的に設定する。
+            'kind' => \App\Enums\AnalysisKind::AdminComparison,
+        ]);
+
+        $selfWebsite = Website::factory()->create(['project_id' => $project->id, 'is_primary' => true, 'display_order' => 0, 'name' => '自社サイト']);
+        WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $selfWebsite->id]);
+
+        for ($i = 0; $i < $competitorCount; $i++) {
+            $competitorWebsite = Website::factory()->create([
+                'project_id' => $project->id,
+                'is_primary' => false,
+                'display_order' => $i + 1,
+                'name' => "競合{$i}",
+            ]);
+            WebsiteAnalysis::factory()->create(['analysis_id' => $analysis->id, 'website_id' => $competitorWebsite->id]);
+        }
+
+        return $analysis;
+    }
+
+    /**
+     * 依頼CJ-2(2026-10-01): 無料診断を経由しない比較(起点のAnalysisが無い、
+     * source_analysis_idがnullのまま)。kindだけで比較と判定できることの
+     * 確認用(makeComparisonAnalysis()との唯一の違いはsource_analysis_idを
+     * 設定しないこと)。
+     *
+     * @param  int  $competitorCount  自社以外に作るWebsite数(最低1でcompose()が例外を投げないようにする)
+     */
+    private function makeStandaloneComparisonAnalysis(int $competitorCount = 3): Analysis
+    {
+        $company = LeadCompany::factory()->create();
+
+        $project = new Project(['name' => '比較']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_company_id = $company->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create([
+            'project_id' => $project->id,
+            'status' => AnalysisStatus::Completed,
+            'kind' => \App\Enums\AnalysisKind::AdminComparison,
         ]);
 
         $selfWebsite = Website::factory()->create(['project_id' => $project->id, 'is_primary' => true, 'display_order' => 0, 'name' => '自社サイト']);
@@ -89,6 +131,29 @@ class GenerateAdminComparisonReportJobTest extends TestCase
     public function test_it_generates_the_pdf_and_stores_it(): void
     {
         $analysis = $this->makeComparisonAnalysis();
+
+        (new GenerateAdminComparisonReportJob($analysis->id))->handle(
+            app(MultiSiteReportViewModelBuilder::class),
+            app(AdminComparisonPdfGenerator::class),
+        );
+
+        $report = Report::where('analysis_id', $analysis->id)->where('format', 'pdf')->first();
+
+        $this->assertNotNull($report);
+        $this->assertSame(ReportGenerationStatus::Completed, $report->status);
+        Storage::disk('analysis')->assertExists($report->storage_path);
+    }
+
+    /**
+     * 依頼CJ-2(2026-10-01): 無料診断を経由しない比較(source_analysis_idが
+     * null)でも、kind=AdminComparisonであればこのJobは正常にレポートを
+     * 生成する ―― CJ-1(kindベースの判定への置き換え)がこの経路を
+     * 壊していないことの確認。
+     */
+    public function test_it_generates_the_pdf_for_a_standalone_comparison_without_a_source_analysis(): void
+    {
+        $analysis = $this->makeStandaloneComparisonAnalysis();
+        $this->assertNull($analysis->source_analysis_id);
 
         (new GenerateAdminComparisonReportJob($analysis->id))->handle(
             app(MultiSiteReportViewModelBuilder::class),

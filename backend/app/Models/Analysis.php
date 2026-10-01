@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\AnalysisKind;
 use App\Enums\AnalysisStatus;
 use Database\Factories\AnalysisFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -10,7 +11,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['project_id', 'source_analysis_id', 'created_by', 'status', 'progress', 'started_at', 'completed_at', 'failed_at', 'error_summary', 'skip_lighthouse', 'skip_screenshots', 'skip_brand_wheel', 'lead_quota_consumed_at', 'crawl_site', 'lead_diagnosis_completed_notified_at', 'recruitment_track'])]
+#[Fillable(['project_id', 'source_analysis_id', 'kind', 'created_by', 'status', 'progress', 'started_at', 'completed_at', 'failed_at', 'error_summary', 'skip_lighthouse', 'skip_screenshots', 'skip_brand_wheel', 'lead_quota_consumed_at', 'crawl_site', 'lead_diagnosis_completed_notified_at', 'recruitment_track'])]
 class Analysis extends Model
 {
     /** @use HasFactory<AnalysisFactory> */
@@ -19,6 +20,7 @@ class Analysis extends Model
     protected function casts(): array
     {
         return [
+            'kind' => AnalysisKind::class,
             'status' => AnalysisStatus::class,
             'progress' => 'integer',
             'started_at' => 'datetime',

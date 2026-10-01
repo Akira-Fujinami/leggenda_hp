@@ -172,6 +172,38 @@ class CompanyDeletionTest extends TestCase
         $this->assertDatabaseHas('lead_companies', ['id' => $company->id]);
     }
 
+    /**
+     * 依頼CJ-2(2026-10-01): 無料診断を経由しない比較(起点なし、担当者情報
+     * null)で登録された企業も、既存のLeadCompanyDeletionServiceで問題なく
+     * 削除できること(CIの削除処理ロジック自体はCJで変更していない ――
+     * 削除対象の特定がprojects.lead_company_idベースであり、無料診断の
+     * 有無に依存しないため)。
+     */
+    public function test_a_company_created_only_via_a_standalone_comparison_can_be_deleted(): void
+    {
+        $company = \App\Models\LeadCompany::factory()->create([
+            'company_name' => '単独比較のみの会社',
+            'primary_contact_name' => null,
+            'primary_contact_email' => null,
+        ]);
+        $sentinel = User::factory()->create();
+        $project = Project::factory()->for($sentinel)->create(['lead_company_id' => $company->id, 'lead_session_id' => null]);
+        Website::factory()->for($project)->create(['is_primary' => true]);
+        Analysis::factory()->for($project)->create([
+            'created_by' => $sentinel->id,
+            'kind' => \App\Enums\AnalysisKind::AdminComparison,
+            'status' => AnalysisStatus::Completed,
+        ]);
+
+        $response = $this->asAdmin()
+            ->from("/admin/companies/{$company->id}/delete")
+            ->delete("/admin/companies/{$company->id}", ['confirmation_company_name' => '単独比較のみの会社']);
+
+        $response->assertRedirect('/admin/companies');
+        $this->assertDatabaseMissing('lead_companies', ['id' => $company->id]);
+        $this->assertDatabaseMissing('projects', ['id' => $project->id]);
+    }
+
     public function test_unauthenticated_request_cannot_delete(): void
     {
         $company = LeadCompany::factory()->create();

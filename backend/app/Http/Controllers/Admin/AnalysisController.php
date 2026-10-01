@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\AnalysisKind;
 use App\Enums\AnalysisStatus;
 use App\Enums\ReportFormat;
 use App\Enums\ReportGenerationStatus;
@@ -142,12 +143,13 @@ class AnalysisController extends Controller
     /**
      * 依頼AC(2026-08-27): 多社比較レポート(PDFのみ)のダウンロード。
      * admin.auth配下(共有アカウント)のため、リード向けdownloadReport()の
-     * ようなオーナーシップ検証は不要 ―― 比較Analysis以外(source_analysis_id
-     * がnull)からのアクセスは404にする(このエンドポイントの対象外)。
+     * ようなオーナーシップ検証は不要 ―― 比較Analysis以外(kindが
+     * AdminComparisonでない)からのアクセスは404にする(このエンドポイントの
+     * 対象外)。
      */
     public function downloadComparisonReport(Analysis $analysis): StreamedResponse
     {
-        abort_if($analysis->source_analysis_id === null, 404);
+        abort_if($analysis->kind !== AnalysisKind::AdminComparison, 404);
 
         $report = Report::query()
             ->where('analysis_id', $analysis->id)
@@ -188,7 +190,7 @@ class AnalysisController extends Controller
         AdminComparisonPptxGenerator $slideGenerator,
         AdminComparisonPptxInserter $inserter,
     ): StreamedResponse|RedirectResponse {
-        abort_if($analysis->source_analysis_id === null, 404);
+        abort_if($analysis->kind !== AnalysisKind::AdminComparison, 404);
 
         $analysis->loadMissing(['attachments', 'websiteAnalyses.website']);
         $attachment = $analysis->attachments->first();
@@ -263,7 +265,7 @@ class AnalysisController extends Controller
      * downloadReport()のようなオーナーシップ検証は不要
      * (downloadComparisonReport()と同じ方針)。
      *
-     * 多社比較(source_analysis_idが非null)は対象外 ―― 既存の
+     * 多社比較(kind=AdminComparison)は対象外 ―― 既存の
      * downloadComparisonReport()/comparison-report専用リンクのまま変更しない
      * (このメソッドで404にすることで、同じPDFが2つの異なる導線から
      * 別ファイル名で配信されるような紛らわしい重複を避ける)。
@@ -274,7 +276,7 @@ class AnalysisController extends Controller
      */
     public function downloadLeadReport(Analysis $analysis, string $format): StreamedResponse
     {
-        abort_if($analysis->source_analysis_id !== null, 404);
+        abort_if($analysis->kind === AnalysisKind::AdminComparison, 404);
 
         $formatEnum = ReportFormat::tryFrom($format);
         abort_if($formatEnum === null, 404);

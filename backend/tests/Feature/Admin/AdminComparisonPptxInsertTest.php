@@ -67,6 +67,34 @@ class AdminComparisonPptxInsertTest extends TestCase
             'project_id' => $project->id,
             'status' => AnalysisStatus::Completed,
             'source_analysis_id' => $sourceAnalysis->id,
+            // 依頼CJ-1: 「比較かどうか」はkindで判定するようになったため、
+            // source_analysis_idと一緒にkindも明示的に設定する。
+            'kind' => \App\Enums\AnalysisKind::AdminComparison,
+        ]);
+
+        $this->addSite($analysis, true, 0, 'self', []);
+        $this->addSite($analysis, false, 1, 'competitor', []);
+
+        return $analysis;
+    }
+
+    /**
+     * 依頼CJ-2(2026-10-01): 無料診断を経由しない比較(起点のProject/Analysisが
+     * 存在しない、source_analysis_idはnullのまま)。
+     */
+    private function makeStandaloneComparisonAnalysis(): Analysis
+    {
+        $company = LeadCompany::factory()->create();
+
+        $project = new Project(['name' => '比較']);
+        $project->user_id = User::factory()->create()->id;
+        $project->lead_company_id = $company->id;
+        $project->save();
+
+        $analysis = Analysis::factory()->create([
+            'project_id' => $project->id,
+            'status' => AnalysisStatus::Completed,
+            'kind' => \App\Enums\AnalysisKind::AdminComparison,
         ]);
 
         $this->addSite($analysis, true, 0, 'self', []);
@@ -250,6 +278,24 @@ class AdminComparisonPptxInsertTest extends TestCase
         $this->assertCount(6, $m[0], '元の2枚+差し込み4枚(説明+比較+足りないもの+階層図)=6枚になっていること');
         $zip->close();
         @unlink($tmp);
+    }
+
+    /**
+     * 依頼CJ-2(2026-10-01): 無料診断を経由しない比較(起点なし)でも、
+     * 差し込みダウンロードは無改修で動く(kind=AdminComparisonのみを見る
+     * ため、source_analysis_idの有無に依存しない)。
+     */
+    public function test_admin_can_download_a_pptx_with_the_comparison_slide_inserted_for_a_standalone_comparison(): void
+    {
+        $analysis = $this->makeStandaloneComparisonAnalysis();
+        $this->assertNull($analysis->source_analysis_id);
+        $deck = $this->makeMinimalDeck(['内容1', '参照元']);
+        $this->attachPptx($analysis, $deck, '御提案資料.pptx');
+
+        $response = $this->asAdmin()->get(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false));
+
+        $response->assertOk();
+        $this->assertStringContainsString('attachment', (string) $response->headers->get('Content-Disposition'));
     }
 
     public function test_the_analysis_show_page_shows_the_insert_link_when_a_pptx_is_attached(): void

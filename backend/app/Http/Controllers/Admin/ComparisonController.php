@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\AnalysisKind;
 use App\Exceptions\Report\ComparisonSlideInsertionException;
 use App\Http\Controllers\Controller;
 use App\Models\Analysis;
@@ -53,10 +54,14 @@ class ComparisonController extends Controller
     ) {}
 
     /**
-     * 依頼BW-2(この依頼で新設): 比較レポートの一覧。source_analysis_idが
-     * 非nullのAnalysisのみを対象にする(依頼AB-2と同じ既存方針、サイト数
+     * 依頼BW-2(この依頼で新設): 比較レポートの一覧。kind=AdminComparisonの
+     * Analysisのみを対象にする(依頼AB-2と同じ既存方針、サイト数
      * からの推測はしない)。営業が日常的に使う画面(依頼者指定)のため、
      * ダッシュボード・サイドバーの両方からここへ導線を張る(BW-3)。
+     *
+     * 依頼CJ-1(2026-10-01): source_analysis_idの有無による絞り込みは、
+     * 無料診断を経由しない比較(依頼CJ-2)を一覧から漏らすため、kind列に
+     * 置き換えた。
      *
      * N+1を避けるため、一覧に必要な関連(自社企業名・競合社数・PPTX添付
      * 有無)をすべてwith()で先読みする。
@@ -64,7 +69,7 @@ class ComparisonController extends Controller
     public function index(Request $request): View
     {
         $comparisons = Analysis::query()
-            ->whereNotNull('source_analysis_id')
+            ->where('kind', AnalysisKind::AdminComparison)
             ->with(['project.leadCompany', 'project.websites', 'attachments', 'reports'])
             ->orderByDesc('created_at')
             ->paginate(self::PER_PAGE)
@@ -87,7 +92,7 @@ class ComparisonController extends Controller
     public function create(Analysis $analysis): View
     {
         abort_unless($analysis->project?->lead_company_id !== null, 404);
-        abort_if($analysis->source_analysis_id !== null, 404, '比較を起点に、さらに比較を作ることはできません。');
+        abort_if($analysis->kind === AnalysisKind::AdminComparison, 404, '比較を起点に、さらに比較を作ることはできません。');
 
         $analysis->loadMissing(['project.websites', 'project.leadCompany']);
 
@@ -137,7 +142,7 @@ class ComparisonController extends Controller
         if ($selectedAnalysisId !== null && $selectedAnalysisId !== '') {
             $selectedAnalysis = Analysis::query()
                 ->whereHas('project', fn ($q) => $q->whereNotNull('lead_company_id'))
-                ->whereNull('source_analysis_id')
+                ->where('kind', AnalysisKind::LeadDiagnosis)
                 ->with(['project.leadCompany', 'project.websites'])
                 ->find($selectedAnalysisId);
         }
@@ -171,7 +176,7 @@ class ComparisonController extends Controller
      *
      * 起点にできる条件はComparisonController::create()・
      * AdminComparisonService::createFromSourceAnalysis()と同じ
-     * (project.lead_company_idが非null、source_analysis_idがnull =
+     * (project.lead_company_idが非null、kind=LeadDiagnosis =
      * 比較自身は候補に出さない)。
      *
      * 返す情報は診断ID・会社名・自社サイトURLのホスト名・診断日・状態
@@ -203,7 +208,7 @@ class ComparisonController extends Controller
 
         $matches = Analysis::query()
             ->whereHas('project', fn ($q) => $q->whereNotNull('lead_company_id'))
-            ->whereNull('source_analysis_id')
+            ->where('kind', AnalysisKind::LeadDiagnosis)
             ->whereHas('project.leadCompany', function ($q) use ($normalizedQuery) {
                 // 依頼BP-2: 大文字小文字を無視する。LIKEの大文字小文字の
                 // 扱いはDBエンジンごとに異なる(Postgresは既定で大文字小文字を
@@ -316,6 +321,73 @@ class ComparisonController extends Controller
         return redirect()
             ->route('admin.analyses.show', $comparison->id)
             ->with('status', "比較(診断ID: {$comparison->id})を開始しました。");
+    }
+
+    /**
+     * 依頼CJ-2(2026-10-01): 無料診断を経由せず、管理者が直接3〜5社比較を
+     * 作成する。起点のAnalysisが存在しないため、store()(起点あり、既存の
+     * フローそのまま変更しない)とは別のメソッドにする。フォーム自体は
+     * 複製しない ―― admin.comparisons.wizardの同じ<form>を、
+     * flow_mode=standaloneのときだけこちらへPOSTする。
+     *
+     * 企業名の重複確認(既存企業に一致したか、新規作成したか)は、
+     * AdminComparisonService::createStandalone()の戻り値
+     * (StandaloneComparisonResult)で分かる ―― ここでは判定ロジックを
+     * 持たず、結果に応じてフラッシュメッセージを出し分けるだけ。
+     */
+    public function storeStandalone(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'self_company_name' => ['required', 'string', 'max:255'],
+            'self_url' => ['required', 'string', 'max:2048'],
+            'competitor_urls' => ['required', 'array'],
+            'competitor_urls.*' => ['nullable', 'string', 'max:2048'],
+            'competitor_names' => ['nullable', 'array'],
+            'competitor_names.*' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $this->assertCompetitorNamesGivenWhenUrlPresent($data['competitor_urls'], $data['competitor_names'] ?? []);
+
+        $salesDeck = $request->file('sales_deck');
+        $this->attachments->assertUploadSucceeded($salesDeck, 'sales_deck');
+        if ($salesDeck !== null) {
+            $this->validateSalesDeck($salesDeck);
+        }
+
+        $result = $this->comparisons->createStandalone(
+            trim($data['self_company_name']),
+            $data['self_url'],
+            $data['competitor_urls'],
+            $data['competitor_names'] ?? [],
+        );
+        $comparison = $result->analysis;
+
+        if ($salesDeck !== null) {
+            try {
+                $this->attachments->store($comparison, $salesDeck);
+            } catch (Throwable $e) {
+                report($e);
+                Log::warning('Failed to attach the sales deck after starting a standalone comparison analysis', [
+                    'analysis_id' => $comparison->id,
+                ]);
+
+                return redirect()
+                    ->route('admin.analyses.show', $comparison->id)
+                    ->with('status', "比較(診断ID: {$comparison->id})を開始しましたが、資料の添付に失敗しました。この画面の添付欄からもう一度アップロードしてください。");
+            }
+        }
+
+        $companyName = $comparison->project?->leadCompany?->company_name ?? trim($data['self_company_name']);
+        $companyNotice = sprintf(
+            (string) config($result->matchedExistingCompany
+                ? 'analysis.admin_comparison.standalone_matched_existing_company_notice'
+                : 'analysis.admin_comparison.standalone_new_company_notice'),
+            $companyName,
+        );
+
+        return redirect()
+            ->route('admin.analyses.show', $comparison->id)
+            ->with('status', "比較(診断ID: {$comparison->id})を開始しました。{$companyNotice}");
     }
 
     /**

@@ -14,13 +14,20 @@
 <p><a href="{{ route('admin.companies.show', $analysis->project?->lead_company_id, false) }}">&larr; {{ $analysis->project?->leadCompany?->company_name ?? '企業詳細' }}へ戻る</a></p>
 
 {{-- 依頼AB-2: 比較↔起点の相互リンク。サイト数からの暗黙の判別はせず、
-     source_analysis_id/comparisonsの有無で明示的に判断する。 --}}
-@if ($analysis->source_analysis_id)
-    <p class="empty">
-        この比較は、無料診断
-        <a href="{{ route('admin.analyses.show', $analysis->source_analysis_id, false) }}">#{{ $analysis->source_analysis_id }}</a>
-        から作成されました。
-    </p>
+     kind(依頼CJ-1でsource_analysis_idの有無から置き換え)で明示的に
+     判断する。source_analysis_id自体は「起点への実際のリンク」専用に
+     戻したため、下の分岐内ではそのまま実リンクとして使う。 --}}
+@if ($analysis->kind === \App\Enums\AnalysisKind::AdminComparison)
+    @if ($analysis->source_analysis_id)
+        <p class="empty">
+            この比較は、無料診断
+            <a href="{{ route('admin.analyses.show', $analysis->source_analysis_id, false) }}">#{{ $analysis->source_analysis_id }}</a>
+            から作成されました。
+        </p>
+    @else
+        {{-- 依頼CJ-4(2026-10-01): 無料診断を経由しない比較(依頼CJ-2)。 --}}
+        <p class="empty">{{ config('analysis.admin_comparison.standalone_created_notice') }}</p>
+    @endif
 @endif
 @if ($analysis->comparisons->isNotEmpty())
     <p class="empty">
@@ -30,26 +37,27 @@
         @endforeach
     </p>
 @endif
-@if (! $analysis->source_analysis_id)
+@if ($analysis->kind === \App\Enums\AnalysisKind::LeadDiagnosis)
     <p>
         <a href="{{ route('admin.analyses.compare.create', $analysis->id, false) }}" class="btn">3〜5社で比較する</a>
     </p>
 @endif
 
 {{--
-    依頼BW-1(2026-09-11、この依頼の主目的): 比較(source_analysis_idが
-    非null)のゴールは「差し込んだ資料を手に入れること」であり、それが
+    依頼BW-1(2026-09-11、この依頼の主目的): 比較(kind=AdminComparison)の
+    ゴールは「差し込んだ資料を手に入れること」であり、それが
     画面の主役になっていなかった(依頼者指摘)。サイト数からの推測はせず、
-    既存方針どおりsource_analysis_idの有無だけで比較かどうかを判断する
-    (依頼AB-2と同じ)。無料診断ではこの節自体を出さない ―― 見た目を
-    変えない(依頼者指定)。
+    既存方針どおりkindだけで比較かどうかを判断する(依頼AB-2と同じ、
+    依頼CJ-1でsource_analysis_idの有無から置き換え済み ―― 無料診断を
+    経由しない比較(依頼CJ-2)もここに含める)。無料診断ではこの節自体を
+    出さない ―― 見た目を変えない(依頼者指定)。
 
     中身(差し込みの仕組み・比較ウィザード・比較作成フォーム)は一切
     変えない。既存のエンドポイント(admin.analyses.attachment.*・
     admin.analyses.comparison-report.*)をそのまま使うだけ(依頼者指定、
     新しい書き込み経路を作らない)。
 --}}
-@if ($analysis->source_analysis_id)
+@if ($analysis->kind === \App\Enums\AnalysisKind::AdminComparison)
     @php
         $pptxAttachment = $analysis->attachments->firstWhere('extension', 'pptx');
         // 依頼BX-4(2026-09-11、依頼BWの穴): 添付はPPTX以外(PDF/DOCX、
@@ -494,8 +502,9 @@
                         <span class="badge status-{{ $report->status->value }}">
                             {{ $reportStatusLabels[$report->status->value] ?? $report->status->value }}
                         </span>
-                        {{-- 依頼BW-1(2026-09-11): 比較(source_analysis_idが
-                             非null)のダウンロード・差し込みリンクは、上部の
+                        {{-- 依頼BW-1(2026-09-11): 比較(kind=AdminComparison、
+                             依頼CJ-1でsource_analysis_idの有無から置き換え済み)の
+                             ダウンロード・差し込みリンクは、上部の
                              「いまやること」パネル配下の1行(依頼者指定の
                              置き場所)へ移した ―― 差し込みの入口を2箇所に
                              出さない(依頼者指定の禁止事項)ため、ここでは
@@ -503,7 +512,7 @@
                              削除、既存のダウンロード・差し込み用エンドポイント
                              自体は変更していない)。無料診断側の分岐(下)は
                              変更しない。 --}}
-                        @if (! $analysis->source_analysis_id && $report->status->value === 'completed')
+                        @if ($analysis->kind === \App\Enums\AnalysisKind::LeadDiagnosis && $report->status->value === 'completed')
                             {{-- 依頼AG-1(2026-08-27): 無料診断(比較でない)の
                                  レポートは、管理者が生トークンを持たないため
                                  リード向けURLを組み立てられない。admin.auth
@@ -525,13 +534,14 @@
     docblock参照) ―― 既に1件ある状態でアップロードすると、既存の1件を
     自動的に差し替える。
 
-    依頼BW-1(2026-09-11): 比較(source_analysis_idが非null)では、この
+    依頼BW-1(2026-09-11): 比較(kind=AdminComparison、依頼CJ-1で
+    source_analysis_idの有無から置き換え済み)では、この
     カードの役割(添付・ダウンロード・差し替え・削除)を上部の「いまやること」
     パネルとその下の1行へ統合した(依頼者指定 ―― 主役でないものを1行に
     まとめる)。無料診断ではこれまでどおりこのカードを表示する
     (依頼者指定「無料診断の詳細画面の見た目を変えないこと」)。
 --}}
-@unless ($analysis->source_analysis_id)
+@unless ($analysis->kind === \App\Enums\AnalysisKind::AdminComparison)
 <div class="card">
     <h3>既存資料</h3>
     @if ($analysis->attachments->isEmpty())

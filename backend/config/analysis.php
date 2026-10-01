@@ -87,6 +87,17 @@ return [
             'failed' => '失敗',
             'cancelled' => '中止',
         ],
+
+        /*
+        | 依頼CJ-2/CJ-4(2026-10-01): 無料診断を経由しない比較(ウィザードの
+        | 「無料診断なしで新しく作る」)まわりの画面文言。直書きしない
+        | (依頼者指定)。
+        */
+        'standalone_created_notice' => 'この比較は、無料診断を経由せず、管理者が直接作成しました。',
+        'standalone_badge_label' => '比較(単独で作成)',
+        'standalone_matched_existing_company_notice' => '企業「%s」は、既存の登録に一致しました。',
+        'standalone_new_company_notice' => '企業「%s」を新規登録しました。',
+        'comparison_only_company_count_label' => '比較のみ登録企業数',
     ],
 
     /*
