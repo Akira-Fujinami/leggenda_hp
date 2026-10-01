@@ -3,13 +3,11 @@
 namespace App\Console\Commands;
 
 use App\Models\LeadSession;
-use App\Services\Analysis\AnalysisStoragePaths;
+use App\Services\Admin\LeadDataDeletionService;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 
 /**
  * 有効期限切れから一定日数(config('lead.retention_days_after_expiry'))を
@@ -35,12 +33,22 @@ use Illuminate\Support\Facades\Storage;
  * 起こりうる(既存のレポートファイル削除も同じ問題を抱えていたため、
  * あわせてトランザクションの外へ出した)。ファイル削除に失敗しても
  * DBの削除自体は成功扱いとし、失敗したパスはログに残す。
+ *
+ * 依頼CI-1(2026-10-01): パス収集・DB削除・ファイル削除の実装を
+ * App\Services\Admin\LeadDataDeletionServiceへ切り出した(会社単位の
+ * 物理削除(依頼CI-2)も同じ機構を再利用する)。この切り出しに伴い、
+ * これまで削除していなかった商談相手向け添付資料(analysis_attachments、
+ * attachments/{analysisId}/配下のPPTX等)も削除されるようになった ――
+ * DB行はcascadeOnDeleteで消えていたが実ファイルは孤児として残り続けて
+ * いた既存の穴で、意図した変更である。ファイル削除失敗時のログ
+ * メッセージは'LeadDataDeletionService: ...'に変わる(旧'lead:purge-
+ * expired-sessions: ...'から、削除処理の実体が移ったことを反映)。
  */
 #[Signature('lead:purge-expired-sessions {--execute : 実際に削除する(指定しない場合は常にdry-run)} {--force : 確認プロンプトをスキップする(--executeと併用時のみ意味を持つ)}')]
 #[Description('保持期間を過ぎたリードセッションとその配下データ(Project/Website/Analysis等・レポートファイル・解析用ストレージ)を安全に確認・削除する')]
 class PurgeExpiredLeadSessions extends Command
 {
-    public function handle(AnalysisStoragePaths $paths): int
+    public function handle(LeadDataDeletionService $deletionService): int
     {
         $execute = (bool) $this->option('execute');
 
@@ -59,24 +67,20 @@ class PurgeExpiredLeadSessions extends Command
             fn ($project) => $project->analyses->sum(fn ($analysis) => $analysis->reports->count())
         ));
 
-        // 依頼M-2: 削除予定のAnalysisストレージディレクトリと合計サイズを、
-        // DB削除の実行有無に関わらず必ず算出する(dry-runでも実行時でも
-        // 同じ集計ロジックを通ることで、表示と実際の削除対象がずれない)。
-        $disk = Storage::disk('analysis');
-        $storageTargets = [];
-        foreach ($targets as $session) {
-            foreach ($session->projects as $project) {
-                foreach ($project->analyses as $analysis) {
-                    $dir = $paths->analysisDir($analysis->id);
-                    if (! $disk->exists($dir)) {
-                        continue;
-                    }
-                    $size = collect($disk->allFiles($dir))->sum(fn (string $file) => $disk->size($file));
-                    $storageTargets[] = ['analysis_id' => $analysis->id, 'dir' => $dir, 'size' => $size];
-                }
-            }
-        }
+        // 依頼CI-1(2026-10-01): ファイル収集・削除のロジックはApp\Services\
+        // Admin\LeadDataDeletionServiceへ切り出した(依頼AU・依頼CIと同じ
+        // 「コピーして2か所に持たない」要件 ―― 会社単位の物理削除
+        // (LeadCompanyDeletionService)もこれを再利用する)。dry-runでも
+        // 実行時でも同じ$allAnalysesに対して同じcollectFileTargets()を
+        // 呼ぶことで、表示と実際の削除対象がずれないこと(依頼M-2)を
+        // 引き続き満たす。
+        $allAnalyses = $targets->flatMap(fn (LeadSession $s) => $s->projects)->flatMap(fn ($project) => $project->analyses);
+        $fileTargets = $deletionService->collectFileTargets($allAnalyses);
+        $reportPaths = $fileTargets['report_paths'];
+        $storageTargets = $fileTargets['storage_targets'];
+        $attachmentTargets = $fileTargets['attachment_targets'];
         $totalStorageBytes = array_sum(array_column($storageTargets, 'size'));
+        $totalAttachmentBytes = array_sum(array_column($attachmentTargets, 'size'));
 
         // 依頼CF-6(2026-09-29): このコマンドがスケジューラ未登録で一度も
         // 自動実行されていなかった(依頼者指摘)。この依頼ではdry-runの
@@ -94,6 +98,11 @@ class PurgeExpiredLeadSessions extends Command
             'report_file_count' => $reportCount,
             'analysis_storage_directory_count' => count($storageTargets),
             'analysis_storage_bytes_to_free' => $totalStorageBytes,
+            // 依頼CI-1(2026-10-01): 既存の穴(添付ファイルを削除していなかった)
+            // を塞いだことで新たに分かる値。キーを追加するだけで、既存の
+            // キーは変更しない。
+            'attachment_file_count' => count($attachmentTargets),
+            'attachment_bytes_to_free' => $totalAttachmentBytes,
         ]);
 
         $diskRoot = (string) config('filesystems.disks.analysis.root');
@@ -129,6 +138,8 @@ class PurgeExpiredLeadSessions extends Command
         foreach ($storageTargets as $target) {
             $this->line("  {$target['dir']} (".$this->formatBytes($target['size']).')');
         }
+        $this->line('=== 添付資料(依頼CI-1、既存の削除漏れを修正) ===');
+        $this->line('削除予定の添付ファイル: '.count($attachmentTargets).'件、合計 '.$this->formatBytes($totalAttachmentBytes));
 
         if (! $execute) {
             $this->newLine();
@@ -149,57 +160,19 @@ class PurgeExpiredLeadSessions extends Command
             return self::SUCCESS;
         }
 
-        // 依頼M-2: 削除するレポートファイルのパスを、DB削除より先に(cascade
-        // されてしまう前に)集めておく。実際のファイル削除はDBコミット後。
-        $reportPaths = [];
-        foreach ($targets as $session) {
-            foreach ($session->projects as $project) {
-                foreach ($project->analyses as $analysis) {
-                    foreach ($analysis->reports as $report) {
-                        if ($report->storage_path !== '') {
-                            $reportPaths[] = $report->storage_path;
-                        }
-                    }
-                }
-            }
-        }
+        // 依頼CI-1: $reportPaths/$storageTargets/$attachmentTargetsは
+        // 既にDB削除より先(このメソッドの冒頭)で集め終わっている
+        // (collectFileTargets()はDB読み取りのみで副作用が無いため、
+        // confirm()より前に呼んでも問題ない)。
 
-        DB::transaction(function () use ($targets) {
-            foreach ($targets as $session) {
-                foreach ($session->projects as $project) {
-                    $project->delete();
-                }
-                $session->delete();
-            }
-        });
+        $deletionService->deleteProjectsAndSessions(
+            $targets->flatMap(fn (LeadSession $s) => $s->projects),
+            $targets,
+        );
 
         // ここに到達した時点でDBのコミットは完了している。ファイル削除は
-        // ベストエフォート ―― 失敗してもDBの削除自体は成功扱いのまま、
-        // 失敗したパスだけログに残す(トランザクション外のため、ここでの
-        // 失敗はもうロールバックに影響しない)。
-        $failedPaths = [];
-        foreach ($reportPaths as $reportPath) {
-            try {
-                $disk->delete($reportPath);
-            } catch (\Throwable $e) {
-                $failedPaths[] = $reportPath;
-                Log::warning('lead:purge-expired-sessions: failed to delete a report file after DB commit', [
-                    'path' => $reportPath,
-                    'exception' => $e->getMessage(),
-                ]);
-            }
-        }
-        foreach ($storageTargets as $target) {
-            try {
-                $disk->deleteDirectory($target['dir']);
-            } catch (\Throwable $e) {
-                $failedPaths[] = $target['dir'];
-                Log::warning('lead:purge-expired-sessions: failed to delete an analysis storage directory after DB commit', [
-                    'path' => $target['dir'],
-                    'exception' => $e->getMessage(),
-                ]);
-            }
-        }
+        // ベストエフォート(LeadDataDeletionService::deleteFiles()参照)。
+        $deleted = $deletionService->deleteFiles($reportPaths, $storageTargets, $attachmentTargets);
 
         $this->newLine();
         $this->info('削除しました。');
@@ -207,9 +180,10 @@ class PurgeExpiredLeadSessions extends Command
         $this->line("Project(カスケード含む): {$projectCount}件");
         $this->line('レポートファイル: '.count($reportPaths).'件');
         $this->line('解析用ストレージディレクトリ: '.count($storageTargets).'件、合計 '.$this->formatBytes($totalStorageBytes));
+        $this->line('添付ファイル: '.count($attachmentTargets).'件、合計 '.$this->formatBytes($totalAttachmentBytes));
 
-        if ($failedPaths !== []) {
-            $this->warn(count($failedPaths).'件のファイル/ディレクトリ削除に失敗しました(ログを参照してください)。DBの削除自体は完了しています。');
+        if ($deleted['failed_count'] > 0) {
+            $this->warn("{$deleted['failed_count']}件のファイル/ディレクトリ削除に失敗しました(ログを参照してください)。DBの削除自体は完了しています。");
         }
 
         return self::SUCCESS;

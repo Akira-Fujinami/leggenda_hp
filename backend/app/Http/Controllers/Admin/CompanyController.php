@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\SalesStatus;
+use App\Exceptions\Admin\LeadCompanyDeletionBlockedException;
 use App\Http\Controllers\Controller;
 use App\Models\LeadCompany;
 use App\Models\LeadSession;
+use App\Services\Admin\LeadCompanyDeletionService;
 use App\Services\Admin\LeadCompanyQueryService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -14,7 +16,10 @@ use Illuminate\View\View;
 
 class CompanyController extends Controller
 {
-    public function __construct(private readonly LeadCompanyQueryService $companies) {}
+    public function __construct(
+        private readonly LeadCompanyQueryService $companies,
+        private readonly LeadCompanyDeletionService $deletions,
+    ) {}
 
     public function index(Request $request): View
     {
@@ -98,6 +103,47 @@ class CompanyController extends Controller
      * 確認ダイアログはBlade側(resources/views/admin/companies/show.blade.php)の
      * onsubmit="return confirm(...)"で表示する。
      */
+    /**
+     * 依頼CI-2(2026-10-01): 会社単位の物理削除の確認画面。押した瞬間に
+     * 消える経路を作らないため、GETで内訳とガードの判定結果だけを見せる
+     * (削除の実行は別のdestroy()、DELETEメソッド)。
+     */
+    public function confirmDelete(LeadCompany $company): View
+    {
+        return view('admin.companies.delete', [
+            'company' => $company,
+            'preview' => $this->deletions->preview($company),
+        ]);
+    }
+
+    /**
+     * 依頼CI-2(2026-10-01)必須: サーバー側でもガード・会社名の一致を
+     * 必ず再確認する(画面でボタンを隠すだけにしない)。実際の削除・
+     * 2つのガード・会社名照合はApp\Services\Admin\LeadCompanyDeletionServiceに
+     * 集約している(新しい判定ロジックをここで作らない)。
+     */
+    public function destroy(Request $request, LeadCompany $company): RedirectResponse
+    {
+        $data = $request->validate([
+            'confirmation_company_name' => ['required', 'string'],
+        ]);
+
+        try {
+            $this->deletions->destroy($company, $data['confirmation_company_name']);
+        } catch (LeadCompanyDeletionBlockedException $e) {
+            $reason = $e->preview->hasRunningAnalyses
+                ? (string) config('lead_company_deletion.running_analyses_blocked_reason')
+                : sprintf(
+                    (string) config('lead_company_deletion.shared_session_blocked_reason'),
+                    implode('、', array_column($e->preview->blockingCompanies, 'company_name')),
+                );
+
+            return redirect()->route('admin.companies.delete', $company->id)->with('status', $reason);
+        }
+
+        return redirect()->route('admin.companies.index')->with('status', 'この会社のデータを削除しました。');
+    }
+
     public function resetAnalysesUsed(Request $request, LeadSession $leadSession): RedirectResponse
     {
         $previousAnalysesUsed = $leadSession->analyses_used;

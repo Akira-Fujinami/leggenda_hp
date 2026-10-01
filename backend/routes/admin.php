@@ -32,6 +32,10 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::get('/companies/{company}', [CompanyController::class, 'show'])->name('companies.show');
         Route::patch('/companies/{company}/sales-status', [CompanyController::class, 'updateSalesStatus'])->name('companies.sales-status');
         Route::patch('/companies/{company}/sales-note', [CompanyController::class, 'updateSalesNote'])->name('companies.sales-note');
+        // 依頼CI-2(2026-10-01): 会社単位の物理削除。確認画面(GET)と実行(DELETE)を
+        // 分ける ―― 押した瞬間に消える経路を作らない(依頼者の必須要件)。
+        Route::get('/companies/{company}/delete', [CompanyController::class, 'confirmDelete'])->name('companies.delete');
+        Route::delete('/companies/{company}', [CompanyController::class, 'destroy'])->name('companies.destroy');
         Route::patch('/lead-sessions/{leadSession}/reset-analyses-used', [CompanyController::class, 'resetAnalysesUsed'])->name('lead-sessions.reset-analyses-used');
 
         Route::get('/analyses', [AnalysisController::class, 'index'])->name('analyses.index');

@@ -4,6 +4,7 @@ namespace Tests\Feature\Console;
 
 use App\Enums\ReportGenerationStatus;
 use App\Models\Analysis;
+use App\Models\AnalysisAttachment;
 use App\Models\LeadSession;
 use App\Models\Project;
 use App\Models\Report;
@@ -79,6 +80,63 @@ class PurgeExpiredLeadSessionsTest extends TestCase
 
         Storage::disk('analysis')->assertMissing("reports/{$analysis->id}/report.pdf");
         $this->assertDatabaseCount('reports', 0);
+    }
+
+    /**
+     * 依頼CI-1(2026-10-01): 既存の穴 ―― 商談相手向け添付資料
+     * (analysis_attachments、attachments/{analysisId}/配下)のDB行は
+     * cascadeOnDeleteで消えるが、実ファイルは削除していなかった。
+     * App\Services\Admin\LeadDataDeletionServiceへ共通化したことで、
+     * このコマンドでも添付ファイルの実体が削除されるようになること。
+     */
+    public function test_execute_with_force_also_deletes_attachment_files_from_storage(): void
+    {
+        Storage::fake('analysis');
+
+        $session = $this->makeExpiredSessionWithProject();
+        $project = $session->projects->first();
+        $analysis = Analysis::factory()->create(['project_id' => $project->id]);
+        Storage::disk('analysis')->put("attachments/{$analysis->id}/sample.pptx", 'fake-pptx-bytes');
+        AnalysisAttachment::factory()->create([
+            'analysis_id' => $analysis->id,
+            'storage_path' => "attachments/{$analysis->id}/sample.pptx",
+            'extension' => 'pptx',
+            'size_bytes' => strlen('fake-pptx-bytes'),
+        ]);
+
+        $this->artisan('lead:purge-expired-sessions --execute --force')->assertSuccessful();
+
+        Storage::disk('analysis')->assertMissing("attachments/{$analysis->id}/sample.pptx");
+        $this->assertDatabaseCount('analysis_attachments', 0);
+    }
+
+    /**
+     * 依頼CI-1最重要: 削除対象外(保持期間内)の添付ファイルは消えないこと。
+     */
+    public function test_execute_does_not_delete_attachment_files_of_analyses_outside_the_target(): void
+    {
+        Storage::fake('analysis');
+        $this->makeExpiredSessionWithProject();
+
+        $keepSession = LeadSession::factory()->create(['expires_at' => now()->addDays(10)]);
+        $user = User::factory()->create();
+        $keepProject = new Project(['name' => 'kept-lead-project']);
+        $keepProject->user_id = $user->id;
+        $keepProject->lead_session_id = $keepSession->id;
+        $keepProject->save();
+        $keepAnalysis = Analysis::factory()->create(['project_id' => $keepProject->id]);
+        Storage::disk('analysis')->put("attachments/{$keepAnalysis->id}/keep.pptx", 'keep me');
+        AnalysisAttachment::factory()->create([
+            'analysis_id' => $keepAnalysis->id,
+            'storage_path' => "attachments/{$keepAnalysis->id}/keep.pptx",
+            'extension' => 'pptx',
+            'size_bytes' => strlen('keep me'),
+        ]);
+
+        $this->artisan('lead:purge-expired-sessions --execute --force')->assertSuccessful();
+
+        Storage::disk('analysis')->assertExists("attachments/{$keepAnalysis->id}/keep.pptx");
+        $this->assertDatabaseCount('analysis_attachments', 1);
     }
 
     public function test_execute_is_refused_in_production(): void
@@ -188,8 +246,11 @@ class PurgeExpiredLeadSessionsTest extends TestCase
 
         $this->assertDatabaseCount('lead_sessions', 0);
         $this->assertDatabaseCount('reports', 0);
+        // 依頼CI-1(2026-10-01): ファイル削除の実体がApp\Services\Admin\
+        // LeadDataDeletionServiceへ切り出されたため、ログメッセージの接頭辞も
+        // それを反映する(PurgeExpiredLeadSessionsTest::handle()のdocblock参照)。
         Log::shouldHaveReceived('warning')
-            ->withArgs(fn (string $message) => $message === 'lead:purge-expired-sessions: failed to delete a report file after DB commit')
+            ->withArgs(fn (string $message) => $message === 'LeadDataDeletionService: failed to delete a report file after DB commit')
             ->once();
     }
 

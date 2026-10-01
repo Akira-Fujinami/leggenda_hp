@@ -137,4 +137,16 @@
         <div class="pagination">{{ $analyses->links() }}</div>
     @endif
 </div>
+
+{{--
+    依頼CI-2(2026-10-01): 会社単位の物理削除への入口。一覧画面や診断詳細
+    画面には置かない(誤操作の入口を増やさない、依頼者指定)。押した瞬間に
+    消えないよう、ここではリンクのみ ―― 確認画面(admin/companies/delete)で
+    内訳・ガードの判定・会社名の照合を経てから実行する。
+--}}
+<div class="card" style="margin-top: 24px; border-color: var(--danger);">
+    <h3 style="color: var(--danger);">危険な操作</h3>
+    <p style="font-size: 13px; color: var(--muted);">この会社のデータ(担当者情報・診断結果・比較結果・レポート・添付資料)をすべて削除します。元に戻せません。</p>
+    <a href="{{ route('admin.companies.delete', $company->id, false) }}" class="btn" style="background: var(--danger); border-color: var(--danger);">この会社のデータを削除する</a>
+</div>
 @endsection
