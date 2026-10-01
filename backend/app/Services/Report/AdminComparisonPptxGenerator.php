@@ -363,7 +363,7 @@ class AdminComparisonPptxGenerator
      * @param  array{
      *     self_company_name: string,
      *     self_readable: bool,
-     *     companies: list<array{name: string, matched: int, total: int, is_self: bool}>,
+     *     companies: list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>,
      *     axes: list<array{
      *         name: string,
      *         caption: ?string,
@@ -394,7 +394,7 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
+     * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
      * @return float  この下に描く領域別数値表の上端y(in)
      */
@@ -488,18 +488,33 @@ class AdminComparisonPptxGenerator
         // 軸ラベルを一切描かず、この領域全体を専用の文言1つに置き換える
         // ―― 0という数字を判定結果であるかのように見せないため
         // (config('admin_comparison_pptx.self_data_unavailable_notice')
-        // docblock参照)。競合側は影響を受けない(このメソッドは競合には
-        // $selfReadable=trueのデフォルトのまま呼ばれる)。
-        if ($isSelf && ! $selfReadable) {
+        // docblock参照)。
+        //
+        // 依頼CH-1b(2026-10-01): status不成立(上記)とは独立に、材料の量
+        // (company['material_sufficient'])が閾値未満のときも同様に数字を
+        // 置き換える ―― こちらは自社・競合の両方が対象(実測analysis_id=148の
+        // しんきん中央金庫のように、status=successで判定は成立していても
+        // 材料が空同然で0/24になるケースのため)。文言はstatus不成立の場合と
+        // 区別する(config('brand_wheel.insufficient_material_notice')、
+        // config/brand_wheel.php側のdocblockに両者の違いを明記)。
+        $selfStatusUnavailable = $isSelf && ! $selfReadable;
+        $materialInsufficient = ! ($company['material_sufficient'] ?? true);
+
+        if ($selfStatusUnavailable || $materialInsufficient) {
+            $bottom = $isSelf ? $hexCenterY + $radius + self::WHEEL_LABEL_RESERVE_IN : $hexCenterY + $radius;
+
             $noticeBox = $slide->createRichTextShape();
-            $this->position($noticeBox, $left, $scoreTop, $tileWidth, ($hexCenterY + $radius + self::WHEEL_LABEL_RESERVE_IN) - $scoreTop);
+            $this->position($noticeBox, $left, $scoreTop, $tileWidth, $bottom - $scoreTop);
             $noticeBox->setWrap(RichText::WRAP_SQUARE);
             $noticeBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
             $noticePara = $noticeBox->getActiveParagraph();
             $noticePara->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $this->font($noticePara->createTextRun((string) config('admin_comparison_pptx.self_data_unavailable_notice')), 10.5, true, self::GAP_TEXT);
+            $noticeText = $selfStatusUnavailable
+                ? (string) config('admin_comparison_pptx.self_data_unavailable_notice')
+                : (string) config('brand_wheel.insufficient_material_notice');
+            $this->font($noticePara->createTextRun($noticeText), 10.5, true, self::GAP_TEXT);
 
-            return $hexCenterY + $radius + self::WHEEL_LABEL_RESERVE_IN;
+            return $bottom;
         }
 
         $scoreBox = $slide->createRichTextShape();
@@ -726,7 +741,7 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
+     * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
      */
     /**
      * 依頼CB-1(2026-09-24): 旧「領域別の発信量」マトリクス(依頼BM〜BQ)を
@@ -735,7 +750,7 @@ class AdminComparisonPptxGenerator
      * $tableTopは、上のヘキサゴン列の実際の高さ(自社・競合の半径やラベル
      * 行数で変わりうる)に応じてaddWheelHexagons()が返す値をそのまま使う。
      *
-     * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
+     * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
      */
     private function addMatrixSection(Slide $slide, array $companies, array $axes, float $tableTop, bool $selfReadable = true): void
@@ -789,7 +804,7 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
+     * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
      */
     private function addMatrixHeader(Slide $slide, array $companies, float $colWidth, float $top): void
     {
@@ -819,7 +834,7 @@ class AdminComparisonPptxGenerator
 
     /**
      * @param  array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}  $axis
-     * @param  list<array{name: string, matched: int, total: int, is_self: bool}>  $companies
+     * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
      */
     private function addMatrixRow(Slide $slide, array $axis, array $companies, float $colWidth, float $top, bool $isBanded, bool $selfReadable = true): void
     {
@@ -852,7 +867,13 @@ class AdminComparisonPptxGenerator
             // 未達を示すオレンジの網かけ(self_gap)も、実際には判定していない
             // ため付けない(「未達」自体が判定結果の一種であり、判定不能とは
             // 意味が異なる)。
-            if ($company['is_self'] && ! $selfReadable) {
+            //
+            // 依頼CH-1b(2026-10-01): status不成立(上記)とは独立に、材料
+            // (company['material_sufficient'])が閾値未満のときも同じく
+            // 「－」にする ―― 自社・競合の両方が対象。
+            $materialInsufficient = ! ($company['material_sufficient'] ?? true);
+
+            if (($company['is_self'] && ! $selfReadable) || $materialInsufficient) {
                 [$bg, $fg] = [null, self::DIM];
             } elseif ($company['is_self'] && $axis['self_gap']) {
                 [$bg, $fg] = [self::GAP_BG, self::GAP_TEXT];
@@ -875,7 +896,7 @@ class AdminComparisonPptxGenerator
             $this->position($cell, $left, $top, $colWidth, self::TABLE_ROW_HEIGHT_IN);
             $cell->setVerticalAlignCenter(RichText::VALIGN_CENTER);
             $cell->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $cellText = ($company['is_self'] && ! $selfReadable) ? '－' : "{$count} / {$axis['denominator']}";
+            $cellText = (($company['is_self'] && ! $selfReadable) || $materialInsufficient) ? '－' : "{$count} / {$axis['denominator']}";
             $this->font($cell->getActiveParagraph()->createTextRun($cellText), 9, true, $fg);
         }
     }
@@ -927,6 +948,7 @@ class AdminComparisonPptxGenerator
      *
      * @param  array{
      *     self_readable: bool,
+     *     self_material_sufficient: bool,
      *     missing_items: array{
      *         heading: string,
      *         empty_text: string,
@@ -953,8 +975,21 @@ class AdminComparisonPptxGenerator
             // 誤解を招く一覧になってしまう(抽出条件自体は変更しない、
             // 依頼者指定 ―― ここでは単に表示しないだけ)。専用の文言に
             // 差し替える。
+            //
+            // 依頼CH-1b(2026-10-01): 自社が材料不足(self_material_sufficient
+            // ===false)のときも同様 ―― status=successで抽出条件自体は動く
+            // ものの、材料が空同然で抽出結果の信頼性が無いため。「足りない
+            // もの」は自社視点の一覧のため対象は自社のみ(競合が材料不足でも
+            // このスライドの前提(自社から見て何が足りないか)は崩れない)。
             if (! ($data['self_readable'] ?? true)) {
-                $this->addSelfUnavailableNotice($slide);
+                $this->addSelfUnavailableNotice($slide, (string) config('admin_comparison_pptx.self_data_unavailable_notice'));
+                $this->addNoteFooter($slide, $data['candidate_survey_source_note']);
+
+                return;
+            }
+
+            if (! ($data['self_material_sufficient'] ?? true)) {
+                $this->addSelfUnavailableNotice($slide, (string) config('brand_wheel.insufficient_material_notice'));
                 $this->addNoteFooter($slide, $data['candidate_survey_source_note']);
 
                 return;
@@ -968,10 +1003,14 @@ class AdminComparisonPptxGenerator
 
     /**
      * 依頼CD-3: 自社のブランド・ホイール判定が成立していないことを伝える
-     * 文言を、タイトル下いっぱいに1つだけ表示する(config
-     * ('admin_comparison_pptx.self_data_unavailable_notice')docblock参照)。
+     * 文言を、タイトル下いっぱいに1つだけ表示する。
+     *
+     * 依頼CH-1b(2026-10-01): status不成立(config('admin_comparison_pptx.
+     * self_data_unavailable_notice'))と材料不足(config('brand_wheel.
+     * insufficient_material_notice'))の2条件で文言が異なるため、呼び出し元が
+     * 条件に応じた文言を渡す(このメソッド自体は表示だけを担う)。
      */
-    private function addSelfUnavailableNotice(Slide $slide): void
+    private function addSelfUnavailableNotice(Slide $slide, string $notice): void
     {
         $box = $slide->createRichTextShape();
         $this->position($box, self::LEFT_IN, 2.6, self::CONTENT_WIDTH_IN, 1.2);
@@ -979,7 +1018,7 @@ class AdminComparisonPptxGenerator
         $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $para = $box->getActiveParagraph();
         $para->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $this->font($para->createTextRun((string) config('admin_comparison_pptx.self_data_unavailable_notice')), 14, true, self::GAP_TEXT);
+        $this->font($para->createTextRun($notice), 14, true, self::GAP_TEXT);
     }
 
     /**

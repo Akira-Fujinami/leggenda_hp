@@ -250,6 +250,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'input_hash' => hash('sha256', json_encode($input->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
                 'input_truncated' => $input->inputTruncated,
                 'input_char_count' => $this->inputTotalChars($input),
+                'input_origin_chars' => $input->originChars,
+                'input_adopted_paragraph_count' => $input->adoptedParagraphCount,
                 'source_pages' => $input->sourcePages,
                 'usage_input_tokens' => null,
                 'usage_output_tokens' => null,
@@ -275,7 +277,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         try {
             $provider = app(BrandWheelAnalysisProviderFactory::class)->make();
         } catch (BrandWheelAnalysisException $e) {
-            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_char_count' => $this->inputTotalChars($input)]);
+            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_char_count' => $this->inputTotalChars($input), 'input_origin_chars' => $input->originChars, 'input_adopted_paragraph_count' => $input->adoptedParagraphCount]);
             $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
@@ -316,6 +318,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 'input_hash' => $inputHash,
                 'input_truncated' => $input->inputTruncated,
                 'input_char_count' => $this->inputTotalChars($input),
+                'input_origin_chars' => $input->originChars,
+                'input_adopted_paragraph_count' => $input->adoptedParagraphCount,
                 'source_pages' => $input->sourcePages,
                 'usage_input_tokens' => 0,
                 'usage_output_tokens' => 0,
@@ -359,7 +363,7 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
                 $this->logAiRetriesExhausted($analysisId, $websiteAnalysisId, $e);
             }
 
-            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_hash' => $inputHash, 'input_truncated' => $input->inputTruncated, 'input_char_count' => $this->inputTotalChars($input)]);
+            $this->finalizeBrandWheelResult($record, $websiteAnalysis, ['status' => 'error', 'error_code' => $e->errorCode, 'error_message' => $e->getMessage(), 'input_hash' => $inputHash, 'input_truncated' => $input->inputTruncated, 'input_char_count' => $this->inputTotalChars($input), 'input_origin_chars' => $input->originChars, 'input_adopted_paragraph_count' => $input->adoptedParagraphCount]);
             $this->completeAsFailed($pipeline, $jobRecord, $analysisId, $websiteAnalysisId, $e->getMessage());
 
             return;
@@ -387,6 +391,8 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
             'input_hash' => $inputHash,
             'input_truncated' => $input->inputTruncated,
             'input_char_count' => $this->inputTotalChars($input),
+            'input_origin_chars' => $input->originChars,
+            'input_adopted_paragraph_count' => $input->adoptedParagraphCount,
             'source_pages' => $input->sourcePages,
             'usage_input_tokens' => $outcome->usageInputTokens,
             'usage_output_tokens' => $outcome->usageOutputTokens,

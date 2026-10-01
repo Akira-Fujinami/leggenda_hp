@@ -49,7 +49,8 @@ class AdminComparisonPptxDataBuilder
      * @return array{
      *     self_company_name: string,
      *     self_readable: bool,
-     *     companies: list<array{name: string, matched: int, total: int, is_self: bool}>,
+     *     self_material_sufficient: bool,
+     *     companies: list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>,
      *     axes: list<array{
      *         name: string,
      *         caption: ?string,
@@ -95,6 +96,10 @@ class AdminComparisonPptxDataBuilder
             'matched' => $viewModel->selfTotalMatched,
             'total' => $totalItems,
             'is_self' => true,
+            // 依頼CH-1b(2026-10-01): selfReadable(status不成立)とは独立の
+            // 軸 ―― 既にMultiSiteReportViewModelBuilderが算出済みの値を
+            // そのまま通すだけ(このクラスの既存方針、self_readableと同じ扱い)。
+            'material_sufficient' => $viewModel->selfMaterialSufficient,
         ];
 
         foreach ($viewModel->competitors as $index => $competitor) {
@@ -110,6 +115,7 @@ class AdminComparisonPptxDataBuilder
                 'matched' => $matched,
                 'total' => $totalItems,
                 'is_self' => false,
+                'material_sufficient' => $viewModel->competitorsMaterialSufficient[$index] ?? true,
             ];
         }
 
@@ -126,6 +132,10 @@ class AdminComparisonPptxDataBuilder
             // selfAxes!==[])をそのまま通すだけ(唯一の情報源を保つ、
             // このクラスの既存方針)。
             'self_readable' => $viewModel->selfReadable,
+            // 依頼CH-1b(2026-10-01): 「足りないもの」スライド
+            // (generateMissingItemsSlide())が、自社が材料不足のときも
+            // self_readable===falseと同じ専用文言へ切り替えられるようにする。
+            'self_material_sufficient' => $viewModel->selfMaterialSufficient,
             'companies' => $companies,
             'axes' => $axes,
             'missing_items' => $missingItems,

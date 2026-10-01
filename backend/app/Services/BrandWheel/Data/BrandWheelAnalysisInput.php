@@ -34,6 +34,16 @@ readonly class BrandWheelAnalysisInput
      *         ('read'|'absent'|'unreadable')。#97のメール本文向けの診断情報であり、
      *         AIの判定材料ではないためtoArray()(=AIへ渡すデータ・input_hashの対象)には
      *         含めない。
+     * @param  ?int  $originChars  依頼CH-1a(2026-10-01)、依頼CH追補-1(2026-10-01)で定義を修正:
+     *         起点由来の文字数 ―― 起点ページ(採用ページ・トップページ)本文の段落合計
+     *         ＋起点URL配下のクロール段落合計(段落間の改行は含まない)。
+     *         crawl_site=falseでも起点ページ自身の本文は数える(「巡回が空振りしただけの
+     *         健全なサイト」を誤って材料不足にしないため ―― 依頼CH追補の指摘)。
+     *         AIの判定材料ではなく資料側の表示判断用の診断情報のため、sourcePagesと同じく
+     *         toArray()には含めない。
+     * @param  ?int  $adoptedParagraphCount  依頼CH-1a: 採用された段落の総数
+     *         (selected_paragraph_length.count)。crawl_site=falseまたはクロール由来の候補が
+     *         0件のときnull。
      */
     public function __construct(
         public int $websiteAnalysisId,
@@ -47,6 +57,8 @@ readonly class BrandWheelAnalysisInput
         public bool $inputTruncated,
         public array $sourcePages,
         public array $allLinkLabels = [],
+        public ?int $originChars = null,
+        public ?int $adoptedParagraphCount = null,
     ) {}
 
     /**

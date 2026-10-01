@@ -411,4 +411,75 @@ class AdminComparisonSiteHierarchyBuilderTest extends TestCase
         $this->assertSame([], $result['outside_origin_breakdown']);
         $this->assertSame(0, $result['outside_origin_other_count']);
     }
+
+    /**
+     * 依頼CH-4(2026-10-01): インデックスページが巡回できていない(title不明)
+     * 枝の名前が、パーセントエンコーディングされたパスセグメントの場合、
+     * デコードして表示すること。巡回・集計ロジック(枝の件数等)は
+     * 変わらないこと。
+     */
+    public function test_branch_name_decodes_a_percent_encoded_segment_without_an_index_title(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        $encodedSegment = rawurlencode('企画・営業');
+        $this->crawledPage($wa, "https://example.com/recruit/{$encodedSegment}/detail.html", null);
+
+        $result = $this->builder()->build($wa);
+
+        $this->assertSame('企画・営業', $result['branches'][0]['name']);
+        $this->assertTrue($result['branches'][0]['name_is_url_segment']);
+    }
+
+    /**
+     * 依頼CH-4必須: デコード後に不正なUTF-8になる場合は、デコードせず
+     * 元のまま出すこと(文字化けを資料に出さない)。
+     */
+    public function test_branch_name_keeps_the_raw_segment_when_decoding_produces_invalid_utf8(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        // %ff%feは有効なUTF-8には復号されない不正なバイト列。
+        $this->crawledPage($wa, 'https://example.com/recruit/%ff%fe/detail.html', null);
+
+        $result = $this->builder()->build($wa);
+
+        $this->assertSame('%ff%fe', $result['branches'][0]['name']);
+    }
+
+    /**
+     * 依頼CH-4: 代表ページラベル(インデックスタイトルが無いページの
+     * フォールバック表示名)でもデコードが効くこと。
+     */
+    public function test_sample_page_label_decodes_a_percent_encoded_segment(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        $encodedSegment = rawurlencode('社員紹介');
+        $this->crawledPage($wa, "https://example.com/recruit/careers/{$encodedSegment}.html", null);
+
+        $result = $this->builder()->build($wa);
+
+        $this->assertSame(['社員紹介.html'], $result['branches'][0]['sample_pages']);
+    }
+
+    /**
+     * 依頼CH-4: 「参考」内訳(起点URL配下の外)の表示名でもデコードが
+     * 効くこと。
+     */
+    public function test_outside_origin_breakdown_name_decodes_a_percent_encoded_segment(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $wa->id, 'page_type' => PageType::Recruit, 'url' => 'https://example.com/recruit/']);
+
+        $encodedSegment = rawurlencode('広報');
+        $this->crawledPage($wa, "https://example.com/{$encodedSegment}/release.html", null);
+
+        $result = $this->builder()->build($wa);
+
+        $this->assertSame('広報', $result['outside_origin_breakdown'][0]['name']);
+    }
 }

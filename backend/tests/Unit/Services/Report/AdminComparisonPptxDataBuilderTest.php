@@ -82,7 +82,7 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
         $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel());
 
         $this->assertSame('テスト株式会社', $data['self_company_name']);
-        $this->assertSame(['name' => 'テスト株式会社', 'matched' => 10, 'total' => 24, 'is_self' => true], $data['companies'][0]);
+        $this->assertSame(['name' => 'テスト株式会社', 'matched' => 10, 'total' => 24, 'is_self' => true, 'material_sufficient' => true], $data['companies'][0]);
     }
 
     /**
@@ -137,8 +137,8 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
         ]);
         $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['comparisonTable' => $table]));
 
-        $this->assertSame(['name' => '競合A社', 'matched' => 3, 'total' => 24, 'is_self' => false], $data['companies'][1]);
-        $this->assertSame(['name' => '競合B社', 'matched' => 4, 'total' => 24, 'is_self' => false], $data['companies'][2]);
+        $this->assertSame(['name' => '競合A社', 'matched' => 3, 'total' => 24, 'is_self' => false, 'material_sufficient' => true], $data['companies'][1]);
+        $this->assertSame(['name' => '競合B社', 'matched' => 4, 'total' => 24, 'is_self' => false, 'material_sufficient' => true], $data['companies'][2]);
     }
 
     /**

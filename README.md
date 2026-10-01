@@ -456,6 +456,19 @@ FRONTEND_ORIGIN=https://<frontend-service>.onrender.com
     この画像は分析結果に依存しない静的アセットのため、サーバ側で自動生成
     していない ―― configの下位要素とこの画像の記載内容がずれても、
     ビルド・テストのいずれでも検知されない(目視確認以外に検知手段が無い)。
+  - **[2026-10-01追加・依頼CH] `2026_10_01_000000_add_crawl_material_columns_to_
+    brand_wheel_analysis_results_table`マイグレーション(`input_origin_chars`/
+    `input_adopted_paragraph_count`列の追加)を、コードのデプロイより先に
+    適用すること**。`GenerateBrandWheelAnalysisJob`はブランド・ホイール判定の
+    全ての終端状態(success/insufficient_input/error)でこの2列へ書き込むため、
+    マイグレーション未適用のままこのコードが動くと、列が存在しないSQLエラーで
+    **無料診断を含むすべてのブランド・ホイール判定が失敗する**。
+    追加する列はいずれもnullable(かつデフォルト値を要求しない)なので、
+    **先にマイグレーションだけを適用しても、まだデプロイされていない旧コードの
+    動作には一切影響しない**(旧コードはこれらの列の存在を知らず、参照も
+    書き込みもしないため)―― この順序(マイグレーション→コード)が安全な理由。
+    通常の`metric_definitions`系(上記)とは逆に、こちらは「コードを先に
+    デプロイすると壊れる」側であることに注意。
 
 ## テスト
 

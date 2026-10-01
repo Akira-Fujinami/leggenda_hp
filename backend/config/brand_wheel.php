@@ -544,6 +544,66 @@ return [
 
     /*
     |----------------------------------------------------------------
+    | 依頼CH-1b(2026-10-01): 材料不足時に数字を文言へ置き換える閾値
+    |----------------------------------------------------------------
+    | brand_wheel_analysis_results.input_origin_chars(起点由来の文字数 ――
+    | 起点ページ(採用ページ・トップページ)本文の段落合計＋起点URL配下の
+    | クロール段落合計、段落間の改行は含まない)がこの値未満のとき、
+    | App\Services\BrandWheel\BrandWheelMaterialSufficiencyがfalseを返す。
+    | 管理画面(admin/analyses/show.blade.php)・差し込みスライド
+    | (AdminComparisonPptxGenerator)・比較レポートPDF
+    | (admin-comparison-pdf.blade.php)が、これを理由に「X / 24」等の数字を
+    | insufficient_material_noticeへ置き換える。自社・競合の両方に適用する。
+    |
+    | 【依頼CH追補-1(2026-10-01)による訂正】当初input_char_count(起点ページ
+    | 本文＋クロール全件＋両者をつなぐ改行を含む合計)を参照していたが、
+    | これを作るきっかけになった信金中央金庫の事例を閾値未満として検出
+    | できないことが判明した ―― 信金の起点URL配下由来のクロール文字数は
+    | 0だが、起点ページ本文自体(9/29時点1,131字)がinput_char_countに
+    | 含まれるため、合計が3,000字を超えてしまう。input_origin_charsに
+    | 切り替えることで、この問題を解消した(下記実測参照)。
+    |
+    | comparison_sufficiency_threshold(matched件数、24項目中6)・
+    | report_eligibility_min_matched(同種、レポート生成可否)とは意図的に
+    | 別キー ―― あちらは「AIの判定結果(matched件数)が十分か」、こちらは
+    | 「AIに渡した材料(文字数)がそもそも十分だったか」という別の関心事の
+    | ため、統合しない。insufficient_input_min_total_chars(200、AIを
+    | 呼ばずに評価を打ち切る下限)とも別キー ―― あちらを超えればAIは
+    | 呼ばれるが、それだけでは「判定結果の数字を安心して見せてよい量」には
+    | 全く足りないケースがある(下記実例)。
+    |
+    | 初期値3000の根拠(依頼CG-1の本番実測analysis_id=148、依頼CH追補に
+    | 記載の実測値): 起点由来の文字数(input_origin_chars相当の値)は
+    | 信金中央金庫 origin_chars=0(起点ページ本文1,131字を足しても
+    | 約1,131字)、NTTデータ origin_chars=11,764(起点ページ本文23,936字を
+    | 足せば約35,700字)、TISI origin_chars=16,124、SCSK origin_chars=17,144。
+    | TISI・SCSKは起点ページ本文自体の文字数はログに記載が無く不明だが、
+    | クロール由来だけで既に閾値を大きく上回るため、起点ページ本文の値が
+    | 不明であっても判定結果には影響しない。3,000は信金(約1,131)を
+    | 明確に下回らせ、他3件(11,764以上)を明確に上回らせるため、この4件を
+    | 正しく振り分けられる。self_low_content_notice_min_chars(同じ3,000、
+    | 依頼P-2)と同じ値を踏襲した。env経由で運用しながら調整すること。
+    */
+    'insufficient_material_display_min_chars' => (int) env('BRAND_WHEEL_INSUFFICIENT_MATERIAL_DISPLAY_MIN_CHARS', 3000),
+
+    /*
+    |----------------------------------------------------------------
+    | 材料不足のときの表示文言(依頼CH-1b、自社・競合共通)
+    |----------------------------------------------------------------
+    | self_data_unavailable_notice(config/admin_comparison_pptx.php、
+    | 依頼CD-3)とは条件も文言の前提も異なるため使い回さない:
+    | - self_data_unavailable_notice: status≠success(判定そのものが
+    |   成立しなかった、自社のみ)のときに使う。数字が無い(axesが空)。
+    | - insufficient_material_notice(このキー): status=successで判定は
+    |   成立したが、input_origin_chars(起点由来の文字数)が閾値未満
+    |   (材料が薄い)のときに使う。自社・競合の両方に適用する。
+    |   「発信していない」と読める断定は避け、材料(読み取れた分量)側の
+    |   問題として書く。
+    */
+    'insufficient_material_notice' => 'この結果は、読み取れた記述の量が少ないため、件数での比較には適していません。',
+
+    /*
+    |----------------------------------------------------------------
     | 「○△－の対比表」ページ冒頭の比較サマリー文言テンプレート(2026-08-17追加)
     |----------------------------------------------------------------
     | BrandWheelComparisonSummaryComposer::comparisonOverview()が組み立てる。
@@ -1054,6 +1114,76 @@ return [
             '*/news/*,*/ir/*,*/press/*,*.pdf,*.jpg,*.jpeg,*.png,*.gif,*.svg,*.zip',
         )),
     ))),
+
+    /*
+    |----------------------------------------------------------------
+    | 依頼CH-2(2026-10-01): 段落プールからの定型文ページ除外
+    |----------------------------------------------------------------
+    | 実測(analysis_id=148)で、プライバシーポリシー・クッキーポリシー等の
+    | 定型文ページが、BrandWheelAnalysisInputFactory::buildClusterPools()が
+    | 作る段落プールの予算上位を占め、社員インタビュー等の本来見せたい
+    | ページを押し出していたことが分かった(SCSK: privacy.html 2,286字)。
+    |
+    | 【外す基準(依頼CH追補で確定)】外すのは**法的定型文だけ**
+    | (プライバシーポリシー・クッキーポリシー・利用規約・特定商取引法に
+    | 基づく表記)。**会社が何者かを語る文書は残す**(ガバナンス・受賞歴)。
+    |
+    | 【governance/ガバナンスは除外しない(依頼CH追補で訂正)】当初の依頼で
+    | 除外語に含めていたが誤りだった ―― axes.personality(「経営スタイル」、
+    | 定義「リーダーシップ・組織構造・性格・価値観」)にコーポレート・
+    | ガバナンスの文書(取締役会の構成・意思決定の仕組み)は直接該当しうる。
+    | 実際、TISIは「経営スタイル」が3回の実行すべてで4/4(満点)であり、
+    | TISIの予算1位がcompany/governance(6,587字)だった ―― 外せば経営
+    | スタイルの判定材料が失われ、スコアが下がる具体的な経路がある。
+    |
+    | 【award(受賞歴)も除外しない】判断・理由: axes.asset.sub_elements.
+    | brand_recognition(「知名度・評判」、定義「会社や実績が外部からどう
+    | 評価・認知されているかについての記述」)に受賞歴は直接該当し、
+    | プライバシーポリシー等の純粋な法的定型文と異なり24項目の判定材料に
+    | なり得るため、除外語には含めない。
+    |
+    | 【巡回対象からは外さない】crawl_excluded_path_patterns(巡回自体の
+    | 除外、階層図の件数等に影響する)とは別物であり、変更しない。ここで
+    | 除外するのはbuildClusterPools()が作る段落プールからだけ ――
+    | 巡回・階層図の集計・crawled_pages_totalの件数には一切影響しない。
+    |
+    | 【site_hierarchy_deprioritized_sample_keywordsとは別キー】
+    | (config/admin_comparison_pptx.php)。あちらは「代表ページとして
+    | 見せる優先順位を下げる」(除外ではない、空欄にしない)、こちらは
+    | 「AIに渡す段落プールから除外する」―― 目的が異なるため、たまたま
+    | 語が重なっていても共有しない(依頼者指定の判断基準)。
+    */
+    'crawl_paragraph_pool_exclude_enabled' => filter_var(env('BRAND_WHEEL_CRAWL_PARAGRAPH_POOL_EXCLUDE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+
+    // マッチ方式: ページのURL(final_url優先)に対する大小文字を区別しない
+    // 部分一致(site_hierarchy_deprioritized_sample_keywordsと同じ方式)。
+    // ページ単位での除外であり、段落単位ではない。
+    // 新しい語を足すときは、上の「外す基準」(法的定型文のみ、会社が何者かを
+    // 語る文書は残す)に照らして判断すること。
+    'crawl_paragraph_pool_excluded_keywords' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env(
+            'BRAND_WHEEL_CRAWL_PARAGRAPH_POOL_EXCLUDED_KEYWORDS',
+            'privacy,プライバシー,個人情報保護方針,cookie,クッキーポリシー,terms,利用規約,利用条件,tokushoho,特定商取引',
+        )),
+    ))),
+
+    /*
+    |----------------------------------------------------------------
+    | 依頼CH-3(2026-10-01): ページ横断の配分(ラウンドロビン)
+    |----------------------------------------------------------------
+    | 実測(analysis_id=148)で、TISIの1段落(4,339字、予算の13%)・1ページ
+    | (company/governance、6,587字、予算の20%)が予算を独占していたことが
+    | 分かった。buildClusterPools()の各クラスタ内の順序を、従来の
+    | 「全段落をフラットに長さ降順」から「ページごとに長さ降順→ページを
+    | 横断してラウンドロビンで1段落ずつ取る」に変更する。ページ内の順序
+    | (長い段落ほど先)は変えない ―― 「長い段落ほど中身がある」という
+    | 前提自体は否定しない。変えるのはページ間の取り出し順だけ。
+    |
+    | falseにすると、この依頼の変更前と完全に同一の順序(フラット長さ降順)
+    | に戻る。
+    */
+    'crawl_paragraph_pool_round_robin_enabled' => filter_var(env('BRAND_WHEEL_CRAWL_PARAGRAPH_POOL_ROUND_ROBIN_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
 
     /*
     |----------------------------------------------------------------

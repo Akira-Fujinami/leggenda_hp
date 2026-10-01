@@ -252,4 +252,47 @@ class MultiSiteReportViewModelBuilderTest extends TestCase
         $this->assertTrue($viewModel->selfReadable);
         $this->assertSame(1, $viewModel->selfTotalMatched);
     }
+
+    /**
+     * 依頼CH追補-1(2026-10-01)必須: selfMaterialSufficient/
+     * competitorsMaterialSufficientは、input_char_count(起点ページ本文＋
+     * クロール全件＋改行を含む合計)ではなくinput_origin_chars(起点由来の
+     * 文字数)を見ること。この2つの値をあえて食い違わせ(input_char_countは
+     * 閾値以上・input_origin_charsは閾値未満)、正しい列が参照されている
+     * ことを区別して検証する。
+     */
+    public function test_self_material_sufficiency_is_derived_from_input_origin_chars_not_input_char_count(): void
+    {
+        config(['brand_wheel.insufficient_material_display_min_chars' => 3000]);
+
+        $analysis = $this->makeComparisonAnalysis();
+        $selfWa = WebsiteAnalysis::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_id' => Website::factory()->create([
+                'project_id' => $analysis->project_id,
+                'is_primary' => true,
+                'display_order' => 0,
+                'name' => 'self',
+            ])->id,
+        ]);
+        BrandWheelAnalysisResult::factory()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $selfWa->id,
+            'status' => 'success',
+            'axes' => [],
+            // input_char_countは閾値以上(信金のように起点ページ本文込みの
+            // 合計は大きいが)、input_origin_charsは閾値未満(起点URL配下の
+            // 材料そのものは薄い)という、信金と同じ食い違いを再現する。
+            'input_char_count' => 4000,
+            'input_origin_chars' => 1131,
+        ]);
+        $this->addSite($analysis, false, 1, 'a', []);
+
+        $viewModel = app(MultiSiteReportViewModelBuilder::class)->build($analysis->fresh());
+
+        $this->assertFalse(
+            $viewModel->selfMaterialSufficient,
+            'input_origin_chars(1,131)が閾値(3,000)未満のため、input_char_count(4,000)の値に関わらずfalseになること',
+        );
+    }
 }

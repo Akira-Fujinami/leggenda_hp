@@ -8,6 +8,7 @@ use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelEvidenceLookupBuilder;
 use App\Services\BrandWheel\BrandWheelHexagonRenderer;
 use App\Services\BrandWheel\BrandWheelLeadResponseComposer;
+use App\Services\BrandWheel\BrandWheelMaterialSufficiency;
 use App\Services\BrandWheel\BrandWheelMultiSiteComparisonComposer;
 use App\Services\BrandWheel\BrandWheelQuoteTranslator;
 use App\Services\BrandWheel\BrandWheelRadarSvgBuilder;
@@ -36,6 +37,7 @@ class MultiSiteReportViewModelBuilder
         private readonly BrandWheelRadarSvgBuilder $radarSvgBuilder,
         private readonly BrandWheelHexagonRenderer $pngRenderer,
         private readonly BrandWheelQuoteTranslator $quoteTranslator,
+        private readonly BrandWheelMaterialSufficiency $materialSufficiency,
     ) {}
 
     public function build(Analysis $analysis): MultiSiteReportViewModel
@@ -162,6 +164,19 @@ class MultiSiteReportViewModelBuilder
             return $axisGroup;
         }, $selfEvidenceByAxis);
 
+        // 依頼CH-1b(2026-10-01)、依頼CH追補-1で参照列を訂正: selfReadable
+        // (status不成立)とは独立に、起点由来の材料の量(input_origin_chars
+        // ―― 起点ページ本文＋起点URL配下のクロール段落)が閾値未満かどうかを
+        // 判定する。input_char_count(起点ページ本文＋クロール全件を含む
+        // 合計)ではこの判定が効かない事例(しんきん中央金庫)が確認された
+        // ため、BrandWheelMaterialSufficiencyのdocblock参照。自社・競合の
+        // 両方に適用する(依頼者指定)。
+        $selfMaterialSufficient = $this->materialSufficiency->isSufficient($selfRecord?->input_origin_chars);
+        $competitorsMaterialSufficient = array_map(
+            fn (?BrandWheelAnalysisResult $record) => $this->materialSufficiency->isSufficient($record?->input_origin_chars),
+            $competitorRecords,
+        );
+
         return new MultiSiteReportViewModel(
             selfCompanyDisplayName: (string) ($analysis->project?->leadCompany?->company_name ?? 'お客様'),
             generatedAtLabel: sprintf('%d年%d月%d日', now()->year, now()->month, now()->day),
@@ -178,6 +193,8 @@ class MultiSiteReportViewModelBuilder
             comparisonTable: $comparisonTable,
             selfEvidenceByAxis: $selfEvidenceByAxis,
             hasQuoteTranslations: $quoteTranslations !== [],
+            selfMaterialSufficient: $selfMaterialSufficient,
+            competitorsMaterialSufficient: $competitorsMaterialSufficient,
         );
     }
 

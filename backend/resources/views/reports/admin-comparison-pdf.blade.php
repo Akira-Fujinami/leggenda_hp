@@ -201,8 +201,18 @@
 <div class="page">
     <h2>自社サイトの分析結果</h2>
     <img class="logo-mark" src="data:image/png;base64,{{ $leggendaLogoImageBase64 }}" alt="LEGGENDA">
+    {{--
+        依頼CH-1b(2026-10-01): selfReadable(status不成立、判定そのものが
+        成立しなかった)とselfMaterialSufficient(判定は成立したが材料
+        (input_char_count)が閾値未満)は条件が異なるため、文言も分ける ――
+        前者は既存のこのページ専用の文言、後者はconfig
+        ('brand_wheel.insufficient_material_notice')(自社・競合共通、
+        AdminComparisonPptxGeneratorの同条件と同じ文言)を使う。
+    --}}
     @if (! $viewModel->selfReadable)
         <p class="lead1">自社サイトの記述からは、今回の比較に必要な情報を十分に読み取れませんでした。</p>
+    @elseif (! $viewModel->selfMaterialSufficient)
+        <p class="lead1">{{ config('brand_wheel.insufficient_material_notice') }}</p>
     @else
         <table style="width: 265mm;"><tr>
             <td style="width: 100mm; vertical-align: top;">

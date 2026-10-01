@@ -121,7 +121,7 @@ class AdminComparisonSiteHierarchyBuilder
             // ディレクトリ形式のURL)は、従来どおりその枝自身のインデックス
             // ページとして扱う(依頼CB-3由来の既存動作、変更しない)。
             if (count($segments) === 1 && str_contains($segments[0], '.')) {
-                $label = $title !== '' ? $title : $segments[0];
+                $label = $title !== '' ? $title : $this->decodeSegmentForDisplay($segments[0]);
                 $flatPageLabels[] = ['label' => $label, 'deprioritized' => $this->isDeprioritizedSampleLabel($label)];
 
                 continue;
@@ -137,7 +137,7 @@ class AdminComparisonSiteHierarchyBuilder
                 $branches[$branchKey]['index_title'] = $title;
             }
 
-            $label = $title !== '' ? $title : end($segments);
+            $label = $title !== '' ? $title : $this->decodeSegmentForDisplay((string) end($segments));
             // 依頼CF-2: sampleLimitでの打ち切りはここでは行わない
             // (deprioritizeSamplePages()で優先度順に並べ替えたあとに
             // 打ち切る ―― そうしないと、たまたま先に見つかった
@@ -149,7 +149,7 @@ class AdminComparisonSiteHierarchyBuilder
         $branchList = [];
         foreach ($branches as $segment => $info) {
             $branchList[] = [
-                'name' => $info['index_title'] ?? $segment,
+                'name' => $info['index_title'] ?? $this->decodeSegmentForDisplay($segment),
                 'page_count' => $info['count'],
                 'sample_pages' => $this->deprioritizeSamplePages($info['labels'], $sampleLimit),
                 // 依頼CC-3③: ページ名を捏造しない ―― インデックスページを
@@ -194,6 +194,24 @@ class AdminComparisonSiteHierarchyBuilder
             'outside_origin_breakdown' => $outsideBreakdown,
             'outside_origin_other_count' => $outsideOtherCount,
         ];
+    }
+
+    /**
+     * 依頼CH-4(2026-10-01): URLのパスセグメントは通常パーセントエンコー
+     * ディングされたまま保存されている(parse_url()はデコードしない)ため、
+     * 表示直前にここでデコードする。デコード後が不正なUTF-8になる場合
+     * (壊れたバイト列・偶然%記号を含む通常の文字列等)は、文字化けを資料に
+     * 出さないため元のまま返す(依頼者指定)。
+     *
+     * 分類キー(枝名のキー・起点外内訳の集計キー)には使わない ――
+     * あくまで最終的な表示名を組み立てる直前にのみ適用し、巡回・集計
+     * ロジック(どのページがどの枝/内訳に属するか)自体は一切変えない。
+     */
+    private function decodeSegmentForDisplay(string $segment): string
+    {
+        $decoded = rawurldecode($segment);
+
+        return mb_check_encoding($decoded, 'UTF-8') ? $decoded : $segment;
     }
 
     /**
@@ -263,7 +281,7 @@ class AdminComparisonSiteHierarchyBuilder
 
         $rows = [];
         foreach ($outsideCounts as $segment => $count) {
-            $rows[] = ['name' => $segment, 'page_count' => $count];
+            $rows[] = ['name' => $this->decodeSegmentForDisplay($segment), 'page_count' => $count];
         }
         usort($rows, fn (array $a, array $b) => $b['page_count'] <=> $a['page_count']);
 

@@ -20,6 +20,7 @@ readonly class MultiSiteReportViewModel
      * @param  list<array{axis_name: string, sub_name: string, definition: string, competitor_matched_count: int}>  $selfStrengths  依頼AC-1の②(自社の強み)、件数降順。競合引用は付けない(依頼者承認の範囲は①のみ)。
      * @param  list<array{axis_name: string, group: string, sub_name: string, self_matched: bool, competitor_matched: list<bool>}>  $comparisonTable  24項目×(自社+競合N社)、config順。competitor_matchedは$competitorsと同じ添字(display_order順)。
      * @param  list<array{axis_name: string, items: list<array{sub_name: string, evidence: string, evidence_translation: ?string}>}>  $selfEvidenceByAxis  自社の「○と判定した根拠」(依頼R方針を踏襲、競合の引用は含まない)
+     * @param  list<bool>  $competitorsMaterialSufficient  依頼CH-1b(2026-10-01)、依頼CH追補-1で参照列を訂正: 競合ごとの材料充足判定(App\Services\BrandWheel\BrandWheelMaterialSufficiency)、$competitorsと同じ添字(display_order順)。selfReadable/status不成立とは独立の軸 ―― status=successでも起点由来の材料(input_origin_chars)が閾値未満ならfalse。
      */
     public function __construct(
         public string $selfCompanyDisplayName,
@@ -37,5 +38,7 @@ readonly class MultiSiteReportViewModel
         public array $comparisonTable,
         public array $selfEvidenceByAxis,
         public bool $hasQuoteTranslations,
+        public bool $selfMaterialSufficient = true,
+        public array $competitorsMaterialSufficient = [],
     ) {}
 }

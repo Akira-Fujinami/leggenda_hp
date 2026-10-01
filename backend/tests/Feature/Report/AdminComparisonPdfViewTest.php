@@ -252,4 +252,33 @@ class AdminComparisonPdfViewTest extends TestCase
         $this->assertStringContainsString('We build a better society.', $html);
         $this->assertStringContainsString('日本語訳: より良い社会を築く。', $html);
     }
+
+    /**
+     * 依頼CH-1b(2026-10-01): selfReadable=true(判定は成立)でも
+     * selfMaterialSufficient=falseのとき、自社の統計ボックス(「確認できた
+     * 項目数」)の実数("8 / 24項目")を出さず、専用の文言
+     * (config('brand_wheel.insufficient_material_notice'))を出すこと。
+     * status不成立の文言(既存)とは区別すること。
+     */
+    public function test_self_stat_box_shows_the_material_notice_when_self_material_is_insufficient(): void
+    {
+        $html = $this->render($this->viewModel([
+            'selfReadable' => true,
+            'selfMaterialSufficient' => false,
+        ]));
+
+        $this->assertStringContainsString((string) config('brand_wheel.insufficient_material_notice'), $html);
+        $this->assertStringNotContainsString('8 <small>/ 24項目</small>', $html);
+    }
+
+    public function test_self_stat_box_shows_real_numbers_when_self_material_is_sufficient(): void
+    {
+        $html = $this->render($this->viewModel([
+            'selfReadable' => true,
+            'selfMaterialSufficient' => true,
+        ]));
+
+        $this->assertStringContainsString('8 <small>/ 24項目</small>', $html);
+        $this->assertStringNotContainsString((string) config('brand_wheel.insufficient_material_notice'), $html);
+    }
 }

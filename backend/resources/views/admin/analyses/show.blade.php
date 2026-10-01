@@ -408,7 +408,7 @@
         <p class="empty">Brand Wheel分析結果がありません。</p>
     @else
         <table class="list">
-            <thead><tr><th>サイト</th><th>状態</th><th>理由</th><th>エラー</th></tr></thead>
+            <thead><tr><th>サイト</th><th>状態</th><th>理由</th><th>エラー</th><th>材料(起点由来)</th></tr></thead>
             <tbody>
                 @foreach ($brandWheelResults as $result)
                     @php
@@ -434,17 +434,36 @@
                         // 変えていない)。
                         $isSelfUnreadable = (bool) $result->websiteAnalysis?->website?->is_primary
                             && ($statusInfo['status'] ?? $result->status) !== 'success';
+
+                        // 依頼CH-1b(2026-10-01)、依頼CH追補-1(2026-10-01)で
+                        // 参照列を訂正: 上記(status不成立)とは独立の軸 ――
+                        // status=success(判定は成立)でも、起点由来の材料
+                        // (input_origin_chars ―― 起点ページ本文＋起点URL配下の
+                        // クロール段落、BrandWheelMaterialSufficiency参照)が
+                        // 閾値未満なら、差し込み・比較PDF側で数字が
+                        // insufficient_material_noticeへ置き換わる。自社・
+                        // 競合の両方が対象(既存の$isSelfUnreadableは自社限定
+                        // のため、これとは別に判定する)。input_char_count
+                        // (起点ページ本文＋クロール全件＋改行を含む合計)では
+                        // この判定が効かない事例(しんきん中央金庫)が確認
+                        // されたため、input_origin_charsを使う。
+                        $isMaterialInsufficient = ($statusInfo['status'] ?? $result->status) === 'success'
+                            && $result->input_origin_chars !== null
+                            && $result->input_origin_chars < (int) config('brand_wheel.insufficient_material_display_min_chars', 3000);
                     @endphp
-                    <tr style="{{ $isSelfUnreadable ? 'background: #FDEEEC;' : '' }}">
+                    <tr style="{{ $isSelfUnreadable ? 'background: #FDEEEC;' : ($isMaterialInsufficient ? 'background: #FFF6E5;' : '') }}">
                         <td>
                             {{ $result->websiteAnalysis?->website?->name }}
                             @if ($isSelfUnreadable)
                                 <span title="自社サイトのブランド・ホイール判定が成立していません(営業資料への差し込み時は専用の文言に置き換わります)" style="color: #C2372B;">&#9940;</span>
+                            @elseif ($isMaterialInsufficient)
+                                <span title="判定に用いた起点由来の材料(読み取れた文字数)が少ないため、営業資料・比較PDFでは件数がこの専用の文言に置き換わります" style="color: #B5750A;">&#9888;</span>
                             @endif
                         </td>
                         <td style="{{ $isSelfUnreadable ? 'color: #C2372B; font-weight: 600;' : '' }}">{{ $statusInfo['label'] ?? $result->status }}</td>
                         <td>{{ $statusInfo['reason'] ?? '—' }}</td>
                         <td>{{ $result->error_message ?? '—' }}</td>
+                        <td style="{{ $isMaterialInsufficient ? 'color: #B5750A; font-weight: 600;' : '' }}">{{ $result->input_origin_chars !== null ? $result->input_origin_chars.'字' : '—' }}</td>
                     </tr>
                 @endforeach
             </tbody>
