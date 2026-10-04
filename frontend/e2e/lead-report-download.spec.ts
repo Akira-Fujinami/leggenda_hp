@@ -20,7 +20,7 @@ test("lead onboarding -> diagnose -> results shows the 4 perspectives, report do
   await page.getByLabel("会社名").fill("E2Eテスト株式会社");
   await page.getByLabel("ご担当者名").fill("E2E太郎");
   await page.getByLabel("メールアドレス").fill(`e2e-lead-${unique}@example.com`);
-  await page.getByLabel("プライバシーポリシーに同意します").check();
+  await page.getByLabel("個人情報の取り扱いについて同意する").check();
   await page.getByRole("button", { name: "無料で診断をはじめる" }).click();
 
   await expect(page).toHaveURL(/\/lead\/diagnose\?token=/);

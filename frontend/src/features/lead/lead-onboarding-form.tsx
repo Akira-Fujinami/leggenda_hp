@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api-client";
 import { useSubmitLeadOnboarding } from "@/features/lead/hooks";
+import { PRIVACY_POLICY_URL } from "@/lib/legal-links";
 
 const onboardingSchema = z.object({
   company_name: z.string().min(1, "会社名を入力してください。").max(255),
@@ -19,7 +20,7 @@ const onboardingSchema = z.object({
   industry: z.string().max(255).optional().or(z.literal("")),
   employee_range: z.string().max(100).optional().or(z.literal("")),
   privacy_policy_agreed: z.boolean().refine((v) => v === true, {
-    message: "プライバシーポリシーへの同意が必要です。",
+    message: "個人情報の取り扱いへの同意が必要です。",
   }),
 });
 
@@ -108,11 +109,27 @@ export function LeadOnboardingForm() {
         <Input id="employee_range" placeholder="例：50〜100名" {...register("employee_range")} />
       </div>
 
-      <div className="flex items-start gap-2">
-        <input id="privacy_policy_agreed" type="checkbox" className="mt-1" {...register("privacy_policy_agreed")} />
-        <Label htmlFor="privacy_policy_agreed" className="font-normal">
-          プライバシーポリシーに同意します
-        </Label>
+      <div className="space-y-1">
+        <div className="flex items-start gap-2">
+          <input id="privacy_policy_agreed" type="checkbox" className="mt-1" {...register("privacy_policy_agreed")} />
+          <Label htmlFor="privacy_policy_agreed" className="font-normal">
+            個人情報の取り扱いについて同意する
+          </Label>
+        </div>
+        {/* 注記はlabelの外に置く(中に入れるとリンクを押したときにチェックが切り替わる) */}
+        <p className="text-xs text-muted-foreground">
+          ※当社の個人情報の取り扱いについては
+          <a
+            href={PRIVACY_POLICY_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="個人情報の取り扱いについて（新しいタブで開きます）"
+            className="underline underline-offset-2"
+          >
+            こちら
+          </a>
+          をご確認ください。
+        </p>
       </div>
       {errors.privacy_policy_agreed && (
         <p className="text-sm text-destructive">{errors.privacy_policy_agreed.message}</p>

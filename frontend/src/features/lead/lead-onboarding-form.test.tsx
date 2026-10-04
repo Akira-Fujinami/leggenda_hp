@@ -28,7 +28,7 @@ describe("LeadOnboardingForm", () => {
     expect(await screen.findByText("会社名を入力してください。")).toBeInTheDocument();
     expect(await screen.findByText("ご担当者名を入力してください。")).toBeInTheDocument();
     expect(await screen.findByText("メールアドレスを入力してください。")).toBeInTheDocument();
-    expect(await screen.findByText("プライバシーポリシーへの同意が必要です。")).toBeInTheDocument();
+    expect(await screen.findByText("個人情報の取り扱いへの同意が必要です。")).toBeInTheDocument();
     expect(mutateMock).not.toHaveBeenCalled();
   });
 
@@ -39,7 +39,7 @@ describe("LeadOnboardingForm", () => {
     await user.type(screen.getByLabelText("会社名"), "株式会社サンプル");
     await user.type(screen.getByLabelText("ご担当者名"), "山田太郎");
     await user.type(screen.getByLabelText("メールアドレス"), "not-an-email");
-    await user.click(screen.getByLabelText("プライバシーポリシーに同意します"));
+    await user.click(screen.getByLabelText("個人情報の取り扱いについて同意する"));
     await user.click(screen.getByRole("button", { name: "無料で診断をはじめる" }));
 
     expect(await screen.findByText("メールアドレスの形式が正しくありません。")).toBeInTheDocument();
@@ -53,7 +53,7 @@ describe("LeadOnboardingForm", () => {
     await user.type(screen.getByLabelText("会社名"), "株式会社サンプル");
     await user.type(screen.getByLabelText("ご担当者名"), "山田太郎");
     await user.type(screen.getByLabelText("メールアドレス"), "lead@example.com");
-    await user.click(screen.getByLabelText("プライバシーポリシーに同意します"));
+    await user.click(screen.getByLabelText("個人情報の取り扱いについて同意する"));
     await user.click(screen.getByRole("button", { name: "無料で診断をはじめる" }));
 
     await waitFor(() => {
@@ -67,5 +67,23 @@ describe("LeadOnboardingForm", () => {
         expect.anything(),
       );
     });
+  });
+
+  it("links to the privacy policy in a new tab without toggling the checkbox", async () => {
+    const user = userEvent.setup();
+    render(<LeadOnboardingForm />);
+
+    const link = screen.getByRole("link", { name: "個人情報の取り扱いについて（新しいタブで開きます）" });
+    expect(link).toHaveTextContent("こちら");
+    expect(link).toHaveAttribute("href", "https://leggenda-co.web-tools.biz/privacypolicy.html");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(screen.getByText(/^※当社の個人情報の取り扱いについては/)).toBeInTheDocument();
+
+    const checkbox = screen.getByLabelText("個人情報の取り扱いについて同意する");
+    expect(checkbox).not.toBeChecked();
+    link.addEventListener("click", (e) => e.preventDefault());
+    await user.click(link);
+    expect(checkbox).not.toBeChecked();
   });
 });
