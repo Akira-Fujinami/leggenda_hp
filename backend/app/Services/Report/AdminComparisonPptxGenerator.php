@@ -1644,7 +1644,7 @@ class AdminComparisonPptxGenerator
      * 0件のときは、巡回した範囲では配下にページが見つからなかったことを
      * 事実として書く(「ありません」と断定しない)。
      *
-     * @param  array{origin_url: string, top: array{url: string}, branches: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, other_branch_count: int}  $tree
+     * @param  array{origin_url: string, top: array{url: string}, branches: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, other_branch_count: int, unplaced_page_count?: int}  $tree
      */
     private function addTreeBranches(Slide $slide, array $tree): void
     {
@@ -1676,11 +1676,21 @@ class AdminComparisonPptxGenerator
             $y += $rowHeight + self::TREE_ROW_GAP_IN;
         }
 
-        if ($tree['other_branch_count'] > 0) {
+        // 依頼CN-A2: 畳んだ枝の「ほかN」と、どのメニューにも属さなかったページの件数を、
+        // 同じ1行に出す(行を増やさない ―― 免責文の固定位置より上に収めるため)。
+        $unplaced = (int) ($tree['unplaced_page_count'] ?? 0);
+        if ($tree['other_branch_count'] > 0 || $unplaced > 0) {
+            $parts = [];
+            if ($tree['other_branch_count'] > 0) {
+                $parts[] = sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_other_branches_template'), $tree['other_branch_count']);
+            }
+            if ($unplaced > 0) {
+                $parts[] = sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_unplaced_template'), $unplaced);
+            }
             $box = $slide->createRichTextShape();
-            $this->position($box, self::TREE_BRANCH_LEFT_IN, $y, self::TREE_BRANCH_WIDTH_IN, 0.22);
+            $this->position($box, self::TREE_BRANCH_LEFT_IN, $y, self::TREE_PAGE_LEFT_IN + self::TREE_PAGE_WIDTH_IN - self::TREE_BRANCH_LEFT_IN, 0.22);
             $box->setInsetLeft(0);
-            $this->font($box->getActiveParagraph()->createTextRun(sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_other_branches_template'), $tree['other_branch_count'])), 9, false, self::MUTED);
+            $this->font($box->getActiveParagraph()->createTextRun(implode('　／　', $parts)), 9, false, self::MUTED);
         }
 
         // TOP → 第1階層の幹と枝(直線だけで描く)。

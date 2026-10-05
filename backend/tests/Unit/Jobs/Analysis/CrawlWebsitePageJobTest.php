@@ -765,4 +765,32 @@ class CrawlWebsitePageJobTest extends TestCase
             AnalysisCrawledPage::query()->where('url', 'https://www.example.co.jp/mid-career/')->value('status'),
         );
     }
+
+    /**
+     * 依頼CN-A1: 巡回で取得したページのtitleを保存する(従来は一度も保存しておらず、
+     * analysis_crawled_pages.titleは常に空だった)。<title>、無ければ最初の<h1>、
+     * どちらも無ければnullのまま(名前を作らない)。
+     */
+    public function test_the_crawl_saves_the_page_title_then_h1_and_leaves_null_when_neither_exists(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis();
+        $withTitle = $this->seedPending($websiteAnalysis, 'https://example.co.jp/with-title');
+        $withH1 = $this->seedPending($websiteAnalysis, 'https://example.co.jp/with-h1');
+        $none = $this->seedPending($websiteAnalysis, 'https://example.co.jp/none');
+
+        Http::fake([
+            'https://example.co.jp/with-title' => Http::response('<html><head><title> 福利厚生 | 採用サイト </title></head><body><h1>見出し</h1></body></html>', 200, ['Content-Type' => 'text/html']),
+            'https://example.co.jp/with-h1' => Http::response('<html><head></head><body><h1>仕事を知る</h1></body></html>', 200, ['Content-Type' => 'text/html']),
+            'https://example.co.jp/none' => Http::response('<html><body><p>本文のみ</p></body></html>', 200, ['Content-Type' => 'text/html']),
+        ]);
+
+        $this->handle($analysis, $websiteAnalysis);
+        $this->handle($analysis, $websiteAnalysis);
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertSame('福利厚生 | 採用サイト', $withTitle->fresh()->title);
+        $this->assertSame('仕事を知る', $withH1->fresh()->title);
+        $this->assertNull($none->fresh()->title);
+    }
 }

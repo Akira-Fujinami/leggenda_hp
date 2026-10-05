@@ -1288,4 +1288,13 @@ class HtmlSeoAnalyzerTest extends TestCase
         $this->assertSame(['事業', 'プライバシーポリシー'], $this->analyzer->extractNavigationLinkLabels($html));
         $this->assertSame([['label' => '事業', 'href' => '/a']], $this->analyzer->extractMenuLinks($html));
     }
+
+    // ---- 依頼CN-A1: extractPageTitle() ----
+
+    public function test_extract_page_title_prefers_title_then_first_non_empty_h1_and_returns_null_otherwise(): void
+    {
+        $this->assertSame('ページ名', $this->analyzer->extractPageTitle('<html><head><title>  ページ名 </title></head><body><h1>見出し</h1></body></html>'));
+        $this->assertSame('見出し', $this->analyzer->extractPageTitle('<html><head><title> </title></head><body><h1></h1><h1>見出し</h1></body></html>'));
+        $this->assertNull($this->analyzer->extractPageTitle('<html><body><p>本文のみ</p></body></html>'));
+    }
 }

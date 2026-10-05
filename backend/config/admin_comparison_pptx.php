@@ -656,6 +656,44 @@ return [
     // 点線の枝(既存の「追加を検討したい導線」)の表示上限。超えた分は「ほかN」。
     'site_hierarchy_tree_recommended_limit' => 4,
 
+    // 依頼CN-A1(2026-10-06): 第2階層のページ名。巡回したページの過半(このratioを超える割合)に
+    // 共通する末尾・先頭の区切り部分(「ページ名 | サイト名」のサイト名)を落とす。落とした結果が
+    // 空になるページは落とさない。区切りは下の一覧(ASCIIのハイフン類は語中のハイフンと
+    // 区別するため前後の空白つき)。長さの上限を超えたら既存の切り詰め処理で切る。
+    'site_hierarchy_tree_title_separators' => ['|', '｜', ' - ', ' – ', ' — ', '：', ' : '],
+
+    'site_hierarchy_tree_title_common_ratio' => 0.5,
+
+    'site_hierarchy_tree_page_label_max_chars' => 40,
+
+    // 依頼CN-A2: どのメニューにも属さなかったページの件数(第1階層の「ほかN」と同じ行に出す)。
+    'site_hierarchy_tree_unplaced_template' => 'どのメニューにも属さないページ %d件',
+
+    /*
+    | 依頼CN-A3(2026-10-06): 点線の枝(追加を検討したい導線)と、実線の枝(メニューの項目)の矛盾を
+    | なくすための照合表。調査の選択肢(config('brand_wheel_candidate_survey.options')のキー)ごとに、
+    | その主題を表すメニューの言葉。第1階層(畳まれて画面に出ない枝も含む)のメニューの言葉に
+    | これらのいずれかが含まれていれば、その調査項目に対応する導線は点線に出さない。
+    | 部分一致、大文字小文字・全角半角を区別しない。AIは使わない。
+    | 【依頼側で最終確認する案】広すぎる言葉(例: 「制度」)は意図しない照合を起こしうる。
+    */
+    'site_hierarchy_flow_menu_words' => [
+        'job_content' => ['仕事', '職種', '業務', '募集', 'job', 'jobs', 'position', 'roles'],
+        'career_path' => ['キャリア', '成長', 'career', 'growth'],
+        'employee_interview' => ['社員', 'インタビュー', 'メンバー', '先輩', 'interview', 'member', 'people', 'voice', 'stories', 'story'],
+        'business_service' => ['事業', 'サービス', 'プロダクト', '製品', 'business', 'service', 'product'],
+        'work_environment' => ['働き方', '働く環境', '職場', '環境', 'オフィス', 'workstyle', 'work style', 'environment', 'office', 'workplace'],
+        'salary_evaluation' => ['給与', '評価', '報酬', '待遇', 'compensation', 'salary', 'evaluation', 'assessment'],
+        'vision_philosophy' => ['ビジョン', 'ミッション', '理念', 'バリュー', 'パーパス', '行動指針', '考え方', 'mission', 'vision', 'values', 'philosophy', 'purpose', 'mvv'],
+        'executive_interview' => ['代表', '経営', '社長', 'ceo', 'トップ'],
+        'overtime_leave_data' => ['数字', 'データ', 'data', 'numbers', 'facts'],
+        'benefits' => ['福利厚生', '手当', '休暇', '制度', 'benefit', 'welfare'],
+        'culture' => ['カルチャー', '社風', '文化', '風土', 'culture'],
+        'company_event' => ['イベント', '交流', 'event'],
+        'training' => ['研修', '教育', '育成', '学び', '人材開発', 'training', 'learning', 'development', 'education'],
+        'achievements_projects' => ['実績', '事例', 'プロジェクト', '受賞', 'project', 'case', 'award'],
+    ],
+
     // 文言。
     'site_hierarchy_tree_top_label' => 'TOP',
     'site_hierarchy_tree_menu_count_template' => 'メニュー%d項目',

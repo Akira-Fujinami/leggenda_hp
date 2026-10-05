@@ -212,6 +212,11 @@ class AnalysisController extends Controller
                 ? $hierarchyBuilder->buildTree($selfWebsiteAnalysis)
                 : $hierarchyBuilder->emptyTree();
 
+            // 依頼CN-A3: 実線の枝(メニューの項目、畳まれた枝を含む)に同じ主題がある導線は、
+            // 点線の枝に出さない。
+            $data['recommended_site_flow_names'] = app(\App\Services\Report\RecommendedFlowFilter::class)
+                ->filter($data['recommended_site_flows'], $tree['first_level_labels'] ?? []);
+
             // 依頼CB-4: 説明→比較(CB-1)→足りないもの(CB-2)→階層図(CB-3)→
             // 参照元、の順で差し込む(説明ページは分析結果に依存しない
             // 固定内容、AdminComparisonPptxGenerator::

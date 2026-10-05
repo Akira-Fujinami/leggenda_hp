@@ -706,4 +706,23 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
             }
         }
     }
+
+    /** 依頼CN-A3: 導線名(従来どおり)に、対応する調査の選択肢のキーを添えて渡す。 */
+    public function test_recommended_site_flows_carry_the_survey_option_key_alongside_the_names(): void
+    {
+        $viewModel = $this->viewModel([
+            'missingFromSelf' => [
+                ['axis_name' => '経営スタイル', 'sub_name' => '会社の性格', 'competitor_matched_count' => 2],
+                ['axis_name' => '資産的魅力', 'sub_name' => '規模・影響力', 'competitor_matched_count' => 2],
+            ],
+        ]);
+        $data = (new AdminComparisonPptxDataBuilder)->build($viewModel);
+
+        $this->assertSame($data['recommended_site_flow_names'], array_column($data['recommended_site_flows'], 'name'));
+        foreach ($data['recommended_site_flows'] as $flow) {
+            $this->assertArrayHasKey('option', $flow);
+        }
+        $this->assertContains('culture', array_column($data['recommended_site_flows'], 'option'));
+        $this->assertContains(null, array_column($data['recommended_site_flows'], 'option'), '調査に対応しない導線はnull');
+    }
 }

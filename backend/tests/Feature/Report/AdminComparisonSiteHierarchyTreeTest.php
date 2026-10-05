@@ -133,7 +133,8 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
         $this->assertSame(2, $jobs['page_count']);
         $this->assertSame(['エンジニア'], $jobs['pages'], 'HTMLが無い項目はURLの配下で代用');
 
-        $this->assertSame(['links' => 1, 'url' => 1], $tree['second_level_source'], 'どちらで作ったかを件数で返す');
+        // 依頼CN-A2: 置き方の内訳(ページ数)。どちらのページもURLが枝の配下にある。
+        $this->assertSame(['links' => 0, 'url' => 3], $tree['second_level_source']);
     }
 
     public function test_top_has_the_url_page_title_main_headings_and_menu_item_count(): void
@@ -369,7 +370,8 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
         $this->assertSame([], $tree['branches'][1]['pages']);
     }
 
-    public function test_a_page_is_assigned_to_only_one_branch_and_never_to_the_top_or_a_menu_item(): void
+    /** 依頼CN-A2: 2つの枝からリンクされたページはどの枝にも置かない(TOP・項目のページ自身も置かない)。 */
+    public function test_a_page_linked_from_two_branches_is_not_placed_and_the_top_and_menu_items_are_never_placed(): void
     {
         $wa = WebsiteAnalysis::factory()->create();
         $this->recruitPage($wa, $this->html('<a href="/recruit/a/">項目A</a><a href="/recruit/b/">項目B</a>'));
@@ -382,9 +384,10 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
         $tree = $this->builder()->buildTree($wa);
 
         [$a, $b] = $tree['branches'];
-        $this->assertSame(['共有ページ'], $a['pages'], '先に出た項目Aの枝に入る');
-        $this->assertSame([], $b['pages'], '同じページを2つの枝に重ねて出さない');
+        $this->assertSame([], $a['pages']);
+        $this->assertSame([], $b['pages']);
         $this->assertSame(1, $b['page_count']);
+        $this->assertSame(1, $tree['unplaced_page_count']);
     }
 
     public function test_pages_without_a_title_show_the_decoded_url_path(): void
@@ -550,5 +553,201 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
         $this->assertSame(5, $tree['pages_within_origin']);
         $this->assertNull($tree['top']['title'], '起点そのもののページではないページ名は出さない');
         $this->assertSame([], $tree['top']['headings']);
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼CN-A1(2026-10-06): 第2階層のページ名。
+    // ------------------------------------------------------------------
+
+    private function titledHtml(?string $title, ?string $h1 = null): string
+    {
+        return '<html><head>'.($title !== null ? "<title>{$title}</title>" : '').'</head><body><main>'.($h1 !== null ? "<h1>{$h1}</h1>" : '').'<p>本文</p></main></body></html>';
+    }
+
+    private function siteWithTwoItems(): WebsiteAnalysis
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, $this->html('<a href="/recruit/culture/">カルチャー</a><a href="/recruit/jobs/">募集職種</a>'));
+
+        return $wa;
+    }
+
+    public function test_a_page_without_a_saved_title_gets_its_name_from_the_stored_html_title_then_h1_then_the_url_path(): void
+    {
+        $wa = $this->siteWithTwoItems();
+        $this->crawled($wa, 'https://example.com/recruit/culture/a', null, $this->titledHtml('Aのタイトル'));
+        $this->crawled($wa, 'https://example.com/recruit/culture/b', null, $this->titledHtml(null, 'Bの見出し'));
+        $this->crawled($wa, 'https://example.com/recruit/culture/c', null, $this->titledHtml(null));
+        $this->crawled($wa, 'https://example.com/recruit/culture/d', null);
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame(['Aのタイトル', 'Bの見出し', '/recruit/culture/c'], $tree['branches'][0]['pages']);
+        $this->assertSame(1, $tree['branches'][0]['other_page_count']);
+    }
+
+    public function test_the_rendered_html_is_read_before_the_static_html_for_the_page_name(): void
+    {
+        $wa = $this->siteWithTwoItems();
+        $page = $this->crawled($wa, 'https://example.com/recruit/culture/a', null, $this->titledHtml('静的のタイトル'));
+        Storage::disk('analysis')->put("pages/{$wa->id}/rendered-a.html", $this->titledHtml('描画後のタイトル'));
+        $page->update(['rendered_html_path' => "pages/{$wa->id}/rendered-a.html"]);
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame(['描画後のタイトル'], $tree['branches'][0]['pages']);
+    }
+
+    public function test_the_page_names_are_not_written_back_to_the_database(): void
+    {
+        $wa = $this->siteWithTwoItems();
+        $page = $this->crawled($wa, 'https://example.com/recruit/culture/a', null, $this->titledHtml('Aのタイトル'));
+
+        $this->builder()->buildTree($wa);
+
+        $this->assertNull($page->fresh()->title);
+    }
+
+    public function test_a_common_site_name_suffix_is_removed_from_the_page_names(): void
+    {
+        $wa = $this->siteWithTwoItems();
+        $this->crawled($wa, 'https://example.com/recruit/culture/a', 'Aの記事 | Example採用サイト');
+        $this->crawled($wa, 'https://example.com/recruit/culture/b', 'Bの記事 | Example採用サイト');
+        $this->crawled($wa, 'https://example.com/recruit/culture/c', 'Cの記事｜Example採用サイト');
+        $this->crawled($wa, 'https://example.com/recruit/jobs/x', '別の書き方のページ');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame(['Aの記事', 'Bの記事', 'Cの記事'], $tree['branches'][0]['pages']);
+        $this->assertSame(['別の書き方のページ'], $tree['branches'][1]['pages'], '区切りの無いtitleは変えない');
+    }
+
+    public function test_a_title_that_would_become_empty_keeps_its_site_name_and_a_minority_suffix_is_kept(): void
+    {
+        $wa = $this->siteWithTwoItems();
+        $this->crawled($wa, 'https://example.com/recruit/culture/a', 'Aの記事 | Example採用サイト');
+        $this->crawled($wa, 'https://example.com/recruit/culture/b', 'Bの記事 | Example採用サイト');
+        $this->crawled($wa, 'https://example.com/recruit/culture/c', 'Example採用サイト');
+        $this->crawled($wa, 'https://example.com/recruit/jobs/x', 'Xの記事 | 別のサイト名');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame(['Aの記事', 'Bの記事', 'Example採用サイト'], $tree['branches'][0]['pages'], '落とすと空になるページは落とさない');
+        $this->assertSame(['Xの記事 | 別のサイト名'], $tree['branches'][1]['pages'], '過半に共通しない末尾は落とさない');
+    }
+
+    public function test_long_page_names_are_cut_with_the_existing_truncator(): void
+    {
+        config(['admin_comparison_pptx.site_hierarchy_tree_page_label_max_chars' => 12]);
+        $wa = $this->siteWithTwoItems();
+        $this->crawled($wa, 'https://example.com/recruit/culture/a', 'とても長いページ名がここに入ります。続きの文章です');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame('とても長いページ名がここ…', $tree['branches'][0]['pages'][0], '句点が上限内に無いときは上限で切って…を付ける');
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼CN-A2(2026-10-06): 第2階層の置き場所。
+    // ------------------------------------------------------------------
+
+    public function test_a_page_below_a_branch_url_goes_to_that_branch_even_if_another_branch_links_to_it_first(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, $this->html('<a href="/recruit/service/">サービス</a><a href="/recruit/culture/">カルチャー</a>'));
+        // サービスのページが、カルチャー配下のページを本文でリンクしている(先にあるサービスの枝に吸われていた)。
+        $this->crawled($wa, 'https://example.com/recruit/service/', 'サービス', $this->html('', '<a href="/recruit/culture/mvvc">ミッション</a>'));
+        $this->crawled($wa, 'https://example.com/recruit/culture/', 'カルチャー');
+        $this->crawled($wa, 'https://example.com/recruit/culture/mvvc', 'ミッション');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame([], $tree['branches'][0]['pages']);
+        $this->assertSame(['ミッション'], $tree['branches'][1]['pages']);
+        $this->assertSame(1, $tree['branches'][0]['page_count']);
+        $this->assertSame(2, $tree['branches'][1]['page_count']);
+    }
+
+    public function test_a_page_outside_every_branch_goes_to_the_only_branch_that_links_to_it(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, $this->html('<a href="/recruit/culture/">カルチャー</a><a href="/recruit/jobs/">募集職種</a>'));
+        $this->crawled($wa, 'https://example.com/recruit/culture/', 'カルチャー', $this->html('', '<a href="/recruit/en/mvvc">English</a>'));
+        $this->crawled($wa, 'https://example.com/recruit/jobs/', '募集職種', $this->html('', '<a href="/recruit/news/1">お知らせ</a>'));
+        $this->crawled($wa, 'https://example.com/recruit/en/mvvc', 'MVVC');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame(['MVVC'], $tree['branches'][0]['pages']);
+        $this->assertSame(2, $tree['branches'][0]['page_count']);
+        $this->assertSame(0, $tree['unplaced_page_count']);
+        $this->assertSame(['links' => 1, 'url' => 0], $tree['second_level_source']);
+    }
+
+    public function test_a_page_linked_from_two_branches_belongs_to_neither_and_is_counted_as_unplaced(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, $this->html('<a href="/recruit/a/">項目A</a><a href="/recruit/b/">項目B</a>'));
+        $shared = '<a href="/recruit/harassment-policy">ハラスメントポリシー</a><a href="/recruit/b/">項目B(本文内)</a><a href="/recruit/">TOPへ戻る</a>';
+        $this->crawled($wa, 'https://example.com/recruit/a/', '項目Aのページ', $this->html('', $shared));
+        $this->crawled($wa, 'https://example.com/recruit/b/', '項目Bのページ', $this->html('', $shared));
+        $this->crawled($wa, 'https://example.com/recruit/harassment-policy', 'ハラスメントポリシー');
+        $this->crawled($wa, 'https://example.com/recruit/orphan', 'どこからもリンクされないページ');
+        $this->crawled($wa, 'https://example.com/recruit/', 'TOP');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        [$a, $b] = $tree['branches'];
+        $this->assertSame([], $a['pages']);
+        $this->assertSame([], $b['pages']);
+        $this->assertSame(1, $a['page_count'], '枝のページ数は置いた数で数え直す(項目のページ自身のみ)');
+        $this->assertSame(2, $tree['unplaced_page_count'], '置かなかったページは捨てずに件数を出す');
+    }
+
+    public function test_the_deepest_branch_wins_when_a_page_is_below_two_branch_urls(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, $this->html('<a href="/recruit/job/">仕事</a><a href="/recruit/job-interview.html">インタビュー</a>'));
+        $this->crawled($wa, 'https://example.com/recruit/job/x', 'Xのページ');
+        $this->crawled($wa, 'https://example.com/recruit/job-interview/y', 'Yのインタビュー');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame(['Xのページ'], $tree['branches'][0]['pages']);
+        $this->assertSame(['Yのインタビュー'], $tree['branches'][1]['pages']);
+    }
+
+    public function test_first_level_labels_include_the_branches_folded_into_the_other_count(): void
+    {
+        config(['admin_comparison_pptx.site_hierarchy_tree_first_level_limit' => 2]);
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, $this->html('<a href="/recruit/a/">項目A</a><a href="/recruit/b/">項目B</a><a href="/recruit/culture/">カルチャー</a>'));
+        $this->crawled($wa, 'https://example.com/recruit/a/p1', 'a1');
+        $this->crawled($wa, 'https://example.com/recruit/a/p2', 'a2');
+        $this->crawled($wa, 'https://example.com/recruit/b/p1', 'b1');
+        $this->crawled($wa, 'https://example.com/recruit/b/p2', 'b2');
+        $this->crawled($wa, 'https://example.com/recruit/culture/p1', 'c1');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame(1, $tree['other_branch_count']);
+        $this->assertSame(['項目A', '項目B'], array_column($tree['branches'], 'name'));
+        $this->assertSame(['項目A', '項目B', 'カルチャー'], $tree['first_level_labels'], '画面に出ない(畳まれた)枝も含む');
+    }
+
+    public function test_the_url_hierarchy_fallback_is_unchanged_by_the_new_placement_rules(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, null);
+        $this->crawled($wa, 'https://example.com/recruit/culture/', 'カルチャー');
+        $this->crawled($wa, 'https://example.com/recruit/culture/vision', '私たちのビジョン');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame('url', $tree['mode']);
+        $this->assertSame(['カルチャー'], array_column($tree['branches'], 'name'));
+        $this->assertSame(['私たちのビジョン'], $tree['branches'][0]['pages']);
+        $this->assertSame(0, $tree['unplaced_page_count']);
+        $this->assertSame(['カルチャー'], $tree['first_level_labels']);
     }
 }

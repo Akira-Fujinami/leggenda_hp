@@ -63,6 +63,9 @@ use Illuminate\Support\Facades\Storage;
     {--no-render : クロールは行うが条件付きレンダリングを無効化する}
     {--call-ai : 実際にOpenAI(gpt-4o)を呼ぶ(既定はAIを呼ばないドライラン)}
     {--json= : 結果をJSONファイルへ書き出すパス(省略時は標準出力へJSON出力)}
+    {--page-stats= : 依頼CN-B1: 巡回したページごとの段落の統計と、入力に採用された文字数・段落数(件数のみ、本文は出さない)をこのJSONパスへ書き出す}
+    {--judge-repeats=0 : 依頼CN-B3: 同じ入力(巡回し直さない)に対して、実際のAI判定をこの回数だけ繰り返し、軸ごとの○の下位要素のキーを出す(費用がかかる。0=行わない)}
+    {--reuse= : 依頼CN-B3: 既に巡回済みのWebsiteAnalysisを使い回す(サイトキー:website_analysis_id のカンマ区切り。例 cybozu:763)。巡回し直さない ―― 同じ入力で判定を繰り返すため}
     {--dump-text= : BrandWheelAnalysisInputFactory::build()が実際に組み立てた本文(recruitPageBodyText/homepagePageBodyText)を、由来ページの内訳とあわせてこのディレクトリへ書き出す(依頼H)。AIには渡さない。ドライランでも使用可}
 ')]
 #[Description('非本番・開発専用: クロール統合後のBrandWheelAnalysisInputFactory入力を測定する(依頼F、既定はAIを呼ばないドライラン)')]
@@ -77,12 +80,26 @@ class MeasureBrandWheelCrawlInputCommand extends Command
      *
      * @var array<string, array{label: string, homepage_url: string, recruit_url: string}>
      */
+    /**
+     * 依頼CN-B1: 福利厚生・給与・制度にあたるページを選ぶための語(URL・ページ名に
+     * 含まれるか、大文字小文字を区別しない部分一致)。測定専用 ―― 入力の選定
+     * ロジックには使わない。
+     *
+     * @var list<string>
+     */
+    private const TARGET_PAGE_WORDS = [
+        '福利厚生', '給与', '報酬', '待遇', '手当', '制度', '評価', '休暇',
+        'benefit', 'salary', 'compensation', 'assessment', 'evaluation', 'welfare', 'treatment', 'allowance', 'system', 'career', 'training', 'hr-system', 'pay',
+    ];
+
     private const SITES = [
         'shinkin' => ['label' => 'しんきん', 'homepage_url' => 'https://www.shinkin.co.jp/ssc/recruit/index.html', 'recruit_url' => 'https://www.shinkin.co.jp/ssc/recruit/index.html'],
         'nttdata' => ['label' => 'NTTデータ', 'homepage_url' => 'https://www.nttdata.com/global/ja/recruit/', 'recruit_url' => 'https://www.nttdata.com/global/ja/recruit/'],
         'smarthr' => ['label' => 'SmartHR', 'homepage_url' => 'https://hello-world.smarthr.co.jp', 'recruit_url' => 'https://hello-world.smarthr.co.jp'],
         'kayac' => ['label' => 'カヤック', 'homepage_url' => 'https://www.kayac.com/recruit/fresh', 'recruit_url' => 'https://www.kayac.com/recruit/fresh'],
         'cybozu' => ['label' => 'サイボウズ', 'homepage_url' => 'https://cybozu.co.jp/recruit/', 'recruit_url' => 'https://cybozu.co.jp/recruit/'],
+        'moneyforward' => ['label' => 'マネーフォワード', 'homepage_url' => 'https://recruit.moneyforward.com/', 'recruit_url' => 'https://recruit.moneyforward.com/'],
+        'freee' => ['label' => 'freee', 'homepage_url' => 'https://jobs.freee.co.jp/', 'recruit_url' => 'https://jobs.freee.co.jp/'],
         'kilfebon' => ['label' => 'キルフェボン', 'homepage_url' => 'https://www.quil-fait-bon-recruit.com', 'recruit_url' => 'https://www.quil-fait-bon-recruit.com'],
     ];
 
@@ -122,18 +139,35 @@ class MeasureBrandWheelCrawlInputCommand extends Command
         // 二重に積まれないようにする。
         Queue::fake();
 
+        $reuse = [];
+        foreach (array_filter(explode(',', (string) $this->option('reuse'))) as $pair) {
+            [$reuseKey, $reuseId] = array_pad(explode(':', trim($pair), 2), 2, null);
+            if ($reuseKey !== null && $reuseId !== null) {
+                $reuse[$reuseKey] = (int) $reuseId;
+            }
+        }
+
         $results = [];
 
         foreach ($siteKeys as $key) {
             $site = self::SITES[$key];
             $this->info("=== {$site['label']} ({$key}) crawl=".($crawlEnabled ? 'on' : 'off').' render='.($renderEnabled ? 'on' : 'off').' ===');
 
-            [$analysisId, $websiteAnalysisId] = $this->seedWebsiteAnalysis($key, $site, $crawlEnabled);
-
-            if ($crawlEnabled) {
-                $this->runCrawlChain($pipeline, $analysisId, $websiteAnalysisId, $renderEnabled);
+            $reuseId = $reuse[$key] ?? null;
+            if ($reuseId !== null) {
+                // 巡回済みの結果を使い回す(巡回・シード・ディスパッチをしない)。
+                $reused = WebsiteAnalysis::findOrFail($reuseId);
+                $analysisId = (int) $reused->analysis_id;
+                $websiteAnalysisId = (int) $reused->id;
+                $this->line("  reuse: website_analysis_id={$websiteAnalysisId}(巡回し直さない)");
             } else {
-                $pipeline->dispatchBrandWheelAnalysisAfterCrawl($analysisId, $websiteAnalysisId);
+                [$analysisId, $websiteAnalysisId] = $this->seedWebsiteAnalysis($key, $site, $crawlEnabled);
+
+                if ($crawlEnabled) {
+                    $this->runCrawlChain($pipeline, $analysisId, $websiteAnalysisId, $renderEnabled);
+                } else {
+                    $pipeline->dispatchBrandWheelAnalysisAfterCrawl($analysisId, $websiteAnalysisId);
+                }
             }
 
             $crawlCounts = AnalysisCrawledPage::query()->where('website_analysis_id', $websiteAnalysisId)
@@ -203,6 +237,14 @@ class MeasureBrandWheelCrawlInputCommand extends Command
                         isset($row['ai_result']['is_mock']) ? ($row['ai_result']['is_mock'] ? 'true' : 'false') : 'null',
                         $row['ai_result']['error_code'] ?? 'null',
                     ));
+                }
+
+                if (! empty($this->option('page-stats'))) {
+                    $row['page_stats'] = $this->collectPageStats($websiteAnalysisId, $input);
+                }
+
+                if ((int) $this->option('judge-repeats') > 0) {
+                    $row['judgments'] = $this->runRepeatedJudgments(WebsiteAnalysis::find($websiteAnalysisId), (int) $this->option('judge-repeats'), $pipeline, $inputFactory);
                 }
 
                 $results[] = $row;
@@ -523,6 +565,177 @@ class MeasureBrandWheelCrawlInputCommand extends Command
             'provider' => $record->provider,
             'is_mock' => $record->is_mock,
         ];
+    }
+
+    /**
+     * 依頼CN-B1: 巡回したページごとの、本文の段落の統計と、AIへの入力に実際に
+     * 採用された文字数・段落数。出すのは件数・文字数・出現回数だけ(本文・
+     * 段落のテキストは出さない)。
+     *
+     * 採用の判定は、build()が実際に組み立てた入力(recruitPageBodyText/
+     * homepagePageBodyText)の行との完全一致で行う(重複除去は「最初に現れた
+     * ページ」が取るため、同じ行は最初のページにだけ数える。起点ページ
+     * (seed)と同じ行はseedのものとして数えない。段落の途中で切って採用した
+     * ものは完全一致しないため数えない ―― 全体で数件)。
+     *
+     * @return array<string, mixed>
+     */
+    private function collectPageStats(int $websiteAnalysisId, BrandWheelAnalysisInput $input): array
+    {
+        $resolver = app(PageHtmlResolver::class);
+        $analyzer = app(HtmlSeoAnalyzer::class);
+        $targetWords = array_values(array_filter((array) config('brand_wheel.measure_target_page_words', self::TARGET_PAGE_WORDS)));
+
+        $finalLines = [];
+        foreach (explode("\n", $input->recruitPageBodyText."\n".$input->homepageBodyText) as $line) {
+            $line = trim($line);
+            if ($line !== '') {
+                $finalLines[$line] = true;
+            }
+        }
+
+        $seedLines = [];
+        foreach ([PageType::Recruit, PageType::Homepage] as $type) {
+            $seedPage = AnalysisPage::query()->where('website_analysis_id', $websiteAnalysisId)->where('page_type', $type)->first();
+            $resolved = $seedPage !== null ? $resolver->resolve($seedPage) : null;
+            if ($resolved !== null) {
+                foreach (explode("\n", $analyzer->extractBodyText(Storage::disk('analysis')->get($resolved['path']), excludeNavigation: true)) as $line) {
+                    $line = trim($line);
+                    if ($line !== '') {
+                        $seedLines[$line] = true;
+                    }
+                }
+            }
+        }
+
+        $owned = [];
+        $pages = [];
+        $pageModels = AnalysisCrawledPage::query()
+            ->where('website_analysis_id', $websiteAnalysisId)
+            ->where('status', AnalysisCrawledPage::STATUS_FETCHED)
+            ->whereNotNull('raw_html_path')
+            ->orderBy('depth')->orderBy('id')->get();
+
+        foreach ($pageModels as $page) {
+            $resolved = $resolver->resolve($page);
+            if ($resolved === null) {
+                continue;
+            }
+            $html = Storage::disk('analysis')->get($resolved['path']);
+            $title = $analyzer->extractPageTitle($html);
+            $url = (string) ($page->final_url ?? $page->url);
+            $lengths = [];
+            $adoptedChars = 0;
+            $adoptedCount = 0;
+            foreach (explode("\n", $analyzer->extractBodyText($html, excludeNavigation: true)) as $line) {
+                $line = trim($line);
+                if ($line === '') {
+                    continue;
+                }
+                $length = mb_strlen($line);
+                $lengths[] = $length;
+                if (isset($seedLines[$line]) || isset($owned[$line])) {
+                    continue;
+                }
+                $owned[$line] = true;
+                if (isset($finalLines[$line])) {
+                    $adoptedChars += $length;
+                    $adoptedCount++;
+                }
+            }
+
+            $isTarget = false;
+            foreach ($targetWords as $word) {
+                if (mb_stripos($url, $word) !== false || ($title !== null && mb_stripos($title, $word) !== false)) {
+                    $isTarget = true;
+                    break;
+                }
+            }
+
+            $pages[] = [
+                'url' => $url,
+                'has_title' => $title !== null,
+                'is_target' => $isTarget,
+                'chars' => array_sum($lengths),
+                'paragraphs' => count($lengths),
+                'median_paragraph_length' => $this->median($lengths),
+                'adopted_chars' => $adoptedChars,
+                'adopted_paragraphs' => $adoptedCount,
+            ];
+        }
+
+        $top = $pages;
+        usort($top, fn (array $a, array $b) => $b['adopted_chars'] <=> $a['adopted_chars']);
+        $top = array_slice($top, 0, 5);
+
+        $allText = $input->recruitPageBodyText."\n".$input->homepageBodyText;
+        $keywordCounts = [];
+        foreach (['福利厚生', '手当', '給与', '休暇', '評価'] as $word) {
+            $keywordCounts[$word] = mb_substr_count($allText, $word);
+        }
+
+        return [
+            'pages_read' => count($pages),
+            'target_pages' => array_values(array_filter($pages, fn (array $p) => $p['is_target'])),
+            'top5_by_adopted_chars' => array_map(fn (array $p) => [
+                'url' => $p['url'], 'adopted_chars' => $p['adopted_chars'], 'adopted_paragraphs' => $p['adopted_paragraphs'],
+                'median_paragraph_length' => $p['median_paragraph_length'],
+            ], $top),
+            'keyword_counts_in_input' => $keywordCounts,
+            'pages_without_title_in_html' => count(array_filter($pages, fn (array $p) => ! $p['has_title'])),
+            'pages_without_saved_title' => $pageModels->filter(fn (AnalysisCrawledPage $p) => trim((string) $p->title) === '')->count(),
+        ];
+    }
+
+    /**
+     * @param  list<int>  $values
+     */
+    private function median(array $values): ?int
+    {
+        if ($values === []) {
+            return null;
+        }
+        sort($values);
+        $n = count($values);
+
+        return $n % 2 === 1 ? $values[intdiv($n, 2)] : (int) round(($values[$n / 2 - 1] + $values[$n / 2]) / 2);
+    }
+
+    /**
+     * 依頼CN-B3: 同じ巡回結果(巡回し直さない)に対して、実際のAI判定を$repeats回
+     * 行い、軸ごとに○と判定された下位要素のキーを返す(本文・根拠の引用は返さない)。
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function runRepeatedJudgments(WebsiteAnalysis $websiteAnalysis, int $repeats, AnalysisPipeline $pipeline, BrandWheelAnalysisInputFactory $inputFactory): array
+    {
+        $rows = [];
+        for ($run = 1; $run <= $repeats; $run++) {
+            AnalysisJobRecord::query()
+                ->where('analysis_id', $websiteAnalysis->analysis_id)
+                ->where('website_analysis_id', $websiteAnalysis->id)
+                ->where('job_type', JobType::GenerateBrandWheelAnalysis)
+                ->delete();
+            BrandWheelAnalysisResult::query()->create([
+                'analysis_id' => $websiteAnalysis->analysis_id,
+                'website_analysis_id' => $websiteAnalysis->id,
+                'status' => 'pending',
+                'is_mock' => false,
+                'input_hash' => '',
+            ]);
+
+            $ai = $this->callAiSynchronously($websiteAnalysis->id, $pipeline, $inputFactory);
+            $record = BrandWheelAnalysisResult::query()->where('website_analysis_id', $websiteAnalysis->id)->latest('id')->first();
+            $axes = [];
+            foreach ((array) ($record?->axes ?? []) as $axis) {
+                $axes[(string) ($axis['axis_key'] ?? '?')] = array_column((array) ($axis['matched_sub_elements'] ?? []), 'key');
+            }
+
+            $rows[] = ['run' => $run, 'status' => $ai['status'] ?? null, 'provider' => $ai['provider'] ?? null, 'is_mock' => $ai['is_mock'] ?? null, 'error_code' => $ai['error_code'] ?? null, 'matched_sub_elements' => $axes];
+            $this->line(sprintf('  judgment run=%d status=%s matched=%s', $run, $ai['status'] ?? 'null', $ai['matched'] ?? 'null'));
+        }
+
+        return $rows;
     }
 
     /**

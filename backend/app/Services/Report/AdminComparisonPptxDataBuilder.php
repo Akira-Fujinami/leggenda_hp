@@ -76,6 +76,7 @@ class AdminComparisonPptxDataBuilder
      *     survey_comparison: array{rows: list<array{rank: int, key: string, name: string, percentage: float, self_state: string, mapped_count: int, self_matched_count: int, competitor_count: ?int}>, competitor_total: int, excluded_competitor_count: int},
      *     candidate_survey_source_note: string,
      *     recommended_site_flow_names: list<string>,
+     *     recommended_site_flows: list<array{name: string, option: ?string}>,
      *     source_note: string,
      *     page_number: ?string,
      * }
@@ -145,6 +146,9 @@ class AdminComparisonPptxDataBuilder
             'survey_comparison' => $this->buildSurveyComparison($viewModel),
             'candidate_survey_source_note' => (string) config('brand_wheel_candidate_survey.source_note'),
             'recommended_site_flow_names' => $this->buildRecommendedSiteFlowNames($viewModel->missingFromSelf),
+            // 依頼CN-A3: 導線名と、それが対応する調査の選択肢(点線の枝から、実線の枝に
+            // 同じ主題があるものを除くための照合用、RecommendedFlowFilter)。
+            'recommended_site_flows' => $this->buildRecommendedSiteFlows($viewModel->missingFromSelf),
             'source_note' => "Leggenda 採用ブランド・ホイール診断({$viewModel->generatedAtLabel}時点)",
             'page_number' => null,
         ];
@@ -372,6 +376,33 @@ class AdminComparisonPptxDataBuilder
         }
 
         return $names;
+    }
+
+    /**
+     * 依頼CN-A3: buildRecommendedSiteFlowNames()と同じ導線名(同じ順・重複除去)に、
+     * その導線が対応する調査の選択肢のキー(対応しなければnull)を添える。
+     *
+     * @param  list<array{axis_name: string, sub_name: string}>  $missingFromSelf
+     * @return list<array{name: string, option: ?string}>
+     */
+    private function buildRecommendedSiteFlows(array $missingFromSelf): array
+    {
+        $flows = [];
+        $seen = [];
+        foreach ($missingFromSelf as $item) {
+            $keys = $this->resolveAxisSubKeys($item['axis_name'], $item['sub_name']);
+            if ($keys === null) {
+                continue;
+            }
+            [$axisKey, $subKey] = $keys;
+            $siteFlowName = config("brand_wheel_candidate_survey.mapping.{$axisKey}.{$subKey}.site_flow_name");
+            if (is_string($siteFlowName) && $siteFlowName !== '' && ! isset($seen[$siteFlowName])) {
+                $seen[$siteFlowName] = true;
+                $flows[] = ['name' => $siteFlowName, 'option' => $this->surveyCatalog->optionForSubElement($axisKey, $subKey)['key'] ?? null];
+            }
+        }
+
+        return $flows;
     }
 
     /**

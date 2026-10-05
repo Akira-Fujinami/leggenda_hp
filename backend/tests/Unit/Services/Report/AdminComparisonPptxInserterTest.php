@@ -1942,4 +1942,37 @@ class AdminComparisonPptxInserterTest extends TestCase
         $template = (string) config('admin_comparison_pptx.missing_item_survey_template');
         $this->assertSame('「X」を確認したい求職者が17%いますが、自社サイトでは確認できませんでした。', sprintf($template, 'X', '17'));
     }
+
+
+    // ---- 依頼CN-A2/A3(2026-10-06) ----
+
+    public function test_hierarchy_slide_shows_the_unplaced_page_count_on_the_same_line_as_the_folded_branches(): void
+    {
+        $tree = $this->hierarchyData();
+        $tree['other_branch_count'] = 7;
+        $tree['unplaced_page_count'] = 12;
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide($this->comparisonData(), $tree));
+
+        $this->assertStringContainsString('ほか7　／　どのメニューにも属さないページ 12件', $xml);
+
+        $tree['other_branch_count'] = 0;
+        $xml2 = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide($this->comparisonData(), $tree));
+        $this->assertStringContainsString('どのメニューにも属さないページ 12件', $xml2);
+        $this->assertStringNotContainsString('ほか7', $xml2);
+
+        $tree['unplaced_page_count'] = 0;
+        $xml3 = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide($this->comparisonData(), $tree));
+        $this->assertStringNotContainsString('どのメニューにも属さないページ', $xml3);
+    }
+
+    public function test_hierarchy_slide_has_no_dotted_section_at_all_when_every_recommended_flow_is_covered(): void
+    {
+        $data = $this->comparisonData();
+        $data['recommended_site_flow_names'] = [];
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide($data, $this->hierarchyData()));
+
+        $this->assertStringNotContainsString('追加を検討したい導線', $xml, '見出しだけ残さない');
+        $this->assertStringNotContainsString('prstDash val="dash"', $xml);
+        $this->assertStringNotContainsString('点線は、', $xml, '点線の説明も出さない');
+    }
 }

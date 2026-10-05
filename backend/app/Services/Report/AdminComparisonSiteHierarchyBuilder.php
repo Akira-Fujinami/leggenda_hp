@@ -9,6 +9,7 @@ use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\CrawlLinkExtractor;
 use App\Services\Analysis\CrawlOriginScopeResolver;
 use App\Services\Analysis\HtmlSeoAnalyzer;
+use App\Services\BrandWheel\BrandWheelTextTruncator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 
@@ -384,12 +385,16 @@ class AdminComparisonSiteHierarchyBuilder
      *     second_level_source: array{links: int, url: int},
      *     menu_source: ?string,
      *     origin_widened: bool,
+     *     unplaced_page_count: int,
+     *     first_level_labels: list<string>,
      * }
      */
     public function buildTree(WebsiteAnalysis $websiteAnalysis): array
     {
         $pages = $this->fetchedPages($websiteAnalysis);
         $totalFetched = $pages->count();
+        // 依頼CN-A1: ページ名を整える(メモリ上のみ、DBには書き戻さない)。
+        $this->hydrateTitles($pages);
 
         $sourceScope = $this->scopeResolver->resolveScope($websiteAnalysis);
         if ($sourceScope === null) {
@@ -444,12 +449,15 @@ class AdminComparisonSiteHierarchyBuilder
         ];
 
         if (count($menuItems) < $minItems) {
-            [$branches, $otherBranchCount] = $this->buildUrlModeBranches($within, $scope);
+            [$branches, $otherBranchCount, $allNames] = $this->buildUrlModeBranches($within, $scope);
             $result = $this->treeResult('url', $scope['origin_url'], $top, $branches, $otherBranchCount, $totalFetched, $pagesWithinOrigin, ['links' => 0, 'url' => 0], $menuSource);
         } else {
-            [$branches, $otherBranchCount, $source] = $this->buildMenuModeBranches($menuItems, $within, $scope);
+            [$branches, $otherBranchCount, $source, $unplaced, $allNames] = $this->buildMenuModeBranches($menuItems, $within, $scope);
             $result = $this->treeResult('menu', $scope['origin_url'], $top, $branches, $otherBranchCount, $totalFetched, $pagesWithinOrigin, $source, $menuSource);
+            $result['unplaced_page_count'] = $unplaced;
         }
+        // 依頼CN-A3: 畳まれて画面に出ない枝も含めた、第1階層のすべての名前(点線の枝との照合用)。
+        $result['first_level_labels'] = $allNames;
         $result['origin_widened'] = $widened;
 
         return $result;
@@ -510,6 +518,8 @@ class AdminComparisonSiteHierarchyBuilder
             'second_level_source' => $source,
             'menu_source' => $menuSource,
             'origin_widened' => false,
+            'unplaced_page_count' => 0,
+            'first_level_labels' => [],
         ];
     }
 
@@ -559,17 +569,30 @@ class AdminComparisonSiteHierarchyBuilder
             ];
         }
 
-        return $this->limitBranches($branches);
+        $allNames = array_column($branches, 'name');
+        [$limited, $otherBranchCount] = $this->limitBranches($branches);
+
+        return [$limited, $otherBranchCount, $allNames];
     }
 
     /**
-     * メニュー版の枝。第2階層は、その項目のページから実際にリンクされている
-     * 巡回済みページを優先し、求められない項目だけURLの配下で代用する。
+     * メニュー版の枝。第2階層のページの置き場所は次の順で決める(依頼CN-A2。
+     * 従来は「メニューの並び順で先に本文からリンクしていた枝」が取っていたため、
+     * どのページからも張られているリンク(ハラスメントポリシー・新着記事の一覧等)が
+     * たまたま先にあった枝に吸われていた):
+     *  1. URLがその枝の配下(枝のURLのディレクトリと前方一致)にあるページは、その枝に置く
+     *     (複数の枝に当てはまるときは、最も深い=最も具体的な枝)。
+     *  2. どの枝の配下でもないページは、本文(ヘッダー・ナビ・フッターの外)からリンク
+     *     している枝がちょうど1つなら、その枝に置く。
+     *  3. 2つ以上の枝からリンクされているページは、どの枝にも置かない
+     *     (どこからでも行けるページであって、その枝の中身ではない)。
+     *  4. どこにも置かなかったページは捨てずに件数を返す(unplaced)。
+     * 枝のページ数は、置いた数にその項目のページ自身(巡回済みなら1)を足したもの。
      *
      * @param  list<array{label: string, url: string, key: string}>  $menuItems
      * @param  Collection<int, AnalysisCrawledPage>  $within
      * @param  array{origin_url: string, host: string, path: string}  $scope
-     * @return array{0: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, 1: int, 2: array{links: int, url: int}}
+     * @return array{0: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, 1: int, 2: array{links: int, url: int}, 3: int, 4: list<string>}  [枝(上限適用後), 畳んだ枝の数, 置き方の内訳(ページ数), どこにも置かなかったページ数, 畳んだ枝を含むすべての枝の名前]
      */
     private function buildMenuModeBranches(array $menuItems, Collection $within, array $scope): array
     {
@@ -587,60 +610,95 @@ class AdminComparisonSiteHierarchyBuilder
         $topKey = $this->urlKey($scope['origin_url']);
         $menuKeys = array_fill_keys(array_column($menuItems, 'key'), true);
 
-        $assigned = [];
-        $source = ['links' => 0, 'url' => 0];
-        $branches = [];
-
-        foreach ($menuItems as $item) {
+        // 項目ごとの、項目のページ・配下の接頭辞・本文からのリンク先(出現順)。
+        $itemPages = [];
+        $itemPrefixes = [];
+        $itemLinks = [];
+        $itemPageIds = [];
+        foreach ($menuItems as $i => $item) {
             $itemPage = $byKey[$item['key']] ?? null;
+            $itemPages[$i] = $itemPage;
             if ($itemPage !== null) {
-                $assigned[$itemPage->id] = true;
+                $itemPageIds[$itemPage->id] = true;
             }
-
-            $children = [];
-
+            $itemPrefixes[$i] = $this->directoryKeyOf($item['key']);
+            $itemLinks[$i] = [];
             if ($itemPage !== null) {
-                foreach ($this->linkedFetchedPages($itemPage, $byKey) as $linked) {
-                    $linkedKey = $this->urlKey((string) ($linked->final_url ?? $linked->url));
-                    if (isset($assigned[$linked->id]) || $linkedKey === $topKey || isset($menuKeys[$linkedKey])) {
-                        continue;
-                    }
-                    $children[] = $linked;
-                    $assigned[$linked->id] = true;
+                foreach ($this->linkedFetchedPages($itemPage, $byKey) as $position => $linked) {
+                    $itemLinks[$i][$linked->id] = $position;
                 }
             }
+        }
 
-            $usedSource = 'links';
-            if ($children === []) {
-                $usedSource = 'url';
-                $prefix = $this->directoryKeyOf($item['key']);
-                foreach ($within as $page) {
-                    $pageKey = $this->urlKey((string) ($page->final_url ?? $page->url));
-                    if (isset($assigned[$page->id]) || $pageKey === $topKey || isset($menuKeys[$pageKey])
-                        || ! str_starts_with($pageKey, $prefix)) {
-                        continue;
-                    }
-                    $children[] = $page;
-                    $assigned[$page->id] = true;
+        $placed = array_fill(0, count($menuItems), []);
+        $source = ['links' => 0, 'url' => 0];
+        $unplaced = 0;
+
+        foreach ($within as $page) {
+            $pageKey = $this->urlKey((string) ($page->final_url ?? $page->url));
+            if ($pageKey === $topKey || isset($menuKeys[$pageKey]) || isset($itemPageIds[$page->id])) {
+                continue;
+            }
+
+            // 1. 配下(最も深い接頭辞の枝)
+            $owner = null;
+            $ownerDepth = -1;
+            foreach ($menuItems as $i => $item) {
+                if (str_starts_with($pageKey, $itemPrefixes[$i]) && strlen($itemPrefixes[$i]) > $ownerDepth) {
+                    $owner = $i;
+                    $ownerDepth = strlen($itemPrefixes[$i]);
                 }
             }
-            if ($children !== []) {
-                $source[$usedSource]++;
+            if ($owner !== null) {
+                $placed[$owner][] = $page;
+                $source['url']++;
+
+                continue;
             }
+
+            // 2./3. 本文からリンクしている枝が1つだけなら置く。2つ以上は置かない。
+            $linkers = [];
+            foreach ($menuItems as $i => $item) {
+                if (isset($itemLinks[$i][$page->id])) {
+                    $linkers[] = $i;
+                }
+            }
+            if (count($linkers) === 1) {
+                $placed[$linkers[0]][] = $page;
+                $source['links']++;
+
+                continue;
+            }
+
+            // 4. どこにも置かない
+            $unplaced++;
+        }
+
+        $branches = [];
+        foreach ($menuItems as $i => $item) {
+            $children = $placed[$i];
+            // 並び: その項目のページの本文でのリンクの出現順を先に、残りは巡回順。
+            usort($children, function (AnalysisCrawledPage $a, AnalysisCrawledPage $b) use ($itemLinks, $i) {
+                $pa = $itemLinks[$i][$a->id] ?? PHP_INT_MAX;
+                $pb = $itemLinks[$i][$b->id] ?? PHP_INT_MAX;
+
+                return $pa <=> $pb ?: $a->id <=> $b->id;
+            });
 
             $labels = array_map(fn (AnalysisCrawledPage $page) => $this->pageLabel($page), $children);
             $branches[] = [
                 'name' => $item['label'],
                 'url' => $item['url'],
-                'page_count' => count($children) + ($itemPage !== null ? 1 : 0),
+                'page_count' => count($children) + ($itemPages[$i] !== null ? 1 : 0),
                 'pages' => array_slice($labels, 0, $secondLimit),
                 'other_page_count' => max(0, count($labels) - $secondLimit),
             ];
         }
 
+        $allNames = array_column($branches, 'name');
         [$limited, $otherBranchCount] = $this->limitBranches($branches);
 
-        return [$limited, $otherBranchCount, $source];
+        return [$limited, $otherBranchCount, $source, $unplaced, $allNames];
     }
 
     /**
@@ -899,6 +957,120 @@ class AdminComparisonSiteHierarchyBuilder
         }
 
         return (preg_replace('/\.[A-Za-z0-9]+$/', '', $withoutQuery) ?? $withoutQuery).'/';
+    }
+
+    /**
+     * 依頼CN-A1(2026-10-06): 階層図に出すページ名を整える(メモリ上のモデルの
+     * titleだけを書き換える ―― DBには書き戻さない)。
+     *  1. 保存済みのtitleがあればそれ。巡回が新しくtitleを保存するようになる前の
+     *     既存データは空なので、保存済みのHTML(レンダリング済み→静的の順)から
+     *     <title>、無ければ最初の<h1>を読む。どちらも取れなければnullのまま
+     *     (呼び出し側がURLのパスを出す。ページ名を作らない)。
+     *  2. 巡回したページの過半に共通する末尾(または先頭)の区切り部分
+     *     (「ページ名 | サイト名」のサイト名)を落とす。落とした結果が空になる
+     *     ページは落とさない。
+     *  3. 長さの上限を超えたら既存の切り詰め処理(BrandWheelTextTruncator)で切る。
+     *
+     * @param  Collection<int, AnalysisCrawledPage>  $pages
+     */
+    private function hydrateTitles(Collection $pages): void
+    {
+        $raw = [];
+        foreach ($pages as $page) {
+            $title = $this->nullIfBlank($page->title);
+            if ($title === null) {
+                $html = $this->readStoredHtml($page->rendered_html_path) ?? $this->readStoredHtml($page->raw_html_path);
+                if ($html !== null) {
+                    try {
+                        $title = $this->nullIfBlank($this->htmlAnalyzer->extractPageTitle($html));
+                    } catch (\Throwable) {
+                        $title = null;
+                    }
+                }
+            }
+            $raw[$page->id] = $title;
+        }
+
+        $cleaned = $this->stripCommonTitleAffixes($raw);
+        $maxChars = (int) config('admin_comparison_pptx.site_hierarchy_tree_page_label_max_chars');
+        foreach ($pages as $page) {
+            $title = $cleaned[$page->id] ?? null;
+            if ($title !== null && $maxChars > 0) {
+                $title = BrandWheelTextTruncator::truncateAtSentenceBoundary($title, $maxChars);
+            }
+            $page->setAttribute('title', $title);
+        }
+    }
+
+    /**
+     * 「ページ名 | サイト名」のような区切りで、巡回したページ(titleのあるもの)の
+     * 過半(config 'site_hierarchy_tree_title_common_ratio'を超える割合)に共通する
+     * 末尾・先頭の部分を落とす。区切りはconfig 'site_hierarchy_tree_title_separators'。
+     * 落とした結果が空になるページは元のまま。共通部分が複数あれば繰り返し落とす。
+     *
+     * @param  array<int, ?string>  $titles  ページID => title
+     * @return array<int, ?string>
+     */
+    private function stripCommonTitleAffixes(array $titles): array
+    {
+        $separators = array_values(array_filter((array) config('admin_comparison_pptx.site_hierarchy_tree_title_separators'), fn ($s) => is_string($s) && $s !== ''));
+        $ratio = (float) config('admin_comparison_pptx.site_hierarchy_tree_title_common_ratio');
+        $withTitle = array_filter($titles, fn ($t) => $t !== null);
+        if ($separators === [] || count($withTitle) < 2) {
+            return $titles;
+        }
+
+        $pattern = '/('.implode('|', array_map(fn (string $s) => preg_quote($s, '/'), $separators)).')/u';
+        $parts = [];
+        foreach ($withTitle as $id => $title) {
+            $split = preg_split($pattern, $title, -1, PREG_SPLIT_NO_EMPTY | PREG_SPLIT_DELIM_CAPTURE) ?: [$title];
+            // [部分, 区切り, 部分, 区切り, …] ―― 部分(偶数番目)だけを取り出し、前後の空白を除く。
+            $onlyParts = [];
+            foreach ($split as $k => $piece) {
+                if (in_array($piece, $separators, true)) {
+                    continue;
+                }
+                $trimmed = trim($piece);
+                if ($trimmed !== '') {
+                    $onlyParts[] = $trimmed;
+                }
+            }
+            $parts[$id] = $onlyParts === [] ? [$title] : $onlyParts;
+        }
+        $originalCounts = array_map('count', $parts);
+
+        $total = count($parts);
+        foreach (['last', 'first'] as $end) {
+            for ($guard = 0; $guard < 5; $guard++) {
+                $counts = [];
+                // サイト名だけのtitle(区切りが無い)も、その末尾・先頭を持つページとして数える。
+                foreach ($parts as $pieces) {
+                    $candidate = $end === 'last' ? end($pieces) : $pieces[0];
+                    $counts[$candidate] = ($counts[$candidate] ?? 0) + 1;
+                }
+                arsort($counts);
+                $common = array_key_first($counts);
+                if ($common === null || $counts[$common] <= $total * $ratio) {
+                    break;
+                }
+                foreach ($parts as $id => $pieces) {
+                    if (count($pieces) >= 2 && ($end === 'last' ? end($pieces) : $pieces[0]) === $common) {
+                        $end === 'last' ? array_pop($pieces) : array_shift($pieces);
+                        $parts[$id] = $pieces;
+                    }
+                }
+            }
+        }
+
+        $result = $titles;
+        foreach ($parts as $id => $pieces) {
+            // 何も落ちていないページは元のtitleのまま(区切りの表記を変えない)。
+            if (count($pieces) !== $originalCounts[$id]) {
+                $result[$id] = trim(implode(' | ', $pieces));
+            }
+        }
+
+        return $result;
     }
 
     private function pageLabel(AnalysisCrawledPage $page): string

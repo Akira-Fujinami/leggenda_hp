@@ -480,6 +480,29 @@ class HtmlSeoAnalyzer
     }
 
     /**
+     * 依頼CN-A1(2026-10-06): 階層図などに出すページ名。<title>の文字、無い・空なら
+     * 最初の<h1>の文字(空白を畳み、前後を除く)。どちらも無ければnull ――
+     * ページ名を推測・作成しない。analyze()(SEO指標の<title>判定)とは目的が
+     * 異なるため独立させ、そちらの挙動には触れない。
+     */
+    public function extractPageTitle(string $html): ?string
+    {
+        [, $xpath] = $this->loadDomForTextExtraction($html);
+
+        foreach (['//title', '//h1'] as $query) {
+            $nodes = $xpath->query($query);
+            foreach ($nodes ?? [] as $node) {
+                $text = trim(preg_replace('/\s+/u', ' ', $node->textContent) ?? '');
+                if ($text !== '' && ($this->sanitizeCandidateText($text) !== null)) {
+                    return $text;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * 依頼CL-3(2026-10-05): 営業資料の階層図(TOPのメニュー → 第1階層)用に、
      * メニューのリンクを「文字＋リンク先(hrefの生の値)」の組で取り出す。
      *

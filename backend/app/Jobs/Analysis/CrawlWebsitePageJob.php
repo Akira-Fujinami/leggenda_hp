@@ -192,12 +192,18 @@ class CrawlWebsitePageJob implements ShouldQueue
         $htmlPath = $paths->rawHtmlPath($this->analysisId, $this->websiteAnalysisId, "crawl/{$next->url_hash}.html");
         $this->putToAnalysisStorage($htmlPath, $result->body);
 
+        // 依頼CN-A1(2026-10-06): 巡回で取得したページのtitleを保存する。従来は
+        // titleを一度も保存しておらず(analysis_crawled_pages.titleは常に空)、
+        // 階層図の第2階層がURLのまま出ていた。<title>、無ければ最初の<h1>
+        // (HtmlSeoAnalyzer::extractPageTitle())。取れなければnullのまま
+        // (名前を作らない)。既存の行は更新しない(新しい巡回から効く)。
         $next->update([
             'final_url' => $result->finalUrl,
             'http_status' => $result->httpStatus,
             'content_type' => $result->contentType,
             'content_length' => strlen($result->body),
             'raw_html_path' => $htmlPath,
+            'title' => $this->extractTitleSafely($htmlSeoAnalyzer, $result->body),
             'status' => AnalysisCrawledPage::STATUS_FETCHED,
             'fetched_at' => now(),
         ]);
@@ -209,6 +215,20 @@ class CrawlWebsitePageJob implements ShouldQueue
         }
 
         $this->dispatchNext(true);
+    }
+
+    /**
+     * titleの取得に失敗しても(想定外のHTML等)、巡回自体は止めない。
+     */
+    private function extractTitleSafely(HtmlSeoAnalyzer $htmlSeoAnalyzer, string $html): ?string
+    {
+        try {
+            $title = $htmlSeoAnalyzer->extractPageTitle($html);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return $title === null ? null : mb_substr($title, 0, 255);
     }
 
     public function failed(\Throwable $exception): void
