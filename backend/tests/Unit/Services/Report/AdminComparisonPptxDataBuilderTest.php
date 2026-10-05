@@ -285,7 +285,9 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
         $this->assertSame('仕事の魅力', $item['region']);
         $definition = config('brand_wheel.axes.financial_benefit.sub_element_definitions.benefits');
         $this->assertSame(sprintf((string) config('admin_comparison_pptx.missing_item_impact_template'), $definition), $item['impact']);
-        $this->assertSame(['item' => '福利厚生', 'percentage' => 12.4], $item['candidate_survey']);
+        $this->assertSame('福利厚生', $item['candidate_survey']['item']);
+        $this->assertSame(12.4, $item['candidate_survey']['percentage']);
+        $this->assertSame('unconfirmed', $item['candidate_survey']['self_state']);
     }
 
     /**
@@ -328,7 +330,7 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
         $missingFromSelf = [$this->missingFromSelfItem('情緒的便益', '優越感', 3)];
         $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['missingFromSelf' => $missingFromSelf]));
 
-        $this->assertSame(['item' => null, 'percentage' => null], $data['missing_items']['items'][0]['candidate_survey']);
+        $this->assertSame(['item' => null, 'percentage' => null, 'self_state' => null], $data['missing_items']['items'][0]['candidate_survey']);
     }
 
     /**
@@ -699,7 +701,7 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
                 [$expectedName, $expectedPercentage] = $legacy["{$axisKey}.{$subKey}"];
                 $this->assertSame(
                     ['item' => $expectedName, 'percentage' => $expectedPercentage],
-                    $items[$i]['candidate_survey'],
+                    ['item' => $items[$i]['candidate_survey']['item'], 'percentage' => $items[$i]['candidate_survey']['percentage']],
                     "{$axisKey}.{$subKey}: 調査の文の材料が変更前と同じ",
                 );
                 $i++;
@@ -724,5 +726,49 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
         }
         $this->assertContains('culture', array_column($data['recommended_site_flows'], 'option'));
         $this->assertContains(null, array_column($data['recommended_site_flows'], 'option'), '調査に対応しない導線はnull');
+    }
+
+    // ---- 依頼CO-2(2026-10-06): 「足りないもの」の文を、表と同じ状態に合わせる ----
+
+    private function workEnvironmentMissingItem(): array
+    {
+        $axis = (array) config('brand_wheel.axes.asset');
+
+        return $this->missingFromSelfItem($axis['name_ja'], $axis['sub_elements']['office_facility'], 3);
+    }
+
+    /** 調査の選択肢(働き方や職場環境=2項目)の一部が○なら、×の1項目の文も「一部」(表の△と同じ)。 */
+    public function test_a_missing_item_carries_the_same_self_state_as_the_survey_table_row(): void
+    {
+        $partial = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'missingFromSelf' => [$this->workEnvironmentMissingItem()],
+            'comparisonTable' => $this->tableByKeys(['relationship.mental_freedom'], [[], []]),
+        ]));
+        $this->assertSame('partial', $partial['missing_items']['items'][0]['candidate_survey']['self_state']);
+        $this->assertSame($this->surveyRow($partial, 'work_environment')['self_state'], $partial['missing_items']['items'][0]['candidate_survey']['self_state']);
+
+        $none = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'missingFromSelf' => [$this->workEnvironmentMissingItem()],
+            'comparisonTable' => $this->tableByKeys([], [[], []]),
+        ]));
+        $this->assertSame('unconfirmed', $none['missing_items']['items'][0]['candidate_survey']['self_state']);
+        $this->assertSame($this->surveyRow($none, 'work_environment')['self_state'], $none['missing_items']['items'][0]['candidate_survey']['self_state']);
+    }
+
+    public function test_a_missing_item_without_a_survey_option_has_no_self_state(): void
+    {
+        $axis = (array) config('brand_wheel.axes.emotional_benefit');
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'missingFromSelf' => [$this->missingFromSelfItem($axis['name_ja'], $axis['sub_elements']['superiority'], 3)],
+        ]));
+
+        $this->assertNull($data['missing_items']['items'][0]['candidate_survey']['self_state']);
+    }
+
+    public function test_the_state_is_computed_in_one_place_for_the_sentence_and_the_table(): void
+    {
+        $source = (string) file_get_contents(base_path('app/Services/Report/AdminComparisonPptxDataBuilder.php'));
+
+        $this->assertSame(1, substr_count($source, "\$selfMatched === \$mapped => 'confirmed'"), '状態の分岐(すべて○/一部/すべて×)を別々に持たない');
     }
 }

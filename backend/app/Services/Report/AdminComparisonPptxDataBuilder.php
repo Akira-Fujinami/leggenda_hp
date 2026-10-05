@@ -124,7 +124,7 @@ class AdminComparisonPptxDataBuilder
         }
 
         $axes = $this->buildAxisMatrix($viewModel->comparisonTable, count($viewModel->competitors));
-        $missingItems = $this->buildMissingItems($viewModel->missingFromSelf, count($viewModel->competitors));
+        $missingItems = $this->buildMissingItems($viewModel->missingFromSelf, count($viewModel->competitors), $this->comparisonByName($viewModel));
 
         return [
             'self_company_name' => $viewModel->selfCompanyDisplayName,
@@ -183,10 +183,14 @@ class AdminComparisonPptxDataBuilder
      *     (config('brand_wheel_candidate_survey.mapping')。「該当なし」の
      *     項目はitem/percentageともnull ―― 数字を捏造しない、依頼者指定)。
      *
+     * 依頼CO-2: candidate_survey.self_stateは、その調査の選択肢に対応する24項目全体の自社の状態
+     * (表「求職者が知りたい情報と、自社サイト」と同じ計算 ―― selfStateOfOption())。項目の選び方・並び順は変えない。
+     *
      * @param  list<array{axis_name: string, sub_name: string, competitor_matched_count: int}>  $missingFromSelf  件数降順で既に並んでいる(BrandWheelMultiSiteComparisonComposer::extractMissingFromSelf())
-     * @return array{heading: string, empty_text: string, items: list<array{axis_name: string, sub_name: string, region: string, impact: string, candidate_survey: array{item: ?string, percentage: ?float}}>, others_count: int}
+     * @param  array<string, array<string, mixed>>  $comparisonByName  comparisonByName()の戻り値
+     * @return array{heading: string, empty_text: string, items: list<array{axis_name: string, sub_name: string, region: string, impact: string, candidate_survey: array{item: ?string, percentage: ?float, self_state: ?string}}>, others_count: int}
      */
-    private function buildMissingItems(array $missingFromSelf, int $competitorCount): array
+    private function buildMissingItems(array $missingFromSelf, int $competitorCount, array $comparisonByName): array
     {
         $maxCount = (int) config('admin_comparison_pptx.missing_items_max_count');
         // 依頼CF-4: 超過時に実際に表示する件数を、$maxCount-1という暗黙の
@@ -196,7 +200,7 @@ class AdminComparisonPptxDataBuilder
         // docblock参照)。
         $overflowDisplayCount = (int) config('admin_comparison_pptx.missing_items_overflow_display_count');
 
-        $items = array_map(fn (array $item) => $this->enrichMissingItem($item['axis_name'], $item['sub_name']), $missingFromSelf);
+        $items = array_map(fn (array $item) => $this->enrichMissingItem($item['axis_name'], $item['sub_name'], $comparisonByName), $missingFromSelf);
 
         $othersCount = 0;
         if (count($items) > $maxCount) {
@@ -216,9 +220,10 @@ class AdminComparisonPptxDataBuilder
     }
 
     /**
-     * @return array{axis_name: string, sub_name: string, region: string, impact: string, candidate_survey: array{item: ?string, percentage: ?float}}
+     * @param  array<string, array<string, mixed>>  $comparisonByName
+     * @return array{axis_name: string, sub_name: string, region: string, impact: string, candidate_survey: array{item: ?string, percentage: ?float, self_state: ?string}}
      */
-    private function enrichMissingItem(string $axisName, string $subName): array
+    private function enrichMissingItem(string $axisName, string $subName, array $comparisonByName): array
     {
         $keys = $this->resolveAxisSubKeys($axisName, $subName);
         if ($keys === null) {
@@ -231,7 +236,7 @@ class AdminComparisonPptxDataBuilder
                 'sub_name' => $subName,
                 'region' => '',
                 'impact' => '',
-                'candidate_survey' => ['item' => null, 'percentage' => null],
+                'candidate_survey' => ['item' => null, 'percentage' => null, 'self_state' => null],
             ];
         }
 
@@ -250,8 +255,61 @@ class AdminComparisonPptxDataBuilder
             'candidate_survey' => [
                 'item' => $surveyOption['name'] ?? null,
                 'percentage' => $surveyOption['percentage'] ?? null,
+                'self_state' => $surveyOption !== null ? $this->selfStateOfOption($surveyOption['key'], $comparisonByName)['state'] : null,
             ],
         ];
+    }
+
+    /**
+     * 比較表(24項目)を「領域名::項目名」で引けるようにしたもの。
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function comparisonByName(MultiSiteReportViewModel $viewModel): array
+    {
+        $byName = [];
+        foreach ($viewModel->comparisonTable as $item) {
+            $byName[$item['axis_name'].'::'.$item['sub_name']] = $item;
+        }
+
+        return $byName;
+    }
+
+    /**
+     * 依頼CO-2: 調査の選択肢1つに対する自社の状態(対応する24項目のうち○の数で決める)の、
+     * 唯一の計算。「足りないもの」の文と「求職者が知りたい情報と、自社サイト」の表の両方がこれを使う。
+     *   すべて○=confirmed / 一部○=partial / すべて×=unconfirmed / 対応する24項目が無い=not_applicable。
+     *
+     * @param  array<string, array<string, mixed>>  $comparisonByName
+     * @return array{state: string, mapped: int, self_matched: int, items: list<array<string, mixed>>} items=対応する24項目の比較表の行
+     */
+    private function selfStateOfOption(string $optionKey, array $comparisonByName): array
+    {
+        $mapped = 0;
+        $selfMatched = 0;
+        $items = [];
+        foreach ($this->surveyCatalog->subElementsForOption($optionKey) as $ref) {
+            $axisConfig = (array) config("brand_wheel.axes.{$ref['axis_key']}");
+            $item = $comparisonByName[($axisConfig['name_ja'] ?? '').'::'.($axisConfig['sub_elements'][$ref['sub_key']] ?? '')] ?? null;
+            if ($item === null) {
+                continue;
+            }
+
+            $mapped++;
+            $items[] = $item;
+            if ($item['self_matched']) {
+                $selfMatched++;
+            }
+        }
+
+        $state = match (true) {
+            $mapped === 0 => 'not_applicable',
+            $selfMatched === $mapped => 'confirmed',
+            $selfMatched === 0 => 'unconfirmed',
+            default => 'partial',
+        };
+
+        return ['state' => $state, 'mapped' => $mapped, 'self_matched' => $selfMatched, 'items' => $items];
     }
 
     /**
@@ -295,41 +353,23 @@ class AdminComparisonPptxDataBuilder
             }
         }
 
-        $byName = [];
-        foreach ($viewModel->comparisonTable as $item) {
-            $byName[$item['axis_name'].'::'.$item['sub_name']] = $item;
-        }
+        $byName = $this->comparisonByName($viewModel);
 
         $rows = [];
         foreach ($this->surveyCatalog->options() as $i => $option) {
-            $mapped = 0;
-            $selfMatched = 0;
+            $own = $this->selfStateOfOption($option['key'], $byName);
+            $mapped = $own['mapped'];
+            $selfMatched = $own['self_matched'];
+            $state = $own['state'];
+
             $competitorHasAny = array_fill_keys($comparable, false);
-
-            foreach ($this->surveyCatalog->subElementsForOption($option['key']) as $ref) {
-                $axisConfig = (array) config("brand_wheel.axes.{$ref['axis_key']}");
-                $item = $byName[($axisConfig['name_ja'] ?? '').'::'.($axisConfig['sub_elements'][$ref['sub_key']] ?? '')] ?? null;
-                if ($item === null) {
-                    continue;
-                }
-
-                $mapped++;
-                if ($item['self_matched']) {
-                    $selfMatched++;
-                }
+            foreach ($own['items'] as $item) {
                 foreach ($comparable as $index) {
                     if ($item['competitor_matched'][$index] ?? false) {
                         $competitorHasAny[$index] = true;
                     }
                 }
             }
-
-            $state = match (true) {
-                $mapped === 0 => 'not_applicable',
-                $selfMatched === $mapped => 'confirmed',
-                $selfMatched === 0 => 'unconfirmed',
-                default => 'partial',
-            };
 
             $rows[] = [
                 'rank' => $i + 1,

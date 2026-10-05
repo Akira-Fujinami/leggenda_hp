@@ -143,11 +143,72 @@ class CrawlOriginScopeResolverTest extends TestCase
         $this->pages($noRedirect, 'https://cybozu.co.jp/recruit/', 'https://cybozu.co.jp/recruit/', 'https://cybozu.co.jp/recruit/', 'https://cybozu.co.jp/recruit/');
         $this->assertSame('https://cybozu.co.jp/recruit/', $this->resolver()->resolveScope($noRedirect)['origin_url']);
 
+        // 依頼CO-1: 入力の配下への転送は入力が起点になる(下の専用テスト)。配下でない転送先は従来どおり。
         $redirected = WebsiteAnalysis::factory()->create();
-        $this->pages($redirected, 'https://example.com/recruit/', 'https://example.com/recruit/saiyo/', 'https://example.com/recruit/', 'https://example.com/recruit/saiyo/');
+        $this->pages($redirected, 'https://example.com/recruit/', 'https://example.com/careers/saiyo/', 'https://example.com/recruit/', 'https://example.com/careers/saiyo/');
         $scope = $this->resolver()->resolveScope($redirected);
-        $this->assertSame('https://example.com/recruit/saiyo/', $scope['origin_url']);
-        $this->assertSame('/recruit/saiyo/', $scope['path']);
+        $this->assertSame('https://example.com/careers/saiyo/', $scope['origin_url']);
+        $this->assertSame('/careers/saiyo/', $scope['path']);
+    }
+
+    /** 依頼CO-1の実例: /recruit → /recruit/fresh は、入力した/recruit/が起点(転送先に狭めない)。 */
+    public function test_a_redirect_into_a_directory_below_the_input_keeps_the_input_as_the_origin(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->pages($wa, 'https://www.kayac.com/recruit', 'https://www.kayac.com/recruit/fresh', 'https://www.kayac.com/recruit', 'https://www.kayac.com/recruit/fresh');
+
+        $scope = $this->resolver()->resolveScope($wa);
+
+        $this->assertSame('https://www.kayac.com/recruit', $scope['origin_url']);
+        $this->assertSame('/recruit/', $scope['path']);
+        $this->assertTrue($this->resolver()->isWithinScope('https://www.kayac.com/recruit/works/1', null, $scope));
+        $this->assertFalse($this->resolver()->isWithinScope('https://www.kayac.com/about', null, $scope));
+
+        // 採用ページの行が無くても(トップページ行だけでも)同じ。
+        $homeOnly = WebsiteAnalysis::factory()->create();
+        $this->pages($homeOnly, 'https://www.example.jp/recruit/', 'https://www.example.jp/recruit/fresh/');
+        $this->assertSame('https://www.example.jp/recruit/', $this->resolver()->resolveScope($homeOnly)['origin_url']);
+    }
+
+    /** 配下でない転送(パスが別・別ホスト)は、従来どおり転送先が起点。 */
+    public function test_a_redirect_outside_the_input_directory_or_to_another_host_still_uses_the_destination(): void
+    {
+        $otherPath = WebsiteAnalysis::factory()->create();
+        $this->pages($otherPath, 'https://www.example.com/recruit', 'https://www.example.com/careers/', 'https://www.example.com/recruit', 'https://www.example.com/careers/');
+        $this->assertSame('https://www.example.com/careers/', $this->resolver()->resolveScope($otherPath)['origin_url']);
+
+        // 前方一致はディレクトリ単位 ―― /recruitment/ は/recruit/の配下ではない。
+        $siblingPrefix = WebsiteAnalysis::factory()->create();
+        $this->pages($siblingPrefix, 'https://www.example.com/recruit', 'https://www.example.com/recruitment/', 'https://www.example.com/recruit', 'https://www.example.com/recruitment/');
+        $this->assertSame('https://www.example.com/recruitment/', $this->resolver()->resolveScope($siblingPrefix)['origin_url']);
+
+        $otherHost = WebsiteAnalysis::factory()->create();
+        $this->pages($otherHost, 'https://www.example.com/recruit', 'https://jobs.example.net/recruit/fresh', 'https://www.example.com/recruit', 'https://jobs.example.net/recruit/fresh');
+        $this->assertSame('https://jobs.example.net/recruit/fresh', $this->resolver()->resolveScope($otherHost)['origin_url']);
+    }
+
+    /** 入力が一番上の転送は、CM-1が担当(このフラグの対象外)。転送なしも変わらない。 */
+    public function test_a_top_input_stays_with_the_cm1_rule_and_no_redirect_is_unchanged(): void
+    {
+        $top = WebsiteAnalysis::factory()->create();
+        $this->pages($top, 'https://www.example.com/', 'https://www.example.com/engineer/', 'https://www.example.com/', 'https://www.example.com/engineer/');
+        $this->assertSame('https://www.example.com/', $this->resolver()->resolveScope($top)['origin_url']);
+
+        $none = WebsiteAnalysis::factory()->create();
+        $this->pages($none, 'https://www.example.com/recruit/', 'https://www.example.com/recruit/', 'https://www.example.com/recruit/', 'https://www.example.com/recruit/');
+        $this->assertSame('https://www.example.com/recruit/', $this->resolver()->resolveScope($none)['origin_url']);
+    }
+
+    public function test_turning_the_keep_input_flag_off_gives_the_destination_as_before(): void
+    {
+        config(['brand_wheel.crawl_origin_keep_input_when_redirected_within' => false]);
+
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->pages($wa, 'https://www.kayac.com/recruit', 'https://www.kayac.com/recruit/fresh', 'https://www.kayac.com/recruit', 'https://www.kayac.com/recruit/fresh');
+
+        $scope = $this->resolver()->resolveScope($wa);
+        $this->assertSame('https://www.kayac.com/recruit/fresh', $scope['origin_url']);
+        $this->assertSame('/recruit/fresh/', $scope['path']);
     }
 
     /** システムがリンクをたどって見つけた採用ページ(トップページ行とurlが異なる)は変えない。 */

@@ -1936,13 +1936,72 @@ class AdminComparisonPptxInserterTest extends TestCase
         $this->assertStringContainsString('7.4%', $xml);
         $this->assertStringNotContainsString('>17%<', str_replace(['<![CDATA[', ']]>'], ['>', '<'], $xml));
 
-        // 「足りないもの」の文中の表記(17を17、13.4を13.4)は変えない。
+        // 依頼CO-3: 「足りないもの」の文中も、表と同じ小数1桁(17.0%・13.4%)。
         $missing = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateMissingItemsSlide($this->comparisonData()));
         $this->assertStringContainsString('13.4%', $missing);
-        $template = (string) config('admin_comparison_pptx.missing_item_survey_template');
-        $this->assertSame('「X」を確認したい求職者が17%いますが、自社サイトでは確認できませんでした。', sprintf($template, 'X', '17'));
+        $comparison = $this->comparisonData();
+        $comparison['missing_items']['items'][0]['candidate_survey'] = ['item' => '働き方や職場環境', 'percentage' => 17.0, 'self_state' => 'unconfirmed'];
+        $comparison['missing_items']['items'][] = ['axis_name' => '資産的魅力', 'sub_name' => '事業の強み', 'region' => '会社の魅力', 'impact' => '定義。', 'candidate_survey' => ['item' => '会社のイベント', 'percentage' => 8.0, 'self_state' => 'unconfirmed']];
+        $formatted = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateMissingItemsSlide($comparison));
+        $this->assertStringContainsString('求職者が17.0%いますが', $formatted);
+        $this->assertStringContainsString('求職者が8.0%いますが', $formatted);
+        $this->assertStringNotContainsString('求職者が17%', $formatted);
+        $this->assertStringNotContainsString('求職者が8%', $formatted);
     }
 
+    // ---- 依頼CO-2/CO-4 ----
+
+    /** 調査の選択肢の自社の状態が「一部○」なら、文は「一部しか確認できませんでした」。すべて×は今の文。 */
+    public function test_the_missing_item_sentence_follows_the_self_state_of_the_survey_option(): void
+    {
+        $partial = $this->comparisonData();
+        $partial['missing_items']['items'][0]['candidate_survey'] = ['item' => '働き方や職場環境', 'percentage' => 17.0, 'self_state' => 'partial'];
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateMissingItemsSlide($partial));
+        $expected = sprintf((string) config('admin_comparison_pptx.missing_item_survey_partial_template'), '働き方や職場環境', '17.0');
+        $this->assertStringContainsString(htmlspecialchars($expected, ENT_QUOTES | ENT_XML1), $xml);
+        $this->assertStringContainsString('一部しか確認できませんでした', $xml);
+        $this->assertStringNotContainsString('自社サイトでは確認できませんでした', $xml);
+
+        $none = $this->comparisonData();
+        $none['missing_items']['items'][0]['candidate_survey'] = ['item' => '働き方や職場環境', 'percentage' => 17.0, 'self_state' => 'unconfirmed'];
+        $xml2 = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateMissingItemsSlide($none));
+        $this->assertStringContainsString(htmlspecialchars(sprintf((string) config('admin_comparison_pptx.missing_item_survey_template'), '働き方や職場環境', '17.0'), ENT_QUOTES | ENT_XML1), $xml2);
+        $this->assertStringNotContainsString('一部しか', $xml2);
+    }
+
+    /** 実物(3社の表)の企業名: カタカナ1語は途中で割れない。割れるときも、長音・小さいかなが行頭に来ない。 */
+    public function test_katakana_company_names_are_not_split_inside_a_word_and_no_line_starts_with_a_prolonged_mark(): void
+    {
+        $names = ['サイバーエージェント', '株式会社サイバーエージェント', '日本アイ・ビー・エム株式会社'];
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData(['自社テスト株式会社', ...$names])));
+
+        foreach ($names as $name) {
+            $boxes = $this->nameBoxesOf($xml, $name);
+            $this->assertNotEmpty($boxes, "「{$name}」が表示されている");
+            foreach ($boxes as $lines) {
+                $this->assertStringNotContainsString('…', implode('', $lines));
+                foreach ($lines as $line) {
+                    $this->assertDoesNotMatchRegularExpression('/^[ーァィゥェォッャュョぁぃぅぇぉっゃゅょ]/u', $line, "{$name}: 行頭に長音・小さいかなが来ている(".implode(' / ', $lines).')');
+                }
+                $this->assertNoWordIsSplit($lines, ['サイバー', 'エージェント', 'アイ', 'ビー', 'エム', '株式会社'], $name);
+            }
+        }
+    }
+
+    public function test_the_split_position_avoids_a_prolonged_mark_or_small_kana_at_the_line_start(): void
+    {
+        $generator = app(AdminComparisonPptxGenerator::class);
+        $method = new \ReflectionMethod($generator, 'splitBalancedForTwoLines');
+        $method->setAccessible(true);
+
+        // 機械的に半分で割ると「サイバーエ／ージェント」になる語。
+        foreach ([['サイバーエージェント', 10], ['キャッチアップ', 8], ['ジャパンネットバンク', 12]] as [$text, $max]) {
+            [$line1, $line2] = $method->invoke($generator, $text, $max);
+            $this->assertSame($text, $line1.$line2);
+            $this->assertNotSame('', $line1);
+            $this->assertDoesNotMatchRegularExpression('/^[ーァィゥェォッャュョ]/u', $line2, "{$text}: ".$line1.' / '.$line2);
+        }
+    }
 
     // ---- 依頼CN-A2/A3(2026-10-06) ----
 

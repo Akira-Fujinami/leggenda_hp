@@ -1195,6 +1195,10 @@ return [
     */
     'crawl_origin_widen_redirected_top' => filter_var(env('BRAND_WHEEL_CRAWL_ORIGIN_WIDEN_REDIRECTED_TOP', true), FILTER_VALIDATE_BOOLEAN),
 
+    // 依頼CO-1: 入力したURLの配下へ転送されたとき(/recruit → /recruit/fresh)、転送先ではなく
+    // 入力したURLを起点にする。falseにすると変更前(転送先が起点)に戻る。
+    'crawl_origin_keep_input_when_redirected_within' => filter_var(env('BRAND_WHEEL_CRAWL_ORIGIN_KEEP_INPUT_WHEN_REDIRECTED_WITHIN', true), FILTER_VALIDATE_BOOLEAN),
+
     /*
     |----------------------------------------------------------------
     | 依頼CF-1(2026-09-29): 巡回の取得順序 ―― 起点URL配下を優先する

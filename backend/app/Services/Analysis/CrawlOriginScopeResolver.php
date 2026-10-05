@@ -105,7 +105,7 @@ class CrawlOriginScopeResolver
         $recruitUrl = $recruit !== null ? ($recruit->final_url ?? $recruit->url) : null;
         if ($recruitUrl !== null && $recruitUrl !== '') {
             if ($recruit !== null && $homepage !== null && $recruit->url === $homepage->url) {
-                return $this->redirectedTopOrigin($homepage) ?? $recruitUrl;
+                return $this->redirectedTopOrigin($homepage) ?? $this->redirectedWithinInputOrigin($homepage) ?? $recruitUrl;
             }
 
             return $recruitUrl;
@@ -113,7 +113,7 @@ class CrawlOriginScopeResolver
 
         $homepageUrl = $homepage !== null ? ($homepage->final_url ?? $homepage->url) : null;
         if ($homepageUrl !== null && $homepageUrl !== '') {
-            return $this->redirectedTopOrigin($homepage) ?? $homepageUrl;
+            return $this->redirectedTopOrigin($homepage) ?? $this->redirectedWithinInputOrigin($homepage) ?? $homepageUrl;
         }
 
         return $websiteAnalysis->website?->url;
@@ -138,6 +138,39 @@ class CrawlOriginScopeResolver
         }
 
         return $final['scheme'].'://'.$final['host'].(isset($final['port']) ? ':'.$final['port'] : '').'/';
+    }
+
+    /**
+     * 依頼CO-1: 入力されたURLの「配下」へ転送されたとき(例: /recruit → /recruit/fresh)の起点。
+     * 転送先をそのまま起点にすると、入力した範囲(/recruit/)のうち転送先の枝だけに
+     * 狭まってしまうため、入力されたURLを起点にする。
+     * 同じホストで、転送先のパスが入力のパスのディレクトリと前方一致するときだけ。
+     * 入力が一番上の場合はredirectedTopOrigin()(CM-1)の担当なので対象外。別のホスト・
+     * 配下でないパスへの転送は従来どおり(転送先が起点)。
+     * config('brand_wheel.crawl_origin_keep_input_when_redirected_within')で無効にできる。
+     */
+    private function redirectedWithinInputOrigin(AnalysisPage $homepage): ?string
+    {
+        if (! (bool) config('brand_wheel.crawl_origin_keep_input_when_redirected_within', true)) {
+            return null;
+        }
+        if ($homepage->final_url === null || $homepage->final_url === '' || (string) $homepage->url === '') {
+            return null;
+        }
+
+        $input = parse_url((string) $homepage->url);
+        $final = parse_url($homepage->final_url);
+        $inputPath = (string) ($input['path'] ?? '');
+        if (! isset($input['host'], $final['host']) || $this->isTopPath($inputPath)) {
+            return null;
+        }
+        if (strtolower($input['host']) !== strtolower($final['host'])) {
+            return null;
+        }
+
+        return str_starts_with((string) ($final['path'] ?? ''), $this->normalizeDirectoryPath($inputPath))
+            ? (string) $homepage->url
+            : null;
     }
 
     /** パスが「サイトの一番上」(空、"/"、または直下のindexファイル)か。 */

@@ -313,6 +313,8 @@ return [
     | missing_item_survey_template(割合の数字がある方)は変更していない。
     */
     'missing_item_survey_template' => '「%1$s」を確認したい求職者が%2$s%%いますが、自社サイトでは確認できませんでした。',
+    // 依頼CO-2: その調査の選択肢に対応する24項目の自社の状態が「一部○」のとき(表の「△ 一部確認できた」と同じ状態)。
+    'missing_item_survey_partial_template' => '「%1$s」を確認したい求職者が%2$s%%いますが、自社サイトでは一部しか確認できませんでした。',
     'missing_item_survey_none_text' => '自社サイトでは確認できませんでした。候補者調査の選択肢には対応する項目がありませんでした(重要でないという意味ではありません)。',
 
     /*
@@ -356,6 +358,9 @@ return [
     'company_name_break_space_chars' => [' ', '　'],
 
     'company_name_min_font_ratio' => 0.8,
+
+    // 依頼CO-4: 語の途中で分けるしかないとき、行頭に置かない文字(長音と小さいかな)。
+    'company_name_no_line_start_chars' => ['ー', 'ァ', 'ィ', 'ゥ', 'ェ', 'ォ', 'ッ', 'ャ', 'ュ', 'ョ', 'ヮ', 'ぁ', 'ぃ', 'ぅ', 'ぇ', 'ぉ', 'っ', 'ゃ', 'ゅ', 'ょ', 'ゎ'],
 
     'company_name_absolute_min_pt' => 7,
 
@@ -677,21 +682,24 @@ return [
     | 部分一致、大文字小文字・全角半角を区別しない。AIは使わない。
     | 【依頼側で最終確認する案】広すぎる言葉(例: 「制度」)は意図しない照合を起こしうる。
     */
+    // 依頼CO-5: 関係ないメニューに当たる広い言葉(業務・募集・成長・社員・メンバー・環境・トップ・経営・データ・
+    // 制度・休暇・交流・教育・development・education・case など)を外した。日本語は部分一致、英字の言葉は
+    // 語の境界で照合する(RecommendedFlowFilter。`job`は`jobs`に当たるが`history`の`story`には当たらない)。
     'site_hierarchy_flow_menu_words' => [
-        'job_content' => ['仕事', '職種', '業務', '募集', 'job', 'jobs', 'position', 'roles'],
-        'career_path' => ['キャリア', '成長', 'career', 'growth'],
-        'employee_interview' => ['社員', 'インタビュー', 'メンバー', '先輩', 'interview', 'member', 'people', 'voice', 'stories', 'story'],
+        'job_content' => ['仕事', '職種', 'job', 'jobs', 'position', 'roles'],
+        'career_path' => ['キャリア', 'career', 'growth'],
+        'employee_interview' => ['インタビュー', '先輩', 'interview', 'voice', 'stories', 'story'],
         'business_service' => ['事業', 'サービス', 'プロダクト', '製品', 'business', 'service', 'product'],
-        'work_environment' => ['働き方', '働く環境', '職場', '環境', 'オフィス', 'workstyle', 'work style', 'environment', 'office', 'workplace'],
+        'work_environment' => ['働き方', '働く環境', '職場', 'オフィス', 'workstyle', 'work style', 'office', 'workplace'],
         'salary_evaluation' => ['給与', '評価', '報酬', '待遇', 'compensation', 'salary', 'evaluation', 'assessment'],
         'vision_philosophy' => ['ビジョン', 'ミッション', '理念', 'バリュー', 'パーパス', '行動指針', '考え方', 'mission', 'vision', 'values', 'philosophy', 'purpose', 'mvv'],
-        'executive_interview' => ['代表', '経営', '社長', 'ceo', 'トップ'],
-        'overtime_leave_data' => ['数字', 'データ', 'data', 'numbers', 'facts'],
-        'benefits' => ['福利厚生', '手当', '休暇', '制度', 'benefit', 'welfare'],
+        'executive_interview' => ['代表', '社長', 'トップメッセージ', '代表メッセージ', '役員', 'ceo'],
+        'overtime_leave_data' => ['数字', '数字で見る', 'numbers', 'facts'],
+        'benefits' => ['福利厚生', '手当', 'benefit', 'welfare'],
         'culture' => ['カルチャー', '社風', '文化', '風土', 'culture'],
-        'company_event' => ['イベント', '交流', 'event'],
-        'training' => ['研修', '教育', '育成', '学び', '人材開発', 'training', 'learning', 'development', 'education'],
-        'achievements_projects' => ['実績', '事例', 'プロジェクト', '受賞', 'project', 'case', 'award'],
+        'company_event' => ['イベント', 'event'],
+        'training' => ['研修', '育成', '学び', '人材開発', 'training', 'learning'],
+        'achievements_projects' => ['実績', '事例', 'プロジェクト', '受賞', 'project', 'award'],
     ],
 
     // 文言。

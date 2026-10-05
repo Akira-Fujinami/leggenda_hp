@@ -750,4 +750,64 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
         $this->assertSame(0, $tree['unplaced_page_count']);
         $this->assertSame(['カルチャー'], $tree['first_level_labels']);
     }
+
+    /**
+     * 依頼CO-1の実例(カヤック): 入力=/recruit、転送先=/recruit/fresh(入力の配下)。起点は入力の
+     * /recruit/になり、転送先のページのメニューから木が描ける。起点そのもののページは保存されて
+     * いないため、転送先のページ名・見出しを起点のものとして出さず、TOPの箱には起点のURLを出す。
+     */
+    public function test_a_redirect_below_the_input_url_draws_the_tree_from_the_stored_destination_without_its_title(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        Storage::disk('analysis')->put("pages/{$wa->id}/kayac.html", $this->html(
+            '<a href="/recruit/fresh/">新卒採用</a><a href="/recruit/works/">仕事を知る</a><a href="/recruit/culture/">カルチャー</a>',
+            '<h1>新卒採用トップ</h1><h2>見出しA</h2>',
+        ));
+        foreach ([PageType::Homepage, PageType::Recruit] as $type) {
+            AnalysisPage::factory()->create([
+                'website_analysis_id' => $wa->id,
+                'page_type' => $type,
+                'url' => 'https://example.com/recruit',
+                'final_url' => 'https://example.com/recruit/fresh',
+                'title' => '新卒採用トップ',
+                'raw_html_path' => "pages/{$wa->id}/kayac.html",
+            ]);
+        }
+        $this->crawled($wa, 'https://example.com/recruit/fresh', '新卒採用トップ');
+        $this->crawled($wa, 'https://example.com/recruit/fresh/entry', 'エントリー');
+        $this->crawled($wa, 'https://example.com/recruit/works/', '仕事を知る');
+        $this->crawled($wa, 'https://example.com/recruit/works/1', '仕事1');
+        $this->crawled($wa, 'https://example.com/recruit/culture/', 'カルチャー');
+        $this->crawled($wa, 'https://example.com/about/', '会社概要');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame('https://example.com/recruit', $tree['origin_url']);
+        $this->assertSame('https://example.com/recruit', $tree['top']['url']);
+        $this->assertSame('menu', $tree['mode']);
+        $this->assertSame(['新卒採用', '仕事を知る', 'カルチャー'], array_column($tree['branches'], 'name'));
+        $this->assertSame(5, $tree['pages_within_origin']);
+        $this->assertNull($tree['top']['title'], '転送先のページ名を起点のものとして出さない');
+        $this->assertSame([], $tree['top']['headings'], '転送先の見出しを起点のものとして出さない');
+    }
+
+    public function test_the_keep_input_flag_off_draws_the_tree_from_the_destination_as_before(): void
+    {
+        config(['brand_wheel.crawl_origin_keep_input_when_redirected_within' => false]);
+        $wa = WebsiteAnalysis::factory()->create();
+        Storage::disk('analysis')->put("pages/{$wa->id}/kayac.html", $this->html('<a href="/recruit/fresh/entry">エントリー</a>'));
+        AnalysisPage::factory()->create([
+            'website_analysis_id' => $wa->id,
+            'page_type' => PageType::Homepage,
+            'url' => 'https://example.com/recruit',
+            'final_url' => 'https://example.com/recruit/fresh',
+            'title' => '新卒採用トップ',
+            'raw_html_path' => "pages/{$wa->id}/kayac.html",
+        ]);
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame('https://example.com/recruit/fresh', $tree['origin_url']);
+        $this->assertSame('新卒採用トップ', $tree['top']['title']);
+    }
 }

@@ -1306,11 +1306,17 @@ class AdminComparisonPptxGenerator
             // 確認できなかった」の順で因果が分かる形にする(依頼者指定)。
             // 該当なし(該当する候補者調査項目が無い)の行は、重要でないという
             // 意味ではないことを添える一言(missing_item_survey_none_text)。
+            // 依頼CO-2: 文は、表と同じ計算の「調査の選択肢」単位の自社の状態に合わせる
+            // (一部○なら「一部しか確認できませんでした」。×の1項目だけを見て言い切らない)。
+            // 依頼CO-3: 割合は表と同じ整形(小数1桁)。
+            $surveyTemplate = ($item['candidate_survey']['self_state'] ?? null) === 'partial'
+                ? 'missing_item_survey_partial_template'
+                : 'missing_item_survey_template';
             $surveyText = $item['candidate_survey']['item'] !== null
                 ? sprintf(
-                    (string) config('admin_comparison_pptx.missing_item_survey_template'),
+                    (string) config("admin_comparison_pptx.{$surveyTemplate}"),
                     $item['candidate_survey']['item'],
-                    rtrim(rtrim(number_format((float) $item['candidate_survey']['percentage'], 1), '0'), '.'),
+                    $this->formatSurveyPercentage((float) $item['candidate_survey']['percentage']),
                 )
                 : (string) config('admin_comparison_pptx.missing_item_survey_none_text');
             $this->font($surveyBox->getActiveParagraph()->createTextRun($surveyText), 8.5, false, self::COPPER);
@@ -1427,8 +1433,8 @@ class AdminComparisonPptxGenerator
 
             $barWidth = $maxPercentage > 0 ? max(0.02, $barMaxWidth * ($row['percentage'] / $maxPercentage)) : 0.02;
             $this->addFilledRect($slide, $barLeft, $top + 0.06, $barWidth, self::SURVEY_ROW_HEIGHT_IN - 0.12, $isGap ? self::GAP_TEXT : self::COPPER);
-            // 依頼CM-5: 表の中では小数1桁に揃える(17.0%)。「足りないもの」の文中の表記は別。
-            $percentLabel = number_format($row['percentage'], 1).'%';
+            // 依頼CM-5/CO-3: 調査の割合は小数1桁(17.0%)。「足りないもの」の文中も同じ整形。
+            $percentLabel = $this->formatSurveyPercentage($row['percentage']).'%';
             $pctBox = $slide->createRichTextShape();
             $this->position($pctBox, $barLeft + $barWidth + 0.06, $top, 0.8, self::SURVEY_ROW_HEIGHT_IN);
             $pctBox->setInsetLeft(0)->setInsetRight(0);
@@ -1454,6 +1460,12 @@ class AdminComparisonPptxGenerator
             }
             $this->addSurveyCell($slide, 'competitor', $top, $competitorText, 9, false, $competitorColor);
         }
+    }
+
+    /** 調査の割合の整形(小数1桁、単位なし)。表と「足りないもの」の文の両方がこれを使う。 */
+    private function formatSurveyPercentage(float $percentage): string
+    {
+        return number_format($percentage, 1);
     }
 
     private function addSurveyCell(Slide $slide, string $column, float $rowTop, string $text, float $sizePt, bool $bold, string $color, string $horizontal = Alignment::HORIZONTAL_LEFT): void
@@ -2067,10 +2079,51 @@ class AdminComparisonPptxGenerator
             }
         }
 
+        // 依頼CO-4: 語の切れ目で分けても収まらない(1語が行より長い)ときは、折る前に下限まで
+        // 文字を小さくし、その大きさでも収まらない語だけを、行頭禁則を避けて等分し、
+        // 語の切れ目(株式会社の前後など)はそのまま残して行に詰める。
+        $floorUnits = $this->maxUnitsPerLine($widthIn, (float) $floor, $bold);
+        $pieces = [];
+        foreach ($tokens as $token) {
+            array_push($pieces, ...$this->splitLongCompanyNameToken($token, max(2, $floorUnits)));
+        }
+        $lines = $this->partitionCompanyName($pieces, $maxLines, $floorUnits, $prefixUnits);
+        if ($lines !== null) {
+            foreach ($lines as $i => $line) {
+                if ($i > 0) {
+                    $para->createBreak();
+                }
+                $this->font($para->createTextRun($line), $floor, $bold, $color);
+            }
+
+            return;
+        }
+
         // 3. 既存の省略の処理に落とす(語の途中で折れることはあり得るが、極端に長い名前のみ)。
         $fallbackWidth = max(0.5, $widthIn - $prefixUnits * 0.07);
-        $text = $this->wrapOrEllipsizeForLines($name, $fallbackWidth, (float) $baseSize, $bold, 2);
-        $this->renderBalancedLines($para, $text, $fallbackWidth, (float) $baseSize, $bold, $color);
+        // 依頼CO-4: 折る前に、下限まで文字を小さくしてから折る(折る位置は行頭禁則を避ける)。
+        $text = $this->wrapOrEllipsizeForLines($name, $fallbackWidth, (float) $floor, $bold, 2);
+        $this->renderBalancedLines($para, $text, $fallbackWidth, (float) $floor, $bold, $color);
+    }
+
+    /**
+     * 1行($maxUnits)に収まらない語だけを、長音・小さいかなが行頭に来ない位置で、ほぼ等分に分ける。
+     * 収まる語はそのまま返す。
+     *
+     * @return list<string>
+     */
+    private function splitLongCompanyNameToken(string $token, int $maxUnits): array
+    {
+        if (mb_strwidth($token, 'UTF-8') <= $maxUnits) {
+            return [$token];
+        }
+
+        [$head, $tail] = $this->splitBalancedForTwoLines($token, $maxUnits);
+        if ($head === '' || $tail === '') {
+            return [$token];
+        }
+
+        return [...$this->splitLongCompanyNameToken($head, $maxUnits), ...$this->splitLongCompanyNameToken($tail, $maxUnits)];
     }
 
     /**
@@ -2235,7 +2288,24 @@ class AdminComparisonPptxGenerator
             $splitIndex = $i + 1;
         }
 
-        return [$line1, implode('', array_slice($chars, $splitIndex))];
+        // 依頼CO-4: 長音「ー」・小さい「ァィゥェォッャュョ」が行頭に来る位置では分けない
+        // (「サイバーエ／ージェント」)。直前へ戻して、その文字を前の語と一緒に2行目へ送る。
+        // 戻した結果1行目が空になるなら、逆に後ろへずらす。
+        $noLineStart = array_values(array_filter((array) config('admin_comparison_pptx.company_name_no_line_start_chars'), fn ($c) => is_string($c) && $c !== ''));
+        $count = count($chars);
+        $back = $splitIndex;
+        while ($back > 0 && $back < $count && in_array($chars[$back], $noLineStart, true)) {
+            $back--;
+        }
+        if ($back > 0) {
+            $splitIndex = $back;
+        } else {
+            while ($splitIndex < $count - 1 && in_array($chars[$splitIndex], $noLineStart, true)) {
+                $splitIndex++;
+            }
+        }
+
+        return [implode('', array_slice($chars, 0, $splitIndex)), implode('', array_slice($chars, $splitIndex))];
     }
 
     /**

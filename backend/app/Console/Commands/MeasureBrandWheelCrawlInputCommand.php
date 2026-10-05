@@ -96,6 +96,7 @@ class MeasureBrandWheelCrawlInputCommand extends Command
         'shinkin' => ['label' => 'しんきん', 'homepage_url' => 'https://www.shinkin.co.jp/ssc/recruit/index.html', 'recruit_url' => 'https://www.shinkin.co.jp/ssc/recruit/index.html'],
         'nttdata' => ['label' => 'NTTデータ', 'homepage_url' => 'https://www.nttdata.com/global/ja/recruit/', 'recruit_url' => 'https://www.nttdata.com/global/ja/recruit/'],
         'smarthr' => ['label' => 'SmartHR', 'homepage_url' => 'https://hello-world.smarthr.co.jp', 'recruit_url' => 'https://hello-world.smarthr.co.jp'],
+        'kayac_recruit' => ['label' => 'カヤック(/recruit)', 'homepage_url' => 'https://www.kayac.com/recruit', 'recruit_url' => 'https://www.kayac.com/recruit'],
         'kayac' => ['label' => 'カヤック', 'homepage_url' => 'https://www.kayac.com/recruit/fresh', 'recruit_url' => 'https://www.kayac.com/recruit/fresh'],
         'cybozu' => ['label' => 'サイボウズ', 'homepage_url' => 'https://cybozu.co.jp/recruit/', 'recruit_url' => 'https://cybozu.co.jp/recruit/'],
         'moneyforward' => ['label' => 'マネーフォワード', 'homepage_url' => 'https://recruit.moneyforward.com/', 'recruit_url' => 'https://recruit.moneyforward.com/'],
@@ -292,12 +293,15 @@ class MeasureBrandWheelCrawlInputCommand extends Command
         if ($isSelfReference) {
             // FetchRecruitPageJob::process()の自己参照検出(依頼B/優先度4-3)と
             // 同じ表現 ―― raw_html_pathを同一パスにする。
+            // 依頼CO: 本番のFetchRecruitPageJobと同じく、トップページ行のurl・final_urlを
+            // そのまま複製する(転送が起きたとき、実際のfinal_urlが起点の判定に効くため)。
+            $homepageRow = AnalysisPage::query()->where('website_analysis_id', $websiteAnalysis->id)->where('page_type', PageType::Homepage)->first();
             AnalysisPage::query()->create([
                 'website_analysis_id' => $websiteAnalysis->id,
                 'page_type' => PageType::Recruit,
-                'url' => $site['recruit_url'],
-                'final_url' => $site['recruit_url'],
-                'http_status' => 200,
+                'url' => $homepageRow?->url ?? $site['recruit_url'],
+                'final_url' => $homepageRow?->final_url ?? $site['recruit_url'],
+                'http_status' => $homepageRow?->http_status ?? 200,
                 'raw_html_path' => $homepagePath,
                 'fetched_at' => now(),
             ]);

@@ -25,7 +25,7 @@ class RecommendedFlowFilter
      */
     public function filter(array $flows, array $menuLabels): array
     {
-        $labels = array_map(fn (string $label) => $this->normalize($label), $menuLabels);
+        $labels = array_map(fn (string $label) => ['compact' => $this->normalize($label), 'spaced' => $this->normalizeKeepingSpaces($label)], $menuLabels);
         $words = (array) config('admin_comparison_pptx.site_hierarchy_flow_menu_words', []);
 
         $kept = [];
@@ -40,7 +40,7 @@ class RecommendedFlowFilter
 
     /**
      * @param  array{name: string, option: ?string}  $flow
-     * @param  list<string>  $labels  正規化済み
+     * @param  list<array{compact: string, spaced: string}>  $labels
      * @param  array<string, list<string>>  $words
      */
     private function isCoveredByMenu(array $flow, array $labels, array $words): bool
@@ -49,25 +49,53 @@ class RecommendedFlowFilter
         $candidates = [];
         if ($flow['option'] !== null) {
             foreach ((array) ($words[$flow['option']] ?? []) as $word) {
-                $candidates[] = $this->normalize((string) $word);
+                $candidates[] = (string) $word;
             }
         }
 
         foreach ($labels as $label) {
-            if ($label === '') {
+            if ($label['compact'] === '') {
                 continue;
             }
-            if ($name !== '' && (str_contains($label, $name) || (mb_strlen($label) >= 2 && str_contains($name, $label)))) {
+            if ($name !== '' && (str_contains($label['compact'], $name) || (mb_strlen($label['compact']) >= 2 && str_contains($name, $label['compact'])))) {
                 return true;
             }
             foreach ($candidates as $word) {
-                if ($word !== '' && str_contains($label, $word)) {
+                if ($this->labelHasWord($label, $word)) {
                     return true;
                 }
             }
         }
 
         return false;
+    }
+
+    /**
+     * 依頼CO-5: 英数字だけの言葉は語の境界で照合する(前後が英数字でないこと。語末の複数形の
+     * s・esは許す ―― `job`は`jobs`に当たるが、`history`の`story`や`agriculture`の`culture`には
+     * 当たらない)。日本語を含む言葉は従来どおり部分一致。
+     *
+     * @param  array{compact: string, spaced: string}  $label
+     */
+    private function labelHasWord(array $label, string $word): bool
+    {
+        $compact = $this->normalize($word);
+        if ($compact === '') {
+            return false;
+        }
+
+        $spacedWord = $this->normalizeKeepingSpaces($word);
+        if (preg_match('/^[a-z0-9 ]+$/', $spacedWord) === 1) {
+            return preg_match('/(?<![a-z0-9])'.preg_quote($spacedWord, '/').'(?:e?s)?(?![a-z0-9])/', $label['spaced']) === 1;
+        }
+
+        return str_contains($label['compact'], $compact);
+    }
+
+    /** 語の境界の判定用: 大文字小文字・全角半角を揃え、空白は1つにまとめて残す。 */
+    private function normalizeKeepingSpaces(string $text): string
+    {
+        return trim((string) preg_replace('/\s+/u', ' ', mb_strtolower(mb_convert_kana($text, 'asKV'))));
     }
 
     /** 大文字小文字・全角半角の差と、空白を無視するための正規化。 */
