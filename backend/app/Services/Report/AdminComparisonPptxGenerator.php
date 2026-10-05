@@ -290,6 +290,11 @@ class AdminComparisonPptxGenerator
 
     private const TREE_TOP_HEIGHT_IN = 1.4;
 
+    /** 依頼CP-3: 中身がURLだけ(ページ名・見出しが無い)のときの箱の高さと、転送の一行ぶんの加算。 */
+    private const TREE_TOP_COMPACT_HEIGHT_IN = 0.5;
+
+    private const TREE_TOP_NOTE_LINE_IN = 0.2;
+
     /** TOPから第1階層への幹の位置と、第1階層の箱。 */
     private const TREE_TRUNK_X_IN = 4.2;
 
@@ -1615,7 +1620,7 @@ class AdminComparisonPptxGenerator
         $left = self::TREE_TOP_LEFT_IN;
         $width = self::TREE_TOP_WIDTH_IN;
         $boxTop = self::TREE_TOP_IN;
-        $height = self::TREE_TOP_HEIGHT_IN;
+        $height = $this->treeTopHeight($top);
 
         $rect = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
         $this->position($rect, $left, $boxTop, $width, $height);
@@ -1648,7 +1653,29 @@ class AdminComparisonPptxGenerator
             $this->font($box->createParagraph()->createTextRun($line), 8, false, self::MUTED);
         }
 
+        // 依頼CP-3: 入力したURLが別のページへ転送されていたときだけ1行添える。
+        // 転送先のURL・ページ名は出さない。
+        if ($top['input_redirected'] ?? false) {
+            $this->font($box->createParagraph()->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_tree_top_redirected_note')), 8, false, self::COPPER);
+        }
+
         return $boxTop + $height;
+    }
+
+    /**
+     * 依頼CP-3: TOPの箱の高さ。ページ名・見出しが無く中身がURLだけのときは、中身に合わせて縮める
+     * (転送の一行があれば、その一行ぶんだけ足す)。ページ名か見出しがあるときは従来の高さ。
+     * 幹の位置(addTreeBranches)と点線の欄の位置(addTreeRecommendations)も、この高さから決まる。
+     *
+     * @param  array{title: ?string, headings: list<string>, input_redirected?: bool}  $top
+     */
+    private function treeTopHeight(array $top): float
+    {
+        if ($top['title'] !== null || $top['headings'] !== []) {
+            return self::TREE_TOP_HEIGHT_IN;
+        }
+
+        return self::TREE_TOP_COMPACT_HEIGHT_IN + (($top['input_redirected'] ?? false) ? self::TREE_TOP_NOTE_LINE_IN : 0.0);
     }
 
     /**
@@ -1656,7 +1683,7 @@ class AdminComparisonPptxGenerator
      * 0件のときは、巡回した範囲では配下にページが見つからなかったことを
      * 事実として書く(「ありません」と断定しない)。
      *
-     * @param  array{origin_url: string, top: array{url: string}, branches: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, other_branch_count: int, unplaced_page_count?: int}  $tree
+     * @param  array{origin_url: string, top: array{url: string, title: ?string, headings: list<string>, input_redirected?: bool}, branches: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, other_branch_count: int, unplaced_page_count?: int}  $tree
      */
     private function addTreeBranches(Slide $slide, array $tree): void
     {
@@ -1706,7 +1733,7 @@ class AdminComparisonPptxGenerator
         }
 
         // TOP → 第1階層の幹と枝(直線だけで描く)。
-        $topMid = self::TREE_TOP_IN + self::TREE_TOP_HEIGHT_IN / 2;
+        $topMid = self::TREE_TOP_IN + $this->treeTopHeight($tree['top']) / 2;
         $trunkX = self::TREE_TRUNK_X_IN;
         $this->drawLine($slide, [self::TREE_TOP_LEFT_IN + self::TREE_TOP_WIDTH_IN, $topMid], [$trunkX, $topMid], self::NAVY, 1.25);
         $this->drawLine($slide, [$trunkX, min($topMid, $centers[0])], [$trunkX, max($topMid, $centers[count($centers) - 1])], self::NAVY, 1.25);

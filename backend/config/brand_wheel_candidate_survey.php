@@ -95,7 +95,7 @@ return [
 
         'relationship' => [
             'colleagues' => ['survey_option' => 'employee_interview', 'site_flow_name' => '社員を知る'],
-            'atmosphere' => ['survey_option' => 'company_event', 'site_flow_name' => '社内イベント'],
+            'atmosphere' => ['survey_option' => 'culture', 'site_flow_name' => 'カルチャー・社風'],
             'physical_freedom' => ['survey_option' => 'overtime_leave_data', 'site_flow_name' => '数字で見る働き方'],
             'mental_freedom' => ['survey_option' => 'work_environment', 'site_flow_name' => '働き方を知る'],
         ],
@@ -103,7 +103,7 @@ return [
         'emotional_benefit' => [
             'pride' => ['survey_option' => 'employee_interview', 'site_flow_name' => '社員を知る'],
             'talkable' => ['survey_option' => 'employee_interview', 'site_flow_name' => '社員を知る'],
-            'satisfaction' => ['survey_option' => 'job_content', 'site_flow_name' => '仕事を知る'],
+            'satisfaction' => ['survey_option' => null, 'site_flow_name' => null],
             'superiority' => ['survey_option' => null, 'site_flow_name' => null],
         ],
 

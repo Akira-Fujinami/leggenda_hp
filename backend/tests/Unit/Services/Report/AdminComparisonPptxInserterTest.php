@@ -2034,4 +2034,70 @@ class AdminComparisonPptxInserterTest extends TestCase
         $this->assertStringNotContainsString('prstDash val="dash"', $xml);
         $this->assertStringNotContainsString('点線は、', $xml, '点線の説明も出さない');
     }
+
+    // ---- 依頼CP-3: TOPの箱 ----
+
+    /** @return array{0: array<string, mixed>, 1: string} [TOPの箱, スライドXML] */
+    private function topBoxOf(array $top, array $recommended = []): array
+    {
+        $tree = $this->hierarchyData();
+        $tree['top'] = $top;
+        $data = $this->comparisonData();
+        $data['recommended_site_flow_names'] = $recommended;
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide($data, $tree));
+        foreach ($this->textBoxes($xml) as $box) {
+            if (str_starts_with($box['text'], 'TOP')) {
+                return [$box, $xml];
+            }
+        }
+        $this->fail('TOPの箱が無い');
+    }
+
+    public function test_the_top_box_shrinks_when_it_only_has_a_url_and_keeps_its_height_when_it_has_a_title(): void
+    {
+        [$compact] = $this->topBoxOf(['url' => 'https://example.com/recruit', 'title' => null, 'headings' => [], 'menu_item_count' => 0]);
+        [$full] = $this->topBoxOf(['url' => 'https://example.com/recruit', 'title' => '採用情報', 'headings' => ['私たちの仕事'], 'menu_item_count' => 2]);
+
+        $this->assertEqualsWithDelta(0.5, $compact['h'], 0.01);
+        $this->assertEqualsWithDelta(1.4, $full['h'], 0.01);
+    }
+
+    public function test_the_redirect_line_appears_only_when_redirected_and_never_shows_the_destination(): void
+    {
+        $note = (string) config('admin_comparison_pptx.site_hierarchy_tree_top_redirected_note');
+        $this->assertSame('このURLは別のページへ転送されます。', $note);
+
+        [$plain, $plainXml] = $this->topBoxOf(['url' => 'https://example.com/recruit', 'title' => null, 'headings' => [], 'menu_item_count' => 0, 'input_redirected' => false]);
+        [$moved, $movedXml] = $this->topBoxOf(['url' => 'https://example.com/recruit', 'title' => null, 'headings' => [], 'menu_item_count' => 0, 'input_redirected' => true]);
+
+        $this->assertStringNotContainsString($note, $plain['text']);
+        $this->assertStringContainsString($note, $moved['text']);
+        $this->assertEqualsWithDelta($plain['h'] + 0.2, $moved['h'], 0.01, '転送の一行ぶんだけ高くなる');
+        $this->assertStringNotContainsString('fresh', $movedXml);
+    }
+
+    /** 箱が縮んでも、幹へつなぐ線は箱の縦の中央、点線の欄は箱の直下から始まり、重ならない。 */
+    public function test_the_trunk_line_and_the_dotted_section_follow_the_top_box_height(): void
+    {
+        foreach ([false, true] as $redirected) {
+            $top = ['url' => 'https://example.com/recruit', 'title' => null, 'headings' => [], 'menu_item_count' => 0, 'input_redirected' => $redirected];
+            [$box, $xml] = $this->topBoxOf($top, ['サステナビリティ', 'オフィス紹介']);
+
+            $midY = $box['y'] + $box['h'] / 2;
+            $found = false;
+            foreach ($this->lineSegments($xml) as [$a, $b]) {
+                if (abs($a[1] - $midY) < 0.01 && abs($b[1] - $midY) < 0.01 && abs($a[0] - ($box['x'] + $box['w'])) < 0.02) {
+                    $found = true;
+                }
+            }
+            $this->assertTrue($found, '箱の右端から、箱の縦の中央の高さで幹へ線が出ている');
+
+            foreach ($this->textBoxes($xml) as $other) {
+                if ($other['text'] === (string) config('admin_comparison_pptx.site_hierarchy_recommended_heading')) {
+                    $this->assertGreaterThanOrEqual($box['y'] + $box['h'], $other['y'], '点線の欄は箱の直下から始まる');
+                }
+            }
+            $this->assertNoOverlaps($xml, $redirected ? '転送あり' : '転送なし');
+        }
+    }
 }

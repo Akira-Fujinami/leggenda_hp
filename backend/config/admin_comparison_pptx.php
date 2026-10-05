@@ -704,6 +704,10 @@ return [
 
     // 文言。
     'site_hierarchy_tree_top_label' => 'TOP',
+    // 依頼CP-3: 入力したURLが別のページへ転送されていたときだけ、TOPの箱に添える一行。
+    'site_hierarchy_tree_top_redirected_note' => 'このURLは別のページへ転送されます。',
+    // 依頼CP-3: URLの階層で描くときの枝の名前の上限(切るだけ)。
+    'site_hierarchy_tree_branch_name_max_chars' => 20,
     'site_hierarchy_tree_menu_count_template' => 'メニュー%d項目',
     'site_hierarchy_tree_page_count_template' => '（%dページ）',
     'site_hierarchy_tree_other_pages_template' => 'ほか%dページ',

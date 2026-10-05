@@ -34,12 +34,14 @@ class CandidateSurveyCatalogTest extends TestCase
             'personality.company_character' => ['カルチャー・社風', 11.4],
             'personality.core_values' => ['企業のビジョンや理念', 16.0],
             'relationship.colleagues' => ['社員インタビュー', 19.4],
-            'relationship.atmosphere' => ['会社のイベント', 8.0],
+            // 依頼CP-1(2026-10-06): 職場の雰囲気は「会社のイベント」ではなく「カルチャー・社風」に対応させた。
+            'relationship.atmosphere' => ['カルチャー・社風', 11.4],
             'relationship.physical_freedom' => ['残業時間や有給取得の客観データ', 12.6],
             'relationship.mental_freedom' => ['働き方や職場環境', 17.0],
             'emotional_benefit.pride' => ['社員インタビュー', 19.4],
             'emotional_benefit.talkable' => ['社員インタビュー', 19.4],
-            'emotional_benefit.satisfaction' => ['希望するポジションの仕事・業務内容', 24.6],
+            // 依頼CP-1: 満足感は調査の選択肢に対応させない(仕事内容そのものを見る項目は24項目に無い)。
+            'emotional_benefit.satisfaction' => [null, null],
             'emotional_benefit.superiority' => [null, null],
             'financial_benefit.salary_level' => ['給与体系や評価制度', 16.4],
             'financial_benefit.benefits' => ['福利厚生', 12.4],

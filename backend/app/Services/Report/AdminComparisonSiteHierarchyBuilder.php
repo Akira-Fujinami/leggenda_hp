@@ -446,6 +446,7 @@ class AdminComparisonSiteHierarchyBuilder
             'title' => $widened ? null : $topPage['title'],
             'headings' => $widened ? [] : $topPage['headings'],
             'menu_item_count' => count($menuItems),
+            'input_redirected' => $this->isInputRedirected($websiteAnalysis),
         ];
 
         if (count($menuItems) < $minItems) {
@@ -461,6 +462,24 @@ class AdminComparisonSiteHierarchyBuilder
         $result['origin_widened'] = $widened;
 
         return $result;
+    }
+
+    /**
+     * 依頼CP-3: 入力されたURL(トップページ行のurl)が、別のページへ転送されていたか
+     * (final_urlがurlと違う)。末尾スラッシュ・index.htmlの差だけの転送は転送と数えない。
+     * 転送先のURL・ページ名は返さない(出さない)。
+     */
+    private function isInputRedirected(WebsiteAnalysis $websiteAnalysis): bool
+    {
+        $homepage = AnalysisPage::query()
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('page_type', PageType::Homepage)
+            ->first();
+        if ($homepage === null || (string) $homepage->url === '' || (string) $homepage->final_url === '') {
+            return false;
+        }
+
+        return $this->urlKey((string) $homepage->url) !== $this->urlKey((string) $homepage->final_url);
     }
 
     /**
@@ -538,6 +557,7 @@ class AdminComparisonSiteHierarchyBuilder
         [$groups, $flatLabels] = $this->groupUrlBranches($within, $scope);
 
         $branches = [];
+        $fullNames = [];
         foreach ($groups as $segment => $info) {
             $labels = $this->deprioritizeSamplePages($info['labels'], PHP_INT_MAX);
             // 枝の名前にしたインデックスページのtitleは、第2階層にも重ねて出さない
@@ -549,8 +569,12 @@ class AdminComparisonSiteHierarchyBuilder
                     $labels = array_values($labels);
                 }
             }
+            // 依頼CP-3: 枝の名前にしたページ名は、第2階層と同じ処理(共通の接尾辞・接頭辞は
+            // hydrateTitles()で落とし済み)のあと、上限の長さで切る(切るだけ。言い換えない)。
+            $fullName = $info['index_title'] ?? $this->decodeSegmentForDisplay((string) $segment);
+            $fullNames[] = $fullName;
             $branches[] = [
-                'name' => $info['index_title'] ?? $this->decodeSegmentForDisplay((string) $segment),
+                'name' => $info['index_title'] !== null ? $this->truncateBranchName($fullName) : $fullName,
                 'url' => null,
                 'page_count' => $info['count'],
                 'pages' => array_slice($labels, 0, $secondLimit),
@@ -560,6 +584,7 @@ class AdminComparisonSiteHierarchyBuilder
 
         if ($flatLabels !== []) {
             $labels = $this->deprioritizeSamplePages($flatLabels, PHP_INT_MAX);
+            $fullNames[] = (string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading');
             $branches[] = [
                 'name' => (string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'),
                 'url' => null,
@@ -569,10 +594,19 @@ class AdminComparisonSiteHierarchyBuilder
             ];
         }
 
-        $allNames = array_column($branches, 'name');
+        // 点線との照合に使う名前は、切る前のもの。
+        $allNames = $fullNames;
         [$limited, $otherBranchCount] = $this->limitBranches($branches);
 
         return [$limited, $otherBranchCount, $allNames];
+    }
+
+    /** 依頼CP-3: URL版の枝の名前の上限(config)。0以下なら切らない。 */
+    private function truncateBranchName(string $name): string
+    {
+        $max = (int) config('admin_comparison_pptx.site_hierarchy_tree_branch_name_max_chars');
+
+        return $max > 0 ? BrandWheelTextTruncator::truncateAtSentenceBoundary($name, $max) : $name;
     }
 
     /**

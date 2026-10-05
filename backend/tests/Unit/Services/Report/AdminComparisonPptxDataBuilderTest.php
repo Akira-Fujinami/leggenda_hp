@@ -771,4 +771,73 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
 
         $this->assertSame(1, substr_count($source, "\$selfMatched === \$mapped => 'confirmed'"), '状態の分岐(すべて○/一部/すべて×)を別々に持たない');
     }
+
+    // ---- 依頼CP-1(2026-10-06): 対応表の差し替え ----
+
+    /** 満足感(satisfaction)は調査の選択肢にも導線にも対応しない。×でも「仕事・業務内容」の文・「仕事を知る」は出ない。 */
+    public function test_satisfaction_is_not_mapped_and_never_produces_the_job_content_sentence_or_flow(): void
+    {
+        $axis = (array) config('brand_wheel.axes.emotional_benefit');
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'missingFromSelf' => [$this->missingFromSelfItem($axis['name_ja'], $axis['sub_elements']['satisfaction'], 3)],
+        ]));
+
+        $this->assertSame(['item' => null, 'percentage' => null, 'self_state' => null], $data['missing_items']['items'][0]['candidate_survey']);
+        $this->assertNotContains('仕事を知る', $data['recommended_site_flow_names']);
+        $this->assertSame([], $data['recommended_site_flows']);
+        $this->assertNull(config('brand_wheel_candidate_survey.mapping.emotional_benefit.satisfaction.survey_option'));
+        $this->assertNull(config('brand_wheel_candidate_survey.mapping.emotional_benefit.satisfaction.site_flow_name'));
+    }
+
+    /** 調査1位・8位は対応する24項目が無くなり、「判定の対象外」。競合の列も「－」(null)。 */
+    public function test_job_content_and_company_event_rows_have_no_mapped_items_and_are_not_applicable(): void
+    {
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'comparisonTable' => $this->tableByKeys([], [['emotional_benefit.satisfaction', 'relationship.atmosphere'], []]),
+        ]));
+
+        foreach (['job_content', 'company_event'] as $key) {
+            $row = $this->surveyRow($data, $key);
+            $this->assertSame('not_applicable', $row['self_state'], $key);
+            $this->assertSame(0, $row['mapped_count']);
+            $this->assertNull($row['competitor_count'], "{$key}: 競合の列も「－」");
+        }
+        $this->assertSame(1, $this->surveyRow($data, 'job_content')['rank'], '1位の行が消えるのではなく対象外として残る');
+        $this->assertCount(14, $data['survey_comparison']['rows']);
+    }
+
+    /** 職場の雰囲気(atmosphere)は「カルチャー・社風」に対応する。企業らしさ(company_character)が○でも雰囲気が×なら△。 */
+    public function test_atmosphere_maps_to_culture_and_a_partial_state_is_shown_when_only_company_character_is_matched(): void
+    {
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'comparisonTable' => $this->tableByKeys(['personality.company_character'], [[], []]),
+        ]));
+
+        $row = $this->surveyRow($data, 'culture');
+        $this->assertSame(2, $row['mapped_count']);
+        $this->assertSame(1, $row['self_matched_count']);
+        $this->assertSame('partial', $row['self_state']);
+
+        $axis = (array) config('brand_wheel.axes.relationship');
+        $missing = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'missingFromSelf' => [$this->missingFromSelfItem($axis['name_ja'], $axis['sub_elements']['atmosphere'], 3)],
+            'comparisonTable' => $this->tableByKeys(['personality.company_character'], [[], []]),
+        ]));
+        $survey = $missing['missing_items']['items'][0]['candidate_survey'];
+        $this->assertSame('カルチャー・社風', $survey['item']);
+        $this->assertSame('partial', $survey['self_state'], '文は「一部しか確認できませんでした」側になる(CO-2)');
+        $this->assertSame(['カルチャー・社風'], $missing['recommended_site_flow_names']);
+    }
+
+    /** 今回の2行以外の対応は変えていない。 */
+    public function test_only_the_two_requested_mapping_rows_changed(): void
+    {
+        $mapping = (array) config('brand_wheel_candidate_survey.mapping');
+        $this->assertSame(['survey_option' => 'culture', 'site_flow_name' => 'カルチャー・社風'], $mapping['relationship']['atmosphere']);
+        $this->assertSame(['survey_option' => null, 'site_flow_name' => null], $mapping['emotional_benefit']['satisfaction']);
+        $this->assertSame(['survey_option' => 'culture', 'site_flow_name' => 'カルチャー・社風'], $mapping['personality']['company_character']);
+        $this->assertSame('employee_interview', $mapping['relationship']['colleagues']['survey_option']);
+        $this->assertSame('work_environment', $mapping['relationship']['mental_freedom']['survey_option']);
+        $this->assertSame('overtime_leave_data', $mapping['relationship']['physical_freedom']['survey_option']);
+    }
 }

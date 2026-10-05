@@ -146,6 +146,7 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
             'title' => '採用情報トップ',
             'headings' => ['私たちの採用', '仕事', '文化'],
             'menu_item_count' => 2,
+            'input_redirected' => false,
         ], $tree['top']);
     }
 
@@ -809,5 +810,47 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
 
         $this->assertSame('https://example.com/recruit/fresh', $tree['origin_url']);
         $this->assertSame('新卒採用トップ', $tree['top']['title']);
+    }
+
+    // ---- 依頼CP-3(2026-10-06) ----
+
+    /** URLの階層で描く側の枝の名前: 共通の接尾辞を落とし、上限で切る(切るだけ)。名前が空になるものは落とさない。 */
+    public function test_url_mode_branch_names_drop_the_common_suffix_and_are_cut_at_the_limit(): void
+    {
+        config(['admin_comparison_pptx.site_hierarchy_tree_branch_name_max_chars' => 10]);
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, null);
+        $this->crawled($wa, 'https://example.com/recruit/culture/', '私たちが大切にしている文化と価値観について | カヤック採用');
+        $this->crawled($wa, 'https://example.com/recruit/culture/a', '文化A | カヤック採用');
+        $this->crawled($wa, 'https://example.com/recruit/jobs/', '募集職種 | カヤック採用');
+        $this->crawled($wa, 'https://example.com/recruit/jobs/b', '職種B | カヤック採用');
+        $this->crawled($wa, 'https://example.com/recruit/about/', 'カヤック採用');
+        $this->crawled($wa, 'https://example.com/recruit/about/c', '概要C | カヤック採用');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame('url', $tree['mode']);
+        $names = array_column($tree['branches'], 'name');
+        $this->assertContains('私たちが大切にしてい…', $names, '共通の接尾辞を落としたうえで、上限(10字)で切る');
+        $this->assertContains('募集職種', $names);
+        $this->assertContains('カヤック採用', $names, '接尾辞を落とすと空になる名前は落とさない');
+        foreach ($names as $name) {
+            $this->assertLessThanOrEqual(11, mb_strlen($name), "{$name}: 上限+省略記号まで");
+        }
+        $this->assertContains('私たちが大切にしている文化と価値観について', $tree['first_level_labels'], '点線との照合には切る前の名前を使う');
+    }
+
+    public function test_the_top_records_whether_the_input_url_was_redirected_without_the_destination(): void
+    {
+        $redirected = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $redirected->id, 'page_type' => PageType::Homepage, 'url' => 'https://example.com/recruit', 'final_url' => 'https://example.com/recruit/fresh', 'title' => '転送先のページ名']);
+        $tree = $this->builder()->buildTree($redirected);
+        $this->assertTrue($tree['top']['input_redirected']);
+        $this->assertStringNotContainsString('fresh', json_encode($tree['top']), '転送先のURLをTOPに持たせない');
+        $this->assertNull($tree['top']['title']);
+
+        $plain = WebsiteAnalysis::factory()->create();
+        AnalysisPage::factory()->create(['website_analysis_id' => $plain->id, 'page_type' => PageType::Homepage, 'url' => 'https://example.com/recruit', 'final_url' => 'https://example.com/recruit/', 'title' => 'ページ名']);
+        $this->assertFalse($this->builder()->buildTree($plain)['top']['input_redirected'], '末尾スラッシュの差だけは転送と数えない');
     }
 }
