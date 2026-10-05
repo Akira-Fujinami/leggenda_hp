@@ -275,7 +275,9 @@ class AdminComparisonPptxInsertTest extends TestCase
         // 誤って1件と数えないようにするため。
         preg_match_all('/<p:sldId\s/', $presentationXml, $m);
         // 依頼CB-4: 差し込みは説明→比較→足りないもの→階層図の4枚になった。
-        $this->assertCount(6, $m[0], '元の2枚+差し込み4枚(説明+比較+足りないもの+階層図)=6枚になっていること');
+        // 依頼CL-4(2026-10-05): 「求職者が知りたい情報と、自社サイト」(CL-2)を
+        // 加えた5枚になった。
+        $this->assertCount(7, $m[0], '元の2枚+差し込み5枚(説明+比較+足りないもの+求職者が知りたい情報+階層図)=7枚になっていること');
         $zip->close();
         @unlink($tmp);
     }

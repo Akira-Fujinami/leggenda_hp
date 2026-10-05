@@ -479,6 +479,52 @@ class HtmlSeoAnalyzer
         return $labels;
     }
 
+    /**
+     * 依頼CL-3(2026-10-05): 営業資料の階層図(TOPのメニュー → 第1階層)用に、
+     * メニューのリンクを「文字＋リンク先(hrefの生の値)」の組で取り出す。
+     *
+     * extractNavigationLinkLabels()(ブランド・ホイールの入力に使われている)
+     * とは別のメソッドにした ―― あちらの挙動(フッターを含む・文字だけ・
+     * 件数上限)を一切変えないため。ラベルの整え方・除外語・件数上限・
+     * 文書順・ラベルでの重複除去は同じ(normalizeNavLinkLabel()を共有)。
+     * 違いは次の2点だけ:
+     *  - フッター(<footer>の内側、フッター内の<nav>を含む)は含めない。
+     *    プライバシーポリシー等が第1階層の枝になるのを避けるため。
+     *  - 記事の見出し(<main>/<article>の内側の<header>)は含めない。
+     *
+     * @return list<array{label: string, href: string}>
+     */
+    public function extractMenuLinks(string $html): array
+    {
+        [, $xpath] = $this->loadDomForTextExtraction($html);
+
+        $nodes = $xpath->query(
+            '//header[not(ancestor::footer) and not(ancestor::main) and not(ancestor::article)]//a[@href]'
+            .' | //nav[not(ancestor::footer)]//a[@href]'
+        );
+
+        $links = [];
+        $seenLabels = [];
+        foreach ($nodes ?? [] as $node) {
+            if (count($links) >= self::NAV_LINK_LABEL_MAX_COUNT) {
+                break;
+            }
+            if (! $node instanceof \DOMElement) {
+                continue;
+            }
+
+            $label = $this->normalizeNavLinkLabel($node->textContent);
+            if ($label === null || isset($seenLabels[$label])) {
+                continue;
+            }
+
+            $seenLabels[$label] = true;
+            $links[] = ['label' => $label, 'href' => trim($node->getAttribute('href'))];
+        }
+
+        return $links;
+    }
+
     private function normalizeNavLinkLabel(string $rawText): ?string
     {
         $text = $this->sanitizeCandidateText(trim($rawText)) ?? '';

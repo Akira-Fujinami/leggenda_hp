@@ -95,125 +95,104 @@ class AdminComparisonPptxGenerator
     private const GAP_TEXT = 'A85B1E';
 
     // ------------------------------------------------------------------
-    // 依頼CB-1/CC-1: ブランド・ホイール比較(各社のヘキサゴン)。
+    // 依頼CL-1(2026-10-05): ブランド・ホイール比較。横3列で組む ――
+    // 左=自社(大きなヘキサゴン)、中央=競合(縦に並べる)、右=領域別の
+    // 発信量の表。依頼CF-3で自社を大きくするために縦の余白を詰めた結果、
+    // 競合のヘキサゴンが点数(18 / 24)や「領域別の発信量」の見出し・凡例に
+    // 重なっていた(実物で確認)。縦に積む構成をやめ、列に分けることで
+    // 解消した。
+    //
+    // 図形同士・図形と文字が重ならないことは自動テストでは見つけられない
+    // (依頼CC-2・CF-3の前例)。寸法を変えたときは必ず実機で画像化して
+    // 確認すること(競合1〜3社=中央を縦1列、4〜5社=2列)。
     // ------------------------------------------------------------------
 
-    /**
-     * 自社ヘキサゴンの名前・総合点ラベルの上端。
-     *
-     * 依頼CF-3(2026-09-29): 自社ヘキサゴンの半径(WHEEL_SELF_RADIUS_IN)を
-     * 0.5→0.65inへ拡大する分の縦の余白を、この値・WHEEL_ROW_GAP_IN・
-     * WHEEL_TABLE_GAP_INの3箇所を切り詰めて確保した(タイトル
-     * (addTitle、下端y=1.41)の直後まで詰める)。表の行の高さ
-     * (TABLE_ROW_HEIGHT_IN、CC-2で詰めたばかり)自体は変えておらず、
-     * tableTop(領域別数値表の上端)の値も変更前と完全に同一
-     * (下記WHEEL_SELF_RADIUS_INのdocblock参照) ―― 表・競合行の位置は
-     * 一切動いていない。
-     */
-    private const WHEEL_SELF_LABEL_TOP_IN = 1.43;
+    /** 3列の見出し行の上端と高さ。見出しの下に細い罫線を引く。 */
+    private const WHEEL_HEADING_TOP_IN = 1.52;
 
-    private const WHEEL_SELF_NAME_HEIGHT_IN = 0.3;
+    private const WHEEL_HEADING_HEIGHT_IN = 0.28;
 
-    private const WHEEL_SELF_SCORE_HEIGHT_IN = 0.22;
+    /** 3列の本体(見出しの下)の上端と下端。ここに収まるように各列を組む。 */
+    private const WHEEL_BODY_TOP_IN = 1.95;
+
+    private const WHEEL_BODY_BOTTOM_IN = 6.3;
 
     /**
-     * 依頼CC-1(2026-09-25): 「六角形のどの頂点が何の領域か分からない」
-     * (依頼者指摘)ため、自社ヘキサゴンの外側に6領域のラベルを置く
-     * (addWheelAxisLabels())ことにした。頂点の外側にラベル1行ぶんの
-     * 余白(WHEEL_LABEL_RESERVE_IN)が要るため、半径を0.62in→0.5inへ縮めた。
-     *
-     * 【実機画像化で見つかった不具合、必ず読むこと】当初、頂点ラベルを
-     * 「ヘキサゴンの半径+WHEEL_LABEL_MARGIN_IN」の位置(hexVertex()で算出)
-     * にだけ置き、名前・総合点ラベルとヘキサゴンの間の縦の余白を増やして
-     * いなかった。半径を縮めても、ヘキサゴンの中心位置(hexCenterY)自体は
-     * 変えていなかったため、「中心から半径+マージン離れた」上頂点ラベルの
-     * 位置が、名前・総合点ラベルのすぐ下(=総合点の数字とほぼ同じ場所)に
-     * 来てしまい、頂点ラベル「活動的魅力」と総合点「6 / 24」が重なって
-     * 表示された(実機画像化で発見、自動テストでは検知できない見た目だけの
-     * 不具合)。
-     *
-     * 直しかた: ヘキサゴンの上頂点自体の位置(hexTopVertexY)を、名前・
-     * 総合点ラベルの下端からWHEEL_LABEL_RESERVE_IN(頂点ラベル1行ぶん+
-     * 余白)だけ下げた位置に置き直した(addWheelCompanyTile参照)。下側の
-     * 頂点ラベルについても、その下端をaddWheelCompanyTile()の戻り値
-     * (=このタイルが実際に使う一番下のY)に含め、競合行がラベルの下端より
-     * 上に来ないようにした。
-     *
-     * 依頼CF-3(2026-09-29): 実機画像化で「塗りの無い輪郭(PhpPresentationが
-     * custGeomを書き出せない既知の制約、依頼者了承済み)では、1インチ角
-     * (半径0.5in)では6軸の凹凸が読み取れない」ことを確認した(依頼者指摘)。
-     * 半径を0.5→0.65inへ拡大した(直径+0.3in、面積は約1.69倍)。
-     *
-     * 【honestyのための制約】ラダーチャート(このヘキサゴン)は「中心からの
-     * 距離が軸間で比較可能であること」が前提のため、X/Yで異なる半径に
-     * 引き伸ばす(横だけ広げる)案は採らなかった ―― 同じ4/4の値でも軸に
-     * よって突き出方が変わって見えてしまい、実際のデータではなく形状の
-     * 歪みで差があるかのように誤解させるため(hexVertex()は今回も単一の
-     * radiusのまま、正六角形の比例を保っている)。「横の空白を使う」は、
-     * 横方向には11.5inの帯のうちヘキサゴンが1.3in(新半径0.65in×2)しか
-     * 使っておらず全く余裕があること自体が、半径を拡大しても左右にはみ出す
-     * 心配が無いという判断材料として働いた、という意味で反映している。
-     *
-     * 縦方向は、表・競合行の位置(tableTop)を変えないことを優先したため、
-     * 半径+0.15in(0.5→0.65)ぶんの余白を、WHEEL_SELF_LABEL_TOP_IN・
-     * WHEEL_ROW_GAP_IN・WHEEL_TABLE_GAP_INを切り詰めて確保した(3箇所
-     * 合計で0.30in切り詰め=半径の上下ぶん0.30inを相殺)。実際に
-     * addWheelHexagons()を通した計算・実機画像化で、tableTopが変更前
-     * (5.16in)と完全に一致することを確認済み。
+     * 左の列(自社)。ヘキサゴンの半径は、依頼CF-3の0.65inから1.1inへ
+     * 拡大した(列の幅4.2inの中に、ヘキサゴンの幅(2×r×cos30°=1.9in)と
+     * 左右の頂点ラベル(各1.15in)がちょうど収まる大きさ)。正六角形の比例は
+     * 保つ ―― X/Yで異なる半径に引き伸ばす案は採らない(同じ4/4でも軸に
+     * よって突き出方が変わって見え、形状の歪みで差があるかのように誤解
+     * させるため、依頼CF-3の判断のまま)。
      */
-    private const WHEEL_SELF_RADIUS_IN = 0.65;
+    private const WHEEL_SELF_LEFT_IN = 0.9;
 
-    private const WHEEL_SELF_TILE_WIDTH_IN = 3.6;
+    private const WHEEL_SELF_WIDTH_IN = 4.2;
 
-    /** 自社ヘキサゴン(ラベル込み)と競合ヘキサゴン列との縦の間隔。依頼CF-3参照。 */
-    private const WHEEL_ROW_GAP_IN = 0.06;
+    private const WHEEL_SELF_RADIUS_IN = 1.1;
 
-    private const WHEEL_COMPETITOR_NAME_HEIGHT_IN = 0.22;
+    /** 企業名(最大2行)と合計点の高さ。 */
+    private const WHEEL_SELF_NAME_HEIGHT_IN = 0.5;
 
-    private const WHEEL_COMPETITOR_SCORE_HEIGHT_IN = 0.16;
-
-    private const WHEEL_COMPETITOR_RADIUS_IN = 0.32;
-
-    /** ヘキサゴン列と、その下の領域別数値表との間隔。依頼CF-3参照。 */
-    private const WHEEL_TABLE_GAP_IN = 0.08;
+    private const WHEEL_SELF_SCORE_HEIGHT_IN = 0.4;
 
     /**
-     * 依頼CC-1: 軸ラベル(自社ヘキサゴンのみ)。頂点から半径方向に
-     * WHEEL_LABEL_MARGIN_INだけ外側へ置く。競合ヘキサゴンには置かない
-     * (依頼者指定「潰れるなら出さなくてよい」の判断 ―― 競合図は半径
-     * 0.32inと小さく、6方向のラベルを置くと重なる)。代わりに、競合図の
-     * 軸の並びが自社図と同じであることをaddLegend()の一文で示す。
+     * 頂点ラベル(領域名＋数値、例「活動的魅力 4/4」)。頂点から半径方向に
+     * WHEEL_LABEL_MARGIN_INだけ外側へ置く。自社のヘキサゴンにだけ置く
+     * (競合の小さい図には置かない ―― 軸の並びが自社の図と同じであることを
+     * 凡例の一文で示す)。
      */
-    private const WHEEL_LABEL_MARGIN_IN = 0.16;
+    private const WHEEL_LABEL_MARGIN_IN = 0.14;
 
-    private const WHEEL_LABEL_WIDTH_IN = 1.1;
+    private const WHEEL_LABEL_WIDTH_IN = 1.15;
 
-    private const WHEEL_LABEL_HEIGHT_IN = 0.14;
+    private const WHEEL_LABEL_HEIGHT_IN = 0.2;
 
-    private const WHEEL_LABEL_FONT_SIZE = 7.0;
+    private const WHEEL_LABEL_FONT_SIZE = 9;
 
     /**
      * 自社ヘキサゴンの上下に、頂点ラベル1行ぶんを確保するための予約高
-     * (margin+ラベル高さ+ラベル自身の内側の余白0.02in+外側の安全マージン
-     * 0.06in)。addWheelCompanyTile()が、名前・総合点ラベルの下端からこの
-     * 高さぶん下げた位置にヘキサゴンの上頂点を置き、戻り値(次のブロックが
-     * 使える一番上のY)にも同じ高さを下側の頂点ラベル分として加える
-     * (WHEEL_SELF_RADIUS_INのdocblock参照)。
+     * (margin+ラベル高さ+安全マージン)。上頂点ラベルが合計点に重ならない
+     * ように、上頂点自体をこの高さだけ合計点の下に置く(依頼CC-1の不具合の
+     * 再発防止)。
      */
     private const WHEEL_LABEL_RESERVE_IN = self::WHEEL_LABEL_MARGIN_IN + self::WHEEL_LABEL_HEIGHT_IN + 0.08;
 
-    // ------------------------------------------------------------------
-    // 依頼CB-1: 領域別の数値表(旧「領域別の発信量」マトリクス、依頼BM〜BQ)。
-    // ヘキサゴンの下に小さく置く凡例として引き続き使う
-    // (「絵だけで数字が分からない状態にしない」、CB-1必須要件)。
-    // ------------------------------------------------------------------
+    /**
+     * 中央の列(競合)。1〜3社は縦1列(ヘキサゴンを左、企業名と点数を右)、
+     * 4〜5社は2列(依頼者了承済み)。1行の高さは本体の高さを行数で割った
+     * 値を上限WHEEL_COMPETITOR_ROW_MAX_HEIGHT_INで抑える。
+     */
+    private const WHEEL_COMPETITOR_LEFT_IN = 5.3;
 
-    /** ヘッダー行の高さ。社名は1行運用にする(表を小さくするため2行は許さない)。 */
-    private const TABLE_HEADER_HEIGHT_IN = 0.19;
+    private const WHEEL_COMPETITOR_WIDTH_IN = 2.8;
 
-    private const TABLE_ROW_HEIGHT_IN = 0.19;
+    private const WHEEL_COMPETITOR_SINGLE_COLUMN_MAX = 3;
 
-    private const AREA_COL_WIDTH_IN = 2.4;
+    private const WHEEL_COMPETITOR_ROW_MAX_HEIGHT_IN = 1.5;
+
+    private const WHEEL_COMPETITOR_SINGLE_RADIUS_IN = 0.5;
+
+    private const WHEEL_COMPETITOR_DOUBLE_RADIUS_IN = 0.34;
+
+    private const WHEEL_COMPETITOR_DOUBLE_TILE_WIDTH_IN = 1.4;
+
+    /**
+     * 右の列(領域別の発信量の表)。列は最大6(自社＋競合5社)になるため、
+     * ヘッダーには企業名ではなく記号(自社/A〜E)を置き、企業名は中央の
+     * 列の各組に同じ記号を添えて示す(企業名が長くても表の列幅が崩れない。
+     * 企業名自体はwrapOrEllipsizeForLines()で2行までに収め、収まらない
+     * 極端に長い名前だけ省略記号にする ―― 依頼BM-5・BN-2由来の既存処理)。
+     */
+    private const WHEEL_TABLE_LEFT_IN = 8.25;
+
+    private const WHEEL_TABLE_WIDTH_IN = 4.15;
+
+    private const AREA_COL_WIDTH_IN = 1.15;
+
+    private const TABLE_HEADER_HEIGHT_IN = 0.34;
+
+    private const TABLE_ROW_HEIGHT_IN = 0.4;
 
     // ------------------------------------------------------------------
     // 依頼CB-2/CC-2: 「足りないもの」スライド。
@@ -248,49 +227,81 @@ class AdminComparisonPptxGenerator
     private const MISSING_ROW_GAP_IN = 0.1;
 
     // ------------------------------------------------------------------
-    // 依頼CB-3: 「自社サイトの階層図」スライド。
+    // 依頼CL-2(2026-10-05): 「求職者が知りたい情報と、自社サイト」スライド。
+    // 調査の選択肢14件を1枚に収める(footerの注記ぶんの高さも確保する)。
+    // 行の高さを変えたときは、14行＋注記が重ならないことを実機で画像化して
+    // 確認すること。
     // ------------------------------------------------------------------
 
-    private const HIERARCHY_ORIGIN_TOP_IN = 1.5;
+    private const SURVEY_INTRO_TOP_IN = 1.46;
 
-    /** 依頼CC-3①: 「巡回したN件のうち起点URL配下はM件」の一文。 */
-    private const HIERARCHY_SCOPE_NOTE_TOP_IN = 1.83;
+    private const SURVEY_TABLE_TOP_IN = 1.85;
 
-    private const HIERARCHY_BRANCHES_TOP_IN = 2.05;
+    private const SURVEY_HEADER_HEIGHT_IN = 0.28;
 
-    /**
-     * 依頼CF-2(2026-09-29): site_hierarchy_sample_pages_per_branchを
-     * 3→5へ増やした分、代表ページの行が最大2行に折り返せるよう
-     * 0.42→0.50inへ増やした(旧: 名前行0.22in+代表ページ1行0.18in+
-     * 余白0.02in、新: 名前行0.22in+代表ページ最大2行0.26in+余白0.02in)。
-     */
-    private const HIERARCHY_ROW_HEIGHT_IN = 0.50;
-
-    private const HIERARCHY_ROW_GAP_IN = 0.06;
-
-    private const HIERARCHY_RECOMMENDED_GAP_IN = 0.18;
-
-    /** 依頼CF-2: 「参考：起点URL配下の外にあったページの内訳」との間隔。 */
-    private const HIERARCHY_OUTSIDE_BREAKDOWN_GAP_IN = 0.14;
+    private const SURVEY_ROW_HEIGHT_IN = 0.25;
 
     /**
-     * 依頼CF追補(2026-09-30): 「参考：起点URL配下の外にあったページの
-     * 内訳」は、枝が少ないときの空白を埋めるための追加要素であり必須の
-     * コンテンツではない ―― 枝が多いサイトでは下記
-     * HIERARCHY_AXIS_CAVEAT_RULE_TOP_IN(axis_unread_caveatの固定位置)と
-     * 衝突しうるため、この安全ラインを超える場合は描かない(0件のときに
-     * セクションごと消す既存方針と同じ考え方: 「入らないものを無理に
-     * 詰め込んで壊す」より「収まる分だけ出す」を優先する)。
+     * 列の[左端, 幅](in)。合計はCONTENT_WIDTH_IN(11.5in)。
      *
-     * 【CF追補で名前・意味を変更】依頼CFでは"HIERARCHY_CONTENT_SAFE_
-     * BOTTOM_IN"としてaxis_unread_caveatにも同じ安全ラインを適用して
-     * いたが、「枝が多いサイトではaxis_unread_caveatが資料のどこにも
-     * 出ない」不具合につながった(依頼者指摘 ―― 良いサイトほど免責文が
-     * 消える逆向きの挙動になっていた)。axis_unread_caveatは可変レイアウト
-     * (枝・推奨導線・参考内訳)の外の固定位置に移し(下記参照)、この定数は
-     * 「参考」内訳だけが従う安全ラインに限定した。
+     * @var array<string, array{0: float, 1: float}>
      */
-    private const HIERARCHY_OUTSIDE_BREAKDOWN_SAFE_BOTTOM_IN = 5.65;
+    private const SURVEY_COLUMNS = [
+        'rank' => [0.9, 0.55],
+        'name' => [1.65, 3.3],
+        'percentage' => [5.1, 3.1],
+        'self' => [8.35, 1.95],
+        'competitor' => [10.35, 2.05],
+    ];
+
+    // ------------------------------------------------------------------
+    // 依頼CL-3(2026-10-05): 「自社サイトの階層図」スライド(木の形)。
+    // 左から右へ TOP → 第1階層 → 第2階層。第2階層の行数で第1階層の行の
+    // 高さが決まるため、最大(第1階層の上限×第2階層の上限)でも、固定位置の
+    // axis_unread_caveat(HIERARCHY_AXIS_CAVEAT_RULE_TOP_IN)の手前に収まる
+    // 上限をconfigに置いてある(site_hierarchy_tree_first_level_limit等)。
+    // 寸法・上限を変えたときは、最大ケースを実機で画像化して確認すること。
+    // ------------------------------------------------------------------
+
+    /** 上部の注記(巡回件数の事実＋木の作り方の説明)。 */
+    private const TREE_NOTES_TOP_IN = 1.46;
+
+    private const TREE_NOTES_HEIGHT_IN = 0.5;
+
+    /** 木の上端。TOPの箱も第1階層の最初の行もここから始まる。 */
+    private const TREE_TOP_IN = 2.05;
+
+    private const TREE_TOP_LEFT_IN = 0.9;
+
+    private const TREE_TOP_WIDTH_IN = 3.0;
+
+    private const TREE_TOP_HEIGHT_IN = 1.4;
+
+    /** TOPから第1階層への幹の位置と、第1階層の箱。 */
+    private const TREE_TRUNK_X_IN = 4.2;
+
+    private const TREE_BRANCH_LEFT_IN = 4.5;
+
+    private const TREE_BRANCH_WIDTH_IN = 3.0;
+
+    private const TREE_BRANCH_BOX_HEIGHT_IN = 0.44;
+
+    /** 第1階層の箱から第2階層への括弧線の位置と、第2階層のページ名の列。 */
+    private const TREE_BRACKET_X_IN = 7.8;
+
+    private const TREE_PAGE_LEFT_IN = 8.0;
+
+    private const TREE_PAGE_WIDTH_IN = 4.4;
+
+    /** 第2階層の1行の高さ(8ptの文字を行間固定せず、実機で重ならない値)。 */
+    private const TREE_LINE_PITCH_IN = 0.146;
+
+    private const TREE_ROW_GAP_IN = 0.05;
+
+    /** 点線の枝(追加を検討したい導線)の1件の枠の高さと間隔。 */
+    private const TREE_RECOMMENDED_ITEM_HEIGHT_IN = 0.22;
+
+    private const TREE_RECOMMENDED_PITCH_IN = 0.28;
 
     /**
      * 依頼CF追補(2026-09-30、必須修正): axis_unread_caveat
@@ -354,11 +365,12 @@ class AdminComparisonPptxGenerator
     ];
 
     /**
-     * 依頼CB-1(2026-09-24): ブランド・ホイール比較。自社を大きく、競合を
-     * 小さく並べたヘキサゴン(6軸レーダー、外周=4/4)+その下に領域別の
-     * 数値表(旧マトリクスを縮小して流用)。値は既存の$data['companies']/
-     * $data['axes'](AdminComparisonPptxDataBuilderが既に計算済み)を
-     * そのまま使う ―― ここで新しい集計は行わない(依頼者指定)。
+     * 依頼CL-1(2026-10-05): ブランド・ホイール比較。横3列 ――
+     * 左=自社(企業名・合計点・大きなヘキサゴン、頂点に領域名と数値)、
+     * 中央=競合(1社ごとに小さなヘキサゴン＋企業名＋合計点)、右=領域別の
+     * 発信量の表(6領域＋合計)。値は既存の$data['companies']/$data['axes']
+     * (AdminComparisonPptxDataBuilderが計算済み)をそのまま使い、ここで新しい
+     * 集計は行わない(依頼者指定)。
      *
      * @param  array{
      *     self_company_name: string,
@@ -387,203 +399,271 @@ class AdminComparisonPptxGenerator
         return $this->renderSingleSlide(function (Slide $slide) use ($data, $selfReadable): void {
             $this->addKicker($slide);
             $this->addTitle($slide, 'ブランド・ホイール比較');
-            $tableTop = $this->addWheelHexagons($slide, $data['companies'], $data['axes'], $selfReadable);
-            $this->addMatrixSection($slide, $data['companies'], $data['axes'], $tableTop, $selfReadable);
+            $this->addWheelColumnHeadings($slide);
+            $this->addWheelSelfColumn($slide, $data['companies'][0], $data['axes'], $selfReadable);
+            $this->addWheelCompetitorColumn($slide, array_slice($data['companies'], 1), $data['axes']);
+            $this->addMatrixSection($slide, $data['companies'], $data['axes'], $selfReadable);
             $this->addFooter($slide, $data['source_note'], $data['page_number']);
         });
     }
 
     /**
-     * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
-     * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
-     * @return float  この下に描く領域別数値表の上端y(in)
+     * 3列それぞれの見出しと、その下の細い罫線。
      */
-    private function addWheelHexagons(Slide $slide, array $companies, array $axes, bool $selfReadable = true): float
+    private function addWheelColumnHeadings(Slide $slide): void
     {
-        $selfCompany = $companies[0];
-        $selfCx = self::LEFT_IN + self::CONTENT_WIDTH_IN / 2;
+        $columns = [
+            [self::WHEEL_SELF_LEFT_IN, self::WHEEL_SELF_WIDTH_IN, (string) config('admin_comparison_pptx.wheel_self_heading'), ''],
+            [self::WHEEL_COMPETITOR_LEFT_IN, self::WHEEL_COMPETITOR_WIDTH_IN, (string) config('admin_comparison_pptx.wheel_competitor_heading'), ''],
+            [self::WHEEL_TABLE_LEFT_IN, self::WHEEL_TABLE_WIDTH_IN, (string) config('admin_comparison_pptx.wheel_table_heading'), (string) config('admin_comparison_pptx.wheel_table_note')],
+        ];
 
-        // 依頼CC-1: addWheelCompanyTile()は「次のブロックが使える一番上の
-        // Y」を返すよう統一した(自社は下側の頂点ラベルの下端まで含む、
-        // 競合はヘキサゴンの下端まで)。旧実装は「ヘキサゴンの上端」を返し
-        // 呼び出し側で+2×半径して下端を計算していたが、自社側は頂点ラベルの
-        // 分だけ下端がさらに下がるため、この計算では下端を数え落としていた
-        // (WHEEL_SELF_RADIUS_INのdocblock参照、実機画像化で発覚した不具合)。
-        $selfBottom = $this->addWheelCompanyTile(
-            $slide, $selfCompany, $axes, null, $selfCx,
-            self::WHEEL_SELF_LABEL_TOP_IN, self::WHEEL_SELF_TILE_WIDTH_IN,
-            self::WHEEL_SELF_NAME_HEIGHT_IN, self::WHEEL_SELF_SCORE_HEIGHT_IN, self::WHEEL_SELF_RADIUS_IN,
-            true, $selfReadable,
-        );
+        foreach ($columns as [$left, $width, $heading, $note]) {
+            $box = $slide->createRichTextShape();
+            $this->position($box, $left, self::WHEEL_HEADING_TOP_IN, $width, self::WHEEL_HEADING_HEIGHT_IN);
+            $box->setInsetLeft(0)->setInsetRight(0);
+            $box->setWrap(RichText::WRAP_SQUARE);
+            $para = $box->getActiveParagraph();
+            $this->font($para->createTextRun($heading), 10.5, true, self::NAVY);
+            if ($note !== '') {
+                $this->font($para->createTextRun('　'.$note), 8, false, self::MUTED);
+            }
 
-        $competitors = array_slice($companies, 1);
-        $n = count($competitors);
-        $tileWidth = $n > 0 ? self::CONTENT_WIDTH_IN / $n : self::CONTENT_WIDTH_IN;
-        $rowTop = $selfBottom + self::WHEEL_ROW_GAP_IN;
-
-        $competitorBottom = $rowTop;
-        foreach ($competitors as $i => $company) {
-            $cx = self::LEFT_IN + $tileWidth * $i + $tileWidth / 2;
-            $bottom = $this->addWheelCompanyTile(
-                $slide, $company, $axes, $i, $cx,
-                $rowTop, $tileWidth - 0.1,
-                self::WHEEL_COMPETITOR_NAME_HEIGHT_IN, self::WHEEL_COMPETITOR_SCORE_HEIGHT_IN, self::WHEEL_COMPETITOR_RADIUS_IN,
-                false,
-            );
-            $competitorBottom = max($competitorBottom, $bottom);
+            $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+            $this->position($rule, $left, self::WHEEL_HEADING_TOP_IN + self::WHEEL_HEADING_HEIGHT_IN, $width, 0.012);
+            $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
+            $rule->getBorder()->setLineStyle(Border::LINE_NONE);
         }
-
-        return $competitorBottom + self::WHEEL_TABLE_GAP_IN;
     }
 
     /**
-     * 1社ぶんの[名前+総合点ラベル]と、その下のヘキサゴン(依頼CB-1)を描く。
-     * 社名の折り返しは依頼BN由来のwrapOrEllipsizeForLines/
-     * renderBalancedLines(mb_strwidth基準)をそのまま使う(新しい折り返し
-     * 処理を作らない、依頼者指定)。
+     * 左の列: 自社。企業名(最大2行)→合計点→大きなヘキサゴン(頂点に領域名と
+     * 数値)。依頼CD-3(判定不成立)・依頼CH-1b(材料不足)のときは、合計点・
+     * ヘキサゴン・頂点ラベルを描かず、この領域全体を専用の文言1つに置き換える
+     * (0という数字を判定結果であるかのように見せない)。
      *
+     * @param  array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}  $company
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
-     * @return float  このタイルが実際に使う一番下のY(次のブロックがここから
-     *                描き始められる)。自社は下側の頂点ラベルの下端まで、
-     *                競合はヘキサゴンの下端まで(ラベルを描かないため)。
      */
-    private function addWheelCompanyTile(
-        Slide $slide,
-        array $company,
-        array $axes,
-        ?int $competitorIndex,
-        float $cx,
-        float $labelTop,
-        float $tileWidth,
-        float $nameHeight,
-        float $scoreHeight,
-        float $radius,
-        bool $isSelf,
-        bool $selfReadable = true,
-    ): float {
-        $nameSize = $isSelf ? 11.0 : 8.0;
-        $scoreSize = $isSelf ? 13.0 : 9.5;
-        $left = $cx - $tileWidth / 2;
+    private function addWheelSelfColumn(Slide $slide, array $company, array $axes, bool $selfReadable): void
+    {
+        $left = self::WHEEL_SELF_LEFT_IN;
+        $width = self::WHEEL_SELF_WIDTH_IN;
+        $cx = $left + $width / 2;
+        $radius = self::WHEEL_SELF_RADIUS_IN;
 
         $nameBox = $slide->createRichTextShape();
-        $this->position($nameBox, $left, $labelTop, $tileWidth, $nameHeight);
+        $this->position($nameBox, $left, self::WHEEL_BODY_TOP_IN, $width, self::WHEEL_SELF_NAME_HEIGHT_IN);
         $nameBox->setWrap(RichText::WRAP_SQUARE);
+        $nameBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $nameBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $nameText = $this->wrapOrEllipsizeForLines($company['name'], $tileWidth, $nameSize, true, 2);
-        $this->renderBalancedLines($nameBox->getActiveParagraph(), $nameText, $tileWidth, $nameSize, true, $isSelf ? self::NAVY : self::MUTED);
+        $nameText = $this->wrapOrEllipsizeForLines($company['name'], $width, 13.0, true, 2);
+        $this->renderBalancedLines($nameBox->getActiveParagraph(), $nameText, $width, 13.0, true, self::NAVY);
 
-        $scoreTop = $labelTop + $nameHeight;
-        $scoreBottom = $scoreTop + $scoreHeight;
-        // 依頼CC-1(必須、実機画像化で発見した不具合の修正): 自社は
-        // ヘキサゴンの上頂点自体を、総合点ラベルの下端からさらに
-        // WHEEL_LABEL_RESERVE_INだけ下げる ―― ここを名前・総合点ラベルの
-        // 直下(=旧実装、$scoreBottomそのもの)にすると、頂点ラベルが
-        // 総合点の数字の上に重なって表示される(WHEEL_SELF_RADIUS_INの
-        // docblock参照)。競合はラベルを描かないため、そのままでよい。
-        $hexTopVertexY = $isSelf ? $scoreBottom + self::WHEEL_LABEL_RESERVE_IN : $scoreBottom;
-        $hexCenterY = $hexTopVertexY + $radius;
+        $scoreTop = self::WHEEL_BODY_TOP_IN + self::WHEEL_SELF_NAME_HEIGHT_IN;
+        $scoreBottom = $scoreTop + self::WHEEL_SELF_SCORE_HEIGHT_IN;
+        $hexCenterY = $scoreBottom + self::WHEEL_LABEL_RESERVE_IN + $radius;
+        $bottom = $hexCenterY + $radius + self::WHEEL_LABEL_RESERVE_IN;
 
-        // 依頼CD-3(必須): 自社のブランド・ホイール判定が成立していない
-        // (selfReadable===false)とき、総合点の数字("0 / 24")・ヘキサゴン・
-        // 軸ラベルを一切描かず、この領域全体を専用の文言1つに置き換える
-        // ―― 0という数字を判定結果であるかのように見せないため
-        // (config('admin_comparison_pptx.self_data_unavailable_notice')
-        // docblock参照)。
-        //
-        // 依頼CH-1b(2026-10-01): status不成立(上記)とは独立に、材料の量
-        // (company['material_sufficient'])が閾値未満のときも同様に数字を
-        // 置き換える ―― こちらは自社・競合の両方が対象(実測analysis_id=148の
-        // しんきん中央金庫のように、status=successで判定は成立していても
-        // 材料が空同然で0/24になるケースのため)。文言はstatus不成立の場合と
-        // 区別する(config('brand_wheel.insufficient_material_notice')、
-        // config/brand_wheel.php側のdocblockに両者の違いを明記)。
-        $selfStatusUnavailable = $isSelf && ! $selfReadable;
-        $materialInsufficient = ! ($company['material_sufficient'] ?? true);
-
-        if ($selfStatusUnavailable || $materialInsufficient) {
-            $bottom = $isSelf ? $hexCenterY + $radius + self::WHEEL_LABEL_RESERVE_IN : $hexCenterY + $radius;
-
-            $noticeBox = $slide->createRichTextShape();
-            $this->position($noticeBox, $left, $scoreTop, $tileWidth, $bottom - $scoreTop);
-            $noticeBox->setWrap(RichText::WRAP_SQUARE);
-            $noticeBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-            $noticePara = $noticeBox->getActiveParagraph();
-            $noticePara->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $noticeText = $selfStatusUnavailable
+        $unavailable = ! $selfReadable || ! ($company['material_sufficient'] ?? true);
+        if ($unavailable) {
+            $noticeText = ! $selfReadable
                 ? (string) config('admin_comparison_pptx.self_data_unavailable_notice')
                 : (string) config('brand_wheel.insufficient_material_notice');
-            $this->font($noticePara->createTextRun($noticeText), 10.5, true, self::GAP_TEXT);
+            $this->addCenteredNotice($slide, $noticeText, $left, $scoreTop, $width, $bottom - $scoreTop, 12.0);
 
-            return $bottom;
+            return;
         }
 
         $scoreBox = $slide->createRichTextShape();
-        $this->position($scoreBox, $left, $scoreTop, $tileWidth, $scoreHeight);
+        $this->position($scoreBox, $left, $scoreTop, $width, self::WHEEL_SELF_SCORE_HEIGHT_IN);
+        $scoreBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $scoreBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $scoreRun = $scoreBox->getActiveParagraph()->createTextRun("{$company['matched']} / {$company['total']}");
-        $this->font($scoreRun, $scoreSize, true, $isSelf ? self::COPPER : self::MUTED);
+        $this->font($scoreBox->getActiveParagraph()->createTextRun("{$company['matched']} / {$company['total']}"), 20, true, self::COPPER);
 
-        $axisCounts = array_map(fn (array $axis) => [
-            $isSelf ? $axis['self_count'] : ($axis['competitor_counts'][$competitorIndex] ?? 0),
-            $axis['denominator'],
-        ], $axes);
-
-        $this->drawBrandWheelHexagon($slide, $cx, $hexCenterY, $radius, $axisCounts, $isSelf ? self::NAVY : self::COPPER, $isSelf ? 2.0 : 1.0);
-
-        // 依頼CC-1(必須): 自社(大きい図)には必ず軸のラベルを出す。競合
-        // (小さい図)には出さない判断(addLegend()の一文で代える、
-        // WHEEL_LABEL_MARGIN_INのdocblock参照)。
-        if ($isSelf) {
-            $this->addWheelAxisLabels($slide, $cx, $hexCenterY, $radius, array_column($axes, 'name'));
-
-            // 下側の頂点ラベルの下端まで、このタイルの領域として確保する
-            // (競合行がラベルに重ならないようにする、WHEEL_ROW_GAP_INの
-            // docblock参照)。
-            return $hexCenterY + $radius + self::WHEEL_LABEL_RESERVE_IN;
-        }
-
-        return $hexCenterY + $radius;
+        $axisCounts = array_map(fn (array $axis) => [$axis['self_count'], $axis['denominator']], $axes);
+        $this->drawBrandWheelHexagon($slide, $cx, $hexCenterY, $radius, $axisCounts, self::NAVY, 2.0);
+        $this->addWheelAxisLabels($slide, $cx, $hexCenterY, $radius, $axes);
     }
 
     /**
-     * 依頼CC-1(必須): 六角形の外側に6領域のラベルを置く。ラベルは
-     * config('brand_wheel.axes.*.name_ja')由来の$axisNames(直書きしない、
-     * AdminComparisonPptxDataBuilder::buildAxisMatrix()がconfig('brand_wheel.
-     * axes')の順で組み立てた$data['axes']をそのまま使う)。頂点の並び順は
-     * drawBrandWheelHexagon()のhexVertex()と全く同じ($axisNames[k]が
-     * 頂点kに対応する)ため、下の領域別数値表の行順(同じ$axesをそのまま
-     * 使う)と必ず一致する
-     * (test_wheel_axis_label_order_matches_the_matrix_table_row_orderで担保)。
+     * 中央の列: 競合。1〜3社は縦1列(1社ごとに[ヘキサゴン｜記号＋企業名＋
+     * 合計点]を1組)、4〜5社は2列(ヘキサゴンの下に企業名と合計点)に並べる。
+     * 各社の記号(A〜E)は右の表のヘッダーと同じ。
      *
-     * @param  list<string>  $axisNames  6領域ぶん、config('brand_wheel.axes')の順
+     * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $competitors
+     * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
      */
-    private function addWheelAxisLabels(Slide $slide, float $cx, float $cy, float $radius, array $axisNames): void
+    private function addWheelCompetitorColumn(Slide $slide, array $competitors, array $axes): void
+    {
+        $count = count($competitors);
+        if ($count === 0) {
+            return;
+        }
+
+        $twoColumns = $count > self::WHEEL_COMPETITOR_SINGLE_COLUMN_MAX;
+        $rows = $twoColumns ? (int) ceil($count / 2) : $count;
+        $rowHeight = min(self::WHEEL_COMPETITOR_ROW_MAX_HEIGHT_IN, (self::WHEEL_BODY_BOTTOM_IN - self::WHEEL_BODY_TOP_IN) / $rows);
+
+        foreach ($competitors as $i => $company) {
+            $row = $twoColumns ? intdiv($i, 2) : $i;
+            $top = self::WHEEL_BODY_TOP_IN + $row * $rowHeight;
+            $left = self::WHEEL_COMPETITOR_LEFT_IN + ($twoColumns ? ($i % 2) * self::WHEEL_COMPETITOR_DOUBLE_TILE_WIDTH_IN : 0.0);
+
+            if ($twoColumns) {
+                $this->addCompactCompetitorTile($slide, $company, $axes, $i, $left, $top, $rowHeight);
+            } else {
+                $this->addRowCompetitorTile($slide, $company, $axes, $i, $left, $top, $rowHeight);
+            }
+        }
+    }
+
+    /**
+     * 縦1列のとき: ヘキサゴンを左、記号＋企業名(最大2行)と合計点を右に置く。
+     * 材料不足(依頼CH-1b)のときは、ヘキサゴンと合計点を描かず、企業名の
+     * 下に専用の文言を置く。
+     *
+     * @param  array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}  $company
+     * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
+     */
+    private function addRowCompetitorTile(Slide $slide, array $company, array $axes, int $index, float $left, float $top, float $rowHeight): void
+    {
+        $width = self::WHEEL_COMPETITOR_WIDTH_IN;
+        $radius = self::WHEEL_COMPETITOR_SINGLE_RADIUS_IN;
+        $centerY = $top + $rowHeight / 2;
+
+        if (! ($company['material_sufficient'] ?? true)) {
+            $this->addCompetitorNameBox($slide, $company['name'], $index, $left, $top + 0.05, $width, 0.5, 9.0, Alignment::HORIZONTAL_LEFT);
+            $this->addCenteredNotice($slide, (string) config('brand_wheel.insufficient_material_notice'), $left, $top + 0.58, $width, max(0.3, $rowHeight - 0.65), 8.0, Alignment::HORIZONTAL_LEFT);
+
+            return;
+        }
+
+        $textLeft = $left + 1.25;
+        $textWidth = $width - 1.25;
+        $this->addCompetitorNameBox($slide, $company['name'], $index, $textLeft, $centerY - 0.5, $textWidth, 0.52, 9.0, Alignment::HORIZONTAL_LEFT);
+
+        $scoreBox = $slide->createRichTextShape();
+        $this->position($scoreBox, $textLeft, $centerY + 0.04, $textWidth, 0.3);
+        $scoreBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_LEFT);
+        $this->font($scoreBox->getActiveParagraph()->createTextRun("{$company['matched']} / {$company['total']}"), 13, true, self::NAVY);
+
+        $axisCounts = array_map(fn (array $axis) => [$axis['competitor_counts'][$index] ?? 0, $axis['denominator']], $axes);
+        $this->drawBrandWheelHexagon($slide, $left + 0.6, $centerY, $radius, $axisCounts, self::COPPER, 1.25);
+    }
+
+    /**
+     * 2列のとき(4〜5社): 記号＋企業名(最大2行)→ヘキサゴン→合計点を縦に積む。
+     *
+     * @param  array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}  $company
+     * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
+     */
+    private function addCompactCompetitorTile(Slide $slide, array $company, array $axes, int $index, float $left, float $top, float $rowHeight): void
+    {
+        $width = self::WHEEL_COMPETITOR_DOUBLE_TILE_WIDTH_IN - 0.05;
+        $radius = self::WHEEL_COMPETITOR_DOUBLE_RADIUS_IN;
+        $nameHeight = 0.38;
+
+        $this->addCompetitorNameBox($slide, $company['name'], $index, $left, $top, $width, $nameHeight, 8.0, Alignment::HORIZONTAL_CENTER);
+
+        if (! ($company['material_sufficient'] ?? true)) {
+            $this->addCenteredNotice($slide, (string) config('brand_wheel.insufficient_material_notice'), $left, $top + $nameHeight + 0.02, $width, max(0.3, $rowHeight - $nameHeight - 0.1), 8.0);
+
+            return;
+        }
+
+        $centerY = $top + $nameHeight + 0.04 + $radius;
+        $axisCounts = array_map(fn (array $axis) => [$axis['competitor_counts'][$index] ?? 0, $axis['denominator']], $axes);
+        $this->drawBrandWheelHexagon($slide, $left + $width / 2, $centerY, $radius, $axisCounts, self::COPPER, 1.0);
+
+        $scoreBox = $slide->createRichTextShape();
+        $this->position($scoreBox, $left, $centerY + $radius + 0.02, $width, 0.24);
+        $scoreBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        $this->font($scoreBox->getActiveParagraph()->createTextRun("{$company['matched']} / {$company['total']}"), 11, true, self::NAVY);
+    }
+
+    /**
+     * 競合の「記号＋企業名」。企業名は既存の折り返し・省略処理
+     * (wrapOrEllipsizeForLines/renderBalancedLines、依頼BN-3由来)で最大2行に
+     * 収め、収まらない極端に長い名前だけ省略記号にする。
+     */
+    private function addCompetitorNameBox(Slide $slide, string $name, int $index, float $left, float $top, float $width, float $height, float $sizePt, string $horizontal): void
+    {
+        $box = $slide->createRichTextShape();
+        $this->position($box, $left, $top, $width, $height);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $para = $box->getActiveParagraph();
+        $para->getAlignment()->setHorizontal($horizontal);
+
+        $this->font($para->createTextRun($this->competitorSymbol($index).'　'), $sizePt + 1, true, self::COPPER);
+        $nameWidth = $width - 0.3;
+        $text = $this->wrapOrEllipsizeForLines($name, $nameWidth, $sizePt, true, 2);
+        $this->renderBalancedLines($para, $text, $nameWidth, $sizePt, true, self::NAVY);
+    }
+
+    /** 競合の記号(0番目=A)。表のヘッダーと中央の列で共通。 */
+    private function competitorSymbol(int $index): string
+    {
+        $symbols = (string) config('admin_comparison_pptx.wheel_competitor_symbols');
+
+        return mb_substr($symbols, $index, 1) !== '' ? mb_substr($symbols, $index, 1) : (string) ($index + 1);
+    }
+
+    /**
+     * 数字の代わりに出す文言(判定不成立・材料不足)を、指定の領域の中央に置く。
+     */
+    private function addCenteredNotice(Slide $slide, string $text, float $left, float $top, float $width, float $height, float $sizePt, string $horizontal = Alignment::HORIZONTAL_CENTER): void
+    {
+        $box = $slide->createRichTextShape();
+        $this->position($box, $left, $top, $width, $height);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $para = $box->getActiveParagraph();
+        $para->getAlignment()->setHorizontal($horizontal);
+        $this->font($para->createTextRun($text), $sizePt, true, self::GAP_TEXT);
+    }
+
+    /**
+     * 依頼CC-1(必須)・依頼CL-1: 六角形の外側に6領域のラベル(領域名と数値、
+     * 例「活動的魅力 4/4」)を置く。領域名はconfig('brand_wheel.axes.*.name_ja')
+     * 由来($axes[*]['name'])で、頂点の並び順はdrawBrandWheelHexagon()の
+     * hexVertex()と全く同じ($axes[k]が頂点kに対応する)ため、右の表の行順
+     * (同じ$axes)と必ず一致する。
+     *
+     * @param  list<array{name: string, denominator: int, self_count: int}>  $axes  6領域ぶん、config('brand_wheel.axes')の順
+     */
+    private function addWheelAxisLabels(Slide $slide, float $cx, float $cy, float $radius, array $axes): void
     {
         $labelRadius = $radius + self::WHEEL_LABEL_MARGIN_IN;
+        $w = self::WHEEL_LABEL_WIDTH_IN;
+        $h = self::WHEEL_LABEL_HEIGHT_IN;
 
-        foreach ($axisNames as $k => $name) {
+        foreach ($axes as $k => $axis) {
             [$x, $y] = $this->hexVertex($cx, $cy, $labelRadius, $k);
             $box = $slide->createRichTextShape();
+            $box->setInsetLeft(0)->setInsetRight(0);
 
             // k=0(真上)は中央揃えで上、k=3(真下)は中央揃えで下、それ以外は
             // 頂点が左右どちら側にあるかで揃えを変え、文字が図に重ならず
             // 外側へ伸びるようにする。
             if ($k === 0) {
-                $this->position($box, $x - self::WHEEL_LABEL_WIDTH_IN / 2, $y - self::WHEEL_LABEL_HEIGHT_IN - 0.02, self::WHEEL_LABEL_WIDTH_IN, self::WHEEL_LABEL_HEIGHT_IN);
+                $this->position($box, $x - $w / 2, $y - $h, $w, $h);
                 $align = Alignment::HORIZONTAL_CENTER;
             } elseif ($k === 3) {
-                $this->position($box, $x - self::WHEEL_LABEL_WIDTH_IN / 2, $y + 0.02, self::WHEEL_LABEL_WIDTH_IN, self::WHEEL_LABEL_HEIGHT_IN);
+                $this->position($box, $x - $w / 2, $y, $w, $h);
                 $align = Alignment::HORIZONTAL_CENTER;
             } elseif ($x > $cx) {
-                $this->position($box, $x, $y - self::WHEEL_LABEL_HEIGHT_IN / 2, self::WHEEL_LABEL_WIDTH_IN, self::WHEEL_LABEL_HEIGHT_IN);
+                $this->position($box, $x, $y - $h / 2, $w, $h);
                 $align = Alignment::HORIZONTAL_LEFT;
             } else {
-                $this->position($box, $x - self::WHEEL_LABEL_WIDTH_IN, $y - self::WHEEL_LABEL_HEIGHT_IN / 2, self::WHEEL_LABEL_WIDTH_IN, self::WHEEL_LABEL_HEIGHT_IN);
+                $this->position($box, $x - $w, $y - $h / 2, $w, $h);
                 $align = Alignment::HORIZONTAL_RIGHT;
             }
 
             $box->getActiveParagraph()->getAlignment()->setHorizontal($align);
-            $this->font($box->getActiveParagraph()->createTextRun($name), self::WHEEL_LABEL_FONT_SIZE, true, self::NAVY);
+            $this->font($box->getActiveParagraph()->createTextRun($axis['name'].' '), self::WHEEL_LABEL_FONT_SIZE, true, self::NAVY);
+            $this->font($box->getActiveParagraph()->createTextRun("{$axis['self_count']}/{$axis['denominator']}"), self::WHEEL_LABEL_FONT_SIZE, true, self::COPPER);
         }
     }
 
@@ -635,7 +715,23 @@ class AdminComparisonPptxGenerator
         }
     }
 
-    private function drawLine(Slide $slide, array $from, array $to, string $colorRgb, float $lineWidthPt): void
+    /**
+     * 長方形の枠線。PhpPresentationのAutoShapeは枠線の色・太さ・点線を書き出さない
+     * (常に枠なし)ため、直線4本で描く(外部参照を持たない)。
+     */
+    private function drawRectOutline(Slide $slide, float $left, float $top, float $width, float $height, string $colorRgb, float $lineWidthPt, ?string $dashStyle = null): void
+    {
+        $tl = [$left, $top];
+        $tr = [$left + $width, $top];
+        $br = [$left + $width, $top + $height];
+        $bl = [$left, $top + $height];
+        $this->drawLine($slide, $tl, $tr, $colorRgb, $lineWidthPt, $dashStyle);
+        $this->drawLine($slide, $tr, $br, $colorRgb, $lineWidthPt, $dashStyle);
+        $this->drawLine($slide, $br, $bl, $colorRgb, $lineWidthPt, $dashStyle);
+        $this->drawLine($slide, $bl, $tl, $colorRgb, $lineWidthPt, $dashStyle);
+    }
+
+    private function drawLine(Slide $slide, array $from, array $to, string $colorRgb, float $lineWidthPt, ?string $dashStyle = null): void
     {
         $line = $slide->createLineShape(
             (int) round($from[0] * self::PX_PER_INCH),
@@ -644,6 +740,9 @@ class AdminComparisonPptxGenerator
             (int) round($to[1] * self::PX_PER_INCH),
         );
         $line->getBorder()->setLineWidth($lineWidthPt)->setColor(new Color('FF'.$colorRgb));
+        if ($dashStyle !== null) {
+            $line->getBorder()->setDashStyle($dashStyle);
+        }
     }
 
     /**
@@ -713,6 +812,7 @@ class AdminComparisonPptxGenerator
         $slide->getBackground();
 
         $buildSlide($slide);
+        $this->normalizeVerticalCentering($slide);
 
         $writer = new PowerPoint2007($presentation);
         $tmpPath = tempnam(sys_get_temp_dir(), 'pptx');
@@ -721,6 +821,28 @@ class AdminComparisonPptxGenerator
         unlink($tmpPath);
 
         return $bytes;
+    }
+
+    /**
+     * 依頼CL(2026-10-05): RichText::setVerticalAlignCenter()は、書き出し時に
+     * anchorCtr="1"(テキストのかたまりを水平方向にも中央に置く)になり、
+     * 左揃え・右揃えの文字まで枠の中央へ寄ってしまう(実機画像化で発覚)。
+     * 縦中央だけが欲しいので、書き出し前に、縦の位置はanchor="ctr"
+     * (段落の縦揃え)で表し、anchorCtrは0に戻す。文字の左右の位置は各段落の
+     * 水平揃え(明示的に指定したもの)だけで決まる。
+     */
+    private function normalizeVerticalCentering(Slide $slide): void
+    {
+        foreach ($slide->getShapeCollection() as $shape) {
+            if (! $shape instanceof RichText || $shape->getVerticalAlignCenter() !== RichText::VALIGN_CENTER) {
+                continue;
+            }
+
+            $shape->setVerticalAlignCenter(RichText::VALIGN_NOTCENTER);
+            foreach ($shape->getParagraphs() as $paragraph) {
+                $paragraph->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
+            }
+        }
     }
 
     private function addKicker(Slide $slide): void
@@ -741,31 +863,21 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
-     */
-    /**
-     * 依頼CB-1(2026-09-24): 旧「領域別の発信量」マトリクス(依頼BM〜BQ)を
-     * 縮小し、ヘキサゴンの下に置く数値の凡例として使う ―― 6領域
-     * (config('brand_wheel.axes')順)×各社、分母4固定のため必ず埋まる。
-     * $tableTopは、上のヘキサゴン列の実際の高さ(自社・競合の半径やラベル
-     * 行数で変わりうる)に応じてaddWheelHexagons()が返す値をそのまま使う。
+     * 依頼CL-1(2026-10-05): 右の列の「領域別の発信量」表。6領域
+     * (config('brand_wheel.axes')順)×(自社＋競合)に、末尾の「合計」の行
+     * (新規、各社の○の数/24)を加える。分母は領域ごとに4固定のため必ず
+     * 埋まる。ヘッダーは企業名ではなく記号(自社/A〜E)にして、列が最大6に
+     * なっても幅が崩れないようにする(企業名は中央の列に同じ記号つきで
+     * 出る)。
      *
      * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
      */
-    private function addMatrixSection(Slide $slide, array $companies, array $axes, float $tableTop, bool $selfReadable = true): void
+    private function addMatrixSection(Slide $slide, array $companies, array $axes, bool $selfReadable = true): void
     {
-        $heading = $slide->createRichTextShape();
-        $this->position($heading, self::LEFT_IN, $tableTop - 0.28, self::CONTENT_WIDTH_IN, 0.24);
-        $run = $heading->getActiveParagraph()->createTextRun('領域別の発信量');
-        $this->font($run, 10.5, true, self::NAVY);
-        $noteRun = $heading->getActiveParagraph()->createTextRun('　各領域4項目・○と判定できた数');
-        $this->font($noteRun, 8, false, self::MUTED);
-
-        $this->addLegend($slide, $tableTop - 0.28);
-
+        $tableTop = self::WHEEL_BODY_TOP_IN + 0.2;
         $companyCount = count($companies);
-        $colWidth = ($companyCount > 0) ? (self::CONTENT_WIDTH_IN - self::AREA_COL_WIDTH_IN) / $companyCount : 0;
+        $colWidth = ($companyCount > 0) ? (self::WHEEL_TABLE_WIDTH_IN - self::AREA_COL_WIDTH_IN) / $companyCount : 0;
 
         $this->addMatrixHeader($slide, $companies, $colWidth, $tableTop);
 
@@ -773,34 +885,45 @@ class AdminComparisonPptxGenerator
             $top = $tableTop + self::TABLE_HEADER_HEIGHT_IN + $i * self::TABLE_ROW_HEIGHT_IN;
             $this->addMatrixRow($slide, $axis, $companies, $colWidth, $top, $i % 2 === 1, $selfReadable);
         }
+
+        $totalTop = $tableTop + self::TABLE_HEADER_HEIGHT_IN + count($axes) * self::TABLE_ROW_HEIGHT_IN;
+        $this->addMatrixTotalRow($slide, $companies, $colWidth, $totalTop, $selfReadable);
+
+        $this->addLegend($slide, $totalTop + self::TABLE_ROW_HEIGHT_IN + 0.15, $companyCount - 1);
     }
 
     /**
      * 依頼BN-3(2026-09-09): オレンジの網かけ・競合内の最高値の太字が
      * 何を意味するか、スライドのどこにも説明が無かった(初見の商談相手には
-     * 伝わらない、依頼者指摘)。見出しと同じ行の右側に凡例を置く。
+     * 伝わらない、依頼者指摘)。表の下に凡例を置く。依頼CL-1で、列が記号
+     * (自社/A〜)になったため、記号の説明を加えた。
      *
      * 濃淡(競合内の最高値を太字にする表現)は残す判断とした(依頼者の
      * 推し・依頼BN-3参照)。全社が同値の行では該当する競合全員が太字に
-     * なる(例: 情緒的便益で競合3社が同値)が、これは「その領域の競合内
-     * 最高値」という凡例の説明どおりの正しい表示であり、誤りではないため。
+     * なるが、これは「その領域の競合内最高値」という凡例の説明どおりの
+     * 正しい表示であり、誤りではないため。
      */
-    private function addLegend(Slide $slide, float $top): void
+    private function addLegend(Slide $slide, float $top, int $competitorCount): void
     {
         $box = $slide->createRichTextShape();
-        $this->position($box, self::LEFT_IN + 6.6, $top, self::CONTENT_WIDTH_IN - 6.6, 0.24);
-        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-        $para = $box->getActiveParagraph();
-        $para->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        $this->position($box, self::WHEEL_TABLE_LEFT_IN, $top, self::WHEEL_TABLE_WIDTH_IN, 0.75);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setInsetLeft(0)->setInsetRight(0);
 
-        $this->font($para->createTextRun('■'), 7, false, self::GAP_TEXT);
-        $this->font($para->createTextRun(' 自社が競合の最高値未達　'), 7, false, self::MUTED);
-        $this->font($para->createTextRun('■'), 7, true, self::NAVY);
-        $this->font($para->createTextRun(' 競合内の最高値　'), 7, false, self::MUTED);
-        // 依頼CC-1: 競合(小さい図)には軸のラベルを置かないため
-        // (addWheelCompanyTile参照)、軸の並びが自社の図と同じであることを
-        // ここで示す。
-        $this->font($para->createTextRun('／軸の並びは自社の図と共通'), 7, false, self::MUTED);
+        $para = $box->getActiveParagraph();
+        $this->font($para->createTextRun('■'), 8, false, self::GAP_TEXT);
+        $this->font($para->createTextRun((string) config('admin_comparison_pptx.wheel_legend_gap')), 8, false, self::MUTED);
+
+        $para2 = $box->createParagraph();
+        $this->font($para2->createTextRun('■'), 8, true, self::NAVY);
+        $this->font($para2->createTextRun((string) config('admin_comparison_pptx.wheel_legend_max')), 8, false, self::MUTED);
+
+        if ($competitorCount > 0) {
+            $range = $this->competitorSymbol(0).($competitorCount > 1 ? '〜'.$this->competitorSymbol($competitorCount - 1) : '');
+            $para3 = $box->createParagraph();
+            $this->font($para3->createTextRun(sprintf((string) config('admin_comparison_pptx.wheel_legend_symbols'), $range)), 8, false, self::MUTED);
+            $this->font($para3->createTextRun((string) config('admin_comparison_pptx.wheel_legend_axis_order')), 8, false, self::MUTED);
+        }
     }
 
     /**
@@ -809,26 +932,25 @@ class AdminComparisonPptxGenerator
     private function addMatrixHeader(Slide $slide, array $companies, float $colWidth, float $top): void
     {
         $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-        $this->position($band, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, self::TABLE_HEADER_HEIGHT_IN);
+        $this->position($band, self::WHEEL_TABLE_LEFT_IN, $top, self::WHEEL_TABLE_WIDTH_IN, self::TABLE_HEADER_HEIGHT_IN);
         $band->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::NAVY));
         $band->getBorder()->setLineStyle(Border::LINE_NONE);
 
         $areaBox = $slide->createRichTextShape();
-        $this->position($areaBox, self::LEFT_IN + 0.1, $top, self::AREA_COL_WIDTH_IN - 0.1, self::TABLE_HEADER_HEIGHT_IN);
+        $this->position($areaBox, self::WHEEL_TABLE_LEFT_IN + 0.1, $top, self::AREA_COL_WIDTH_IN - 0.1, self::TABLE_HEADER_HEIGHT_IN);
+        $areaBox->setInsetLeft(0)->setInsetRight(0);
         $areaBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $this->font($areaBox->getActiveParagraph()->createTextRun('領域'), 9, true, self::WHITE);
 
         foreach ($companies as $i => $company) {
-            $left = self::LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
+            $left = self::WHEEL_TABLE_LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
             $box = $slide->createRichTextShape();
             $this->position($box, $left, $top, $colWidth, self::TABLE_HEADER_HEIGHT_IN);
-            $box->setWrap(RichText::WRAP_SQUARE);
+            $box->setInsetLeft(0)->setInsetRight(0);
             $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
             $box->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            // 依頼BM-5: ヘッダーは1行運用(表を小さくしたため2行は許さない)。
-            // 収まらない極端に長い社名だけ省略記号にする。
-            $text = $this->wrapOrEllipsizeForLines($company['name'], $colWidth, 8.5, true, 1);
-            $this->font($box->getActiveParagraph()->createTextRun($text), 8.5, true, self::WHITE);
+            $text = $company['is_self'] ? (string) config('admin_comparison_pptx.wheel_table_self_header') : $this->competitorSymbol($i - 1);
+            $this->font($box->getActiveParagraph()->createTextRun($text), 9, true, self::WHITE);
         }
     }
 
@@ -840,25 +962,26 @@ class AdminComparisonPptxGenerator
     {
         if ($isBanded) {
             $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-            $this->position($band, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, self::TABLE_ROW_HEIGHT_IN);
+            $this->position($band, self::WHEEL_TABLE_LEFT_IN, $top, self::WHEEL_TABLE_WIDTH_IN, self::TABLE_ROW_HEIGHT_IN);
             $band->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::BAND));
             $band->getBorder()->setLineStyle(Border::LINE_NONE);
         }
 
         $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-        $this->position($rule, self::LEFT_IN, $top + self::TABLE_ROW_HEIGHT_IN - 0.006, self::CONTENT_WIDTH_IN, 0.006);
+        $this->position($rule, self::WHEEL_TABLE_LEFT_IN, $top + self::TABLE_ROW_HEIGHT_IN - 0.006, self::WHEEL_TABLE_WIDTH_IN, 0.006);
         $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
         $rule->getBorder()->setLineStyle(Border::LINE_NONE);
 
         $areaNameBox = $slide->createRichTextShape();
-        $this->position($areaNameBox, self::LEFT_IN + 0.1, $top, self::AREA_COL_WIDTH_IN - 0.1, self::TABLE_ROW_HEIGHT_IN);
+        $this->position($areaNameBox, self::WHEEL_TABLE_LEFT_IN + 0.1, $top, self::AREA_COL_WIDTH_IN - 0.1, self::TABLE_ROW_HEIGHT_IN);
+        $areaNameBox->setInsetLeft(0)->setInsetRight(0);
         $areaNameBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $this->font($areaNameBox->getActiveParagraph()->createTextRun($axis['name']), 9, true, self::BODY_TEXT);
 
         $maxCompetitor = $axis['competitor_counts'] === [] ? 0 : max($axis['competitor_counts']);
 
         foreach ($companies as $i => $company) {
-            $left = self::LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
+            $left = self::WHEEL_TABLE_LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
             $count = $company['is_self'] ? $axis['self_count'] : ($axis['competitor_counts'][$i - 1] ?? 0);
 
             // 依頼CD-3(必須): 自社が判定不能(selfReadable===false)のとき、
@@ -871,9 +994,9 @@ class AdminComparisonPptxGenerator
             // 依頼CH-1b(2026-10-01): status不成立(上記)とは独立に、材料
             // (company['material_sufficient'])が閾値未満のときも同じく
             // 「－」にする ―― 自社・競合の両方が対象。
-            $materialInsufficient = ! ($company['material_sufficient'] ?? true);
+            $unavailable = ($company['is_self'] && ! $selfReadable) || ! ($company['material_sufficient'] ?? true);
 
-            if (($company['is_self'] && ! $selfReadable) || $materialInsufficient) {
+            if ($unavailable) {
                 [$bg, $fg] = [null, self::DIM];
             } elseif ($company['is_self'] && $axis['self_gap']) {
                 [$bg, $fg] = [self::GAP_BG, self::GAP_TEXT];
@@ -894,10 +1017,53 @@ class AdminComparisonPptxGenerator
 
             $cell = $slide->createRichTextShape();
             $this->position($cell, $left, $top, $colWidth, self::TABLE_ROW_HEIGHT_IN);
+            $cell->setInsetLeft(0)->setInsetRight(0);
             $cell->setVerticalAlignCenter(RichText::VALIGN_CENTER);
             $cell->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $cellText = (($company['is_self'] && ! $selfReadable) || $materialInsufficient) ? '－' : "{$count} / {$axis['denominator']}";
+            $cellText = $unavailable ? '－' : "{$count}/{$axis['denominator']}";
             $this->font($cell->getActiveParagraph()->createTextRun($cellText), 9, true, $fg);
+        }
+    }
+
+    /**
+     * 依頼CL-1(新規): 表の末尾の「合計」の行。各社の○の数/24
+     * (company['matched']/['total'] ―― 左の列・中央の列の合計点と同じ値)。
+     * 判定不成立・材料不足の会社は「－」(領域別のセルと同じ扱い)。
+     *
+     * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
+     */
+    private function addMatrixTotalRow(Slide $slide, array $companies, float $colWidth, float $top, bool $selfReadable): void
+    {
+        $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($rule, self::WHEEL_TABLE_LEFT_IN, $top, self::WHEEL_TABLE_WIDTH_IN, 0.012);
+        $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::NAVY));
+        $rule->getBorder()->setLineStyle(Border::LINE_NONE);
+
+        $labelBox = $slide->createRichTextShape();
+        $this->position($labelBox, self::WHEEL_TABLE_LEFT_IN + 0.1, $top, self::AREA_COL_WIDTH_IN - 0.1, self::TABLE_ROW_HEIGHT_IN);
+        $labelBox->setInsetLeft(0)->setInsetRight(0);
+        $labelBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $this->font($labelBox->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.wheel_table_total_label')), 9, true, self::NAVY);
+
+        foreach ($companies as $i => $company) {
+            $left = self::WHEEL_TABLE_LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
+            $unavailable = ($company['is_self'] && ! $selfReadable) || ! ($company['material_sufficient'] ?? true);
+
+            if ($company['is_self'] && ! $unavailable) {
+                $cellBg = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+                $this->position($cellBg, $left, $top + 0.012, $colWidth, self::TABLE_ROW_HEIGHT_IN - 0.012);
+                $cellBg->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::SELF_TINT));
+                $cellBg->getBorder()->setLineStyle(Border::LINE_NONE);
+            }
+
+            $cell = $slide->createRichTextShape();
+            $this->position($cell, $left, $top, $colWidth, self::TABLE_ROW_HEIGHT_IN);
+            $cell->setInsetLeft(0)->setInsetRight(0);
+            $cell->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $cell->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $text = $unavailable ? '－' : "{$company['matched']}/{$company['total']}";
+            $color = $unavailable ? self::DIM : ($company['is_self'] ? self::COPPER : self::NAVY);
+            $this->font($cell->getActiveParagraph()->createTextRun($text), 9, true, $color);
         }
     }
 
@@ -1110,212 +1276,496 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * 依頼CB-3(2026-09-24): 「自社サイトの階層図」スライド。
-     * AdminComparisonSiteHierarchyBuilderが渡す$hierarchy(URLのパス階層
-     * から組み立てた1階層目の枝)をそのまま描画するだけで、集計はこの
-     * クラスでは一切行わない。「ありません」と断定する文言は使わない
-     * (依頼者指定、必須) ―― 0件のときも
-     * config('admin_comparison_pptx.site_hierarchy_empty_text')
-     * (「巡回した範囲では...見つかりませんでした」)を使う。
+     * 依頼CL-2(2026-10-05): 「求職者が知りたい情報と、自社サイト」。
+     * 調査の選択肢(割合の高い順)を1行ずつ並べ、自社サイトの状態(確認できた
+     * /一部確認できた/確認できず/判定の対象外)と、競合の掲載社数を添える。
+     * 「足りないもの」(競合との比較で項目を選ぶ)とは逆に、アンケートを軸に
+     * する。「確認できず」の行は色で強調する。割合は長方形の横棒で示す
+     * (画像は使わない ―― 差し込みの仕組みが外部参照を拒否するため)。
+     *
+     * 依頼CD-3/CH-1b: 自社が判定不成立・材料不足のときは、表の代わりに
+     * 既存の専用文言を出す(「足りないもの」と同じ扱い)。
+     *
+     * @param  array{
+     *     self_readable: bool,
+     *     self_material_sufficient: bool,
+     *     survey_comparison: array{rows: list<array{rank: int, key: string, name: string, percentage: float, self_state: string, mapped_count: int, self_matched_count: int, competitor_count: ?int}>, competitor_total: int, excluded_competitor_count: int},
+     *     candidate_survey_source_note: string,
+     * } $data
+     */
+    public function generateSurveyComparisonSlide(array $data): string
+    {
+        return $this->renderSingleSlide(function (Slide $slide) use ($data): void {
+            $this->addKicker($slide);
+            $this->addTitle($slide, (string) config('admin_comparison_pptx.survey_comparison_title'));
+
+            if (! ($data['self_readable'] ?? true)) {
+                $this->addSelfUnavailableNotice($slide, (string) config('admin_comparison_pptx.self_data_unavailable_notice'));
+                $this->addNoteFooter($slide, $data['candidate_survey_source_note']);
+
+                return;
+            }
+
+            if (! ($data['self_material_sufficient'] ?? true)) {
+                $this->addSelfUnavailableNotice($slide, (string) config('brand_wheel.insufficient_material_notice'));
+                $this->addNoteFooter($slide, $data['candidate_survey_source_note']);
+
+                return;
+            }
+
+            $comparison = $data['survey_comparison'];
+
+            $intro = $slide->createRichTextShape();
+            $this->position($intro, self::LEFT_IN, self::SURVEY_INTRO_TOP_IN, self::CONTENT_WIDTH_IN, 0.3);
+            $intro->setInsetLeft(0)->setInsetRight(0);
+            $intro->setWrap(RichText::WRAP_SQUARE);
+            $this->font($intro->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.survey_comparison_intro')), 10, false, self::MUTED);
+
+            $this->addSurveyHeader($slide);
+            $this->addSurveyRows($slide, $comparison);
+            $this->addSurveyNotes($slide, $comparison, $data['candidate_survey_source_note']);
+        });
+    }
+
+    private function addSurveyHeader(Slide $slide): void
+    {
+        $top = self::SURVEY_TABLE_TOP_IN;
+        $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($band, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, self::SURVEY_HEADER_HEIGHT_IN);
+        $band->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::NAVY));
+        $band->getBorder()->setLineStyle(Border::LINE_NONE);
+
+        $headers = (array) config('admin_comparison_pptx.survey_comparison_headers');
+        foreach (['rank', 'name', 'percentage', 'self', 'competitor'] as $key) {
+            [$left, $width] = self::SURVEY_COLUMNS[$key];
+            $box = $slide->createRichTextShape();
+            $this->position($box, $left, $top, $width, self::SURVEY_HEADER_HEIGHT_IN);
+            $box->setInsetLeft(0)->setInsetRight(0);
+            $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            if ($key === 'rank') {
+                $box->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            }
+            $this->font($box->getActiveParagraph()->createTextRun((string) ($headers[$key] ?? '')), 9, true, self::WHITE);
+        }
+    }
+
+    /**
+     * @param  array{rows: list<array{rank: int, key: string, name: string, percentage: float, self_state: string, mapped_count: int, self_matched_count: int, competitor_count: ?int}>, competitor_total: int, excluded_competitor_count: int}  $comparison
+     */
+    private function addSurveyRows(Slide $slide, array $comparison): void
+    {
+        $rows = $comparison['rows'];
+        $maxPercentage = $rows === [] ? 0.0 : max(array_column($rows, 'percentage'));
+        $labels = (array) config('admin_comparison_pptx.survey_comparison_state_labels');
+        $symbols = (array) config('admin_comparison_pptx.survey_comparison_state_symbols');
+        [$barLeft, $barAreaWidth] = self::SURVEY_COLUMNS['percentage'];
+        $barMaxWidth = $barAreaWidth - 0.85;
+
+        foreach ($rows as $i => $row) {
+            $top = self::SURVEY_TABLE_TOP_IN + self::SURVEY_HEADER_HEIGHT_IN + $i * self::SURVEY_ROW_HEIGHT_IN;
+            $isGap = $row['self_state'] === 'unconfirmed';
+
+            if ($isGap) {
+                $this->addFilledRect($slide, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, self::SURVEY_ROW_HEIGHT_IN, self::GAP_BG);
+            } elseif ($i % 2 === 1) {
+                $this->addFilledRect($slide, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, self::SURVEY_ROW_HEIGHT_IN, self::BAND);
+            }
+            $this->addFilledRect($slide, self::LEFT_IN, $top + self::SURVEY_ROW_HEIGHT_IN - 0.006, self::CONTENT_WIDTH_IN, 0.006, self::RULE);
+
+            $this->addSurveyCell($slide, 'rank', $top, (string) $row['rank'], 9, false, self::MUTED, Alignment::HORIZONTAL_CENTER);
+            $name = $this->wrapOrEllipsizeForLines($row['name'], self::SURVEY_COLUMNS['name'][1], 9.5, false, 1);
+            $this->addSurveyCell($slide, 'name', $top, $name, 9.5, $isGap, $isGap ? self::GAP_TEXT : self::BODY_TEXT);
+
+            $barWidth = $maxPercentage > 0 ? max(0.02, $barMaxWidth * ($row['percentage'] / $maxPercentage)) : 0.02;
+            $this->addFilledRect($slide, $barLeft, $top + 0.06, $barWidth, self::SURVEY_ROW_HEIGHT_IN - 0.12, $isGap ? self::GAP_TEXT : self::COPPER);
+            $percentLabel = rtrim(rtrim(number_format($row['percentage'], 1), '0'), '.').'%';
+            $pctBox = $slide->createRichTextShape();
+            $this->position($pctBox, $barLeft + $barWidth + 0.06, $top, 0.8, self::SURVEY_ROW_HEIGHT_IN);
+            $pctBox->setInsetLeft(0)->setInsetRight(0);
+            $pctBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $this->font($pctBox->getActiveParagraph()->createTextRun($percentLabel), 9, true, $isGap ? self::GAP_TEXT : self::NAVY);
+
+            $state = $row['self_state'];
+            $stateText = trim(($symbols[$state] ?? '').' '.($labels[$state] ?? ''));
+            $stateColor = match ($state) {
+                'confirmed' => self::NAVY,
+                'partial' => self::MUTED,
+                'unconfirmed' => self::GAP_TEXT,
+                default => self::DIM,
+            };
+            $this->addSurveyCell($slide, 'self', $top, $stateText, 9, $state !== 'not_applicable', $stateColor);
+
+            if ($row['competitor_count'] === null) {
+                $competitorText = (string) config('admin_comparison_pptx.survey_comparison_competitor_none');
+                $competitorColor = self::DIM;
+            } else {
+                $competitorText = sprintf((string) config('admin_comparison_pptx.survey_comparison_competitor_template'), $row['competitor_count'], $comparison['competitor_total']);
+                $competitorColor = self::BODY_TEXT;
+            }
+            $this->addSurveyCell($slide, 'competitor', $top, $competitorText, 9, false, $competitorColor);
+        }
+    }
+
+    private function addSurveyCell(Slide $slide, string $column, float $rowTop, string $text, float $sizePt, bool $bold, string $color, string $horizontal = Alignment::HORIZONTAL_LEFT): void
+    {
+        [$left, $width] = self::SURVEY_COLUMNS[$column];
+        $box = $slide->createRichTextShape();
+        $this->position($box, $left, $rowTop, $width, self::SURVEY_ROW_HEIGHT_IN);
+        $box->setInsetLeft(0)->setInsetRight(0);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $box->getActiveParagraph()->getAlignment()->setHorizontal($horizontal);
+        $this->font($box->getActiveParagraph()->createTextRun($text), $sizePt, $bold, $color);
+    }
+
+    private function addFilledRect(Slide $slide, float $left, float $top, float $width, float $height, string $rgb): void
+    {
+        $rect = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($rect, $left, $top, $width, $height);
+        $rect->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.$rgb));
+        $rect->getBorder()->setLineStyle(Border::LINE_NONE);
+    }
+
+    /**
+     * 表の下の注記: 出典(OTOGI調べ)・巡回の範囲の断り・自社と競合の数え方の
+     * 違い・「判定の対象外」の意味・材料不足の競合を除いたこと(該当時のみ)。
+     * 1つの本文ボックスに段落で並べる(行数が変わっても重ならない)。
+     *
+     * @param  array{rows: list<array<string, mixed>>, competitor_total: int, excluded_competitor_count: int}  $comparison
+     */
+    private function addSurveyNotes(Slide $slide, array $comparison, string $sourceNote): void
+    {
+        $notes = [
+            $sourceNote,
+            sprintf((string) config('admin_comparison_pptx.survey_comparison_note_scope'), (int) config('brand_wheel.crawl_max_pages')),
+            (string) config('admin_comparison_pptx.survey_comparison_note_counting'),
+            (string) config('admin_comparison_pptx.survey_comparison_note_not_applicable'),
+        ];
+        if (($comparison['excluded_competitor_count'] ?? 0) > 0) {
+            $notes[] = sprintf((string) config('admin_comparison_pptx.survey_comparison_note_excluded'), $comparison['excluded_competitor_count']);
+        }
+
+        $box = $slide->createRichTextShape();
+        $top = self::SURVEY_TABLE_TOP_IN + self::SURVEY_HEADER_HEIGHT_IN + count($comparison['rows']) * self::SURVEY_ROW_HEIGHT_IN + 0.08;
+        $this->position($box, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, 6.93 - $top);
+        $box->setInsetLeft(0)->setInsetRight(0);
+        $box->setWrap(RichText::WRAP_SQUARE);
+
+        foreach ($notes as $i => $note) {
+            $para = $i === 0 ? $box->getActiveParagraph() : $box->createParagraph();
+            $this->font($para->createTextRun($note), 8, false, self::MUTED);
+        }
+
+        $logo = $slide->createRichTextShape();
+        $this->position($logo, self::LEFT_IN, 6.98, 3.0, 0.3);
+        $this->font($logo->getActiveParagraph()->createTextRun('LEGGENDA'), 9, true, self::MUTED);
+    }
+
+    /**
+     * 依頼CL-3(2026-10-05): 「自社サイトの階層図」を、左から右へ
+     * TOP → 第1階層(メニューの項目) → 第2階層(その先のページ)と線でつなぐ
+     * 木の形にした。AdminComparisonSiteHierarchyBuilder::buildTree()が渡す
+     * $treeをそのまま描画するだけで、集計はこのクラスでは行わない。
+     * 「ありません」と断定する文言は使わない(依頼者指定、必須) ――
+     * 巡回できたページの範囲で読み取れたことだけを書く。
+     *
+     * 点線の枝=既存の「追加を検討したい導線」(足りないものに対応するサイトの
+     * 導線名)。TOPから点線で出す。axis_unread_caveatと巡回範囲の注記は、
+     * 枝・点線の枝の量に関わらず固定位置に必ず描く(依頼CF追補)。
      *
      * @param  array{recommended_site_flow_names: list<string>}  $data
-     * @param  array{origin_url: string, branches: list<array{name: string, page_count: int, sample_pages: list<string>, name_is_url_segment: bool}>, other_branch_count: int, total_fetched_pages: int, pages_within_origin: int, outside_origin_breakdown: list<array{name: string, page_count: int}>, outside_origin_other_count: int}  $hierarchy
+     * @param  array{
+     *     mode: string,
+     *     origin_url: string,
+     *     top: array{url: string, title: ?string, headings: list<string>, menu_item_count: int},
+     *     branches: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>,
+     *     other_branch_count: int,
+     *     total_fetched_pages: int,
+     *     pages_within_origin: int,
+     *     outside_origin_count: int,
+     * } $tree
      */
-    public function generateSiteHierarchySlide(array $data, array $hierarchy): string
+    public function generateSiteHierarchySlide(array $data, array $tree): string
     {
-        return $this->renderSingleSlide(function (Slide $slide) use ($data, $hierarchy): void {
+        return $this->renderSingleSlide(function (Slide $slide) use ($data, $tree): void {
             $this->addKicker($slide);
             $this->addTitle($slide, '自社サイトの階層図');
-            $this->addHierarchyOrigin($slide, $hierarchy['origin_url']);
-            $this->addHierarchyScopeNote($slide, $hierarchy['total_fetched_pages'], $hierarchy['pages_within_origin']);
-            $bottom = $this->addHierarchyBranches($slide, $hierarchy['branches'], $hierarchy['other_branch_count'], $hierarchy['origin_url']);
-            $bottom = $this->addHierarchyRecommendations($slide, $data['recommended_site_flow_names'], $bottom);
-            // 依頼CF-2: 枝が少ないサイトで下半分が空白のまま残る不具合の
-            // 対応。起点URL配下の「外」にあった実データの内訳を「参考」
-            // として要約する(実データから出せる材料のみ、捏造しない)。
-            $this->addHierarchyOutsideBreakdown($slide, $hierarchy['outside_origin_breakdown'] ?? [], $hierarchy['outside_origin_other_count'] ?? 0, $bottom);
-            // 依頼CF-5②/CF追補: config('brand_wheel.axis_unread_caveat')
-            // (「本分析は...サイトの記述のみを拝見しています」という
-            // 診断結果全体への断り書き)は、24項目の説明ページ(1枚目)では
-            // 何の話か伝わらなかった(依頼者指摘、実機画像化で確認)。
-            // 差し込み4枚のうち実質最後の内容ページであるこの階層図
-            // スライドの末尾、可変レイアウトの外の固定位置へ移した
-            // (CF追補で「枝が多いと描かれないことがある」不具合を修正、
-            // HIERARCHY_AXIS_CAVEAT_RULE_TOP_INのdocblock参照)。
-            // $bottomは渡さない ―― 可変コンテンツの量に一切左右されない。
+            $this->addTreeNotes($slide, $tree, $data['recommended_site_flow_names'] !== []);
+
+            $topBottom = $this->addTreeTop($slide, $tree['top'], $tree['mode'] === 'menu');
+            $this->addTreeBranches($slide, $tree);
+            $this->addTreeRecommendations($slide, $data['recommended_site_flow_names'], $topBottom);
+
+            // 依頼CF-5②/CF追補: 固定位置に必ず描く(可変コンテンツの量に
+            // 一切左右されない)。
             $this->addAxisUnreadCaveat($slide);
             // 依頼CB-3必須: footerには、通常の出典行(addFooter())ではなく
-            // 巡回範囲についての注記を出す ―― この1枚の内容が「巡回できた
-            // 範囲」に限られることを、必ず読める位置に置くため
-            // (addNoteFooter()、CB-2のaddNoteFooter呼び出しと同じ仕組み)。
+            // 巡回範囲についての注記を出す。
             $note = sprintf((string) config('admin_comparison_pptx.site_hierarchy_crawl_scope_note'), (int) config('brand_wheel.crawl_max_pages'));
             $this->addNoteFooter($slide, $note);
         });
     }
 
-    private function addHierarchyOrigin(Slide $slide, string $originUrl): void
+    /**
+     * 上部の注記: 「巡回したN件のうち、この起点URL配下にあったのはM件でした。」
+     * (依頼CC-3①)＋起点URL配下でないページが1件以上あるときだけ「残りは
+     * 同じドメインの別のセクションです。」(依頼CL-3)。次の行に、木の作り方
+     * (メニューにもとづく/URLの階層にもとづく)と点線の説明。
+     *
+     * @param  array{mode: string, total_fetched_pages: int, pages_within_origin: int, outside_origin_count: int}  $tree
+     */
+    private function addTreeNotes(Slide $slide, array $tree, bool $hasRecommendations): void
     {
+        $scope = sprintf((string) config('admin_comparison_pptx.site_hierarchy_scope_note'), $tree['total_fetched_pages'], $tree['pages_within_origin']);
+        if ($tree['outside_origin_count'] > 0) {
+            $scope .= (string) config('admin_comparison_pptx.site_hierarchy_scope_outside_suffix');
+        }
+
+        $mode = (string) config($tree['mode'] === 'menu'
+            ? 'admin_comparison_pptx.site_hierarchy_tree_mode_note_menu'
+            : 'admin_comparison_pptx.site_hierarchy_tree_mode_note_url');
+        if ($hasRecommendations) {
+            $mode .= (string) config('admin_comparison_pptx.site_hierarchy_tree_recommended_note');
+        }
+
         $box = $slide->createRichTextShape();
-        $this->position($box, self::LEFT_IN, self::HIERARCHY_ORIGIN_TOP_IN, self::CONTENT_WIDTH_IN, 0.28);
+        $this->position($box, self::LEFT_IN, self::TREE_NOTES_TOP_IN, self::CONTENT_WIDTH_IN, self::TREE_NOTES_HEIGHT_IN);
+        $box->setInsetLeft(0)->setInsetRight(0);
         $box->setWrap(RichText::WRAP_SQUARE);
-        $para = $box->getActiveParagraph();
-        $this->font($para->createTextRun('TOP　'), 11, true, self::NAVY);
-        $this->font($para->createTextRun($originUrl), 10, false, self::MUTED);
+        $this->font($box->getActiveParagraph()->createTextRun($scope), 9, false, self::MUTED);
+        $this->font($box->createParagraph()->createTextRun($mode), 8, false, self::MUTED);
     }
 
     /**
-     * 依頼CC-3①(必須): 「巡回したN件のうち、起点URL配下にあったのはM件」を
-     * 事実として1行添える。実データから算出する
-     * (AdminComparisonSiteHierarchyBuilder::build())。警告のような見た目に
-     * しない(依頼者指定、通常の本文と同じ色・太さにする)。
+     * 左の列: TOP(起点)の箱。URL・ページ名・主な見出し・メニューの項目数。
+     * 取れていないもの(ページ名・見出し)は出さない(捏造しない)。
+     *
+     * @param  array{url: string, title: ?string, headings: list<string>, menu_item_count: int}  $top
+     * @return float  箱の下端y(in)
      */
-    private function addHierarchyScopeNote(Slide $slide, int $totalFetchedPages, int $pagesWithinOrigin): void
+    private function addTreeTop(Slide $slide, array $top, bool $showMenuCount): float
     {
+        $left = self::TREE_TOP_LEFT_IN;
+        $width = self::TREE_TOP_WIDTH_IN;
+        $boxTop = self::TREE_TOP_IN;
+        $height = self::TREE_TOP_HEIGHT_IN;
+
+        $rect = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($rect, $left, $boxTop, $width, $height);
+        $rect->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::BAND));
+        $rect->getBorder()->setLineStyle(Border::LINE_NONE);
+        $this->drawRectOutline($slide, $left, $boxTop, $width, $height, self::NAVY, 1.25);
+
         $box = $slide->createRichTextShape();
-        $this->position($box, self::LEFT_IN, self::HIERARCHY_SCOPE_NOTE_TOP_IN, self::CONTENT_WIDTH_IN, 0.22);
+        $this->position($box, $left, $boxTop, $width, $height);
         $box->setWrap(RichText::WRAP_SQUARE);
-        $text = sprintf((string) config('admin_comparison_pptx.site_hierarchy_scope_note'), $totalFetchedPages, $pagesWithinOrigin);
-        $this->font($box->getActiveParagraph()->createTextRun($text), 9, false, self::MUTED);
+
+        $innerWidth = $width - 0.2;
+        $labelPara = $box->getActiveParagraph();
+        $this->font($labelPara->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_tree_top_label')), 11, true, self::NAVY);
+        // メニューの項目数は、メニューから木を作ったときだけ添える(代替の
+        // URL階層で描くときは、読み取れた件数が0〜1でも添えない)。
+        if ($showMenuCount) {
+            $this->font($labelPara->createTextRun('　'.sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_menu_count_template'), $top['menu_item_count'])), 8, false, self::COPPER);
+        }
+
+        $this->font($box->createParagraph()->createTextRun($this->truncateToWidth($top['url'], 84)), 8, false, self::MUTED);
+
+        if ($top['title'] !== null) {
+            $title = $this->wrapOrEllipsizeForLines($top['title'], $innerWidth, 9.0, true, 2);
+            $this->font($box->createParagraph()->createTextRun($title), 9, true, self::BODY_TEXT);
+        }
+
+        foreach ($top['headings'] as $heading) {
+            $line = $this->wrapOrEllipsizeForLines('・'.$heading, $innerWidth, 8.0, false, 1);
+            $this->font($box->createParagraph()->createTextRun($line), 8, false, self::MUTED);
+        }
+
+        return $boxTop + $height;
     }
 
     /**
-     * @param  list<array{name: string, page_count: int, sample_pages: list<string>, name_is_url_segment: bool}>  $branches
-     * @return float  この下に描く「追加を検討したい導線」の上端y(in)
+     * 中央の列(第1階層)と右の列(第2階層)。行の高さは第2階層の行数で決まる。
+     * 0件のときは、巡回した範囲では配下にページが見つからなかったことを
+     * 事実として書く(「ありません」と断定しない)。
+     *
+     * @param  array{origin_url: string, top: array{url: string}, branches: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, other_branch_count: int}  $tree
      */
-    private function addHierarchyBranches(Slide $slide, array $branches, int $otherBranchCount, string $originUrl): float
+    private function addTreeBranches(Slide $slide, array $tree): void
     {
+        $branches = $tree['branches'];
+
         if ($branches === []) {
             $box = $slide->createRichTextShape();
-            $this->position($box, self::LEFT_IN, self::HIERARCHY_BRANCHES_TOP_IN, self::CONTENT_WIDTH_IN, 0.3);
+            $this->position($box, self::TREE_BRANCH_LEFT_IN, self::TREE_TOP_IN, self::TREE_PAGE_LEFT_IN + self::TREE_PAGE_WIDTH_IN - self::TREE_BRANCH_LEFT_IN, 0.5);
             $box->setWrap(RichText::WRAP_SQUARE);
-            $text = sprintf((string) config('admin_comparison_pptx.site_hierarchy_empty_text'), $originUrl);
+            $text = sprintf((string) config('admin_comparison_pptx.site_hierarchy_empty_text'), $tree['origin_url']);
             $this->font($box->getActiveParagraph()->createTextRun($text), 11, false, self::MUTED);
 
-            return self::HIERARCHY_BRANCHES_TOP_IN + 0.3 + self::HIERARCHY_RECOMMENDED_GAP_IN;
+            return;
         }
 
-        $rowStep = self::HIERARCHY_ROW_HEIGHT_IN + self::HIERARCHY_ROW_GAP_IN;
+        $pitch = self::TREE_LINE_PITCH_IN;
+        $y = self::TREE_TOP_IN;
+        $centers = [];
 
-        foreach ($branches as $i => $branch) {
-            $top = self::HIERARCHY_BRANCHES_TOP_IN + $i * $rowStep;
+        foreach ($branches as $branch) {
+            $lineCount = count($branch['pages']) + ($branch['other_page_count'] > 0 ? 1 : 0);
+            $rowHeight = max(self::TREE_BRANCH_BOX_HEIGHT_IN + 0.04, $lineCount * $pitch + 0.06);
+            $center = $y + $rowHeight / 2;
+            $centers[] = $center;
 
-            $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-            $this->position($rule, self::LEFT_IN, $top + self::HIERARCHY_ROW_HEIGHT_IN - 0.008, self::CONTENT_WIDTH_IN, 0.008);
-            $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
-            $rule->getBorder()->setLineStyle(Border::LINE_NONE);
+            $this->addTreeBranchBox($slide, $branch, $center);
+            $this->addTreeSecondLevel($slide, $branch, $center, $lineCount);
 
-            // 依頼CF-2: 枝記号を直書きせずconfigから出す。最後の枝には
-            // 別の記号(既定'└ ')を使い、枝の一覧がそこで終わることが
-            // 見た目でも伝わるようにする。
-            $isLastBranch = $i === count($branches) - 1;
-            $symbol = (string) config($isLastBranch
-                ? 'admin_comparison_pptx.site_hierarchy_last_branch_symbol'
-                : 'admin_comparison_pptx.site_hierarchy_branch_symbol');
-
-            $nameBox = $slide->createRichTextShape();
-            $this->position($nameBox, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, 0.22);
-            $namePara = $nameBox->getActiveParagraph();
-            $this->font($namePara->createTextRun($symbol.$branch['name']), 11, true, self::NAVY);
-            // 依頼CC-3③: インデックスページを巡回できておらず、URLの
-            // パスセグメントをそのまま枝名にしている場合、それと分かる印を
-            // 添える(依頼者指定「判断して提案する」への回答) ―― ページ名を
-            // 無理に日本語へ変換しない(捏造しない)代わりに、これが正式な
-            // ページ名ではないことを商談相手にも伝わる形にする。
-            if ($branch['name_is_url_segment']) {
-                $this->font($namePara->createTextRun('　(ページ名未取得)'), 8, false, self::DIM);
-            }
-            $this->font($namePara->createTextRun("　（{$branch['page_count']}ページ）"), 9, false, self::MUTED);
-
-            if ($branch['sample_pages'] !== []) {
-                // 依頼CF-2: site_hierarchy_sample_pages_per_branchを3→5へ
-                // 増やした分、最大2行までの折り返しを見込む高さにした
-                // (HIERARCHY_ROW_HEIGHT_INのdocblock参照)。
-                $sampleBox = $slide->createRichTextShape();
-                $this->position($sampleBox, self::LEFT_IN + 0.2, $top + 0.22, self::CONTENT_WIDTH_IN - 0.2, 0.26);
-                $sampleBox->setWrap(RichText::WRAP_SQUARE);
-                $sampleText = implode('　/　', $branch['sample_pages']);
-                $this->font($sampleBox->getActiveParagraph()->createTextRun($sampleText), 8.5, false, self::MUTED);
-            }
+            $y += $rowHeight + self::TREE_ROW_GAP_IN;
         }
 
-        $bottom = self::HIERARCHY_BRANCHES_TOP_IN + count($branches) * $rowStep;
-
-        if ($otherBranchCount > 0) {
-            $othersBox = $slide->createRichTextShape();
-            $this->position($othersBox, self::LEFT_IN, $bottom, self::CONTENT_WIDTH_IN, 0.2);
-            $this->font($othersBox->getActiveParagraph()->createTextRun("ほか{$otherBranchCount}"), 9.5, false, self::MUTED);
-            $bottom += 0.2;
+        if ($tree['other_branch_count'] > 0) {
+            $box = $slide->createRichTextShape();
+            $this->position($box, self::TREE_BRANCH_LEFT_IN, $y, self::TREE_BRANCH_WIDTH_IN, 0.22);
+            $box->setInsetLeft(0);
+            $this->font($box->getActiveParagraph()->createTextRun(sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_other_branches_template'), $tree['other_branch_count'])), 9, false, self::MUTED);
         }
 
-        return $bottom + self::HIERARCHY_RECOMMENDED_GAP_IN;
+        // TOP → 第1階層の幹と枝(直線だけで描く)。
+        $topMid = self::TREE_TOP_IN + self::TREE_TOP_HEIGHT_IN / 2;
+        $trunkX = self::TREE_TRUNK_X_IN;
+        $this->drawLine($slide, [self::TREE_TOP_LEFT_IN + self::TREE_TOP_WIDTH_IN, $topMid], [$trunkX, $topMid], self::NAVY, 1.25);
+        $this->drawLine($slide, [$trunkX, min($topMid, $centers[0])], [$trunkX, max($topMid, $centers[count($centers) - 1])], self::NAVY, 1.25);
+        foreach ($centers as $center) {
+            $this->drawLine($slide, [$trunkX, $center], [self::TREE_BRANCH_LEFT_IN, $center], self::NAVY, 1.25);
+        }
     }
 
     /**
-     * 依頼CB-3必須: 「ありません」と断定しない ―― 「足りないもの」(CB-2)に
-     * 対応するサイトの導線名を「追加を検討したい導線」として並べるだけで、
-     * 巡回した範囲に無いと断定はしない。0件(足りない項目が無い)のときは
-     * 何も描かない ―― 「無かった」ことを積極的に述べる文言は不要なため。
-     * 巡回の範囲についての注記は、この下のfooter(addNoteFooter())で
-     * 別途必ず出す(generateSiteHierarchySlide()参照)。
-     *
-     * @param  list<string>  $recommendedSiteFlowNames
-     * @return float  この下に描く次のブロックが使える上端y(in)。0件のときは$topをそのまま返す。
+     * @param  array{name: string, page_count: int}  $branch
      */
-    private function addHierarchyRecommendations(Slide $slide, array $recommendedSiteFlowNames, float $top): float
+    private function addTreeBranchBox(Slide $slide, array $branch, float $center): void
     {
-        if ($recommendedSiteFlowNames === []) {
-            return $top;
-        }
+        $top = $center - self::TREE_BRANCH_BOX_HEIGHT_IN / 2;
 
-        $headingBox = $slide->createRichTextShape();
-        $this->position($headingBox, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, 0.22);
-        $this->font($headingBox->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_recommended_heading')), 11, true, self::NAVY);
+        $rect = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+        $this->position($rect, self::TREE_BRANCH_LEFT_IN, $top, self::TREE_BRANCH_WIDTH_IN, self::TREE_BRANCH_BOX_HEIGHT_IN);
+        $rect->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::WHITE));
+        $rect->getBorder()->setLineStyle(Border::LINE_NONE);
+        $this->drawRectOutline($slide, self::TREE_BRANCH_LEFT_IN, $top, self::TREE_BRANCH_WIDTH_IN, self::TREE_BRANCH_BOX_HEIGHT_IN, self::NAVY, 1.0);
 
-        $listBox = $slide->createRichTextShape();
-        $this->position($listBox, self::LEFT_IN, $top + 0.24, self::CONTENT_WIDTH_IN, 0.3);
-        $listBox->setWrap(RichText::WRAP_SQUARE);
-        $listText = implode('　/　', $recommendedSiteFlowNames);
-        $this->font($listBox->getActiveParagraph()->createTextRun($listText), 10, false, self::GAP_TEXT);
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::TREE_BRANCH_LEFT_IN, $top, self::TREE_BRANCH_WIDTH_IN, self::TREE_BRANCH_BOX_HEIGHT_IN);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
 
-        return $top + 0.24 + 0.3 + self::HIERARCHY_OUTSIDE_BREAKDOWN_GAP_IN;
+        $name = $this->wrapOrEllipsizeForLines($branch['name'], self::TREE_BRANCH_WIDTH_IN - 0.1, 10.0, true, 1);
+        $this->font($box->getActiveParagraph()->createTextRun($name), 10, true, self::NAVY);
+        $this->font($box->createParagraph()->createTextRun(sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_page_count_template'), $branch['page_count'])), 8, false, self::MUTED);
     }
 
     /**
-     * 依頼CF-2(2026-09-29): 起点URL配下の「外」にあった実データの内訳を
-     * 「参考」として要約する(AdminComparisonSiteHierarchyBuilder::
-     * summarizeOutsideOriginBreakdown()が実データから算出、捏造しない)。
-     * 0件(起点の外に何も無かった、または起点自体が解決できなかった)の
-     * ときは何も描かない ―― 無理に空欄の節を残さない。枝が多く$topが
-     * 既にaxis_unread_caveatの固定位置に近い場合も描かない
-     * (HIERARCHY_OUTSIDE_BREAKDOWN_SAFE_BOTTOM_IN参照 ―― この「参考」節
-     * だけが対象で、axis_unread_caveat自体は別の固定位置に必ず描く、
-     * CF追補で分離)。
+     * 第2階層: 枝の右に、ページ名(無ければURLをデコードしたもの)を数件並べ、
+     * 残りは「ほかNページ」。枝から幹→各行へ直線でつなぐ。
      *
-     * @param  list<array{name: string, page_count: int}>  $breakdown
-     * @return float  この下に描く次のブロックが使える上端y(in)。描かなかった場合は$topをそのまま返す。
+     * @param  array{pages: list<string>, other_page_count: int}  $branch
      */
-    private function addHierarchyOutsideBreakdown(Slide $slide, array $breakdown, int $otherCount, float $top): float
+    private function addTreeSecondLevel(Slide $slide, array $branch, float $center, int $lineCount): void
     {
-        $neededHeight = 0.24 + 0.4 + self::HIERARCHY_OUTSIDE_BREAKDOWN_GAP_IN;
-        if ($breakdown === [] || $top + $neededHeight > self::HIERARCHY_OUTSIDE_BREAKDOWN_SAFE_BOTTOM_IN) {
-            return $top;
+        if ($lineCount === 0) {
+            return;
         }
 
-        $headingBox = $slide->createRichTextShape();
-        $this->position($headingBox, self::LEFT_IN, $top, self::CONTENT_WIDTH_IN, 0.22);
-        $this->font($headingBox->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_outside_breakdown_heading')), 10.5, true, self::MUTED);
+        $pitch = self::TREE_LINE_PITCH_IN;
+        $blockTop = $center - $lineCount * $pitch / 2;
+        $lines = $branch['pages'];
+        if ($branch['other_page_count'] > 0) {
+            $lines[] = sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_other_pages_template'), $branch['other_page_count']);
+        }
 
-        $items = array_map(fn (array $row) => "{$row['name']}（{$row['page_count']}）", $breakdown);
+        $bracketX = self::TREE_BRACKET_X_IN;
+        $centers = [];
+        foreach ($lines as $k => $line) {
+            $isOther = $branch['other_page_count'] > 0 && $k === count($lines) - 1;
+            $lineCenter = $blockTop + $k * $pitch + $pitch / 2;
+            $centers[] = $lineCenter;
+
+            $box = $slide->createRichTextShape();
+            $this->position($box, self::TREE_PAGE_LEFT_IN, $lineCenter - $pitch / 2, self::TREE_PAGE_WIDTH_IN, $pitch);
+            $box->setInsetLeft(0)->setInsetRight(0)->setInsetTop(0)->setInsetBottom(0);
+            $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $text = $isOther ? $line : $this->wrapOrEllipsizeForLines($line, self::TREE_PAGE_WIDTH_IN, 8.0, false, 1);
+            $this->font($box->getActiveParagraph()->createTextRun($text), 8, false, $isOther ? self::DIM : self::BODY_TEXT);
+
+            $this->drawLine($slide, [$bracketX, $lineCenter], [self::TREE_PAGE_LEFT_IN - 0.05, $lineCenter], self::DIM, 0.75);
+        }
+
+        $this->drawLine($slide, [self::TREE_BRANCH_LEFT_IN + self::TREE_BRANCH_WIDTH_IN, $center], [$bracketX, $center], self::DIM, 0.75);
+        $this->drawLine($slide, [$bracketX, min($center, $centers[0])], [$bracketX, max($center, $centers[count($centers) - 1])], self::DIM, 0.75);
+    }
+
+    /**
+     * 点線の枝(既存の「追加を検討したい導線」): TOPの箱の下から点線で出し、
+     * 導線名を点線の枠で並べる。「ありません」と断定しない ―― 巡回した範囲で
+     * 確認できなかった導線の例であり、注記(addTreeNotes)で明示する。
+     * 0件のときは何も描かない。
+     *
+     * @param  list<string>  $names
+     */
+    private function addTreeRecommendations(Slide $slide, array $names, float $topBottom): void
+    {
+        if ($names === []) {
+            return;
+        }
+
+        $limit = (int) config('admin_comparison_pptx.site_hierarchy_tree_recommended_limit');
+        $shown = array_slice($names, 0, $limit);
+        $otherCount = count($names) - count($shown);
+
+        $headingTop = $topBottom + 0.12;
+        $heading = $slide->createRichTextShape();
+        $this->position($heading, self::TREE_TOP_LEFT_IN + 0.3, $headingTop, self::TREE_TOP_WIDTH_IN - 0.3, 0.24);
+        $heading->setInsetLeft(0);
+        $this->font($heading->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_recommended_heading')), 10, true, self::GAP_TEXT);
+
+        $itemsTop = $headingTop + 0.3;
+        $itemLeft = self::TREE_TOP_LEFT_IN + 0.3;
+        $itemWidth = self::TREE_TOP_WIDTH_IN - 0.3;
+        $spineX = self::TREE_TOP_LEFT_IN + 0.12;
+
+        $lastCenter = $itemsTop;
+        foreach ($shown as $k => $name) {
+            $top = $itemsTop + $k * self::TREE_RECOMMENDED_PITCH_IN;
+            $center = $top + self::TREE_RECOMMENDED_ITEM_HEIGHT_IN / 2;
+            $lastCenter = $center;
+
+            $rect = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
+            $this->position($rect, $itemLeft, $top, $itemWidth, self::TREE_RECOMMENDED_ITEM_HEIGHT_IN);
+            $rect->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::WHITE));
+            $rect->getBorder()->setLineStyle(Border::LINE_NONE);
+            $this->drawRectOutline($slide, $itemLeft, $top, $itemWidth, self::TREE_RECOMMENDED_ITEM_HEIGHT_IN, self::GAP_TEXT, 1.0, Border::DASH_DASH);
+
+            $box = $slide->createRichTextShape();
+            $this->position($box, $itemLeft, $top, $itemWidth, self::TREE_RECOMMENDED_ITEM_HEIGHT_IN);
+            $box->setInsetTop(0)->setInsetBottom(0);
+            $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $text = $this->wrapOrEllipsizeForLines($name, $itemWidth, 9.0, false, 1);
+            $this->font($box->getActiveParagraph()->createTextRun($text), 9, false, self::GAP_TEXT);
+
+            $this->drawLine($slide, [$spineX, $center], [$itemLeft, $center], self::GAP_TEXT, 1.0, Border::DASH_DASH);
+        }
+
         if ($otherCount > 0) {
-            $items[] = "ほか（{$otherCount}）";
+            $top = $itemsTop + count($shown) * self::TREE_RECOMMENDED_PITCH_IN;
+            $box = $slide->createRichTextShape();
+            $this->position($box, $itemLeft, $top, $itemWidth, 0.2);
+            $box->setInsetLeft(0)->setInsetTop(0)->setInsetBottom(0);
+            $this->font($box->getActiveParagraph()->createTextRun(sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_recommended_other_template'), $otherCount)), 8, false, self::MUTED);
         }
 
-        $listBox = $slide->createRichTextShape();
-        $this->position($listBox, self::LEFT_IN, $top + 0.24, self::CONTENT_WIDTH_IN, 0.4);
-        $listBox->setWrap(RichText::WRAP_SQUARE);
-        $this->font($listBox->getActiveParagraph()->createTextRun(implode('　/　', $items)), 9, false, self::MUTED);
+        $this->drawLine($slide, [$spineX, $topBottom], [$spineX, $lastCenter], self::GAP_TEXT, 1.0, Border::DASH_DASH);
+    }
 
-        return $top + $neededHeight;
+    /** 表示幅(全角=2)基準で、収まらない分を省略記号にする(URL用)。 */
+    private function truncateToWidth(string $text, int $maxUnits): string
+    {
+        return mb_strwidth($text, 'UTF-8') <= $maxUnits ? $text : $this->truncateToDisplayWidth($text, max(0, $maxUnits - 2)).'…';
     }
 
     /**

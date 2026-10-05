@@ -17,9 +17,14 @@ class CrawlLinkExtractor
      * ページ内の<a href>をすべて絶対URLへ解決して返す(重複除去済み)。
      * fragment(#…)・mailto:・tel:・javascript:は除外する。
      *
+     * 依頼CL-3: $excludeChromeをtrueにすると、<header>/<nav>/<footer>の
+     * 内側のリンクを除いた本文側のリンクだけを返す(階層図の第2階層で、
+     * 全ページ共通のメニュー・フッターのリンクを除くため)。既定(false)の
+     * 挙動は従来と同じ。
+     *
      * @return list<string>
      */
-    public function extractAbsoluteLinks(string $html, string $pageUrl): array
+    public function extractAbsoluteLinks(string $html, string $pageUrl, bool $excludeChrome = false): array
     {
         $dom = new \DOMDocument;
         $previous = libxml_use_internal_errors(true);
@@ -31,7 +36,9 @@ class CrawlLinkExtractor
         libxml_use_internal_errors($previous);
 
         $xpath = new \DOMXPath($dom);
-        $nodes = $xpath->query('//a[@href]');
+        $nodes = $xpath->query($excludeChrome
+            ? '//a[@href][not(ancestor::header) and not(ancestor::nav) and not(ancestor::footer)]'
+            : '//a[@href]');
 
         $links = [];
         foreach ($nodes ?? [] as $node) {
@@ -39,15 +46,7 @@ class CrawlLinkExtractor
                 continue;
             }
 
-            $href = trim($node->getAttribute('href'));
-
-            if ($href === '' || str_starts_with($href, '#')
-                || str_starts_with($href, 'mailto:') || str_starts_with($href, 'tel:')
-                || str_starts_with($href, 'javascript:')) {
-                continue;
-            }
-
-            $resolved = $this->resolveAbsoluteUrl($pageUrl, $href);
+            $resolved = $this->resolveHref($pageUrl, $node->getAttribute('href'));
 
             if ($resolved !== null) {
                 $links[$resolved] = true;
@@ -55,6 +54,25 @@ class CrawlLinkExtractor
         }
 
         return array_keys($links);
+    }
+
+    /**
+     * hrefの生の値を、ページURLを基準に絶対URLへ解決する(依頼CL-3で
+     * extractAbsoluteLinks()のループ本体をそのまま切り出して公開した ――
+     * 除外規則・解決規則は従来と同一)。fragmentのみ・mailto:・tel:・
+     * javascript:・空はnull。
+     */
+    public function resolveHref(string $pageUrl, string $rawHref): ?string
+    {
+        $href = trim($rawHref);
+
+        if ($href === '' || str_starts_with($href, '#')
+            || str_starts_with($href, 'mailto:') || str_starts_with($href, 'tel:')
+            || str_starts_with($href, 'javascript:')) {
+            return null;
+        }
+
+        return $this->resolveAbsoluteUrl($pageUrl, $href);
     }
 
     private function resolveAbsoluteUrl(string $pageUrl, string $href): ?string

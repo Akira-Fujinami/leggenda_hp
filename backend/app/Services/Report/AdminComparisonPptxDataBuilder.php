@@ -45,6 +45,8 @@ use App\Support\Report\MultiSiteReportViewModel;
  */
 class AdminComparisonPptxDataBuilder
 {
+    public function __construct(private readonly CandidateSurveyCatalog $surveyCatalog = new CandidateSurveyCatalog) {}
+
     /**
      * @return array{
      *     self_company_name: string,
@@ -71,6 +73,7 @@ class AdminComparisonPptxDataBuilder
      *         }>,
      *         others_count: int,
      *     },
+     *     survey_comparison: array{rows: list<array{rank: int, key: string, name: string, percentage: float, self_state: string, mapped_count: int, self_matched_count: int, competitor_count: ?int}>, competitor_total: int, excluded_competitor_count: int},
      *     candidate_survey_source_note: string,
      *     recommended_site_flow_names: list<string>,
      *     source_note: string,
@@ -139,6 +142,7 @@ class AdminComparisonPptxDataBuilder
             'companies' => $companies,
             'axes' => $axes,
             'missing_items' => $missingItems,
+            'survey_comparison' => $this->buildSurveyComparison($viewModel),
             'candidate_survey_source_note' => (string) config('brand_wheel_candidate_survey.source_note'),
             'recommended_site_flow_names' => $this->buildRecommendedSiteFlowNames($viewModel->missingFromSelf),
             'source_note' => "Leggenda 採用ブランド・ホイール診断({$viewModel->generatedAtLabel}時点)",
@@ -230,7 +234,9 @@ class AdminComparisonPptxDataBuilder
         [$axisKey, $subKey] = $keys;
         $axisConfig = (array) config("brand_wheel.axes.{$axisKey}");
         $definition = (string) ($axisConfig['sub_element_definitions'][$subKey] ?? '');
-        $mapping = (array) config("brand_wheel_candidate_survey.mapping.{$axisKey}.{$subKey}", []);
+        // 依頼CL-2: 調査の選択肢の名前・割合はoptions(1か所)から引く
+        // (24項目の側には持たない)。「該当なし」はnull(従来と同じ)。
+        $surveyOption = $this->surveyCatalog->optionForSubElement($axisKey, $subKey);
 
         return [
             'axis_name' => $axisName,
@@ -238,9 +244,105 @@ class AdminComparisonPptxDataBuilder
             'region' => AdminComparisonPptxGenerator::regionName((string) ($axisConfig['group'] ?? '')),
             'impact' => sprintf((string) config('admin_comparison_pptx.missing_item_impact_template'), $definition),
             'candidate_survey' => [
-                'item' => $mapping['survey_item'] ?? null,
-                'percentage' => isset($mapping['percentage']) ? (float) $mapping['percentage'] : null,
+                'item' => $surveyOption['name'] ?? null,
+                'percentage' => $surveyOption['percentage'] ?? null,
             ],
+        ];
+    }
+
+    /**
+     * 依頼CL-2(2026-10-05): 「求職者が知りたい情報と、自社サイト」。
+     * 「足りないもの」(競合との比較で項目を選ぶ)とは逆に、調査の選択肢
+     * (config('brand_wheel_candidate_survey.options')、割合の高い順)を軸に
+     * 1行ずつ並べ、対応する24項目の判定を添える。判定そのものは
+     * viewModel->comparisonTable(多社比較PDFと同じ唯一の情報源)から読み、
+     * ここで新しい判定は行わない。
+     *
+     * 自社の状態(対応する24項目のうち○の数で決める):
+     *   すべて○=confirmed / 一部○=partial / すべて×=unconfirmed /
+     *   対応する24項目が無い=not_applicable。
+     * 競合の掲載(competitor_count)は、対応する24項目のうち「1つでも○」の
+     * 会社を数える(自社の状態の決め方とは数え方が違う ―― スライド側の
+     * 注記で示す)。材料不足の競合(competitorsMaterialSufficient=false)は
+     * 判定が信頼できないため、分子にも分母(competitor_total)にも含めず、
+     * 除外した社数をexcluded_competitor_countで返す。
+     *
+     * @return array{
+     *     rows: list<array{
+     *         rank: int,
+     *         key: string,
+     *         name: string,
+     *         percentage: float,
+     *         self_state: string,
+     *         mapped_count: int,
+     *         self_matched_count: int,
+     *         competitor_count: ?int,
+     *     }>,
+     *     competitor_total: int,
+     *     excluded_competitor_count: int,
+     * }
+     */
+    private function buildSurveyComparison(MultiSiteReportViewModel $viewModel): array
+    {
+        $comparable = [];
+        foreach (array_keys($viewModel->competitors) as $index) {
+            if ($viewModel->competitorsMaterialSufficient[$index] ?? true) {
+                $comparable[] = $index;
+            }
+        }
+
+        $byName = [];
+        foreach ($viewModel->comparisonTable as $item) {
+            $byName[$item['axis_name'].'::'.$item['sub_name']] = $item;
+        }
+
+        $rows = [];
+        foreach ($this->surveyCatalog->options() as $i => $option) {
+            $mapped = 0;
+            $selfMatched = 0;
+            $competitorHasAny = array_fill_keys($comparable, false);
+
+            foreach ($this->surveyCatalog->subElementsForOption($option['key']) as $ref) {
+                $axisConfig = (array) config("brand_wheel.axes.{$ref['axis_key']}");
+                $item = $byName[($axisConfig['name_ja'] ?? '').'::'.($axisConfig['sub_elements'][$ref['sub_key']] ?? '')] ?? null;
+                if ($item === null) {
+                    continue;
+                }
+
+                $mapped++;
+                if ($item['self_matched']) {
+                    $selfMatched++;
+                }
+                foreach ($comparable as $index) {
+                    if ($item['competitor_matched'][$index] ?? false) {
+                        $competitorHasAny[$index] = true;
+                    }
+                }
+            }
+
+            $state = match (true) {
+                $mapped === 0 => 'not_applicable',
+                $selfMatched === $mapped => 'confirmed',
+                $selfMatched === 0 => 'unconfirmed',
+                default => 'partial',
+            };
+
+            $rows[] = [
+                'rank' => $i + 1,
+                'key' => $option['key'],
+                'name' => $option['name'],
+                'percentage' => $option['percentage'],
+                'self_state' => $state,
+                'mapped_count' => $mapped,
+                'self_matched_count' => $selfMatched,
+                'competitor_count' => ($mapped === 0 || $comparable === []) ? null : count(array_filter($competitorHasAny)),
+            ];
+        }
+
+        return [
+            'rows' => $rows,
+            'competitor_total' => count($comparable),
+            'excluded_competitor_count' => count($viewModel->competitors) - count($comparable),
         ];
     }
 

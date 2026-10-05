@@ -518,4 +518,192 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
         ]));
         $this->assertSame('競合5社中3社以上が伝えていて、自社が伝えていない項目', $data5['missing_items']['heading']);
     }
+
+    // ------------------------------------------------------------------
+    // 依頼CL-2(2026-10-05): 「求職者が知りたい情報と、自社サイト」(survey_comparison)。
+    // ------------------------------------------------------------------
+
+    /**
+     * 項目キー("axisKey.subKey")で○を指定してcomparisonTableを組み立てる。
+     *
+     * @param  list<string>  $selfKeys
+     * @param  list<list<string>>  $competitorKeysList  競合ごとの○の項目キー
+     */
+    private function tableByKeys(array $selfKeys, array $competitorKeysList): array
+    {
+        $table = [];
+        foreach ((array) config('brand_wheel.axes') as $axisKey => $axisConfig) {
+            foreach ($axisConfig['sub_elements'] as $subKey => $subName) {
+                $path = "{$axisKey}.{$subKey}";
+                $table[] = [
+                    'axis_name' => $axisConfig['name_ja'],
+                    'group' => $axisConfig['group'],
+                    'sub_name' => $subName,
+                    'self_matched' => in_array($path, $selfKeys, true),
+                    'competitor_matched' => array_map(fn (array $keys) => in_array($path, $keys, true), $competitorKeysList),
+                ];
+            }
+        }
+
+        return $table;
+    }
+
+    private function surveyRow(array $data, string $optionKey): array
+    {
+        foreach ($data['survey_comparison']['rows'] as $row) {
+            if ($row['key'] === $optionKey) {
+                return $row;
+            }
+        }
+        $this->fail("調査の選択肢 {$optionKey} の行が無い");
+    }
+
+    public function test_survey_comparison_lists_all_fourteen_options_in_descending_percentage_order(): void
+    {
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel());
+        $rows = $data['survey_comparison']['rows'];
+
+        $this->assertCount(14, $rows);
+        $this->assertSame(range(1, 14), array_column($rows, 'rank'));
+        $percentages = array_column($rows, 'percentage');
+        $sorted = $percentages;
+        rsort($sorted);
+        $this->assertSame($sorted, $percentages);
+        $this->assertSame('希望するポジションの仕事・業務内容', $rows[0]['name']);
+    }
+
+    /**
+     * 調査の選択肢1つに、24項目のうち複数が対応する(社員インタビュー=3項目)。
+     * すべて○=confirmed、一部=partial、すべて×=unconfirmed、対応する項目が無い=not_applicable。
+     */
+    public function test_survey_comparison_decides_the_self_state_from_all_mapped_items(): void
+    {
+        $viewModel = $this->viewModel([
+            'comparisonTable' => $this->tableByKeys(
+                // 社員インタビュー(3項目)は1つだけ○ → partial。給与体系(1項目)は○ → confirmed。福利厚生(1項目)は× → unconfirmed。
+                ['relationship.colleagues', 'financial_benefit.salary_level'],
+                [[], []],
+            ),
+        ]);
+        $data = (new AdminComparisonPptxDataBuilder)->build($viewModel);
+
+        $partial = $this->surveyRow($data, 'employee_interview');
+        $this->assertSame('partial', $partial['self_state']);
+        $this->assertSame(3, $partial['mapped_count']);
+        $this->assertSame(1, $partial['self_matched_count']);
+
+        $this->assertSame('confirmed', $this->surveyRow($data, 'salary_evaluation')['self_state']);
+        $this->assertSame('unconfirmed', $this->surveyRow($data, 'benefits')['self_state']);
+
+        $all = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
+            'comparisonTable' => $this->tableByKeys(['relationship.colleagues', 'emotional_benefit.pride', 'emotional_benefit.talkable'], [[], []]),
+        ]));
+        $this->assertSame('confirmed', $this->surveyRow($all, 'employee_interview')['self_state']);
+    }
+
+    /**
+     * 対応する24項目が無い選択肢(研修制度)は「判定の対象外」。競合の数も出さない。
+     */
+    public function test_survey_comparison_marks_options_without_mapped_items_as_not_applicable(): void
+    {
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel());
+        $row = $this->surveyRow($data, 'training');
+
+        $this->assertSame('not_applicable', $row['self_state']);
+        $this->assertSame(0, $row['mapped_count']);
+        $this->assertNull($row['competitor_count']);
+    }
+
+    /**
+     * 競合の「掲載」は、対応する項目のうち1つでも○の会社を数える(自社の判定とは数え方が違う)。
+     */
+    public function test_survey_comparison_counts_a_competitor_when_any_mapped_item_is_matched(): void
+    {
+        $viewModel = $this->viewModel([
+            'competitors' => [
+                ['name' => '競合A社', 'url' => 'https://a.example.com'],
+                ['name' => '競合B社', 'url' => 'https://b.example.com'],
+                ['name' => '競合C社', 'url' => 'https://c.example.com'],
+            ],
+            'competitorCount' => 3,
+            'comparisonTable' => $this->tableByKeys([], [
+                ['emotional_benefit.pride'],                                 // 社員インタビューの3項目のうち1つ → 掲載
+                [],                                                          // 掲載なし
+                ['relationship.colleagues', 'emotional_benefit.talkable'],   // 2つ → 1社として数える
+            ]),
+        ]);
+        $data = (new AdminComparisonPptxDataBuilder)->build($viewModel);
+
+        $this->assertSame(3, $data['survey_comparison']['competitor_total']);
+        $this->assertSame(2, $this->surveyRow($data, 'employee_interview')['competitor_count']);
+        $this->assertSame(0, $this->surveyRow($data, 'benefits')['competitor_count']);
+    }
+
+    /**
+     * 材料不足の競合は、判定が信頼できないため分子にも分母にも含めない。
+     */
+    public function test_survey_comparison_excludes_competitors_with_insufficient_material_from_numerator_and_denominator(): void
+    {
+        $viewModel = $this->viewModel([
+            'competitors' => [
+                ['name' => '競合A社', 'url' => 'https://a.example.com'],
+                ['name' => '競合B社', 'url' => 'https://b.example.com'],
+            ],
+            'competitorCount' => 2,
+            'competitorsMaterialSufficient' => [true, false],
+            'comparisonTable' => $this->tableByKeys([], [['financial_benefit.benefits'], ['financial_benefit.benefits']]),
+        ]);
+        $data = (new AdminComparisonPptxDataBuilder)->build($viewModel);
+
+        $this->assertSame(1, $data['survey_comparison']['competitor_total']);
+        $this->assertSame(1, $data['survey_comparison']['excluded_competitor_count']);
+        $this->assertSame(1, $this->surveyRow($data, 'benefits')['competitor_count'], '材料不足の競合B社は数えない');
+    }
+
+    public function test_survey_comparison_has_no_competitor_counts_when_every_competitor_is_excluded(): void
+    {
+        $viewModel = $this->viewModel([
+            'competitors' => [['name' => '競合A社', 'url' => 'https://a.example.com']],
+            'competitorCount' => 1,
+            'competitorsMaterialSufficient' => [false],
+            'comparisonTable' => $this->tableByKeys([], [['financial_benefit.benefits']]),
+        ]);
+        $data = (new AdminComparisonPptxDataBuilder)->build($viewModel);
+
+        $this->assertSame(0, $data['survey_comparison']['competitor_total']);
+        $this->assertNull($this->surveyRow($data, 'benefits')['competitor_count']);
+    }
+
+    /**
+     * 既存の「足りないもの」の各行の調査の文(候補者調査の項目名・割合)が、
+     * 持ち方を変える前と同じ結果になること(24項目すべて)。
+     */
+    public function test_missing_items_candidate_survey_is_unchanged_for_all_24_items(): void
+    {
+        config(['admin_comparison_pptx.missing_items_max_count' => 100]);
+
+        $missing = [];
+        foreach ((array) config('brand_wheel.axes') as $axisConfig) {
+            foreach ($axisConfig['sub_elements'] as $subName) {
+                $missing[] = ['axis_name' => $axisConfig['name_ja'], 'sub_name' => $subName, 'competitor_matched_count' => 2];
+            }
+        }
+        $data = (new AdminComparisonPptxDataBuilder)->build($this->viewModel(['missingFromSelf' => $missing]));
+        $items = $data['missing_items']['items'];
+        $this->assertCount(24, $items);
+
+        $legacy = CandidateSurveyCatalogTest::legacyMapping();
+        $i = 0;
+        foreach ((array) config('brand_wheel.axes') as $axisKey => $axisConfig) {
+            foreach (array_keys($axisConfig['sub_elements']) as $subKey) {
+                [$expectedName, $expectedPercentage] = $legacy["{$axisKey}.{$subKey}"];
+                $this->assertSame(
+                    ['item' => $expectedName, 'percentage' => $expectedPercentage],
+                    $items[$i]['candidate_survey'],
+                    "{$axisKey}.{$subKey}: 調査の文の材料が変更前と同じ",
+                );
+                $i++;
+            }
+        }
+    }
 }

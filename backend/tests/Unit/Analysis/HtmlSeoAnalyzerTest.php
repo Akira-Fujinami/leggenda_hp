@@ -1237,4 +1237,55 @@ class HtmlSeoAnalyzerTest extends TestCase
 
         $this->assertSame(['エネルギー事業'], $labels);
     }
+
+    // ------------------------------------------------------------------
+    // 依頼CL-3(2026-10-05): extractMenuLinks()(階層図の第1階層用、文字＋リンク先)。
+    // ------------------------------------------------------------------
+
+    public function test_extract_menu_links_returns_label_and_href_pairs_from_header_and_nav_in_document_order(): void
+    {
+        $html = '<html><body>'
+            .'<header><nav><a href="/culture/">カルチャー</a><a href="/benefits/">福利厚生</a></nav></header>'
+            .'<main><a href="/should-be-ignored">本文中のリンクは対象外</a></main>'
+            .'</body></html>';
+
+        $this->assertSame([
+            ['label' => 'カルチャー', 'href' => '/culture/'],
+            ['label' => '福利厚生', 'href' => '/benefits/'],
+        ], $this->analyzer->extractMenuLinks($html));
+    }
+
+    public function test_extract_menu_links_excludes_the_footer_including_a_nav_inside_the_footer(): void
+    {
+        $html = '<html><body>'
+            .'<header><nav><a href="/jobs/">募集職種</a></nav></header>'
+            .'<footer><a href="/privacy/">プライバシーポリシー</a><nav><a href="/sitemap/">サイトマップ</a></nav></footer>'
+            .'</body></html>';
+
+        $this->assertSame([['label' => '募集職種', 'href' => '/jobs/']], $this->analyzer->extractMenuLinks($html));
+    }
+
+    public function test_extract_menu_links_ignores_article_headers_and_keeps_label_dedupe_and_caps(): void
+    {
+        $html = '<html><body>'
+            .'<main><article><header><a href="/news/1">記事の見出しリンク</a></header></article></main>'
+            .'<header><nav><a href="/a">事業</a><a href="/b">事業</a></nav></header>'
+            .'</body></html>';
+
+        $links = $this->analyzer->extractMenuLinks($html);
+
+        $this->assertSame([['label' => '事業', 'href' => '/a']], $links, 'ラベルの重複は最初の1件だけ、記事内のheaderは対象外');
+    }
+
+    /**
+     * 既存のextractNavigationLinkLabels()(ブランド・ホイールの入力に使われている)は
+     * 挙動を変えていない ―― フッターのリンクも含めたままであること。
+     */
+    public function test_extract_navigation_link_labels_still_includes_footer_links_after_the_menu_links_method_was_added(): void
+    {
+        $html = '<html><body><header><nav><a href="/a">事業</a></nav></header><footer><a href="/p">プライバシーポリシー</a></footer></body></html>';
+
+        $this->assertSame(['事業', 'プライバシーポリシー'], $this->analyzer->extractNavigationLinkLabels($html));
+        $this->assertSame([['label' => '事業', 'href' => '/a']], $this->analyzer->extractMenuLinks($html));
+    }
 }

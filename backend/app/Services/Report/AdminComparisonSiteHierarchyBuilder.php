@@ -2,10 +2,15 @@
 
 namespace App\Services\Report;
 
+use App\Enums\PageType;
 use App\Models\AnalysisCrawledPage;
+use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
+use App\Services\Analysis\CrawlLinkExtractor;
 use App\Services\Analysis\CrawlOriginScopeResolver;
+use App\Services\Analysis\HtmlSeoAnalyzer;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * 依頼CB-3(2026-09-24): 営業資料へ差し込む「自社サイトの階層図」スライドの
@@ -50,10 +55,23 @@ use Illuminate\Support\Collection;
  * 分けるため)。プライバシーポリシー等、枝の中身の判断材料にならない
  * ページは巡回対象からは外さず(crawl_excluded_path_patternsは変更しない)、
  * 代表ページとして選ぶ優先順位だけを下げる(deprioritizeSamplePages())。
+ *
+ * 依頼CL-3(2026-10-05): 階層図を「TOP → 第1階層 → 第2階層」の木の形に
+ * 作り直した(buildTree())。discovered_viaは親子関係を持たないままで
+ * (スキーマは変更しない)、親子は保存済みのHTMLを読み直して求める ――
+ * 第1階層はTOPのメニュー(extractMenuLinks())、第2階層はその項目の
+ * ページから実際にリンクされているページ(CrawlLinkExtractorで読み直す)。
+ * メニューが読めないサイトでは、従来のURLの階層(build()と共通の
+ * groupUrlBranches())を同じ木の形で描く。AIは使わず、同じ入力から
+ * 同じ結果になる。build()の出力形(CL以前の枝の一覧)は変えていない。
  */
 class AdminComparisonSiteHierarchyBuilder
 {
-    public function __construct(private readonly CrawlOriginScopeResolver $scopeResolver) {}
+    public function __construct(
+        private readonly CrawlOriginScopeResolver $scopeResolver,
+        private readonly HtmlSeoAnalyzer $htmlAnalyzer = new HtmlSeoAnalyzer,
+        private readonly CrawlLinkExtractor $linkExtractor = new CrawlLinkExtractor,
+    ) {}
 
     /**
      * @return array{origin_url: string, branches: list<array{name: string, page_count: int, sample_pages: list<string>, name_is_url_segment: bool}>, other_branch_count: int, total_fetched_pages: int, pages_within_origin: int, outside_origin_breakdown: list<array{name: string, page_count: int}>, outside_origin_other_count: int}
@@ -78,6 +96,69 @@ class AdminComparisonSiteHierarchyBuilder
 
         $sampleLimit = (int) config('admin_comparison_pptx.site_hierarchy_sample_pages_per_branch');
 
+        [$branches, $flatPageLabels, $pagesWithinOrigin, $outsideCounts] = $this->groupUrlBranches($pages, $scope);
+
+        $branchList = [];
+        foreach ($branches as $segment => $info) {
+            $branchList[] = [
+                'name' => $info['index_title'] ?? $this->decodeSegmentForDisplay($segment),
+                'page_count' => $info['count'],
+                'sample_pages' => $this->deprioritizeSamplePages($info['labels'], $sampleLimit),
+                // 依頼CC-3③: ページ名を捏造しない ―― インデックスページを
+                // 巡回できておらずURLのパスセグメントのまま枝名にしている
+                // 場合、その旨をGenerator側で分かる形にする(捏造しない、
+                // かつ「これが正式なページ名だ」と誤解させないため)。
+                'name_is_url_segment' => $info['index_title'] === null,
+            ];
+        }
+
+        // 依頼CD-5: 起点直下の単独ページ(上記で枝から外したもの)を、1件の
+        // 集計行として枝の一覧に加える。見出し(name)はページ名ではなく
+        // 「起点直下のページ」という区分自体の説明文言(捏造ではない、
+        // config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'))。
+        // 各ページの実名はsample_pages側にのみ出す(タイトルがあればタイトル、
+        // 無ければファイル名 ―― 日本語名を捏造しない、依頼者指定)。
+        if ($flatPageLabels !== []) {
+            $branchList[] = [
+                'name' => (string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'),
+                'page_count' => count($flatPageLabels),
+                'sample_pages' => $this->deprioritizeSamplePages($flatPageLabels, $sampleLimit),
+                'name_is_url_segment' => false,
+            ];
+        }
+
+        // 依頼CB-3: 枝の絞り方はページ数の多い順(依頼者提案、素朴で説明
+        // しやすい ―― サイト内でどの区分に最も厚みがあるかがそのまま伝わる)。
+        usort($branchList, fn (array $a, array $b) => $b['page_count'] <=> $a['page_count']);
+
+        $limit = (int) config('admin_comparison_pptx.site_hierarchy_branch_limit');
+        $otherBranchCount = max(0, count($branchList) - $limit);
+        $branchList = array_slice($branchList, 0, $limit);
+
+        [$outsideBreakdown, $outsideOtherCount] = $this->summarizeOutsideOriginBreakdown($outsideCounts);
+
+        return [
+            'origin_url' => $scope['origin_url'],
+            'branches' => $branchList,
+            'other_branch_count' => $otherBranchCount,
+            'total_fetched_pages' => $totalFetchedPages,
+            'pages_within_origin' => $pagesWithinOrigin,
+            'outside_origin_breakdown' => $outsideBreakdown,
+            'outside_origin_other_count' => $outsideOtherCount,
+        ];
+    }
+
+    /**
+     * 依頼CL-3: build()とbuildTree()(メニューが読めないサイトの代替)で
+     * 共有する、URLのパス階層による枝のグルーピング。依頼CL以前のbuild()の
+     * ループ本体をそのまま切り出したもの(挙動は変えていない)。
+     *
+     * @param  Collection<int, AnalysisCrawledPage>  $pages
+     * @param  array{origin_url: string, host: string, path: string}  $scope
+     * @return array{0: array<string, array{count: int, index_title: ?string, labels: list<array{label: string, deprioritized: bool}>}>, 1: list<array{label: string, deprioritized: bool}>, 2: int, 3: array<string, int>}
+     */
+    private function groupUrlBranches(Collection $pages, array $scope): array
+    {
         /** @var array<string, array{count: int, index_title: ?string, labels: list<array{label: string, deprioritized: bool}>}> $branches */
         $branches = [];
         /** @var list<array{label: string, deprioritized: bool}> $flatPageLabels 依頼CD-5参照 */
@@ -146,54 +227,7 @@ class AdminComparisonSiteHierarchyBuilder
             $branches[$branchKey]['labels'][] = ['label' => $label, 'deprioritized' => $this->isDeprioritizedSampleLabel($label)];
         }
 
-        $branchList = [];
-        foreach ($branches as $segment => $info) {
-            $branchList[] = [
-                'name' => $info['index_title'] ?? $this->decodeSegmentForDisplay($segment),
-                'page_count' => $info['count'],
-                'sample_pages' => $this->deprioritizeSamplePages($info['labels'], $sampleLimit),
-                // 依頼CC-3③: ページ名を捏造しない ―― インデックスページを
-                // 巡回できておらずURLのパスセグメントのまま枝名にしている
-                // 場合、その旨をGenerator側で分かる形にする(捏造しない、
-                // かつ「これが正式なページ名だ」と誤解させないため)。
-                'name_is_url_segment' => $info['index_title'] === null,
-            ];
-        }
-
-        // 依頼CD-5: 起点直下の単独ページ(上記で枝から外したもの)を、1件の
-        // 集計行として枝の一覧に加える。見出し(name)はページ名ではなく
-        // 「起点直下のページ」という区分自体の説明文言(捏造ではない、
-        // config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'))。
-        // 各ページの実名はsample_pages側にのみ出す(タイトルがあればタイトル、
-        // 無ければファイル名 ―― 日本語名を捏造しない、依頼者指定)。
-        if ($flatPageLabels !== []) {
-            $branchList[] = [
-                'name' => (string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'),
-                'page_count' => count($flatPageLabels),
-                'sample_pages' => $this->deprioritizeSamplePages($flatPageLabels, $sampleLimit),
-                'name_is_url_segment' => false,
-            ];
-        }
-
-        // 依頼CB-3: 枝の絞り方はページ数の多い順(依頼者提案、素朴で説明
-        // しやすい ―― サイト内でどの区分に最も厚みがあるかがそのまま伝わる)。
-        usort($branchList, fn (array $a, array $b) => $b['page_count'] <=> $a['page_count']);
-
-        $limit = (int) config('admin_comparison_pptx.site_hierarchy_branch_limit');
-        $otherBranchCount = max(0, count($branchList) - $limit);
-        $branchList = array_slice($branchList, 0, $limit);
-
-        [$outsideBreakdown, $outsideOtherCount] = $this->summarizeOutsideOriginBreakdown($outsideCounts);
-
-        return [
-            'origin_url' => $scope['origin_url'],
-            'branches' => $branchList,
-            'other_branch_count' => $otherBranchCount,
-            'total_fetched_pages' => $totalFetchedPages,
-            'pages_within_origin' => $pagesWithinOrigin,
-            'outside_origin_breakdown' => $outsideBreakdown,
-            'outside_origin_other_count' => $outsideOtherCount,
-        ];
+        return [$branches, $flatPageLabels, $pagesWithinOrigin, $outsideCounts];
     }
 
     /**
@@ -323,6 +357,516 @@ class AdminComparisonSiteHierarchyBuilder
     }
 
     /**
+     * 依頼CL-3(2026-10-05): 階層図の木(TOP → 第1階層 → 第2階層)。
+     *
+     * mode='menu': 第1階層=TOPのメニュー(ヘッダー・ナビゲーション、フッター
+     * は含めない)の項目、第2階層=その項目のページから実際にリンクされて
+     * いるページ(全ページ共通のメニュー・フッターのリンクは除く)。実際の
+     * リンクが求められない項目だけ、URLがその項目の配下にあるページで代用する
+     * (second_level_sourceにどちらで作ったかを件数で返す)。
+     * mode='url': メニューの項目が config 'site_hierarchy_tree_menu_min_items'
+     * 未満しか取れないサイトでは、従来のURLの階層(build()と共通の
+     * groupUrlBranches())を同じ木の形で返す。
+     *
+     * 対象は巡回で取得できたページ(status=fetched)のうち、起点URL配下
+     * (CrawlOriginScopeResolver)のものだけ。HTMLが読めない・起点が解決
+     * できない場合も例外にせず、枝が空の木を返す。
+     *
+     * @return array{
+     *     mode: string,
+     *     origin_url: string,
+     *     top: array{url: string, title: ?string, headings: list<string>, menu_item_count: int},
+     *     branches: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>,
+     *     other_branch_count: int,
+     *     total_fetched_pages: int,
+     *     pages_within_origin: int,
+     *     outside_origin_count: int,
+     *     second_level_source: array{links: int, url: int},
+     *     menu_source: ?string,
+     * }
+     */
+    public function buildTree(WebsiteAnalysis $websiteAnalysis): array
+    {
+        $pages = $this->fetchedPages($websiteAnalysis);
+        $totalFetched = $pages->count();
+
+        $scope = $this->scopeResolver->resolveScope($websiteAnalysis);
+        if ($scope === null) {
+            return $this->treeResult('url', '', ['url' => '', 'title' => null, 'headings' => [], 'menu_item_count' => 0], [], 0, $totalFetched, 0, ['links' => 0, 'url' => 0], null);
+        }
+
+        $within = $pages->filter(fn (AnalysisCrawledPage $page) => $this->scopeResolver->isWithinScope($page->url, $page->final_url, $scope))->values();
+        $pagesWithinOrigin = $within->count();
+
+        $topPage = $this->readTopPage($websiteAnalysis, $scope, $pages);
+        $minItems = (int) config('admin_comparison_pptx.site_hierarchy_tree_menu_min_items');
+
+        // レンダリング済みHTMLを優先する(メニューがJavaScriptで描かれるサイトが
+        // ある)。ただし項目が足りなければ静的HTMLも試し、多い方を採る。
+        $menuItems = [];
+        $menuSource = null;
+        foreach ($topPage['htmls'] as $candidate) {
+            $items = $this->extractMenuItems($candidate['html'], $topPage['base_url'], $scope);
+            if ($menuSource === null || count($items) > count($menuItems)) {
+                $menuItems = $items;
+                $menuSource = $candidate['source'];
+            }
+            if (count($items) >= $minItems) {
+                $menuItems = $items;
+                $menuSource = $candidate['source'];
+                break;
+            }
+        }
+
+        $top = [
+            'url' => $scope['origin_url'],
+            'title' => $topPage['title'],
+            'headings' => $topPage['headings'],
+            'menu_item_count' => count($menuItems),
+        ];
+
+        if (count($menuItems) < $minItems) {
+            [$branches, $otherBranchCount] = $this->buildUrlModeBranches($within, $scope);
+
+            return $this->treeResult('url', $scope['origin_url'], $top, $branches, $otherBranchCount, $totalFetched, $pagesWithinOrigin, ['links' => 0, 'url' => 0], $menuSource);
+        }
+
+        [$branches, $otherBranchCount, $source] = $this->buildMenuModeBranches($menuItems, $within, $scope);
+
+        return $this->treeResult('menu', $scope['origin_url'], $top, $branches, $otherBranchCount, $totalFetched, $pagesWithinOrigin, $source, $menuSource);
+    }
+
+    /**
+     * 自社のWebsiteAnalysisが見つからないとき(想定外)の、枝が空の木。
+     *
+     * @return array<string, mixed>
+     */
+    public function emptyTree(): array
+    {
+        return $this->treeResult('url', '', ['url' => '', 'title' => null, 'headings' => [], 'menu_item_count' => 0], [], 0, 0, 0, ['links' => 0, 'url' => 0], null);
+    }
+
+    /**
+     * @param  array{url: string, title: ?string, headings: list<string>, menu_item_count: int}  $top
+     * @param  list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>  $branches
+     * @param  array{links: int, url: int}  $source
+     * @return array<string, mixed>
+     */
+    private function treeResult(string $mode, string $originUrl, array $top, array $branches, int $otherBranchCount, int $totalFetched, int $pagesWithinOrigin, array $source, ?string $menuSource): array
+    {
+        return [
+            'mode' => $mode,
+            'origin_url' => $originUrl,
+            'top' => $top,
+            'branches' => $branches,
+            'other_branch_count' => $otherBranchCount,
+            'total_fetched_pages' => $totalFetched,
+            'pages_within_origin' => $pagesWithinOrigin,
+            'outside_origin_count' => $totalFetched - $pagesWithinOrigin,
+            'second_level_source' => $source,
+            'menu_source' => $menuSource,
+        ];
+    }
+
+    /**
+     * 代替(mode='url')の枝。URLの階層のまま、枝の名前にはそのインデックス
+     * ページのtitleを優先する(取れていなければURLのセグメントをデコード
+     * したもの)。第1階層・第2階層の上限はメニュー版と同じconfig。
+     *
+     * @param  Collection<int, AnalysisCrawledPage>  $within  起点URL配下のページ
+     * @param  array{origin_url: string, host: string, path: string}  $scope
+     * @return array{0: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, 1: int}
+     */
+    private function buildUrlModeBranches(Collection $within, array $scope): array
+    {
+        $secondLimit = (int) config('admin_comparison_pptx.site_hierarchy_tree_second_level_limit');
+        [$groups, $flatLabels] = $this->groupUrlBranches($within, $scope);
+
+        $branches = [];
+        foreach ($groups as $segment => $info) {
+            $labels = $this->deprioritizeSamplePages($info['labels'], PHP_INT_MAX);
+            // 枝の名前にしたインデックスページのtitleは、第2階層にも重ねて出さない
+            // (ページ数には数えたまま)。
+            if ($info['index_title'] !== null) {
+                $position = array_search($info['index_title'], $labels, true);
+                if ($position !== false) {
+                    unset($labels[$position]);
+                    $labels = array_values($labels);
+                }
+            }
+            $branches[] = [
+                'name' => $info['index_title'] ?? $this->decodeSegmentForDisplay((string) $segment),
+                'url' => null,
+                'page_count' => $info['count'],
+                'pages' => array_slice($labels, 0, $secondLimit),
+                'other_page_count' => max(0, count($labels) - $secondLimit),
+            ];
+        }
+
+        if ($flatLabels !== []) {
+            $labels = $this->deprioritizeSamplePages($flatLabels, PHP_INT_MAX);
+            $branches[] = [
+                'name' => (string) config('admin_comparison_pptx.site_hierarchy_flat_pages_heading'),
+                'url' => null,
+                'page_count' => count($flatLabels),
+                'pages' => array_slice($labels, 0, $secondLimit),
+                'other_page_count' => max(0, count($labels) - $secondLimit),
+            ];
+        }
+
+        return $this->limitBranches($branches);
+    }
+
+    /**
+     * メニュー版の枝。第2階層は、その項目のページから実際にリンクされている
+     * 巡回済みページを優先し、求められない項目だけURLの配下で代用する。
+     *
+     * @param  list<array{label: string, url: string, key: string}>  $menuItems
+     * @param  Collection<int, AnalysisCrawledPage>  $within
+     * @param  array{origin_url: string, host: string, path: string}  $scope
+     * @return array{0: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, 1: int, 2: array{links: int, url: int}}
+     */
+    private function buildMenuModeBranches(array $menuItems, Collection $within, array $scope): array
+    {
+        $secondLimit = (int) config('admin_comparison_pptx.site_hierarchy_tree_second_level_limit');
+
+        /** @var array<string, AnalysisCrawledPage> $byKey */
+        $byKey = [];
+        foreach ($within as $page) {
+            $byKey[$this->urlKey((string) $page->url)] ??= $page;
+            if ($page->final_url !== null) {
+                $byKey[$this->urlKey((string) $page->final_url)] ??= $page;
+            }
+        }
+
+        $topKey = $this->urlKey($scope['origin_url']);
+        $menuKeys = array_fill_keys(array_column($menuItems, 'key'), true);
+
+        $assigned = [];
+        $source = ['links' => 0, 'url' => 0];
+        $branches = [];
+
+        foreach ($menuItems as $item) {
+            $itemPage = $byKey[$item['key']] ?? null;
+            if ($itemPage !== null) {
+                $assigned[$itemPage->id] = true;
+            }
+
+            $children = [];
+
+            if ($itemPage !== null) {
+                foreach ($this->linkedFetchedPages($itemPage, $byKey) as $linked) {
+                    $linkedKey = $this->urlKey((string) ($linked->final_url ?? $linked->url));
+                    if (isset($assigned[$linked->id]) || $linkedKey === $topKey || isset($menuKeys[$linkedKey])) {
+                        continue;
+                    }
+                    $children[] = $linked;
+                    $assigned[$linked->id] = true;
+                }
+            }
+
+            $usedSource = 'links';
+            if ($children === []) {
+                $usedSource = 'url';
+                $prefix = $this->directoryKeyOf($item['key']);
+                foreach ($within as $page) {
+                    $pageKey = $this->urlKey((string) ($page->final_url ?? $page->url));
+                    if (isset($assigned[$page->id]) || $pageKey === $topKey || isset($menuKeys[$pageKey])
+                        || ! str_starts_with($pageKey, $prefix)) {
+                        continue;
+                    }
+                    $children[] = $page;
+                    $assigned[$page->id] = true;
+                }
+            }
+            if ($children !== []) {
+                $source[$usedSource]++;
+            }
+
+            $labels = array_map(fn (AnalysisCrawledPage $page) => $this->pageLabel($page), $children);
+            $branches[] = [
+                'name' => $item['label'],
+                'url' => $item['url'],
+                'page_count' => count($children) + ($itemPage !== null ? 1 : 0),
+                'pages' => array_slice($labels, 0, $secondLimit),
+                'other_page_count' => max(0, count($labels) - $secondLimit),
+            ];
+        }
+
+        [$limited, $otherBranchCount] = $this->limitBranches($branches);
+
+        return [$limited, $otherBranchCount, $source];
+    }
+
+    /**
+     * 第1階層の上限を適用する。ページ数の多い順(同数はメニューの並び順)に
+     * 上限件数を選び、表示順はもとの並び順に戻す。
+     *
+     * @param  list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>  $branches
+     * @return array{0: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, 1: int}
+     */
+    private function limitBranches(array $branches): array
+    {
+        $limit = (int) config('admin_comparison_pptx.site_hierarchy_tree_first_level_limit');
+        if (count($branches) <= $limit) {
+            return [$branches, 0];
+        }
+
+        $indexed = array_map(null, array_keys($branches), $branches);
+        usort($indexed, fn (array $a, array $b) => [$b[1]['page_count'], $a[0]] <=> [$a[1]['page_count'], $b[0]]);
+        $chosen = array_slice($indexed, 0, $limit);
+        usort($chosen, fn (array $a, array $b) => $a[0] <=> $b[0]);
+
+        return [array_map(fn (array $pair) => $pair[1], $chosen), count($branches) - $limit];
+    }
+
+    /**
+     * そのページの保存済みHTML(レンダリング済み優先)に含まれる、本文側の
+     * (<header>/<nav>/<footer>の外の)リンクのうち、巡回済みのページ。
+     * リンクの出現順。読めない場合は空。
+     *
+     * @param  array<string, AnalysisCrawledPage>  $byKey
+     * @return list<AnalysisCrawledPage>
+     */
+    private function linkedFetchedPages(AnalysisCrawledPage $page, array $byKey): array
+    {
+        $html = $this->readStoredHtml($page->rendered_html_path) ?? $this->readStoredHtml($page->raw_html_path);
+        if ($html === null) {
+            return [];
+        }
+
+        $pageUrl = (string) ($page->final_url ?? $page->url);
+        $result = [];
+        foreach ($this->linkExtractor->extractAbsoluteLinks($html, $pageUrl, true) as $link) {
+            $target = $byKey[$this->urlKey($link)] ?? null;
+            if ($target !== null && $target->id !== $page->id) {
+                $result[$target->id] = $target;
+            }
+        }
+
+        return array_values($result);
+    }
+
+    /**
+     * TOP(起点URL)のページ名・主な見出し・保存済みHTML(レンダリング済み
+     * →静的の順)を読む。起点が採用ページ/トップページ由来ならそのAnalysisPage、
+     * なければ巡回済みページから同じURLのものを探す。読めなければHTMLは空。
+     *
+     * @param  array{origin_url: string, host: string, path: string}  $scope
+     * @param  Collection<int, AnalysisCrawledPage>  $crawled
+     * @return array{title: ?string, headings: list<string>, base_url: string, htmls: list<array{source: string, html: string}>}
+     */
+    private function readTopPage(WebsiteAnalysis $websiteAnalysis, array $scope, Collection $crawled): array
+    {
+        $originKey = $this->urlKey($scope['origin_url']);
+        $title = null;
+        $paths = [];
+
+        foreach ([PageType::Recruit, PageType::Homepage] as $type) {
+            $analysisPage = AnalysisPage::query()
+                ->where('website_analysis_id', $websiteAnalysis->id)
+                ->where('page_type', $type)
+                ->first();
+            if ($analysisPage !== null && $this->urlKey((string) ($analysisPage->final_url ?? $analysisPage->url)) === $originKey) {
+                $title = $this->nullIfBlank($analysisPage->title);
+                $paths = ['rendered' => $analysisPage->rendered_html_path, 'raw' => $analysisPage->raw_html_path];
+                break;
+            }
+        }
+
+        if ($paths === []) {
+            $crawledTop = $crawled->first(fn (AnalysisCrawledPage $page) => $this->urlKey((string) ($page->final_url ?? $page->url)) === $originKey);
+            if ($crawledTop !== null) {
+                $title = $this->nullIfBlank($crawledTop->title);
+                $paths = ['rendered' => $crawledTop->rendered_html_path, 'raw' => $crawledTop->raw_html_path];
+            }
+        }
+
+        $htmls = [];
+        foreach (['rendered', 'raw'] as $kind) {
+            $html = $this->readStoredHtml($paths[$kind] ?? null);
+            if ($html !== null) {
+                $htmls[] = ['source' => $kind, 'html' => $html];
+            }
+        }
+
+        return [
+            'title' => $title,
+            'headings' => $htmls === [] ? [] : $this->topHeadings($htmls[0]['html']),
+            'base_url' => $scope['origin_url'],
+            'htmls' => $htmls,
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function topHeadings(string $html): array
+    {
+        $limit = (int) config('admin_comparison_pptx.site_hierarchy_tree_top_heading_limit');
+        $maxChars = (int) config('admin_comparison_pptx.site_hierarchy_tree_label_max_chars');
+
+        $headings = $this->htmlAnalyzer->extractHeadingTexts($html);
+        $h1 = array_values(array_filter($headings, fn (array $h) => $h['level'] === 1));
+        $h2 = array_values(array_filter($headings, fn (array $h) => $h['level'] === 2));
+
+        $result = [];
+        foreach ([...$h1, ...$h2] as $heading) {
+            $text = mb_strlen($heading['text']) > $maxChars ? mb_substr($heading['text'], 0, $maxChars - 1).'…' : $heading['text'];
+            if (! in_array($text, $result, true)) {
+                $result[] = $text;
+            }
+            if (count($result) >= $limit) {
+                break;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * TOPのメニューの項目(文字＋リンク先)。起点URL配下のものだけを、メニューの
+     * 並び順のまま、リンク先URLの重複を除いて返す。他の項目の配下にある項目
+     * (ドロップダウンの子など)は第1階層に含めず、その項目の枝に含まれる。
+     *
+     * @param  array{origin_url: string, host: string, path: string}  $scope
+     * @return list<array{label: string, url: string, key: string}>
+     */
+    private function extractMenuItems(string $html, string $baseUrl, array $scope): array
+    {
+        $originKey = $this->urlKey($scope['origin_url']);
+        $items = [];
+        $seenKeys = [];
+
+        foreach ($this->htmlAnalyzer->extractMenuLinks($html) as $link) {
+            $url = $this->linkExtractor->resolveHref($baseUrl, $link['href']);
+            if ($url === null || ! $this->scopeResolver->isWithinScope($url, null, $scope)) {
+                continue;
+            }
+
+            $key = $this->urlKey($url);
+            if ($key === $originKey || isset($seenKeys[$key])) {
+                continue;
+            }
+
+            $label = $this->cleanMenuLabel($link['label']);
+            if ($label === '') {
+                continue;
+            }
+
+            $seenKeys[$key] = true;
+            $items[] = ['label' => $label, 'url' => $url, 'key' => $key];
+        }
+
+        // 他の項目の配下にある項目(ディレクトリ形式のURLの下)は、その項目の枝に
+        // 含まれるため第1階層からは外す。
+        $keys = array_column($items, 'key');
+
+        return array_values(array_filter($items, function (array $item) use ($keys) {
+            foreach ($keys as $other) {
+                if ($other !== $item['key'] && $this->isDirectoryLikeKey($other) && str_starts_with($item['key'], $other.'/')) {
+                    return false;
+                }
+            }
+
+            return true;
+        }));
+    }
+
+    /**
+     * メニューの文字から、アイコンフォントの文字列(例: "keyboard_arrow_right"
+     * がカルチャーの前に付く)を除く。小文字の英単語がアンダースコアで2つ
+     * 以上つながったものだけを対象にする(ほかの文字は変えない)。
+     */
+    private function cleanMenuLabel(string $label): string
+    {
+        $cleaned = preg_replace('/(?<![A-Za-z0-9])[a-z]+(?:_[a-z]+)+/u', '', $label) ?? $label;
+
+        return trim(preg_replace('/\s+/u', ' ', $cleaned) ?? $cleaned);
+    }
+
+    /**
+     * URLの比較用キー: ホスト(小文字)＋パス(末尾の"/"と"index.html"等を
+     * 除く)＋クエリ。fragmentは含めない。
+     */
+    private function urlKey(string $url): string
+    {
+        $parts = parse_url($url);
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        $path = (string) ($parts['path'] ?? '');
+        $path = preg_replace('#/index\.(?:html?|php)$#i', '/', $path) ?? $path;
+        $path = rtrim($path, '/');
+        $query = isset($parts['query']) && $parts['query'] !== '' ? '?'.$parts['query'] : '';
+
+        return $host.$path.$query;
+    }
+
+    /** 最後のセグメントに"."を含まない(=ディレクトリ形式の)キーか。ホストだけ(ルート)は含めない。 */
+    private function isDirectoryLikeKey(string $key): bool
+    {
+        if (str_contains($key, '?')) {
+            return false;
+        }
+        $slash = strpos($key, '/');
+        if ($slash === false) {
+            return false;
+        }
+        $lastSegment = substr($key, (int) strrpos($key, '/') + 1);
+
+        return $lastSegment !== '' && ! str_contains($lastSegment, '.');
+    }
+
+    /**
+     * その項目の配下とみなすURLキーの接頭辞(末尾"/"つき)。ディレクトリ形式は
+     * そのまま、ファイル形式(.htmlなど)は拡張子を除いたものを配下の接頭辞とする。
+     */
+    private function directoryKeyOf(string $key): string
+    {
+        $withoutQuery = explode('?', $key)[0];
+        if ($this->isDirectoryLikeKey($withoutQuery)) {
+            return $withoutQuery.'/';
+        }
+
+        return (preg_replace('/\.[A-Za-z0-9]+$/', '', $withoutQuery) ?? $withoutQuery).'/';
+    }
+
+    private function pageLabel(AnalysisCrawledPage $page): string
+    {
+        $title = trim((string) $page->title);
+        if ($title !== '') {
+            return $title;
+        }
+
+        $parts = parse_url((string) ($page->final_url ?? $page->url));
+        $path = $this->decodeSegmentForDisplay((string) ($parts['path'] ?? '/'));
+
+        return $path === '' ? '/' : $path;
+    }
+
+    private function nullIfBlank(?string $value): ?string
+    {
+        $trimmed = trim((string) $value);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    private function readStoredHtml(?string $path): ?string
+    {
+        if ($path === null || $path === '') {
+            return null;
+        }
+
+        $disk = Storage::disk('analysis');
+        if (! $disk->exists($path)) {
+            return null;
+        }
+
+        $html = $disk->get($path);
+
+        return is_string($html) && $html !== '' ? $html : null;
+    }
+
+    /**
      * @return Collection<int, AnalysisCrawledPage>
      */
     private function fetchedPages(WebsiteAnalysis $websiteAnalysis): Collection
@@ -330,7 +874,8 @@ class AdminComparisonSiteHierarchyBuilder
         return AnalysisCrawledPage::query()
             ->where('website_analysis_id', $websiteAnalysis->id)
             ->where('status', AnalysisCrawledPage::STATUS_FETCHED)
-            ->get(['url', 'final_url', 'title']);
+            ->orderBy('id')
+            ->get(['id', 'url', 'final_url', 'title', 'raw_html_path', 'rendered_html_path']);
     }
 
     /**

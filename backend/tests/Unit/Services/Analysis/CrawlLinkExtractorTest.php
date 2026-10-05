@@ -164,4 +164,34 @@ class CrawlLinkExtractorTest extends TestCase
 
         $this->assertSame(['https://example.com/about.html'], $links);
     }
+
+    // ------------------------------------------------------------------
+    // 依頼CL-3(2026-10-05): excludeChrome・resolveHref()。
+    // ------------------------------------------------------------------
+
+    public function test_exclude_chrome_returns_only_the_links_outside_header_nav_and_footer(): void
+    {
+        $html = '<html><body>'
+            .'<header><a href="/home">ホーム</a></header>'
+            .'<nav><a href="/menu">メニュー</a></nav>'
+            .'<main><a href="/article-1">記事1</a><a href="/article-2">記事2</a></main>'
+            .'<footer><a href="/privacy">プライバシー</a></footer>'
+            .'</body></html>';
+
+        $this->assertSame(
+            ['https://example.com/article-1', 'https://example.com/article-2'],
+            $this->extractor->extractAbsoluteLinks($html, 'https://example.com/recruit', true),
+        );
+        // 既定(false)は従来どおりすべてのリンクを返す。
+        $this->assertCount(5, $this->extractor->extractAbsoluteLinks($html, 'https://example.com/recruit'));
+    }
+
+    public function test_resolve_href_resolves_like_extract_absolute_links_and_rejects_non_navigational_hrefs(): void
+    {
+        $this->assertSame('https://example.com/ssc/greeting.html', $this->extractor->resolveHref('https://example.com/ssc/recruit/', '../greeting.html'));
+        $this->assertSame('https://example.com/a', $this->extractor->resolveHref('https://example.com/recruit/', '/a#top'));
+        foreach (['', '#top', 'mailto:a@example.com', 'tel:0300000000', 'javascript:void(0)'] as $href) {
+            $this->assertNull($this->extractor->resolveHref('https://example.com/', $href), "「{$href}」は除外される");
+        }
+    }
 }

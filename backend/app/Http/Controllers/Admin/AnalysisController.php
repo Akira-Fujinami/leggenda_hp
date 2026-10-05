@@ -207,19 +207,23 @@ class AnalysisController extends Controller
             // analysis_crawled_pagesから組み立てる ―― ViewModel/$dataは
             // URLの階層情報を持たないため、別に取得する。
             $selfWebsiteAnalysis = $analysis->websiteAnalyses->first(fn ($wa) => (bool) $wa->website?->is_primary);
-            $hierarchy = $selfWebsiteAnalysis !== null
-                ? $hierarchyBuilder->build($selfWebsiteAnalysis)
-                : ['origin_url' => '', 'branches' => [], 'other_branch_count' => 0, 'total_fetched_pages' => 0, 'pages_within_origin' => 0];
+            // 依頼CL-3: 階層図は木(TOP → 第1階層 → 第2階層)の形で渡す。
+            $tree = $selfWebsiteAnalysis !== null
+                ? $hierarchyBuilder->buildTree($selfWebsiteAnalysis)
+                : $hierarchyBuilder->emptyTree();
 
             // 依頼CB-4: 説明→比較(CB-1)→足りないもの(CB-2)→階層図(CB-3)→
             // 参照元、の順で差し込む(説明ページは分析結果に依存しない
             // 固定内容、AdminComparisonPptxGenerator::
             // generateExplanationSlide()参照)。
+            // 依頼CL-4(2026-10-05): 「求職者が知りたい情報と、自社サイト」
+            // (CL-2)を「足りないもの」の次に加え、5枚にした。
             $slideBytesList = [
                 $slideGenerator->generateExplanationSlide(),
                 $slideGenerator->generate($data),
                 $slideGenerator->generateMissingItemsSlide($data),
-                $slideGenerator->generateSiteHierarchySlide($data, $hierarchy),
+                $slideGenerator->generateSurveyComparisonSlide($data),
+                $slideGenerator->generateSiteHierarchySlide($data, $tree),
             ];
 
             $baseDeckPath = Storage::disk('analysis')->path($attachment->storage_path);
