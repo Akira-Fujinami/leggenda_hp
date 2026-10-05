@@ -82,6 +82,7 @@ class MeasureBrandWheelCrawlInputCommand extends Command
         'nttdata' => ['label' => 'NTTデータ', 'homepage_url' => 'https://www.nttdata.com/global/ja/recruit/', 'recruit_url' => 'https://www.nttdata.com/global/ja/recruit/'],
         'smarthr' => ['label' => 'SmartHR', 'homepage_url' => 'https://hello-world.smarthr.co.jp', 'recruit_url' => 'https://hello-world.smarthr.co.jp'],
         'kayac' => ['label' => 'カヤック', 'homepage_url' => 'https://www.kayac.com/recruit/fresh', 'recruit_url' => 'https://www.kayac.com/recruit/fresh'],
+        'cybozu' => ['label' => 'サイボウズ', 'homepage_url' => 'https://cybozu.co.jp/recruit/', 'recruit_url' => 'https://cybozu.co.jp/recruit/'],
         'kilfebon' => ['label' => 'キルフェボン', 'homepage_url' => 'https://www.quil-fait-bon-recruit.com', 'recruit_url' => 'https://www.quil-fait-bon-recruit.com'],
     ];
 
@@ -321,13 +322,9 @@ class MeasureBrandWheelCrawlInputCommand extends Command
      */
     private function runCrawlChain(AnalysisPipeline $pipeline, int $analysisId, int $waId, bool $renderEnabled): void
     {
-        (new CrawlWebsiteJob($analysisId, $waId))->handle(
-            $pipeline,
-            app(CrawlPolicyResolver::class),
-            app(RobotsTxtParser::class),
-            app(\App\Services\Analysis\SitemapParser::class),
-            app(CrawlLinkExtractor::class),
-        );
+        // 依頼CM: Jobのhandle()に依存が増えるたびにこの手書きの引数列が壊れていた
+        // (CrawlWebsiteJobは6引数になっていた)ため、コンテナに解決させる。
+        app()->call([new CrawlWebsiteJob($analysisId, $waId), 'handle']);
 
         $intervalMicros = (int) round((float) config('brand_wheel.crawl_request_interval_seconds', 1.0) * 1_000_000);
         $maxPages = (int) config('brand_wheel.crawl_max_pages', 50);
@@ -359,16 +356,7 @@ class MeasureBrandWheelCrawlInputCommand extends Command
                 usleep($intervalMicros);
             }
 
-            (new CrawlWebsitePageJob($analysisId, $waId))->handle(
-                $pipeline,
-                app(SafeHttpFetcher::class),
-                app(CrawlLinkExtractor::class),
-                app(RobotsTxtParser::class),
-                app(CrawlPolicyResolver::class),
-                app(AnalysisStoragePaths::class),
-                app(HtmlSeoAnalyzer::class),
-                app(PageHtmlResolver::class),
-            );
+            app()->call([new CrawlWebsitePageJob($analysisId, $waId), 'handle']);
 
             $dispatched = WebsiteAnalysis::find($waId)?->brand_wheel_dispatched_at !== null;
             $hasRenderCandidates = AnalysisCrawledPage::query()->where('website_analysis_id', $waId)->where('render_candidate', true)->exists();
@@ -389,11 +377,7 @@ class MeasureBrandWheelCrawlInputCommand extends Command
                 if (WebsiteAnalysis::find($waId)?->brand_wheel_dispatched_at !== null) {
                     break;
                 }
-                (new RenderCrawledPageJob($analysisId, $waId))->handle(
-                    $pipeline,
-                    app(AnalyzerClient::class),
-                    app(AnalysisStoragePaths::class),
-                );
+                app()->call([new RenderCrawledPageJob($analysisId, $waId), 'handle']);
             }
         } else {
             AnalysisCrawledPage::query()->where('website_analysis_id', $waId)->where('render_candidate', true)
