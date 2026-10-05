@@ -264,7 +264,9 @@ return [
     | 0件(自社が24項目すべてを満たす)のとき、セクションごと消して余白を
     | 残すことは禁止(依頼BO由来、依頼者指定) ―― 見出しの下にこの文言を出す。
     */
-    'missing_items_heading' => '競合%1$d社中%2$d社以上が伝えていて、自社が伝えていない項目',
+    // 依頼CM-6(2026-10-06): 「自社が伝えていない」と断定せず、この資料の他の箇所と同じ
+    // 「確認できなかった」の言い方に統一した(巡回は最大ページ数までのため)。
+    'missing_items_heading' => '競合%1$d社中%2$d社以上が伝えていて、自社サイトでは確認できなかった項目',
     'missing_items_empty_text' => '見つかりませんでした。',
 
     /*
@@ -283,8 +285,8 @@ return [
     | 確認できなかった項目」であり、割合は参考という位置づけに改めた。
     | 項目の選び方・並び順・各行の表示は変えていない。
     */
-    'missing_items_intro' => '競合の多くが伝えていて、自社サイトでは確認できなかった項目です。'
-        .'添えた求職者調査の割合は参考で、項目の選定や並び順には使っていません。',
+    // 依頼CM-6: 見出し(missing_items_heading)と重なる前半を外した。
+    'missing_items_intro' => '添えた求職者調査の割合は参考で、項目の選定や並び順には使っていません。',
 
     /*
     |--------------------------------------------------------------------------
@@ -332,6 +334,30 @@ return [
     'wheel_table_self_header' => '自社',
 
     'wheel_table_total_label' => '合計',
+
+    // 依頼CM-4(2026-10-06): 競合がこの社数以下のとき、表の見出しに企業名を出し(中央の
+    // 列にも記号を付けない)、中央の列を縦1列にする。これより多いときは記号
+    // (自社/A〜E)で、中央の列は2列。
+    'wheel_names_max_competitors' => 3,
+
+    /*
+    | 依頼CM-3(2026-10-06): 企業名の折り方(AdminComparisonPptxGenerator::
+    | renderCompanyName())。企業名は語の切れ目で折る。文章の折り返しには使わない。
+    |  - company_name_break_words: 独立した語として前後で切れる語(法人格)。
+    |  - company_name_break_after_chars: この文字の直後で切れる(文字は前の行に残す)。
+    |  - company_name_break_space_chars: この文字で切れる(文字は捨てる)。
+    |  - 1行に収めるため文字を小さくしてよい下限:
+    |    max(company_name_absolute_min_pt, 元の大きさ × company_name_min_font_ratio)。
+    */
+    'company_name_break_words' => ['株式会社', '有限会社', '合同会社'],
+
+    'company_name_break_after_chars' => ['・'],
+
+    'company_name_break_space_chars' => [' ', '　'],
+
+    'company_name_min_font_ratio' => 0.8,
+
+    'company_name_absolute_min_pt' => 7,
 
     // 競合の記号。先頭から順にA、B、…(最大5社)。
     'wheel_competitor_symbols' => 'ABCDE',
@@ -614,6 +640,14 @@ return [
     // メニューの項目がこの件数未満のとき(0〜1件しか取れないサイト)は、
     // メニューを使わず、URLの階層にもとづく枝を同じ木の形で描く。
     'site_hierarchy_tree_menu_min_items' => 2,
+
+    // 依頼CM-2(2026-10-06): 起点URLの配下で取得できたページがこの件数に満たないとき、
+    // 階層図の表示だけ、起点をそのホストの一番上まで広げて描く(巡回・判定に使う
+    // 起点は変えない)。広げたことは図の中の注記(下記)で示す。
+    'site_hierarchy_tree_widen_min_pages' => 3,
+
+    // 広げて描いたときの注記。%s=広げた先の起点(サイトの一番上)のURL。
+    'site_hierarchy_tree_widened_note' => '起点URLの配下にページが少ないため、サイト全体（%s）の階層で描いています。',
 
     // TOPに添える「主な見出し」の件数上限と、1件あたりの最大文字数。
     'site_hierarchy_tree_top_heading_limit' => 3,

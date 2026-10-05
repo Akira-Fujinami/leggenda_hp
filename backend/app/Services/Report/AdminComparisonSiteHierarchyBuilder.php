@@ -383,6 +383,7 @@ class AdminComparisonSiteHierarchyBuilder
      *     outside_origin_count: int,
      *     second_level_source: array{links: int, url: int},
      *     menu_source: ?string,
+     *     origin_widened: bool,
      * }
      */
     public function buildTree(WebsiteAnalysis $websiteAnalysis): array
@@ -390,15 +391,30 @@ class AdminComparisonSiteHierarchyBuilder
         $pages = $this->fetchedPages($websiteAnalysis);
         $totalFetched = $pages->count();
 
-        $scope = $this->scopeResolver->resolveScope($websiteAnalysis);
-        if ($scope === null) {
+        $sourceScope = $this->scopeResolver->resolveScope($websiteAnalysis);
+        if ($sourceScope === null) {
             return $this->treeResult('url', '', ['url' => '', 'title' => null, 'headings' => [], 'menu_item_count' => 0], [], 0, $totalFetched, 0, ['links' => 0, 'url' => 0], null);
+        }
+
+        // 依頼CM-2(2026-10-06): 起点の配下で取得できたページが基準未満なら、
+        // 階層図の表示だけ、起点をそのホストの一番上まで広げて描く。巡回・判定に
+        // 使う起点(CrawlOriginScopeResolver)は変えない ―― ここで広げるのは
+        // この木の描画範囲だけ。
+        $scope = $sourceScope;
+        $widened = false;
+        $withinSource = $pages->filter(fn (AnalysisCrawledPage $page) => $this->scopeResolver->isWithinScope($page->url, $page->final_url, $sourceScope))->count();
+        if ($withinSource < (int) config('admin_comparison_pptx.site_hierarchy_tree_widen_min_pages')) {
+            $hostTop = $this->hostTopScope($sourceScope);
+            if ($hostTop !== null) {
+                $scope = $hostTop;
+                $widened = true;
+            }
         }
 
         $within = $pages->filter(fn (AnalysisCrawledPage $page) => $this->scopeResolver->isWithinScope($page->url, $page->final_url, $scope))->values();
         $pagesWithinOrigin = $within->count();
 
-        $topPage = $this->readTopPage($websiteAnalysis, $scope, $pages);
+        $topPage = $this->readTopPage($websiteAnalysis, $sourceScope, $pages);
         $minItems = (int) config('admin_comparison_pptx.site_hierarchy_tree_menu_min_items');
 
         // レンダリング済みHTMLを優先する(メニューがJavaScriptで描かれるサイトが
@@ -418,22 +434,50 @@ class AdminComparisonSiteHierarchyBuilder
             }
         }
 
+        // 広げたときは、保存済みのページ(広げる前の起点のページ)のページ名・見出しを
+        // 広げた先の「サイトの一番上」のものとして出さない(別のページのため)。
         $top = [
             'url' => $scope['origin_url'],
-            'title' => $topPage['title'],
-            'headings' => $topPage['headings'],
+            'title' => $widened ? null : $topPage['title'],
+            'headings' => $widened ? [] : $topPage['headings'],
             'menu_item_count' => count($menuItems),
         ];
 
         if (count($menuItems) < $minItems) {
             [$branches, $otherBranchCount] = $this->buildUrlModeBranches($within, $scope);
+            $result = $this->treeResult('url', $scope['origin_url'], $top, $branches, $otherBranchCount, $totalFetched, $pagesWithinOrigin, ['links' => 0, 'url' => 0], $menuSource);
+        } else {
+            [$branches, $otherBranchCount, $source] = $this->buildMenuModeBranches($menuItems, $within, $scope);
+            $result = $this->treeResult('menu', $scope['origin_url'], $top, $branches, $otherBranchCount, $totalFetched, $pagesWithinOrigin, $source, $menuSource);
+        }
+        $result['origin_widened'] = $widened;
 
-            return $this->treeResult('url', $scope['origin_url'], $top, $branches, $otherBranchCount, $totalFetched, $pagesWithinOrigin, ['links' => 0, 'url' => 0], $menuSource);
+        return $result;
+    }
+
+    /**
+     * 起点をそのホストの一番上(/)まで広げた範囲。すでに一番上、またはホストが
+     * 読み取れないときはnull(広げる意味が無い)。
+     *
+     * @param  array{origin_url: string, host: string, path: string}  $scope
+     * @return array{origin_url: string, host: string, path: string}|null
+     */
+    private function hostTopScope(array $scope): ?array
+    {
+        if ($scope['host'] === '' || $scope['path'] === '/') {
+            return null;
         }
 
-        [$branches, $otherBranchCount, $source] = $this->buildMenuModeBranches($menuItems, $within, $scope);
+        $parts = parse_url($scope['origin_url']);
+        if (! isset($parts['scheme'], $parts['host'])) {
+            return null;
+        }
 
-        return $this->treeResult('menu', $scope['origin_url'], $top, $branches, $otherBranchCount, $totalFetched, $pagesWithinOrigin, $source, $menuSource);
+        return [
+            'origin_url' => $parts['scheme'].'://'.$parts['host'].(isset($parts['port']) ? ':'.$parts['port'] : '').'/',
+            'host' => $scope['host'],
+            'path' => '/',
+        ];
     }
 
     /**
@@ -465,6 +509,7 @@ class AdminComparisonSiteHierarchyBuilder
             'outside_origin_count' => $totalFetched - $pagesWithinOrigin,
             'second_level_source' => $source,
             'menu_source' => $menuSource,
+            'origin_widened' => false,
         ];
     }
 
@@ -650,7 +695,14 @@ class AdminComparisonSiteHierarchyBuilder
     /**
      * TOP(起点URL)のページ名・主な見出し・保存済みHTML(レンダリング済み
      * →静的の順)を読む。起点が採用ページ/トップページ由来ならそのAnalysisPage、
-     * なければ巡回済みページから同じURLのものを探す。読めなければHTMLは空。
+     * なければ巡回済みページから同じURLのものを探す。
+     *
+     * 依頼CM-1/CM-2: 起点が「転送先ホストの一番上」へ広がった場合(入力が一番上で、
+     * 転送で奥のページへ着いた場合)、起点のURLと保存済みのページのURLが一致しない。
+     * そのときは、同じホストの保存済みページ(採用ページ→トップページの順)の
+     * HTMLを使う ―― 実際に取得したそのページのメニューが一番上のメニューを含む
+     * ため。リンクの解決はそのページ自身のURLを基準にし、ページ名・見出しは
+     * (起点そのもののページではないため)出さない。読めなければHTMLは空。
      *
      * @param  array{origin_url: string, host: string, path: string}  $scope
      * @param  Collection<int, AnalysisCrawledPage>  $crawled
@@ -661,24 +713,43 @@ class AdminComparisonSiteHierarchyBuilder
         $originKey = $this->urlKey($scope['origin_url']);
         $title = null;
         $paths = [];
+        $baseUrl = $scope['origin_url'];
+        $matched = false;
+        $fallback = null;
 
         foreach ([PageType::Recruit, PageType::Homepage] as $type) {
             $analysisPage = AnalysisPage::query()
                 ->where('website_analysis_id', $websiteAnalysis->id)
                 ->where('page_type', $type)
                 ->first();
-            if ($analysisPage !== null && $this->urlKey((string) ($analysisPage->final_url ?? $analysisPage->url)) === $originKey) {
+            if ($analysisPage === null) {
+                continue;
+            }
+
+            $pageUrl = (string) ($analysisPage->final_url ?? $analysisPage->url);
+            if ($this->urlKey($pageUrl) === $originKey) {
                 $title = $this->nullIfBlank($analysisPage->title);
                 $paths = ['rendered' => $analysisPage->rendered_html_path, 'raw' => $analysisPage->raw_html_path];
+                $matched = true;
                 break;
+            }
+
+            if ($fallback === null
+                && strtolower((string) parse_url($pageUrl, PHP_URL_HOST)) === $scope['host']
+                && ($analysisPage->rendered_html_path !== null || $analysisPage->raw_html_path !== null)) {
+                $fallback = [$analysisPage, $pageUrl];
             }
         }
 
-        if ($paths === []) {
+        if (! $matched) {
             $crawledTop = $crawled->first(fn (AnalysisCrawledPage $page) => $this->urlKey((string) ($page->final_url ?? $page->url)) === $originKey);
             if ($crawledTop !== null) {
                 $title = $this->nullIfBlank($crawledTop->title);
                 $paths = ['rendered' => $crawledTop->rendered_html_path, 'raw' => $crawledTop->raw_html_path];
+                $matched = true;
+            } elseif ($fallback !== null) {
+                $paths = ['rendered' => $fallback[0]->rendered_html_path, 'raw' => $fallback[0]->raw_html_path];
+                $baseUrl = $fallback[1];
             }
         }
 
@@ -692,8 +763,8 @@ class AdminComparisonSiteHierarchyBuilder
 
         return [
             'title' => $title,
-            'headings' => $htmls === [] ? [] : $this->topHeadings($htmls[0]['html']),
-            'base_url' => $scope['origin_url'],
+            'headings' => ($matched && $htmls !== []) ? $this->topHeadings($htmls[0]['html']) : [],
+            'base_url' => $baseUrl,
             'htmls' => $htmls,
         ];
     }

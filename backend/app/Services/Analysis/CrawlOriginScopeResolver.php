@@ -72,27 +72,78 @@ class CrawlOriginScopeResolver
         return str_starts_with((string) ($parts['path'] ?? ''), $scope['path']);
     }
 
+    /**
+     * 依頼CM-1(2026-10-06): 起点URLの決め方。従来は採用ページ(無ければトップ
+     * ページ)のfinal_urlをそのまま起点にしていたため、サイトの一番上を入力
+     * したのに転送で奥のページ(例: hello-world.smarthr.co.jp →
+     * recruit.smarthr.co.jp/engineer/)へ連れて行かれると、転送先の奥の1ページ
+     * (パスまで含めて)が起点になっていた。
+     *
+     * 入力した人の意図に合わせ、次の場合だけ転送先のホストの一番上(/)を起点にする:
+     *  - 入力されたURL(トップページ行のurl)が一番上(パスが空か"/")で、かつ
+     *  - 転送の結果(final_url)が一番上ではない奥のページになっていて、かつ
+     *  - 採用ページの行が「入力されたURLの複製」である(自己参照、
+     *    FetchRecruitPageJobがトップページ行を複製した場合 ―― urlが
+     *    トップページ行と一致する)か、採用ページの行が無い場合。
+     * システムがリンクをたどって見つけた別の採用ページ(トップページ行と
+     * urlが異なる)は、従来どおりそのfinal_urlのディレクトリを起点にする。
+     * 奥のページを入力した場合(入力が一番上でない)も従来どおり。
+     * config('brand_wheel.crawl_origin_widen_redirected_top')で無効にでき、
+     * 無効なら変更前と同じ起点になる。
+     */
     private function resolveOriginUrl(WebsiteAnalysis $websiteAnalysis): ?string
     {
+        $homepage = AnalysisPage::query()
+            ->where('website_analysis_id', $websiteAnalysis->id)
+            ->where('page_type', PageType::Homepage)
+            ->first();
+
         $recruit = AnalysisPage::query()
             ->where('website_analysis_id', $websiteAnalysis->id)
             ->where('page_type', PageType::Recruit)
             ->first();
         $recruitUrl = $recruit !== null ? ($recruit->final_url ?? $recruit->url) : null;
         if ($recruitUrl !== null && $recruitUrl !== '') {
+            if ($recruit !== null && $homepage !== null && $recruit->url === $homepage->url) {
+                return $this->redirectedTopOrigin($homepage) ?? $recruitUrl;
+            }
+
             return $recruitUrl;
         }
 
-        $homepage = AnalysisPage::query()
-            ->where('website_analysis_id', $websiteAnalysis->id)
-            ->where('page_type', PageType::Homepage)
-            ->first();
         $homepageUrl = $homepage !== null ? ($homepage->final_url ?? $homepage->url) : null;
         if ($homepageUrl !== null && $homepageUrl !== '') {
-            return $homepageUrl;
+            return $this->redirectedTopOrigin($homepage) ?? $homepageUrl;
         }
 
         return $websiteAnalysis->website?->url;
+    }
+
+    /**
+     * 入力が一番上で、転送で奥のページへ着いた場合の「転送先ホストの一番上」。
+     * 該当しなければnull(呼び出し元は従来の起点を使う)。
+     */
+    private function redirectedTopOrigin(AnalysisPage $homepage): ?string
+    {
+        if (! (bool) config('brand_wheel.crawl_origin_widen_redirected_top', true)) {
+            return null;
+        }
+        if ($homepage->final_url === null || $homepage->final_url === '' || ! $this->isTopPath((string) (parse_url((string) $homepage->url)['path'] ?? ''))) {
+            return null;
+        }
+
+        $final = parse_url($homepage->final_url);
+        if (! isset($final['scheme'], $final['host']) || $this->isTopPath((string) ($final['path'] ?? ''))) {
+            return null;
+        }
+
+        return $final['scheme'].'://'.$final['host'].(isset($final['port']) ? ':'.$final['port'] : '').'/';
+    }
+
+    /** パスが「サイトの一番上」(空、"/"、または直下のindexファイル)か。 */
+    private function isTopPath(string $path): bool
+    {
+        return $path === '' || $path === '/' || (bool) preg_match('#^/index\.(?:html?|php)$#i', $path);
     }
 
     /**

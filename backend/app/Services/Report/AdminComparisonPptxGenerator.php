@@ -105,6 +105,11 @@ class AdminComparisonPptxGenerator
     // 図形同士・図形と文字が重ならないことは自動テストでは見つけられない
     // (依頼CC-2・CF-3の前例)。寸法を変えたときは必ず実機で画像化して
     // 確認すること(競合1〜3社=中央を縦1列、4〜5社=2列)。
+    //
+    // 依頼CM-4(2026-10-06): 競合が1〜3社(config: wheel_names_max_competitors)の
+    // ときは、表の見出しに企業名を出す(列の幅に余裕があるため、右の表を広げ、
+    // 中央の列を狭める)。4〜5社のときは記号(自社/A〜E)。列の寸法はこの2通りを
+    // WHEEL_LAYOUT_NAMES / WHEEL_LAYOUT_SYMBOLSにまとめてある。
     // ------------------------------------------------------------------
 
     /** 3列の見出し行の上端と高さ。見出しの下に細い罫線を引く。 */
@@ -116,6 +121,34 @@ class AdminComparisonPptxGenerator
     private const WHEEL_BODY_TOP_IN = 1.95;
 
     private const WHEEL_BODY_BOTTOM_IN = 6.3;
+
+    /**
+     * 中央の列と右の表の寸法(in)。names=表の見出しが企業名(競合1〜3社)、
+     * symbols=表の見出しが記号(競合4〜5社)。
+     *
+     * @var array<string, array{names: bool, competitor_left: float, competitor_width: float, table_left: float, table_width: float, area_width: float, area_font: int, header_height: float}>
+     */
+    private const WHEEL_LAYOUT_NAMES = [
+        'names' => true,
+        'competitor_left' => 5.3,
+        'competitor_width' => 1.6,
+        'table_left' => 7.05,
+        'table_width' => 5.35,
+        'area_width' => 0.85,
+        'area_font' => 8,
+        'header_height' => 0.56,
+    ];
+
+    private const WHEEL_LAYOUT_SYMBOLS = [
+        'names' => false,
+        'competitor_left' => 5.3,
+        'competitor_width' => 2.8,
+        'table_left' => 8.25,
+        'table_width' => 4.15,
+        'area_width' => 1.15,
+        'area_font' => 9,
+        'header_height' => 0.34,
+    ];
 
     /**
      * 左の列(自社)。ヘキサゴンの半径は、依頼CF-3の0.65inから1.1inへ
@@ -159,38 +192,18 @@ class AdminComparisonPptxGenerator
     private const WHEEL_LABEL_RESERVE_IN = self::WHEEL_LABEL_MARGIN_IN + self::WHEEL_LABEL_HEIGHT_IN + 0.08;
 
     /**
-     * 中央の列(競合)。1〜3社は縦1列(ヘキサゴンを左、企業名と点数を右)、
-     * 4〜5社は2列(依頼者了承済み)。1行の高さは本体の高さを行数で割った
-     * 値を上限WHEEL_COMPETITOR_ROW_MAX_HEIGHT_INで抑える。
+     * 中央の列(競合)の1行の高さの上限と、ヘキサゴンの半径。競合が少ない
+     * (企業名を表の見出しに出す)ときは縦1列で、企業名を上に、その下に
+     * ヘキサゴンと合計点を並べる。多い(記号)ときは2列で、企業名・ヘキサゴン・
+     * 合計点を縦に積む。
      */
-    private const WHEEL_COMPETITOR_LEFT_IN = 5.3;
-
-    private const WHEEL_COMPETITOR_WIDTH_IN = 2.8;
-
-    private const WHEEL_COMPETITOR_SINGLE_COLUMN_MAX = 3;
-
     private const WHEEL_COMPETITOR_ROW_MAX_HEIGHT_IN = 1.5;
 
-    private const WHEEL_COMPETITOR_SINGLE_RADIUS_IN = 0.5;
+    private const WHEEL_COMPETITOR_SINGLE_RADIUS_IN = 0.4;
 
-    private const WHEEL_COMPETITOR_DOUBLE_RADIUS_IN = 0.34;
+    private const WHEEL_COMPETITOR_DOUBLE_RADIUS_IN = 0.3;
 
     private const WHEEL_COMPETITOR_DOUBLE_TILE_WIDTH_IN = 1.4;
-
-    /**
-     * 右の列(領域別の発信量の表)。列は最大6(自社＋競合5社)になるため、
-     * ヘッダーには企業名ではなく記号(自社/A〜E)を置き、企業名は中央の
-     * 列の各組に同じ記号を添えて示す(企業名が長くても表の列幅が崩れない。
-     * 企業名自体はwrapOrEllipsizeForLines()で2行までに収め、収まらない
-     * 極端に長い名前だけ省略記号にする ―― 依頼BM-5・BN-2由来の既存処理)。
-     */
-    private const WHEEL_TABLE_LEFT_IN = 8.25;
-
-    private const WHEEL_TABLE_WIDTH_IN = 4.15;
-
-    private const AREA_COL_WIDTH_IN = 1.15;
-
-    private const TABLE_HEADER_HEIGHT_IN = 0.34;
 
     private const TABLE_ROW_HEIGHT_IN = 0.4;
 
@@ -266,10 +279,10 @@ class AdminComparisonPptxGenerator
     /** 上部の注記(巡回件数の事実＋木の作り方の説明)。 */
     private const TREE_NOTES_TOP_IN = 1.46;
 
-    private const TREE_NOTES_HEIGHT_IN = 0.5;
+    private const TREE_NOTES_HEIGHT_IN = 0.62;
 
     /** 木の上端。TOPの箱も第1階層の最初の行もここから始まる。 */
-    private const TREE_TOP_IN = 2.05;
+    private const TREE_TOP_IN = 2.15;
 
     private const TREE_TOP_LEFT_IN = 0.9;
 
@@ -294,7 +307,7 @@ class AdminComparisonPptxGenerator
     private const TREE_PAGE_WIDTH_IN = 4.4;
 
     /** 第2階層の1行の高さ(8ptの文字を行間固定せず、実機で重ならない値)。 */
-    private const TREE_LINE_PITCH_IN = 0.146;
+    private const TREE_LINE_PITCH_IN = 0.135;
 
     private const TREE_ROW_GAP_IN = 0.05;
 
@@ -372,6 +385,10 @@ class AdminComparisonPptxGenerator
      * (AdminComparisonPptxDataBuilderが計算済み)をそのまま使い、ここで新しい
      * 集計は行わない(依頼者指定)。
      *
+     * 依頼CM-4: 競合が1〜3社のときは表の見出しに企業名を出し、中央の列にも
+     * 記号を付けない。4〜5社のときは記号(自社/A〜E)で、中央の列に同じ記号を
+     * 付ける。
+     *
      * @param  array{
      *     self_company_name: string,
      *     self_readable: bool,
@@ -395,27 +412,43 @@ class AdminComparisonPptxGenerator
         // 「0/24」等の数字ではなく専用の文言に差し替える(config
         // ('admin_comparison_pptx.self_data_unavailable_notice')docblock参照)。
         $selfReadable = $data['self_readable'] ?? true;
+        $layout = $this->wheelLayout(count($data['companies']) - 1);
 
-        return $this->renderSingleSlide(function (Slide $slide) use ($data, $selfReadable): void {
+        return $this->renderSingleSlide(function (Slide $slide) use ($data, $selfReadable, $layout): void {
             $this->addKicker($slide);
             $this->addTitle($slide, 'ブランド・ホイール比較');
-            $this->addWheelColumnHeadings($slide);
+            $this->addWheelColumnHeadings($slide, $layout);
             $this->addWheelSelfColumn($slide, $data['companies'][0], $data['axes'], $selfReadable);
-            $this->addWheelCompetitorColumn($slide, array_slice($data['companies'], 1), $data['axes']);
-            $this->addMatrixSection($slide, $data['companies'], $data['axes'], $selfReadable);
+            $this->addWheelCompetitorColumn($slide, array_slice($data['companies'], 1), $data['axes'], $layout);
+            $this->addMatrixSection($slide, $data['companies'], $data['axes'], $selfReadable, $layout);
             $this->addFooter($slide, $data['source_note'], $data['page_number']);
         });
     }
 
     /**
-     * 3列それぞれの見出しと、その下の細い罫線。
+     * 競合の社数に応じた列の寸法。config('admin_comparison_pptx.
+     * wheel_names_max_competitors')社以下なら表の見出しに企業名を出す配置。
+     *
+     * @return array{names: bool, competitor_left: float, competitor_width: float, table_left: float, table_width: float, area_width: float, header_height: float}
      */
-    private function addWheelColumnHeadings(Slide $slide): void
+    private function wheelLayout(int $competitorCount): array
+    {
+        return $competitorCount <= (int) config('admin_comparison_pptx.wheel_names_max_competitors')
+            ? self::WHEEL_LAYOUT_NAMES
+            : self::WHEEL_LAYOUT_SYMBOLS;
+    }
+
+    /**
+     * 3列それぞれの見出しと、その下の細い罫線。
+     *
+     * @param  array{competitor_left: float, competitor_width: float, table_left: float, table_width: float}  $layout
+     */
+    private function addWheelColumnHeadings(Slide $slide, array $layout): void
     {
         $columns = [
             [self::WHEEL_SELF_LEFT_IN, self::WHEEL_SELF_WIDTH_IN, (string) config('admin_comparison_pptx.wheel_self_heading'), ''],
-            [self::WHEEL_COMPETITOR_LEFT_IN, self::WHEEL_COMPETITOR_WIDTH_IN, (string) config('admin_comparison_pptx.wheel_competitor_heading'), ''],
-            [self::WHEEL_TABLE_LEFT_IN, self::WHEEL_TABLE_WIDTH_IN, (string) config('admin_comparison_pptx.wheel_table_heading'), (string) config('admin_comparison_pptx.wheel_table_note')],
+            [$layout['competitor_left'], $layout['competitor_width'], (string) config('admin_comparison_pptx.wheel_competitor_heading'), ''],
+            [$layout['table_left'], $layout['table_width'], (string) config('admin_comparison_pptx.wheel_table_heading'), (string) config('admin_comparison_pptx.wheel_table_note')],
         ];
 
         foreach ($columns as [$left, $width, $heading, $note]) {
@@ -455,10 +488,10 @@ class AdminComparisonPptxGenerator
         $nameBox = $slide->createRichTextShape();
         $this->position($nameBox, $left, self::WHEEL_BODY_TOP_IN, $width, self::WHEEL_SELF_NAME_HEIGHT_IN);
         $nameBox->setWrap(RichText::WRAP_SQUARE);
+        $nameBox->setInsetLeft(0)->setInsetRight(0);
         $nameBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $nameBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $nameText = $this->wrapOrEllipsizeForLines($company['name'], $width, 13.0, true, 2);
-        $this->renderBalancedLines($nameBox->getActiveParagraph(), $nameText, $width, 13.0, true, self::NAVY);
+        $this->renderCompanyName($nameBox->getActiveParagraph(), $company['name'], $width, 13.0, true, self::NAVY);
 
         $scoreTop = self::WHEEL_BODY_TOP_IN + self::WHEEL_SELF_NAME_HEIGHT_IN;
         $scoreBottom = $scoreTop + self::WHEEL_SELF_SCORE_HEIGHT_IN;
@@ -487,69 +520,67 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * 中央の列: 競合。1〜3社は縦1列(1社ごとに[ヘキサゴン｜記号＋企業名＋
-     * 合計点]を1組)、4〜5社は2列(ヘキサゴンの下に企業名と合計点)に並べる。
-     * 各社の記号(A〜E)は右の表のヘッダーと同じ。
+     * 中央の列: 競合。1〜3社(wheel_names_max_competitors以下)は縦1列(企業名を上に、
+     * その下にヘキサゴンと合計点)、4〜5社は2列(記号つきの企業名→ヘキサゴン→
+     * 合計点を縦に積む)。4〜5社の記号(A〜E)は右の表のヘッダーと同じ。
      *
      * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $competitors
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
+     * @param  array{names: bool, competitor_left: float, competitor_width: float}  $layout
      */
-    private function addWheelCompetitorColumn(Slide $slide, array $competitors, array $axes): void
+    private function addWheelCompetitorColumn(Slide $slide, array $competitors, array $axes, array $layout): void
     {
         $count = count($competitors);
         if ($count === 0) {
             return;
         }
 
-        $twoColumns = $count > self::WHEEL_COMPETITOR_SINGLE_COLUMN_MAX;
+        $twoColumns = ! $layout['names'];
         $rows = $twoColumns ? (int) ceil($count / 2) : $count;
         $rowHeight = min(self::WHEEL_COMPETITOR_ROW_MAX_HEIGHT_IN, (self::WHEEL_BODY_BOTTOM_IN - self::WHEEL_BODY_TOP_IN) / $rows);
 
         foreach ($competitors as $i => $company) {
             $row = $twoColumns ? intdiv($i, 2) : $i;
             $top = self::WHEEL_BODY_TOP_IN + $row * $rowHeight;
-            $left = self::WHEEL_COMPETITOR_LEFT_IN + ($twoColumns ? ($i % 2) * self::WHEEL_COMPETITOR_DOUBLE_TILE_WIDTH_IN : 0.0);
+            $left = $layout['competitor_left'] + ($twoColumns ? ($i % 2) * self::WHEEL_COMPETITOR_DOUBLE_TILE_WIDTH_IN : 0.0);
 
             if ($twoColumns) {
                 $this->addCompactCompetitorTile($slide, $company, $axes, $i, $left, $top, $rowHeight);
             } else {
-                $this->addRowCompetitorTile($slide, $company, $axes, $i, $left, $top, $rowHeight);
+                $this->addNamedCompetitorTile($slide, $company, $axes, $i, $left, $top, $rowHeight, $layout['competitor_width']);
             }
         }
     }
 
     /**
-     * 縦1列のとき: ヘキサゴンを左、記号＋企業名(最大2行)と合計点を右に置く。
-     * 材料不足(依頼CH-1b)のときは、ヘキサゴンと合計点を描かず、企業名の
-     * 下に専用の文言を置く。
+     * 縦1列のとき: 企業名(記号は付けない、表の見出しも企業名)を上に、その下に
+     * ヘキサゴンと合計点を並べる。材料不足(依頼CH-1b)のときは、ヘキサゴンと
+     * 合計点を描かず、企業名の下に専用の文言を置く。
      *
      * @param  array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}  $company
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
      */
-    private function addRowCompetitorTile(Slide $slide, array $company, array $axes, int $index, float $left, float $top, float $rowHeight): void
+    private function addNamedCompetitorTile(Slide $slide, array $company, array $axes, int $index, float $left, float $top, float $rowHeight, float $width): void
     {
-        $width = self::WHEEL_COMPETITOR_WIDTH_IN;
-        $radius = self::WHEEL_COMPETITOR_SINGLE_RADIUS_IN;
-        $centerY = $top + $rowHeight / 2;
+        $nameHeight = 0.5;
+        $this->addCompetitorNameBox($slide, $company['name'], '', $left, $top, $width, $nameHeight, 9.0, Alignment::HORIZONTAL_LEFT);
 
         if (! ($company['material_sufficient'] ?? true)) {
-            $this->addCompetitorNameBox($slide, $company['name'], $index, $left, $top + 0.05, $width, 0.5, 9.0, Alignment::HORIZONTAL_LEFT);
-            $this->addCenteredNotice($slide, (string) config('brand_wheel.insufficient_material_notice'), $left, $top + 0.58, $width, max(0.3, $rowHeight - 0.65), 8.0, Alignment::HORIZONTAL_LEFT);
+            $this->addCenteredNotice($slide, (string) config('brand_wheel.insufficient_material_notice'), $left, $top + $nameHeight + 0.05, $width, max(0.3, $rowHeight - $nameHeight - 0.1), 8.0, Alignment::HORIZONTAL_LEFT);
 
             return;
         }
 
-        $textLeft = $left + 1.25;
-        $textWidth = $width - 1.25;
-        $this->addCompetitorNameBox($slide, $company['name'], $index, $textLeft, $centerY - 0.5, $textWidth, 0.52, 9.0, Alignment::HORIZONTAL_LEFT);
+        $radius = self::WHEEL_COMPETITOR_SINGLE_RADIUS_IN;
+        $centerY = $top + $nameHeight + 0.05 + $radius;
+        $axisCounts = array_map(fn (array $axis) => [$axis['competitor_counts'][$index] ?? 0, $axis['denominator']], $axes);
+        $this->drawBrandWheelHexagon($slide, $left + $radius + 0.05, $centerY, $radius, $axisCounts, self::COPPER, 1.25);
 
         $scoreBox = $slide->createRichTextShape();
-        $this->position($scoreBox, $textLeft, $centerY + 0.04, $textWidth, 0.3);
+        $this->position($scoreBox, $left + 0.95, $centerY - 0.15, $width - 0.95, 0.3);
+        $scoreBox->setInsetLeft(0)->setInsetRight(0);
         $scoreBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_LEFT);
-        $this->font($scoreBox->getActiveParagraph()->createTextRun("{$company['matched']} / {$company['total']}"), 13, true, self::NAVY);
-
-        $axisCounts = array_map(fn (array $axis) => [$axis['competitor_counts'][$index] ?? 0, $axis['denominator']], $axes);
-        $this->drawBrandWheelHexagon($slide, $left + 0.6, $centerY, $radius, $axisCounts, self::COPPER, 1.25);
+        $this->font($scoreBox->getActiveParagraph()->createTextRun("{$company['matched']} / {$company['total']}"), 11, true, self::NAVY);
     }
 
     /**
@@ -562,9 +593,9 @@ class AdminComparisonPptxGenerator
     {
         $width = self::WHEEL_COMPETITOR_DOUBLE_TILE_WIDTH_IN - 0.05;
         $radius = self::WHEEL_COMPETITOR_DOUBLE_RADIUS_IN;
-        $nameHeight = 0.38;
+        $nameHeight = 0.5;
 
-        $this->addCompetitorNameBox($slide, $company['name'], $index, $left, $top, $width, $nameHeight, 8.0, Alignment::HORIZONTAL_CENTER);
+        $this->addCompetitorNameBox($slide, $company['name'], $this->competitorSymbol($index), $left, $top, $width, $nameHeight, 8.0, Alignment::HORIZONTAL_CENTER);
 
         if (! ($company['material_sufficient'] ?? true)) {
             $this->addCenteredNotice($slide, (string) config('brand_wheel.insufficient_material_notice'), $left, $top + $nameHeight + 0.02, $width, max(0.3, $rowHeight - $nameHeight - 0.1), 8.0);
@@ -583,23 +614,20 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * 競合の「記号＋企業名」。企業名は既存の折り返し・省略処理
-     * (wrapOrEllipsizeForLines/renderBalancedLines、依頼BN-3由来)で最大2行に
-     * 収め、収まらない極端に長い名前だけ省略記号にする。
+     * 競合の企業名(記号を使うときは先頭に「A　」)。企業名は語の切れ目で最大3行に
+     * 折り(renderCompanyName、依頼CM-3)、収まらない極端に長い名前だけ省略記号。
      */
-    private function addCompetitorNameBox(Slide $slide, string $name, int $index, float $left, float $top, float $width, float $height, float $sizePt, string $horizontal): void
+    private function addCompetitorNameBox(Slide $slide, string $name, string $symbol, float $left, float $top, float $width, float $height, float $sizePt, string $horizontal): void
     {
         $box = $slide->createRichTextShape();
         $this->position($box, $left, $top, $width, $height);
         $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setInsetLeft(0)->setInsetRight(0);
         $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $para = $box->getActiveParagraph();
         $para->getAlignment()->setHorizontal($horizontal);
 
-        $this->font($para->createTextRun($this->competitorSymbol($index).'　'), $sizePt + 1, true, self::COPPER);
-        $nameWidth = $width - 0.3;
-        $text = $this->wrapOrEllipsizeForLines($name, $nameWidth, $sizePt, true, 2);
-        $this->renderBalancedLines($para, $text, $nameWidth, $sizePt, true, self::NAVY);
+        $this->renderCompanyName($para, $name, $width, $sizePt, true, self::NAVY, $symbol === '' ? '' : $symbol.'　', self::COPPER, 3);
     }
 
     /** 競合の記号(0番目=A)。表のヘッダーと中央の列で共通。 */
@@ -866,47 +894,54 @@ class AdminComparisonPptxGenerator
      * 依頼CL-1(2026-10-05): 右の列の「領域別の発信量」表。6領域
      * (config('brand_wheel.axes')順)×(自社＋競合)に、末尾の「合計」の行
      * (新規、各社の○の数/24)を加える。分母は領域ごとに4固定のため必ず
-     * 埋まる。ヘッダーは企業名ではなく記号(自社/A〜E)にして、列が最大6に
-     * なっても幅が崩れないようにする(企業名は中央の列に同じ記号つきで
-     * 出る)。
+     * 埋まる。
+     *
+     * 依頼CM-4(2026-10-06): ヘッダーは、競合が1〜3社のとき企業名(語の切れ目で
+     * 折る、renderCompanyName)、4〜5社のとき記号(自社/A〜E ―― 列が最大6に
+     * なっても幅が崩れないようにするため、中央の列に同じ記号を付ける)。
      *
      * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
+     * @param  array{names: bool, table_left: float, table_width: float, area_width: float, header_height: float}  $layout
      */
-    private function addMatrixSection(Slide $slide, array $companies, array $axes, bool $selfReadable = true): void
+    private function addMatrixSection(Slide $slide, array $companies, array $axes, bool $selfReadable, array $layout): void
     {
         $tableTop = self::WHEEL_BODY_TOP_IN + 0.2;
         $companyCount = count($companies);
-        $colWidth = ($companyCount > 0) ? (self::WHEEL_TABLE_WIDTH_IN - self::AREA_COL_WIDTH_IN) / $companyCount : 0;
+        $colWidth = ($companyCount > 0) ? ($layout['table_width'] - $layout['area_width']) / $companyCount : 0;
 
-        $this->addMatrixHeader($slide, $companies, $colWidth, $tableTop);
+        $this->addMatrixHeader($slide, $companies, $colWidth, $tableTop, $layout);
 
+        $rowsTop = $tableTop + $layout['header_height'];
         foreach ($axes as $i => $axis) {
-            $top = $tableTop + self::TABLE_HEADER_HEIGHT_IN + $i * self::TABLE_ROW_HEIGHT_IN;
-            $this->addMatrixRow($slide, $axis, $companies, $colWidth, $top, $i % 2 === 1, $selfReadable);
+            $top = $rowsTop + $i * self::TABLE_ROW_HEIGHT_IN;
+            $this->addMatrixRow($slide, $axis, $companies, $colWidth, $top, $i % 2 === 1, $selfReadable, $layout);
         }
 
-        $totalTop = $tableTop + self::TABLE_HEADER_HEIGHT_IN + count($axes) * self::TABLE_ROW_HEIGHT_IN;
-        $this->addMatrixTotalRow($slide, $companies, $colWidth, $totalTop, $selfReadable);
+        $totalTop = $rowsTop + count($axes) * self::TABLE_ROW_HEIGHT_IN;
+        $this->addMatrixTotalRow($slide, $companies, $colWidth, $totalTop, $selfReadable, $layout);
 
-        $this->addLegend($slide, $totalTop + self::TABLE_ROW_HEIGHT_IN + 0.15, $companyCount - 1);
+        $this->addLegend($slide, $totalTop + self::TABLE_ROW_HEIGHT_IN + 0.15, $companyCount - 1, $layout);
     }
 
     /**
      * 依頼BN-3(2026-09-09): オレンジの網かけ・競合内の最高値の太字が
      * 何を意味するか、スライドのどこにも説明が無かった(初見の商談相手には
      * 伝わらない、依頼者指摘)。表の下に凡例を置く。依頼CL-1で、列が記号
-     * (自社/A〜)になったため、記号の説明を加えた。
+     * (自社/A〜)になったため、記号の説明を加えた。依頼CM-4で、記号を使う
+     * (4〜5社の)ときだけ、その注記を出す(企業名を見出しにするときは出さない)。
      *
      * 濃淡(競合内の最高値を太字にする表現)は残す判断とした(依頼者の
      * 推し・依頼BN-3参照)。全社が同値の行では該当する競合全員が太字に
      * なるが、これは「その領域の競合内最高値」という凡例の説明どおりの
      * 正しい表示であり、誤りではないため。
+     *
+     * @param  array{names: bool, table_left: float, table_width: float}  $layout
      */
-    private function addLegend(Slide $slide, float $top, int $competitorCount): void
+    private function addLegend(Slide $slide, float $top, int $competitorCount, array $layout): void
     {
         $box = $slide->createRichTextShape();
-        $this->position($box, self::WHEEL_TABLE_LEFT_IN, $top, self::WHEEL_TABLE_WIDTH_IN, 0.75);
+        $this->position($box, $layout['table_left'], $top, $layout['table_width'], 0.75);
         $box->setWrap(RichText::WRAP_SQUARE);
         $box->setInsetLeft(0)->setInsetRight(0);
 
@@ -919,69 +954,82 @@ class AdminComparisonPptxGenerator
         $this->font($para2->createTextRun((string) config('admin_comparison_pptx.wheel_legend_max')), 8, false, self::MUTED);
 
         if ($competitorCount > 0) {
-            $range = $this->competitorSymbol(0).($competitorCount > 1 ? '〜'.$this->competitorSymbol($competitorCount - 1) : '');
             $para3 = $box->createParagraph();
-            $this->font($para3->createTextRun(sprintf((string) config('admin_comparison_pptx.wheel_legend_symbols'), $range)), 8, false, self::MUTED);
+            if (! $layout['names']) {
+                $range = $this->competitorSymbol(0).($competitorCount > 1 ? '〜'.$this->competitorSymbol($competitorCount - 1) : '');
+                $this->font($para3->createTextRun(sprintf((string) config('admin_comparison_pptx.wheel_legend_symbols'), $range)), 8, false, self::MUTED);
+            }
             $this->font($para3->createTextRun((string) config('admin_comparison_pptx.wheel_legend_axis_order')), 8, false, self::MUTED);
         }
     }
 
     /**
      * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
+     * @param  array{names: bool, table_left: float, table_width: float, area_width: float, header_height: float}  $layout
      */
-    private function addMatrixHeader(Slide $slide, array $companies, float $colWidth, float $top): void
+    private function addMatrixHeader(Slide $slide, array $companies, float $colWidth, float $top, array $layout): void
     {
         $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-        $this->position($band, self::WHEEL_TABLE_LEFT_IN, $top, self::WHEEL_TABLE_WIDTH_IN, self::TABLE_HEADER_HEIGHT_IN);
+        $this->position($band, $layout['table_left'], $top, $layout['table_width'], $layout['header_height']);
         $band->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::NAVY));
         $band->getBorder()->setLineStyle(Border::LINE_NONE);
 
         $areaBox = $slide->createRichTextShape();
-        $this->position($areaBox, self::WHEEL_TABLE_LEFT_IN + 0.1, $top, self::AREA_COL_WIDTH_IN - 0.1, self::TABLE_HEADER_HEIGHT_IN);
+        $this->position($areaBox, $layout['table_left'] + 0.1, $top, $layout['area_width'] - 0.1, $layout['header_height']);
         $areaBox->setInsetLeft(0)->setInsetRight(0);
         $areaBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $this->font($areaBox->getActiveParagraph()->createTextRun('領域'), 9, true, self::WHITE);
 
         foreach ($companies as $i => $company) {
-            $left = self::WHEEL_TABLE_LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
+            $left = $layout['table_left'] + $layout['area_width'] + $i * $colWidth;
             $box = $slide->createRichTextShape();
-            $this->position($box, $left, $top, $colWidth, self::TABLE_HEADER_HEIGHT_IN);
+            $this->position($box, $left, $top, $colWidth, $layout['header_height']);
             $box->setInsetLeft(0)->setInsetRight(0);
+            $box->setWrap(RichText::WRAP_SQUARE);
             $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-            $box->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-            $text = $company['is_self'] ? (string) config('admin_comparison_pptx.wheel_table_self_header') : $this->competitorSymbol($i - 1);
-            $this->font($box->getActiveParagraph()->createTextRun($text), 9, true, self::WHITE);
+            $para = $box->getActiveParagraph();
+            $para->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+
+            if ($company['is_self']) {
+                $this->font($para->createTextRun((string) config('admin_comparison_pptx.wheel_table_self_header')), 9, true, self::WHITE);
+            } elseif ($layout['names']) {
+                // 列の幅に収まる大きさ(下限まで)で、語の切れ目で折る。
+                $this->renderCompanyName($para, $company['name'], $colWidth, 8.0, true, self::WHITE, '', null, 3);
+            } else {
+                $this->font($para->createTextRun($this->competitorSymbol($i - 1)), 9, true, self::WHITE);
+            }
         }
     }
 
     /**
      * @param  array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}  $axis
      * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
+     * @param  array{table_left: float, table_width: float, area_width: float, area_font: int}  $layout
      */
-    private function addMatrixRow(Slide $slide, array $axis, array $companies, float $colWidth, float $top, bool $isBanded, bool $selfReadable = true): void
+    private function addMatrixRow(Slide $slide, array $axis, array $companies, float $colWidth, float $top, bool $isBanded, bool $selfReadable, array $layout): void
     {
         if ($isBanded) {
             $band = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-            $this->position($band, self::WHEEL_TABLE_LEFT_IN, $top, self::WHEEL_TABLE_WIDTH_IN, self::TABLE_ROW_HEIGHT_IN);
+            $this->position($band, $layout['table_left'], $top, $layout['table_width'], self::TABLE_ROW_HEIGHT_IN);
             $band->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::BAND));
             $band->getBorder()->setLineStyle(Border::LINE_NONE);
         }
 
         $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-        $this->position($rule, self::WHEEL_TABLE_LEFT_IN, $top + self::TABLE_ROW_HEIGHT_IN - 0.006, self::WHEEL_TABLE_WIDTH_IN, 0.006);
+        $this->position($rule, $layout['table_left'], $top + self::TABLE_ROW_HEIGHT_IN - 0.006, $layout['table_width'], 0.006);
         $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
         $rule->getBorder()->setLineStyle(Border::LINE_NONE);
 
         $areaNameBox = $slide->createRichTextShape();
-        $this->position($areaNameBox, self::WHEEL_TABLE_LEFT_IN + 0.1, $top, self::AREA_COL_WIDTH_IN - 0.1, self::TABLE_ROW_HEIGHT_IN);
+        $this->position($areaNameBox, $layout['table_left'] + 0.1, $top, $layout['area_width'] - 0.1, self::TABLE_ROW_HEIGHT_IN);
         $areaNameBox->setInsetLeft(0)->setInsetRight(0);
         $areaNameBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-        $this->font($areaNameBox->getActiveParagraph()->createTextRun($axis['name']), 9, true, self::BODY_TEXT);
+        $this->font($areaNameBox->getActiveParagraph()->createTextRun($axis['name']), $layout['area_font'], true, self::BODY_TEXT);
 
         $maxCompetitor = $axis['competitor_counts'] === [] ? 0 : max($axis['competitor_counts']);
 
         foreach ($companies as $i => $company) {
-            $left = self::WHEEL_TABLE_LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
+            $left = $layout['table_left'] + $layout['area_width'] + $i * $colWidth;
             $count = $company['is_self'] ? $axis['self_count'] : ($axis['competitor_counts'][$i - 1] ?? 0);
 
             // 依頼CD-3(必須): 自社が判定不能(selfReadable===false)のとき、
@@ -1026,27 +1074,28 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * 依頼CL-1(新規): 表の末尾の「合計」の行。各社の○の数/24
-     * (company['matched']/['total'] ―― 左の列・中央の列の合計点と同じ値)。
+     * 依頼CL-1(新規): 表の末尾の「合計」の行(各社の○の数/24
+     * (company['matched']/['total'] ―― 左の列・中央の列の合計点と同じ値))。
      * 判定不成立・材料不足の会社は「－」(領域別のセルと同じ扱い)。
      *
      * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies
+     * @param  array{table_left: float, table_width: float, area_width: float}  $layout
      */
-    private function addMatrixTotalRow(Slide $slide, array $companies, float $colWidth, float $top, bool $selfReadable): void
+    private function addMatrixTotalRow(Slide $slide, array $companies, float $colWidth, float $top, bool $selfReadable, array $layout): void
     {
         $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-        $this->position($rule, self::WHEEL_TABLE_LEFT_IN, $top, self::WHEEL_TABLE_WIDTH_IN, 0.012);
+        $this->position($rule, $layout['table_left'], $top, $layout['table_width'], 0.012);
         $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::NAVY));
         $rule->getBorder()->setLineStyle(Border::LINE_NONE);
 
         $labelBox = $slide->createRichTextShape();
-        $this->position($labelBox, self::WHEEL_TABLE_LEFT_IN + 0.1, $top, self::AREA_COL_WIDTH_IN - 0.1, self::TABLE_ROW_HEIGHT_IN);
+        $this->position($labelBox, $layout['table_left'] + 0.1, $top, $layout['area_width'] - 0.1, self::TABLE_ROW_HEIGHT_IN);
         $labelBox->setInsetLeft(0)->setInsetRight(0);
         $labelBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $this->font($labelBox->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.wheel_table_total_label')), 9, true, self::NAVY);
 
         foreach ($companies as $i => $company) {
-            $left = self::WHEEL_TABLE_LEFT_IN + self::AREA_COL_WIDTH_IN + $i * $colWidth;
+            $left = $layout['table_left'] + $layout['area_width'] + $i * $colWidth;
             $unavailable = ($company['is_self'] && ! $selfReadable) || ! ($company['material_sufficient'] ?? true);
 
             if ($company['is_self'] && ! $unavailable) {
@@ -1378,7 +1427,8 @@ class AdminComparisonPptxGenerator
 
             $barWidth = $maxPercentage > 0 ? max(0.02, $barMaxWidth * ($row['percentage'] / $maxPercentage)) : 0.02;
             $this->addFilledRect($slide, $barLeft, $top + 0.06, $barWidth, self::SURVEY_ROW_HEIGHT_IN - 0.12, $isGap ? self::GAP_TEXT : self::COPPER);
-            $percentLabel = rtrim(rtrim(number_format($row['percentage'], 1), '0'), '.').'%';
+            // 依頼CM-5: 表の中では小数1桁に揃える(17.0%)。「足りないもの」の文中の表記は別。
+            $percentLabel = number_format($row['percentage'], 1).'%';
             $pctBox = $slide->createRichTextShape();
             $this->position($pctBox, $barLeft + $barWidth + 0.06, $top, 0.8, self::SURVEY_ROW_HEIGHT_IN);
             $pctBox->setInsetLeft(0)->setInsetRight(0);
@@ -1476,6 +1526,7 @@ class AdminComparisonPptxGenerator
      * @param  array{
      *     mode: string,
      *     origin_url: string,
+     *     origin_widened?: bool,
      *     top: array{url: string, title: ?string, headings: list<string>, menu_item_count: int},
      *     branches: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>,
      *     other_branch_count: int,
@@ -1533,6 +1584,11 @@ class AdminComparisonPptxGenerator
         $box->setWrap(RichText::WRAP_SQUARE);
         $this->font($box->getActiveParagraph()->createTextRun($scope), 9, false, self::MUTED);
         $this->font($box->createParagraph()->createTextRun($mode), 8, false, self::MUTED);
+        // 依頼CM-2: 起点をサイトの一番上まで広げて描いたときは、そのことを図の中で示す。
+        if ($tree['origin_widened'] ?? false) {
+            $widened = sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_widened_note'), $tree['origin_url']);
+            $this->font($box->createParagraph()->createTextRun($widened), 8, true, self::COPPER);
+        }
     }
 
     /**
@@ -1944,6 +2000,178 @@ class AdminComparisonPptxGenerator
         $maxUnitsPerLine = max(1, (int) floor($usableWidthPt / $unitWidthPt));
 
         return max(1, (int) ceil(mb_strwidth($text, 'UTF-8') / $maxUnitsPerLine));
+    }
+
+    /**
+     * 依頼CM-3(2026-10-06): 企業名の描画。従来はrenderBalancedLines()が表示幅の
+     * ほぼ半分で機械的に2行へ割っていたため、「サイボウズ」「マネーフォワード」が
+     * 語の途中で切れていた(本番の資料で確認)。企業名は語の切れ目で折る:
+     *  1. 1行に収まるなら折らない。文字を小さくして収まるなら、下限
+     *     (config: company_name_min_font_ratio / company_name_absolute_min_pt)まで
+     *     小さくしてよい。
+     *  2. 収まらなければ、語の切れ目(config: company_name_break_words
+     *     「株式会社」等の前後 / company_name_break_after_chars「・」の後 /
+     *     company_name_break_space_chars 空白)で$maxLines行以内に分ける。全ての行が
+     *     収まる分け方のうち、最も長い行が最も短くなるものを選ぶ。やはり収まらなければ
+     *     下限まで文字を小さくして試す。
+     *  3. それでも収まらない(語そのものが行より長い等)ときだけ、既存の省略の処理
+     *     (wrapOrEllipsizeForLines + renderBalancedLines)に落とす。
+     * 企業名の表示だけに使う(文章の折り返しには使わない)。
+     *
+     * $prefixは企業名の前に付ける記号(例: 「A　」)。1行目の幅に含めて数える。
+     * $widthInは文字を置ける幅(呼び出し側で左右のインセットを0にしておくこと)。
+     */
+    private function renderCompanyName(RichText\Paragraph $para, string $name, float $widthIn, float $sizePt, bool $bold, string $color, string $prefix = '', ?string $prefixColor = null, int $maxLines = 2): void
+    {
+        $baseSize = (int) round($sizePt);
+        $floor = max((int) config('admin_comparison_pptx.company_name_absolute_min_pt'), (int) round($baseSize * (float) config('admin_comparison_pptx.company_name_min_font_ratio')));
+        $floor = min($floor, $baseSize);
+        $prefixUnits = mb_strwidth($prefix, 'UTF-8');
+
+        if ($prefix !== '') {
+            $this->font($para->createTextRun($prefix), $baseSize + 1, true, $prefixColor ?? $color);
+        }
+
+        // 1. 1行(文字を小さくして収まるなら下限まで)。
+        for ($size = $baseSize; $size >= $floor; $size--) {
+            if (mb_strwidth($name, 'UTF-8') + $prefixUnits <= $this->maxUnitsPerLine($widthIn, (float) $size, $bold)) {
+                $this->font($para->createTextRun($name), $size, $bold, $color);
+
+                return;
+            }
+        }
+
+        // 2. 語の切れ目で複数行(大きい文字から順に、下限まで)。
+        $tokens = $this->companyNameTokens($name);
+        for ($size = $baseSize; $size >= $floor; $size--) {
+            $lines = $this->partitionCompanyName($tokens, $maxLines, $this->maxUnitsPerLine($widthIn, (float) $size, $bold), $prefixUnits);
+            if ($lines !== null) {
+                foreach ($lines as $i => $line) {
+                    if ($i > 0) {
+                        $para->createBreak();
+                    }
+                    $this->font($para->createTextRun($line), $size, $bold, $color);
+                }
+
+                return;
+            }
+        }
+
+        // 3. 既存の省略の処理に落とす(語の途中で折れることはあり得るが、極端に長い名前のみ)。
+        $fallbackWidth = max(0.5, $widthIn - $prefixUnits * 0.07);
+        $text = $this->wrapOrEllipsizeForLines($name, $fallbackWidth, (float) $baseSize, $bold, 2);
+        $this->renderBalancedLines($para, $text, $fallbackWidth, (float) $baseSize, $bold, $color);
+    }
+
+    /**
+     * トークンを、語の切れ目だけで$maxLines行以内に分ける。どの行も$maxUnits
+     * (1行目は記号ぶん$firstLinePrefixUnitsを差し引く)以内に収まる分け方のうち、
+     * 最も長い行が最も短くなるものを返す。収まる分け方が無ければnull。
+     *
+     * @param  list<string>  $tokens
+     * @return list<string>|null
+     */
+    private function partitionCompanyName(array $tokens, int $maxLines, int $maxUnits, int $firstLinePrefixUnits): ?array
+    {
+        $count = count($tokens);
+        if ($count < 2 || $maxLines < 2) {
+            return null;
+        }
+
+        $best = null;
+        $search = function (int $start, array $lines) use (&$search, &$best, $tokens, $count, $maxLines, $maxUnits, $firstLinePrefixUnits): void {
+            if ($start >= $count) {
+                $widest = 0;
+                foreach ($lines as $i => $line) {
+                    $widest = max($widest, mb_strwidth($line, 'UTF-8') + ($i === 0 ? $firstLinePrefixUnits : 0));
+                }
+                if (count($lines) >= 2 && ($best === null || $widest < $best[0])) {
+                    $best = [$widest, $lines];
+                }
+
+                return;
+            }
+            if (count($lines) >= $maxLines) {
+                return;
+            }
+            for ($end = $start + 1; $end <= $count; $end++) {
+                $line = $this->joinCompanyNameTokens(array_slice($tokens, $start, $end - $start));
+                $units = mb_strwidth($line, 'UTF-8') + (count($lines) === 0 ? $firstLinePrefixUnits : 0);
+                if ($units > $maxUnits) {
+                    break;
+                }
+                $search($end, [...$lines, $line]);
+            }
+        };
+        $search(0, []);
+
+        return $best === null ? null : $best[1];
+    }
+
+    /**
+     * 企業名を語の切れ目で分けたトークンにする。空白は捨て、config
+     * 'company_name_break_words'(株式会社など)は独立したトークンに、
+     * 'company_name_break_after_chars'(・など)は直前のトークンの末尾に付ける。
+     *
+     * @return list<string>
+     */
+    private function companyNameTokens(string $name): array
+    {
+        $words = array_values(array_filter((array) config('admin_comparison_pptx.company_name_break_words'), fn ($w) => is_string($w) && $w !== ''));
+        $afterChars = (array) config('admin_comparison_pptx.company_name_break_after_chars');
+        $spaceChars = (array) config('admin_comparison_pptx.company_name_break_space_chars');
+
+        $parts = $words === []
+            ? [$name]
+            : (preg_split('/('.implode('|', array_map(fn (string $w) => preg_quote($w, '/'), $words)).')/u', $name, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY) ?: [$name]);
+
+        $tokens = [];
+        foreach ($parts as $part) {
+            if (in_array($part, $words, true)) {
+                $tokens[] = $part;
+
+                continue;
+            }
+
+            $current = '';
+            foreach (mb_str_split($part) as $char) {
+                if (in_array($char, $spaceChars, true)) {
+                    if ($current !== '') {
+                        $tokens[] = $current;
+                    }
+                    $current = '';
+                } elseif (in_array($char, $afterChars, true)) {
+                    $tokens[] = $current.$char;
+                    $current = '';
+                } else {
+                    $current .= $char;
+                }
+            }
+            if ($current !== '') {
+                $tokens[] = $current;
+            }
+        }
+
+        return $tokens;
+    }
+
+    /**
+     * トークンを1行に戻す。英数字どうしが隣り合う境目だけ空白を戻す
+     * (「Fuji of Innovation」)。日本語との境目には入れない。
+     *
+     * @param  list<string>  $tokens
+     */
+    private function joinCompanyNameTokens(array $tokens): string
+    {
+        $line = '';
+        foreach ($tokens as $token) {
+            if ($line !== '' && preg_match('/[A-Za-z0-9]$/', $line) && preg_match('/^[A-Za-z0-9]/', $token)) {
+                $line .= ' ';
+            }
+            $line .= $token;
+        }
+
+        return $line;
     }
 
     /**

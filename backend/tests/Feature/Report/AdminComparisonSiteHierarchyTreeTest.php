@@ -6,6 +6,7 @@ use App\Enums\PageType;
 use App\Models\AnalysisCrawledPage;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
+use App\Services\Analysis\CrawlOriginScopeResolver;
 use App\Services\Report\AdminComparisonSiteHierarchyBuilder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
@@ -26,6 +27,8 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
     {
         parent::setUp();
         Storage::fake('analysis');
+        // 依頼CM-2の「広げて描く」は専用のテストで確かめる(ここでは基準を0にして無効にする)。
+        config(['admin_comparison_pptx.site_hierarchy_tree_widen_min_pages' => 0]);
     }
 
     private function builder(): AdminComparisonSiteHierarchyBuilder
@@ -416,5 +419,136 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
         $this->assertSame(['募集要項', '採用までの流れ'], array_column($tree['branches'], 'name'), '起点(.../ssc/recruit/)の配下だけ');
         $this->assertSame(2, $tree['pages_within_origin']);
         $this->assertSame(1, $tree['outside_origin_count']);
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼CM-2(2026-10-06): 起点の配下にページが少ないときは、階層図の表示だけ
+    // 起点をそのホストの一番上まで広げて描く(巡回・判定の起点は変えない)。
+    // ------------------------------------------------------------------
+
+    private function shallowOriginSite(): WebsiteAnalysis
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        // 起点は /recruit/engineer/(配下は自分自身の1件だけ)。サイトの一番上のメニューは別にある。
+        $this->recruitPage(
+            $wa,
+            $this->html('<a href="/about/">会社を知る</a><a href="/jobs/">募集職種</a>', '<h1>エンジニア採用</h1>'),
+            null,
+            'https://example.com/recruit/engineer/',
+            'エンジニア採用トップ',
+        );
+        $this->crawled($wa, 'https://example.com/recruit/engineer/', 'エンジニア採用トップ');
+        $this->crawled($wa, 'https://example.com/about/', '会社を知る | 採用');
+        $this->crawled($wa, 'https://example.com/about/philosophy', '私たちの考え方');
+        $this->crawled($wa, 'https://example.com/jobs/', '募集職種 | 採用');
+        $this->crawled($wa, 'https://example.com/jobs/sales', '営業');
+
+        return $wa;
+    }
+
+    public function test_the_tree_is_widened_to_the_host_top_when_few_pages_are_under_the_origin(): void
+    {
+        config(['admin_comparison_pptx.site_hierarchy_tree_widen_min_pages' => 3]);
+        $wa = $this->shallowOriginSite();
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertTrue($tree['origin_widened']);
+        $this->assertSame('https://example.com/', $tree['origin_url']);
+        $this->assertSame('https://example.com/', $tree['top']['url']);
+        $this->assertSame('menu', $tree['mode'], '広げた範囲でTOPのメニューが描ける');
+        $this->assertSame(['会社を知る', '募集職種'], array_column($tree['branches'], 'name'));
+        $this->assertSame(5, $tree['pages_within_origin'], '広げた範囲で数え直す');
+        $this->assertNull($tree['top']['title'], '広げた先の一番上のものではないページ名は出さない');
+        $this->assertSame([], $tree['top']['headings']);
+    }
+
+    public function test_the_tree_is_not_widened_when_enough_pages_are_under_the_origin(): void
+    {
+        config(['admin_comparison_pptx.site_hierarchy_tree_widen_min_pages' => 1]);
+        $wa = $this->shallowOriginSite();
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertFalse($tree['origin_widened']);
+        $this->assertSame('https://example.com/recruit/engineer/', $tree['origin_url']);
+    }
+
+    public function test_widening_never_changes_the_origin_used_for_crawling_and_scoring(): void
+    {
+        config(['admin_comparison_pptx.site_hierarchy_tree_widen_min_pages' => 3]);
+        $wa = $this->shallowOriginSite();
+
+        $this->builder()->buildTree($wa);
+
+        $this->assertSame(
+            'https://example.com/recruit/engineer/',
+            app(CrawlOriginScopeResolver::class)->resolveScope($wa)['origin_url'],
+            '巡回・判定に使う起点(リゾルバ)は階層図の広げ方に影響されない',
+        );
+        $this->assertSame('https://example.com/recruit/engineer/', $this->builder()->countWithinOrigin($wa)['origin_url']);
+    }
+
+    public function test_a_site_that_is_already_at_the_top_is_not_reported_as_widened(): void
+    {
+        config(['admin_comparison_pptx.site_hierarchy_tree_widen_min_pages' => 10]);
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, $this->html('<a href="/a/">A</a><a href="/b/">B</a>'), null, 'https://example.com/');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertFalse($tree['origin_widened']);
+    }
+
+    public function test_widening_still_returns_an_empty_branch_list_when_nothing_can_be_drawn(): void
+    {
+        config(['admin_comparison_pptx.site_hierarchy_tree_widen_min_pages' => 3]);
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, null, null, 'https://example.com/recruit/engineer/');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertTrue($tree['origin_widened']);
+        $this->assertSame([], $tree['branches']);
+    }
+
+    /**
+     * 依頼CM-1の実例(SmartHR): 入力=サイトの一番上(hello-world.smarthr.co.jp)、
+     * 転送先=recruit.smarthr.co.jp/engineer/、自己参照で採用ページの行が複製された。
+     * 起点は転送先ホストの一番上になり、保存済みのページのメニューから木が描ける。
+     */
+    public function test_a_redirected_top_page_input_draws_the_menu_tree_from_the_stored_page(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        $html = $this->html(
+            '<a href="/about/">SmartHRを知る</a><a href="/business/">事業領域を知る</a><a href="/environment/">働く環境を知る</a>',
+            '<h1>エンジニア採用</h1>',
+        );
+        Storage::disk('analysis')->put("pages/{$wa->id}/smarthr.html", $html);
+        foreach ([PageType::Homepage, PageType::Recruit] as $type) {
+            AnalysisPage::factory()->create([
+                'website_analysis_id' => $wa->id,
+                'page_type' => $type,
+                'url' => 'https://hello-world.smarthr.co.jp/',
+                'final_url' => 'https://recruit.smarthr.co.jp/engineer/',
+                'title' => 'エンジニア採用',
+                'raw_html_path' => "pages/{$wa->id}/smarthr.html",
+            ]);
+        }
+        $this->crawled($wa, 'https://recruit.smarthr.co.jp/engineer/', 'エンジニア採用');
+        $this->crawled($wa, 'https://recruit.smarthr.co.jp/about/', 'SmartHRを知る');
+        $this->crawled($wa, 'https://recruit.smarthr.co.jp/about/mission', 'ミッション');
+        $this->crawled($wa, 'https://recruit.smarthr.co.jp/business/', '事業領域を知る');
+        $this->crawled($wa, 'https://recruit.smarthr.co.jp/environment/', '働く環境を知る');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame('https://recruit.smarthr.co.jp/', $tree['origin_url']);
+        $this->assertSame('menu', $tree['mode']);
+        $this->assertFalse($tree['origin_widened']);
+        $this->assertSame(['SmartHRを知る', '事業領域を知る', '働く環境を知る'], array_column($tree['branches'], 'name'));
+        $this->assertSame(5, $tree['pages_within_origin']);
+        $this->assertNull($tree['top']['title'], '起点そのもののページではないページ名は出さない');
+        $this->assertSame([], $tree['top']['headings']);
     }
 }

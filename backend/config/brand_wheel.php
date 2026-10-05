@@ -1186,6 +1186,16 @@ return [
     'crawl_paragraph_pool_round_robin_enabled' => filter_var(env('BRAND_WHEEL_CRAWL_PARAGRAPH_POOL_ROUND_ROBIN_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
 
     /*
+    | 依頼CM-1(2026-10-06): 入力がサイトの一番上で、転送により奥のページ
+    | (例: hello-world.smarthr.co.jp → recruit.smarthr.co.jp/engineer/)へ
+    | 着いた場合、起点を転送先ホストの一番上(/)にする
+    | (CrawlOriginScopeResolver::resolveOriginUrl()参照)。falseなら変更前と
+    | 同じ起点(転送先のパスまで含める)。システムが見つけた採用ページ・奥の
+    | ページを入力した場合は、この設定に関わらず従来どおり。
+    */
+    'crawl_origin_widen_redirected_top' => filter_var(env('BRAND_WHEEL_CRAWL_ORIGIN_WIDEN_REDIRECTED_TOP', true), FILTER_VALIDATE_BOOLEAN),
+
+    /*
     |----------------------------------------------------------------
     | 依頼CF-1(2026-09-29): 巡回の取得順序 ―― 起点URL配下を優先する
     |----------------------------------------------------------------

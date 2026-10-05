@@ -504,7 +504,7 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
             ],
             'missingFromSelf' => [],
         ]));
-        $this->assertSame('競合3社中2社以上が伝えていて、自社が伝えていない項目', $data3['missing_items']['heading']);
+        $this->assertSame('競合3社中2社以上が伝えていて、自社サイトでは確認できなかった項目', $data3['missing_items']['heading']);
 
         $data5 = (new AdminComparisonPptxDataBuilder)->build($this->viewModel([
             'competitors' => [
@@ -516,7 +516,7 @@ class AdminComparisonPptxDataBuilderTest extends TestCase
             ],
             'missingFromSelf' => [],
         ]));
-        $this->assertSame('競合5社中3社以上が伝えていて、自社が伝えていない項目', $data5['missing_items']['heading']);
+        $this->assertSame('競合5社中3社以上が伝えていて、自社サイトでは確認できなかった項目', $data5['missing_items']['heading']);
     }
 
     // ------------------------------------------------------------------

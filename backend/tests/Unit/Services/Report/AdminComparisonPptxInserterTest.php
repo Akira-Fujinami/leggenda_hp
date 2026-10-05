@@ -1046,19 +1046,19 @@ class AdminComparisonPptxInserterTest extends TestCase
     }
 
     /**
-     * 依頼CL-1: 表の末尾に「合計」の行(各社の○の数/24)があり、ヘッダーが
-     * 記号(自社/A〜)、中央の列の各社に同じ記号が付いている。「自社が競合の
+     * 依頼CL-1: 表の末尾に「合計」の行(各社の○の数/24)があり、(競合4〜5社では)ヘッダーが
+     * 記号(自社/A〜)、中央の列の各社に同じ記号が付いている(依頼CM-4)。「自社が競合の
      * 最高値に届いていない領域」の強調(凡例)は残っている。
      */
     public function test_wheel_comparison_has_a_total_row_and_symbols_shared_between_the_table_and_the_competitor_tiles(): void
     {
-        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData(['自社テスト株式会社', '競合A', '競合B', '競合C'])));
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData(['自社テスト株式会社', '競合A', '競合B', '競合C', '競合D'])));
 
         $this->assertStringContainsString('合計]]>', $xml);
         $this->assertStringContainsString('16/24', $xml, '自社の合計');
         $this->assertStringContainsString('18/24', $xml);
         $this->assertStringContainsString('20/24', $xml);
-        foreach (['A', 'B', 'C'] as $symbol) {
+        foreach (['A', 'B', 'C', 'D'] as $symbol) {
             $this->assertGreaterThanOrEqual(2, substr_count($xml, "<![CDATA[{$symbol}]]>") + substr_count($xml, "<![CDATA[{$symbol}　]]>"), "記号{$symbol}が表のヘッダーと中央の列の両方に出ること");
         }
         $this->assertStringContainsString('自社が競合の最高値未達', $xml);
@@ -1209,8 +1209,14 @@ class AdminComparisonPptxInserterTest extends TestCase
     {
         $intro = (string) config('admin_comparison_pptx.missing_items_intro');
         $this->assertStringNotContainsString('関心が高い', $intro);
-        $this->assertStringContainsString('競合の多くが伝えていて', $intro);
         $this->assertStringContainsString('参考', $intro);
+        $this->assertStringContainsString('項目の選定や並び順には使っていません', $intro);
+        // 依頼CM-6: 見出しと同じ内容(競合が伝えていて…確認できなかった)を繰り返さない。
+        $this->assertStringNotContainsString('確認できなかった', $intro);
+        $this->assertStringNotContainsString('競合', $intro);
+        $heading = (string) config('admin_comparison_pptx.missing_items_heading');
+        $this->assertStringContainsString('自社サイトでは確認できなかった項目', $heading);
+        $this->assertStringNotContainsString('自社が伝えていない', $heading, '断定せず「確認できなかった」で統一する');
 
         $xml = $this->slideXmlOf($this->missingItemsSlideBytes());
         $this->assertStringContainsString(htmlspecialchars($intro, ENT_QUOTES | ENT_XML1), $xml);
@@ -1684,5 +1690,256 @@ class AdminComparisonPptxInserterTest extends TestCase
                 $this->assertStringContainsString('重なっている', $e->getMessage());
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 依頼CM-3/CM-4/CM-5(2026-10-06): 企業名の折り方・表の見出し・桁。
+    // ------------------------------------------------------------------
+
+    /**
+     * 文字枠ごとの、改行(a:br・段落)で区切った行。
+     *
+     * @return list<array{lines: list<string>, text: string}>
+     */
+    private function textBoxLines(string $slideXml): array
+    {
+        $dom = new \DOMDocument;
+        $dom->loadXML($slideXml);
+        $xp = new \DOMXPath($dom);
+        $xp->registerNamespace('p', 'http://schemas.openxmlformats.org/presentationml/2006/main');
+        $xp->registerNamespace('a', 'http://schemas.openxmlformats.org/drawingml/2006/main');
+
+        $result = [];
+        foreach ($xp->query('//p:sp[p:nvSpPr/p:cNvSpPr[@txBox="1"]]') as $sp) {
+            $lines = [];
+            foreach ($xp->query('.//a:p', $sp) as $paragraph) {
+                $current = '';
+                foreach ($paragraph->childNodes as $child) {
+                    if ($child->nodeName === 'a:br') {
+                        $lines[] = $current;
+                        $current = '';
+                    } elseif ($child->nodeName === 'a:r') {
+                        foreach ($xp->query('./a:t', $child) as $textNode) {
+                            $current .= $textNode->textContent;
+                        }
+                    }
+                }
+                $lines[] = $current;
+            }
+            $lines = array_values(array_filter($lines, fn (string $l) => trim($l) !== ''));
+            if ($lines !== []) {
+                $result[] = ['lines' => $lines, 'text' => implode('', $lines)];
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * 企業名を表示している文字枠(の行)をすべて返す。記号(A　など)は除く。
+     *
+     * @return list<list<string>>
+     */
+    private function nameBoxesOf(string $slideXml, string $name): array
+    {
+        $compact = str_replace([' ', '　'], '', $name);
+        $found = [];
+        foreach ($this->textBoxLines($slideXml) as $box) {
+            $lines = $box['lines'];
+            $lines[0] = preg_replace('/^[A-E]　/u', '', $lines[0]) ?? $lines[0];
+            if (str_replace([' ', '　'], '', implode('', $lines)) === $compact) {
+                $found[] = $lines;
+            }
+        }
+
+        return $found;
+    }
+
+    /** どの行も、語(トークン)を2行にまたがって割っていないこと。 */
+    private function assertNoWordIsSplit(array $lines, array $words, string $label): void
+    {
+        $name = implode('', $lines);
+        foreach ($words as $word) {
+            if (! str_contains(str_replace([' ', '　'], '', $name), $word)) {
+                continue;
+            }
+            $inOneLine = false;
+            foreach ($lines as $line) {
+                if (str_contains($line, $word)) {
+                    $inOneLine = true;
+                }
+            }
+            $this->assertTrue($inOneLine, "{$label}: 「{$word}」が行をまたいで割れている(".implode(' / ', $lines).')');
+        }
+    }
+
+    private const NAME_WORDS = ['サイボウズ', 'マネーフォワード', 'フリー', 'Fuji', 'Innovation', 'レジェンダ', 'コーポレーション', '株式会社'];
+
+    /**
+     * 依頼CM-3: 実物で「サイボウズ/株式会社」「株式会社マネ/ーフォワード」と語の途中で
+     * 切れていた企業名が、語の切れ目で折れる(競合1〜3社=企業名の見出し、4〜5社=記号)。
+     */
+    public function test_company_names_are_never_split_in_the_middle_of_a_word(): void
+    {
+        $names = ['サイボウズ株式会社', '株式会社マネーフォワード', 'フリー株式会社', '株式会社Fuji of Innovation', 'レジェンダ・コーポレーション株式会社'];
+        $cases = [
+            '競合3社(企業名の見出し)' => ['自社テスト株式会社', ...array_slice($names, 0, 3)],
+            '競合3社(後ろの2社)' => ['レジェンダ・コーポレーション株式会社', $names[3], $names[4], $names[0]],
+            '競合4社(記号)' => ['自社テスト株式会社', ...array_slice($names, 0, 4)],
+            '競合5社(記号)' => ['自社テスト株式会社', ...$names],
+        ];
+
+        foreach ($cases as $label => $companyNames) {
+            $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData($companyNames)));
+            foreach (array_slice($companyNames, 1) as $name) {
+                $boxes = $this->nameBoxesOf($xml, $name);
+                $this->assertNotEmpty($boxes, "{$label}: 「{$name}」が表示されている");
+                foreach ($boxes as $lines) {
+                    $this->assertStringNotContainsString('…', implode('', $lines), "{$label}: 「{$name}」は省略されない");
+                    $this->assertNoWordIsSplit($lines, self::NAME_WORDS, $label);
+                }
+            }
+            $this->assertNoOverlaps($xml, $label);
+        }
+    }
+
+    public function test_company_names_break_before_or_after_the_corporate_form_and_at_spaces_and_middle_dots(): void
+    {
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData(['自社', '株式会社マネーフォワード', 'レジェンダ・コーポレーション株式会社'])));
+
+        // 「株式会社」の前後で折れる(「株式会社」/「マネーフォワード」)。
+        $this->assertContains(['株式会社', 'マネーフォワード'], $this->nameBoxesOf($xml, '株式会社マネーフォワード'));
+        // 「・」の後ろで折れる。
+        $boxes = $this->nameBoxesOf($xml, 'レジェンダ・コーポレーション株式会社');
+        $this->assertNotEmpty($boxes);
+        foreach ($boxes as $lines) {
+            $this->assertGreaterThan(1, count($lines));
+            $this->assertTrue(
+                str_ends_with($lines[0], '・') || str_ends_with($lines[0], '株式会社') || str_starts_with($lines[1] ?? '', '株式会社'),
+                '語の切れ目(・の後ろ/株式会社の前後)で折れている: '.implode(' / ', $lines),
+            );
+        }
+
+        // 空白で折れ、英数字どうしの境目には空白が戻る。
+        $xml2 = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData(['自社', '株式会社Fuji of Innovation', '競合B', '競合C', '競合D'])));
+        foreach ($this->nameBoxesOf($xml2, '株式会社Fuji of Innovation') as $lines) {
+            $this->assertNoWordIsSplit($lines, ['Fuji', 'Innovation', '株式会社'], '空白区切りの企業名');
+        }
+    }
+
+    /** 1行に収まるなら折らない。 */
+    public function test_a_name_that_fits_on_one_line_is_not_broken(): void
+    {
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData(['自社テスト株式会社', 'フリー株式会社', '競合B'])));
+
+        foreach ($this->nameBoxesOf($xml, 'フリー株式会社') as $lines) {
+            $this->assertSame(['フリー株式会社'], $lines);
+        }
+        foreach ($this->nameBoxesOf($xml, '自社テスト株式会社') as $lines) {
+            $this->assertSame(['自社テスト株式会社'], $lines, '自社の名前(幅が広い)も折らない');
+        }
+    }
+
+    /** 極端に長い名前だけ、既存の省略の処理に落ちる(図形は崩れない)。 */
+    public function test_an_extremely_long_name_falls_back_to_the_existing_ellipsis(): void
+    {
+        $long = str_repeat('ものすごく長い企業名', 12).'株式会社';
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData(['自社テスト株式会社', $long, '競合B'])));
+
+        $this->assertStringContainsString('…', $xml);
+        $this->assertStringNotContainsString($long, $xml);
+        $this->assertNoOverlaps($xml, '極端に長い名前');
+    }
+
+    /** 文字を小さくして1行に収まるときは、下限(7pt)より小さくしない。 */
+    public function test_the_font_is_never_shrunk_below_the_configured_floor(): void
+    {
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData(['自社テスト株式会社', '株式会社マネーフォワード', 'レジェンダ・コーポレーション株式会社', '株式会社Fuji of Innovation'])));
+
+        preg_match_all('/<a:rPr[^>]*\bsz="(\d+)"/', $xml, $m);
+        $floor = (int) config('admin_comparison_pptx.company_name_absolute_min_pt');
+        $this->assertNotEmpty($m[1]);
+        foreach ($m[1] as $sz) {
+            $this->assertGreaterThanOrEqual($floor * 100, (int) $sz, '文字の大きさが下限より小さくない');
+        }
+    }
+
+    /** 折り方の語・文字は config から出る(直書きしない)。 */
+    public function test_the_break_words_come_from_config(): void
+    {
+        config(['admin_comparison_pptx.company_name_break_words' => ['ホールディングス']]);
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData(['自社', 'テクノロジーズホールディングス', '競合B', '競合C', '競合D'])));
+
+        $boxes = $this->nameBoxesOf($xml, 'テクノロジーズホールディングス');
+        $this->assertNotEmpty($boxes);
+        foreach ($boxes as $lines) {
+            $this->assertSame(['テクノロジーズ', 'ホールディングス'], $lines, 'config の語の前後で折れる');
+        }
+    }
+
+    // ---- CM-4: 表の見出し ----
+
+    public function test_with_one_to_three_competitors_the_table_header_shows_company_names_and_no_symbols(): void
+    {
+        foreach ([1, 2, 3] as $count) {
+            $names = ['自社テスト株式会社'];
+            for ($i = 1; $i <= $count; $i++) {
+                $names[] = "競合{$i}株式会社";
+            }
+            $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData($names)));
+            $boxes = $this->textBoxLines($xml);
+
+            // 見出し(表のヘッダー行)と中央の列の両方に、企業名が出る。
+            for ($i = 1; $i <= $count; $i++) {
+                $this->assertGreaterThanOrEqual(2, count($this->nameBoxesOf($xml, "競合{$i}株式会社")), "競合{$count}社: 「競合{$i}株式会社」が見出しと中央の列の両方に出る");
+            }
+            // 記号(A〜)は出さない。注記も出さない。
+            foreach (['A', 'B', 'C'] as $symbol) {
+                foreach ($boxes as $box) {
+                    $this->assertDoesNotMatchRegularExpression('/^'.$symbol.'(　|$)/u', $box['text'], "競合{$count}社: 記号{$symbol}を使わない");
+                }
+            }
+            $this->assertStringNotContainsString('中央の競合の記号', $xml);
+            $this->assertStringContainsString('軸の並びは自社の図と共通です。', $xml, '軸の並びの注記は残る');
+            $this->assertNoOverlaps($xml, "競合{$count}社(企業名の見出し)");
+        }
+    }
+
+    public function test_with_four_or_five_competitors_the_table_header_uses_symbols_and_the_legend_explains_them(): void
+    {
+        foreach ([4, 5] as $count) {
+            $names = ['自社テスト株式会社'];
+            for ($i = 1; $i <= $count; $i++) {
+                $names[] = "競合{$i}株式会社";
+            }
+            $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generate($this->wheelData($names)));
+
+            $last = ['A', 'B', 'C', 'D', 'E'][$count - 1];
+            $this->assertStringContainsString("表のA〜{$last}は、中央の競合の記号です。", $xml);
+            foreach (array_slice(['A', 'B', 'C', 'D', 'E'], 0, $count) as $symbol) {
+                $this->assertGreaterThanOrEqual(2, substr_count($xml, "<![CDATA[{$symbol}]]>") + substr_count($xml, "<![CDATA[{$symbol}　]]>"), "競合{$count}社: 記号{$symbol}が見出しと中央の列の両方に出る");
+            }
+            $this->assertNoOverlaps($xml, "競合{$count}社(記号)");
+        }
+    }
+
+    // ---- CM-5: 割合の桁 ----
+
+    public function test_the_survey_table_percentages_are_aligned_to_one_decimal_place(): void
+    {
+        $data = $this->surveyData();
+        $data['survey_comparison']['rows'][2]['percentage'] = 17.0;
+        $xml = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateSurveyComparisonSlide($data));
+
+        $this->assertStringContainsString('17.0%', $xml);
+        $this->assertStringContainsString('24.6%', $xml);
+        $this->assertStringContainsString('7.4%', $xml);
+        $this->assertStringNotContainsString('>17%<', str_replace(['<![CDATA[', ']]>'], ['>', '<'], $xml));
+
+        // 「足りないもの」の文中の表記(17を17、13.4を13.4)は変えない。
+        $missing = $this->slideXmlOf(app(AdminComparisonPptxGenerator::class)->generateMissingItemsSlide($this->comparisonData()));
+        $this->assertStringContainsString('13.4%', $missing);
+        $template = (string) config('admin_comparison_pptx.missing_item_survey_template');
+        $this->assertSame('「X」を確認したい求職者が17%いますが、自社サイトでは確認できませんでした。', sprintf($template, 'X', '17'));
     }
 }
