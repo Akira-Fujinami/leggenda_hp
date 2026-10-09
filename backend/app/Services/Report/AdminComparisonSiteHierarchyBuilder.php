@@ -10,6 +10,8 @@ use App\Services\Analysis\CrawlLinkExtractor;
 use App\Services\Analysis\CrawlOriginScopeResolver;
 use App\Services\Analysis\HtmlSeoAnalyzer;
 use App\Services\BrandWheel\BrandWheelTextTruncator;
+use App\Services\CorporateTop\CorporateTopAnalyzer;
+use App\Services\CorporateTop\CorporateTopStore;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 
@@ -72,6 +74,8 @@ class AdminComparisonSiteHierarchyBuilder
         private readonly CrawlOriginScopeResolver $scopeResolver,
         private readonly HtmlSeoAnalyzer $htmlAnalyzer = new HtmlSeoAnalyzer,
         private readonly CrawlLinkExtractor $linkExtractor = new CrawlLinkExtractor,
+        private readonly ?CorporateTopStore $corporateStore = null,
+        private readonly ?CorporateTopAnalyzer $corporateAnalyzer = null,
     ) {}
 
     /**
@@ -449,8 +453,15 @@ class AdminComparisonSiteHierarchyBuilder
             'input_redirected' => $this->isInputRedirected($websiteAnalysis),
         ];
 
+        // 依頼CR-1: 保存済みのコーポレートTOP(取得は比較の流れの中で済んでいる。ここでは通信しない)。
+        $corporateMeta = $this->corporateStore()->readMeta((int) $websiteAnalysis->analysis_id, (int) $websiteAnalysis->id);
+        $corporateHtml = ($corporateMeta['status'] ?? null) === 'found'
+            ? $this->corporateStore()->readHtml((int) $websiteAnalysis->analysis_id, (int) $websiteAnalysis->id)
+            : null;
+        $corporate = $corporateHtml !== null ? $this->corporateInfo($corporateMeta, $corporateHtml, $sourceScope) : null;
+
         if (count($menuItems) < $minItems) {
-            [$branches, $otherBranchCount, $allNames] = $this->buildUrlModeBranches($within, $scope);
+            [$branches, $otherBranchCount, $allNames] = $this->buildUrlModeBranches($within, $scope, $pages, $corporateHtml !== null ? ['html' => $corporateHtml, 'url' => (string) $corporateMeta['url']] : null);
             $result = $this->treeResult('url', $scope['origin_url'], $top, $branches, $otherBranchCount, $totalFetched, $pagesWithinOrigin, ['links' => 0, 'url' => 0], $menuSource);
         } else {
             [$branches, $otherBranchCount, $source, $unplaced, $allNames] = $this->buildMenuModeBranches($menuItems, $within, $scope);
@@ -461,7 +472,90 @@ class AdminComparisonSiteHierarchyBuilder
         $result['first_level_labels'] = $allNames;
         $result['origin_widened'] = $widened;
 
+        // 依頼CR-1/CR-3: コーポレートTOP(決まったときだけ。決まらなかった理由は注記で示す)と、箱の下に添えるURLのパス。
+        $result['corporate'] = $corporate;
+        $result['corporate_missing'] = $corporate === null && ($corporateMeta['status'] ?? null) === 'not_found';
+        $originHost = $sourceScope['host'];
+        $result['recruit_path'] = $this->displayPath($sourceScope['origin_url'], $corporate['host'] ?? $originHost);
+        $result['branches'] = array_map(function (array $branch) use ($originHost) {
+            $pathUrl = $branch['url'] ?? ($branch['path_url'] ?? null);
+            $branch['path'] = $pathUrl !== null ? $this->displayPath((string) $pathUrl, $originHost) : null;
+            unset($branch['path_url']);
+
+            return $branch;
+        }, $result['branches']);
+
         return $result;
+    }
+
+    private function corporateStore(): CorporateTopStore
+    {
+        return $this->corporateStore ?? app(CorporateTopStore::class);
+    }
+
+    private function corporateAnalyzer(): CorporateTopAnalyzer
+    {
+        return $this->corporateAnalyzer ?? app(CorporateTopAnalyzer::class);
+    }
+
+    /**
+     * 依頼CR-1: 第1階層に描くコーポレートTOPの情報。採用の箱の名前は、採用へのリンクの文字
+     * (空ならconfigの既定)。他のメニューは名前だけ(上限を超えたら「ほかN」の件数)。
+     *
+     * @param  array<string, mixed>  $meta
+     * @param  array{origin_url: string, host: string, path: string}  $sourceScope
+     * @return array{host: string, url: string, recruit_label: string, other_menu: list<string>, other_menu_more: int}
+     */
+    private function corporateInfo(array $meta, string $html, array $sourceScope): array
+    {
+        $url = (string) ($meta['url'] ?? '');
+        $label = trim((string) ($meta['recruit_label'] ?? ''));
+        $max = (int) config('admin_comparison_pptx.corporate_top_label_max_chars');
+        if ($label === '') {
+            $label = (string) config('admin_comparison_pptx.corporate_top_default_recruit_label');
+        }
+        if ($max > 0 && mb_strlen($label) > $max) {
+            $label = mb_substr($label, 0, $max - 1).'…';
+        }
+
+        $others = $this->corporateAnalyzer()->otherMenuLabels($html, $url, $sourceScope, $meta['recruit_label'] ?? null);
+        $limit = (int) config('admin_comparison_pptx.corporate_top_other_menu_limit');
+
+        return [
+            'host' => strtolower((string) (parse_url($url, PHP_URL_HOST) ?? '')),
+            'url' => $url,
+            'recruit_label' => $label,
+            'other_menu' => array_slice($others, 0, $limit),
+            'other_menu_more' => max(0, count($others) - $limit),
+        ];
+    }
+
+    /**
+     * 依頼CR-3: 箱の下に添えるURLのパス(/recruit/fresh など)。基準のホストと違うときは、ホストから書く。
+     * パスだけでなく、末尾の「/」は付けない(ルートだけのときは「/」)。長いときは途中を「…」で省く。
+     */
+    private function displayPath(string $url, string $referenceHost): string
+    {
+        $parts = parse_url($url);
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        $path = rawurldecode((string) ($parts['path'] ?? ''));
+        $path = rtrim($path, '/');
+        if (! mb_check_encoding($path, 'UTF-8')) {
+            $path = (string) ($parts['path'] ?? '');
+        }
+
+        $text = ($host !== '' && $host !== strtolower($referenceHost))
+            ? $host.$path
+            : ($path === '' ? '/' : $path);
+
+        $max = (int) config('admin_comparison_pptx.site_hierarchy_path_max_chars');
+        if ($max > 0 && mb_strlen($text) > $max) {
+            $keep = $max - 1;
+            $head = (int) ceil($keep / 2);
+            $text = mb_substr($text, 0, $head).'…'.mb_substr($text, -($keep - $head));
+        }
+
+        return $text;
     }
 
     /**
@@ -539,6 +633,9 @@ class AdminComparisonSiteHierarchyBuilder
             'origin_widened' => false,
             'unplaced_page_count' => 0,
             'first_level_labels' => [],
+            'corporate' => null,
+            'corporate_missing' => false,
+            'recruit_path' => '',
         ];
     }
 
@@ -547,22 +644,37 @@ class AdminComparisonSiteHierarchyBuilder
      * ページのtitleを優先する(取れていなければURLのセグメントをデコード
      * したもの)。第1階層・第2階層の上限はメニュー版と同じconfig。
      *
+     * 依頼CR-2: 枝の名前は、その枝のURLへ張られたリンクの文字(巡回した各ページの保存済みHTMLと
+     * コーポレートTOPから集め、いちばん多く使われているもの、同数なら短いもの)。候補が無ければ
+     * 従来どおりそのページのtitle(無ければURLのセグメント)。名前を作らない・言い換えない。
+     *
      * @param  Collection<int, AnalysisCrawledPage>  $within  起点URL配下のページ
      * @param  array{origin_url: string, host: string, path: string}  $scope
+     * @param  Collection<int, AnalysisCrawledPage>|null  $allPages  リンクの文字を集める、巡回したすべてのページ
+     * @param  array{html: string, url: string}|null  $corporateTop
      * @return array{0: list<array{name: string, url: ?string, page_count: int, pages: list<string>, other_page_count: int}>, 1: int}
      */
-    private function buildUrlModeBranches(Collection $within, array $scope): array
+    private function buildUrlModeBranches(Collection $within, array $scope, ?Collection $allPages = null, ?array $corporateTop = null): array
     {
         $secondLimit = (int) config('admin_comparison_pptx.site_hierarchy_tree_second_level_limit');
         [$groups, $flatLabels] = $this->groupUrlBranches($within, $scope);
+
+        $branchUrls = [];
+        foreach (array_keys($groups) as $segment) {
+            $branchUrls[(string) $segment] = $this->branchUrl($scope, (string) $segment);
+        }
+        $linkNames = (bool) config('admin_comparison_pptx.site_hierarchy_link_names_enabled', true)
+            ? $this->linkNamesFor($branchUrls, $allPages ?? $within, $corporateTop)
+            : [];
 
         $branches = [];
         $fullNames = [];
         foreach ($groups as $segment => $info) {
             $labels = $this->deprioritizeSamplePages($info['labels'], PHP_INT_MAX);
+            $linkName = $linkNames[(string) $segment] ?? null;
             // 枝の名前にしたインデックスページのtitleは、第2階層にも重ねて出さない
-            // (ページ数には数えたまま)。
-            if ($info['index_title'] !== null) {
+            // (ページ数には数えたまま)。リンクの文字を名前にしたときは、titleは名前ではないので残す。
+            if ($info['index_title'] !== null && $linkName === null) {
                 $position = array_search($info['index_title'], $labels, true);
                 if ($position !== false) {
                     unset($labels[$position]);
@@ -571,11 +683,12 @@ class AdminComparisonSiteHierarchyBuilder
             }
             // 依頼CP-3: 枝の名前にしたページ名は、第2階層と同じ処理(共通の接尾辞・接頭辞は
             // hydrateTitles()で落とし済み)のあと、上限の長さで切る(切るだけ。言い換えない)。
-            $fullName = $info['index_title'] ?? $this->decodeSegmentForDisplay((string) $segment);
+            $fullName = $linkName ?? $info['index_title'] ?? $this->decodeSegmentForDisplay((string) $segment);
             $fullNames[] = $fullName;
             $branches[] = [
-                'name' => $info['index_title'] !== null ? $this->truncateBranchName($fullName) : $fullName,
+                'name' => ($linkName === null && $info['index_title'] !== null) ? $this->truncateBranchName($fullName) : $fullName,
                 'url' => null,
+                'path_url' => $branchUrls[(string) $segment],
                 'page_count' => $info['count'],
                 'pages' => array_slice($labels, 0, $secondLimit),
                 'other_page_count' => max(0, count($labels) - $secondLimit),
@@ -599,6 +712,101 @@ class AdminComparisonSiteHierarchyBuilder
         [$limited, $otherBranchCount] = $this->limitBranches($branches);
 
         return [$limited, $otherBranchCount, $allNames];
+    }
+
+    /**
+     * 依頼CR-2: URL版の枝のURL(起点のディレクトリ + 枝のセグメント)。
+     *
+     * @param  array{origin_url: string, host: string, path: string}  $scope
+     */
+    private function branchUrl(array $scope, string $segment): string
+    {
+        $parts = parse_url($scope['origin_url']);
+        $base = ($parts['scheme'] ?? 'https').'://'.($parts['host'] ?? $scope['host']).(isset($parts['port']) ? ':'.$parts['port'] : '');
+
+        return $base.rtrim($scope['path'], '/').'/'.$segment;
+    }
+
+    /**
+     * 依頼CR-2: 枝のURLごとに、そのURLへ張られたリンクの文字のうち、いちばん多く使われているものを返す
+     * (同数なら短いもの、それも同じなら文字の並びが早いもの)。長さの上限(config)を超えるもの・空のもの・
+     * 汎用の言葉(config)は候補から外す。候補が無い枝は結果に含めない。
+     *
+     * @param  array<string, string>  $branchUrls  枝のセグメント => 枝のURL
+     * @param  Collection<int, AnalysisCrawledPage>  $pages  リンクの文字を集める、保存済みHTMLのあるページ
+     * @param  array{html: string, url: string}|null  $corporateTop
+     * @return array<string, string>  枝のセグメント => リンクの文字
+     */
+    private function linkNamesFor(array $branchUrls, Collection $pages, ?array $corporateTop): array
+    {
+        if ($branchUrls === []) {
+            return [];
+        }
+
+        $targets = [];
+        foreach ($branchUrls as $segment => $url) {
+            $targets[$this->urlKey($url)] = (string) $segment;
+        }
+
+        /** @var array<string, array<string, int>> $counts */
+        $counts = [];
+        foreach ($pages as $page) {
+            $html = $this->readStoredHtml($page->rendered_html_path) ?? $this->readStoredHtml($page->raw_html_path);
+            if ($html !== null) {
+                $this->collectLinkTexts($html, (string) ($page->final_url ?? $page->url), $targets, $counts);
+            }
+        }
+        if ($corporateTop !== null) {
+            $this->collectLinkTexts($corporateTop['html'], $corporateTop['url'], $targets, $counts);
+        }
+
+        $max = (int) config('admin_comparison_pptx.site_hierarchy_link_name_max_chars');
+        $generic = array_map(fn ($w) => mb_strtolower(trim((string) $w)), (array) config('admin_comparison_pptx.site_hierarchy_link_name_generic_words', []));
+
+        $names = [];
+        foreach ($counts as $segment => $labels) {
+            $candidates = array_filter(
+                $labels,
+                fn (int $count, string $label) => $label !== '' && ($max <= 0 || mb_strlen($label) <= $max) && ! in_array(mb_strtolower($label), $generic, true),
+                ARRAY_FILTER_USE_BOTH,
+            );
+            if ($candidates === []) {
+                continue;
+            }
+            $labelsOrdered = array_keys($candidates);
+            usort($labelsOrdered, fn (string $a, string $b) => [$candidates[$b], mb_strlen($a), $a] <=> [$candidates[$a], mb_strlen($b), $b]);
+            $names[(string) $segment] = (string) $labelsOrdered[0];
+        }
+
+        return $names;
+    }
+
+    /**
+     * @param  array<string, string>  $targets  枝のURLキー => 枝のセグメント
+     * @param  array<string, array<string, int>>  $counts
+     */
+    private function collectLinkTexts(string $html, string $pageUrl, array $targets, array &$counts): void
+    {
+        $dom = new \DOMDocument;
+        $previous = libxml_use_internal_errors(true);
+        $dom->loadHTML('<?xml encoding="utf-8"?>'.$html, LIBXML_NOENT | LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+
+        foreach ((new \DOMXPath($dom))->query('//a[@href]') ?: [] as $node) {
+            if (! $node instanceof \DOMElement) {
+                continue;
+            }
+            $url = $this->linkExtractor->resolveHref($pageUrl, $node->getAttribute('href'));
+            $segment = $url !== null ? ($targets[$this->urlKey($url)] ?? null) : null;
+            if ($segment === null) {
+                continue;
+            }
+            $label = trim((string) preg_replace('/\s+/u', ' ', $node->textContent));
+            if ($label !== '') {
+                $counts[$segment][$label] = ($counts[$segment][$label] ?? 0) + 1;
+            }
+        }
     }
 
     /** 依頼CP-3: URL版の枝の名前の上限(config)。0以下なら切らない。 */

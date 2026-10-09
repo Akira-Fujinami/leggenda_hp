@@ -457,6 +457,9 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         // あとに、トップメッセージ × 人事制度のジョブを1回だけ起動する。判定・進捗・完了判定には
         // 影響させない(起動に失敗しても例外は出ない ―― TopMessageInsightDispatcher参照)。
         app(TopMessageInsightDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
+
+        // 依頼CR-1: 比較の自社サイトだけ、階層図のTOPにするコーポレートTOPを1回取得する(同様に、比較には影響させない)。
+        app(\App\Services\CorporateTop\CorporateTopDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
     }
 
     /**

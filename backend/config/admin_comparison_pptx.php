@@ -744,4 +744,54 @@ return [
     'top_message_title_max_pt' => 25,
     'top_message_title_min_pt' => 18,
 
+    /*
+    |--------------------------------------------------------------------------
+    | 依頼CR: 階層図のTOPをコーポレートサイトにする / 各階層を見やすくする
+    |--------------------------------------------------------------------------
+    */
+    // CR-1: コーポレートTOPの取得を行うか(自社サイトだけ、比較の流れの中で1回)。
+    'corporate_top_enabled' => (bool) env('CORPORATE_TOP_ENABLED', true),
+    // 起点のホストの先頭のラベルがこれなら、外したホストをコーポレートの候補にする。
+    // 「-recruit」で終わるラベル(mixigroup-recruitなど)は対象外。
+    'corporate_top_recruit_host_labels' => ['recruit', 'careers', 'career', 'jobs', 'saiyo', 'hr'],
+    // コーポレートTOPの取得の締切り(秒)。
+    'corporate_top_fetch_timeout_seconds' => 15,
+    // 採用へのリンクの文字が空(alt・aria-labelも無い)ときの、採用の箱の名前。
+    'corporate_top_default_recruit_label' => '採用情報',
+    'corporate_top_label_max_chars' => 16,
+    // 第1階層に名前だけ並べる、採用以外のメニュー(薄く)の上限。超えたら「ほかN」。
+    'corporate_top_other_menu_limit' => 4,
+    'corporate_top_other_menu_other_template' => 'ほか%d',
+
+    // CR-3: 列の見出し(見出し・説明)。コーポレートTOPが決まったときは4列、決まらなかったときは3列。
+    'site_hierarchy_columns_corporate' => [
+        ['heading' => 'コーポレートTOP', 'description' => 'サイトの入口'],
+        ['heading' => '第1階層', 'description' => 'コーポレートのメニュー'],
+        ['heading' => '第2階層', 'description' => '採用サイトの区分'],
+        ['heading' => '第3階層', 'description' => '各ページ'],
+    ],
+    'site_hierarchy_columns_recruit' => [
+        ['heading' => '採用サイトTOP', 'description' => 'サイトの入口'],
+        ['heading' => '第1階層', 'description' => '採用サイトの区分'],
+        ['heading' => '第2階層', 'description' => '各ページ'],
+    ],
+    // 階層が深くなるほど薄くする(濃紺 → 青 → 薄い青 → 白に近い色)。文字の色は箱の色ごと。
+    'site_hierarchy_level_fill' => ['12243F', '2F5D9E', 'D6E4F5', 'F3F7FC'],
+    'site_hierarchy_level_text' => ['FFFFFF', 'FFFFFF', '12243F', '0C1726'],
+    // 採用の箱(第1階層の中で強調する)の枠。
+    'site_hierarchy_accent_color' => 'C8763C',
+    // 採用以外のメニュー(名前だけ)の文字と枠。
+    'site_hierarchy_other_menu_text' => '9AA6B4',
+    'site_hierarchy_other_menu_border' => 'D9DFE7',
+    // 箱の下に添えるURLのパス: 長いときは途中を「…」で省く(文字数の上限)。
+    'site_hierarchy_path_max_chars' => 30,
+    // コーポレートTOPが決まらなかった(取得はしたが採用サイトへのリンクを確認できなかった)ときの注記。
+    'site_hierarchy_corporate_missing_note' => 'コーポレートサイトのTOPから採用サイトへのリンクを確認できなかったため、採用サイトを起点に描いています。',
+
+    // CR-2: URLの階層で描くときの第2階層の枝名を、その枝のURLへ張られたリンクの文字にする。
+    'site_hierarchy_link_names_enabled' => true,
+    'site_hierarchy_link_name_max_chars' => 12,
+    // 汎用の言葉(リンクの文字がこれだけのものは枝名の候補から外す。大文字小文字を区別しない)。
+    'site_hierarchy_link_name_generic_words' => ['詳しく見る', 'もっと見る', 'もっと', 'MORE', 'VIEW MORE', 'READ MORE', 'こちら', '詳細', '詳細はこちら', '続きを読む', 'CLICK', 'LINK', '>', '→'],
+
 ];

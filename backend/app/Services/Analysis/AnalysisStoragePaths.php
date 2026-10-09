@@ -61,6 +61,23 @@ class AnalysisStoragePaths
         return $this->base($analysisId, $websiteAnalysisId).'/top_message_insight.json';
     }
 
+    /**
+     * 依頼CR-1: 階層図のTOPにするコーポレートサイトのTOPページ(静的HTML)。巡回の50件には数えず、
+     * 巡回の保存先(raw/の巡回ページ)とは別のファイル名で置く。analysisDir()ごとの削除で消える。
+     */
+    public function corporateTopHtmlPath(int $analysisId, int $websiteAnalysisId): string
+    {
+        return $this->rawDir($analysisId, $websiteAnalysisId).'/corporate_top.html';
+    }
+
+    /**
+     * 依頼CR-1: コーポレートTOPを決めた結果(どの候補で、リンクの文字は何か、決まらなかった理由)。
+     */
+    public function corporateTopMetaPath(int $analysisId, int $websiteAnalysisId): string
+    {
+        return $this->metadataDir($analysisId, $websiteAnalysisId).'/corporate_top.json';
+    }
+
     private function base(int $analysisId, int $websiteAnalysisId): string
     {
         return "analyses/{$analysisId}/websites/{$websiteAnalysisId}";

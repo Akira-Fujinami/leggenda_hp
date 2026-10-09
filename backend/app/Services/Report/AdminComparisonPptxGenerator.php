@@ -308,7 +308,12 @@ class AdminComparisonPptxGenerator
     private const TREE_NOTES_HEIGHT_IN = 0.62;
 
     /** 木の上端。TOPの箱も第1階層の最初の行もここから始まる。 */
-    private const TREE_TOP_IN = 2.15;
+    private const TREE_TOP_IN = 2.55;
+
+    // 依頼CR-3: 列の上の見出し(階層名と説明)の位置と、コーポレートTOPが決まったときの4列の[左, 幅](in)。
+    private const TREE_HEADINGS_TOP_IN = 2.06;
+
+    private const TREE4_COLUMNS = [[0.9, 1.9], [3.1, 2.3], [5.75, 2.65], [8.7, 3.7]];
 
     private const TREE_TOP_LEFT_IN = 0.9;
 
@@ -340,7 +345,7 @@ class AdminComparisonPptxGenerator
     /** 第2階層の1行の高さ(8ptの文字を行間固定せず、実機で重ならない値)。 */
     private const TREE_LINE_PITCH_IN = 0.135;
 
-    private const TREE_ROW_GAP_IN = 0.05;
+    private const TREE_ROW_GAP_IN = 0.03;
 
     /** 点線の枝(追加を検討したい導線)の1件の枠の高さと間隔。 */
     private const TREE_RECOMMENDED_ITEM_HEIGHT_IN = 0.22;
@@ -1588,9 +1593,22 @@ class AdminComparisonPptxGenerator
             $this->addTitle($slide, '自社サイトの階層図');
             $this->addTreeNotes($slide, $tree, $data['recommended_site_flow_names'] !== []);
 
-            $topBottom = $this->addTreeTop($slide, $tree['top'], $tree['mode'] === 'menu');
-            $this->addTreeBranches($slide, $tree);
-            $this->addTreeRecommendations($slide, $data['recommended_site_flow_names'], $topBottom);
+            if (($tree['corporate'] ?? null) !== null) {
+                // 依頼CR-3: コーポレートTOPが決まったときは4列(コーポレートTOP → メニュー → 採用サイトの区分 → 各ページ)。
+                $tree['recommended_names'] = $data['recommended_site_flow_names'];
+                $this->addCorporateTree($slide, $tree);
+            } else {
+                // コーポレートTOPが決まらなかったときは、いまの3列(TOP = 採用サイトの起点)。見出しも3列ぶん。
+                $this->addTreeColumnHeadings(
+                    $slide,
+                    [[self::TREE_TOP_LEFT_IN, self::TREE_TOP_WIDTH_IN], [self::TREE_BRANCH_LEFT_IN, self::TREE_BRANCH_WIDTH_IN], [self::TREE_PAGE_LEFT_IN, self::TREE_PAGE_WIDTH_IN]],
+                    (array) config('admin_comparison_pptx.site_hierarchy_columns_recruit'),
+                    [0, 1, 2],
+                );
+                $topBottom = $this->addTreeTop($slide, $tree['top'], $tree['mode'] === 'menu');
+                $this->addTreeBranches($slide, $tree);
+                $this->addTreeRecommendations($slide, $data['recommended_site_flow_names'], $topBottom);
+            }
 
             // 依頼CF-5②/CF追補: 固定位置に必ず描く(可変コンテンツの量に
             // 一切左右されない)。
@@ -1634,6 +1652,10 @@ class AdminComparisonPptxGenerator
         if ($tree['origin_widened'] ?? false) {
             $widened = sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_widened_note'), $tree['origin_url']);
             $this->font($box->createParagraph()->createTextRun($widened), 8, true, self::COPPER);
+        }
+        // 依頼CR-3: コーポレートTOPから採用サイトへのリンクを確認できず、採用サイトを起点に描いているとき。
+        if ($tree['corporate_missing'] ?? false) {
+            $this->font($box->createParagraph()->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_corporate_missing_note')), 8, true, self::COPPER);
         }
     }
 
@@ -1734,7 +1756,7 @@ class AdminComparisonPptxGenerator
 
         foreach ($branches as $branch) {
             $lineCount = count($branch['pages']) + ($branch['other_page_count'] > 0 ? 1 : 0);
-            $rowHeight = max(self::TREE_BRANCH_BOX_HEIGHT_IN + 0.04, $lineCount * $pitch + 0.06);
+            $rowHeight = max(self::TREE_BRANCH_BOX_HEIGHT_IN + 0.04, $lineCount * $pitch + 0.02);
             $center = $y + $rowHeight / 2;
             $centers[] = $center;
 
@@ -1772,7 +1794,7 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * @param  array{name: string, page_count: int}  $branch
+     * @param  array{name: string, page_count: int, path?: ?string}  $branch
      */
     private function addTreeBranchBox(Slide $slide, array $branch, float $center): void
     {
@@ -1791,7 +1813,7 @@ class AdminComparisonPptxGenerator
 
         $name = $this->wrapOrEllipsizeForLines($branch['name'], self::TREE_BRANCH_WIDTH_IN - 0.1, 10.0, true, 1);
         $this->font($box->getActiveParagraph()->createTextRun($name), 10, true, self::NAVY);
-        $this->font($box->createParagraph()->createTextRun(sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_page_count_template'), $branch['page_count'])), 8, false, self::MUTED);
+        $this->font($box->createParagraph()->createTextRun($this->branchSubLine($branch)), 8, false, self::MUTED);
     }
 
     /**
@@ -1894,6 +1916,321 @@ class AdminComparisonPptxGenerator
         }
 
         $this->drawLine($slide, [$spineX, $topBottom], [$spineX, $lastCenter], self::GAP_TEXT, 1.0, Border::DASH_DASH);
+    }
+
+    /**
+     * 依頼CR-3: 列の上の見出し(階層名と説明)。各列の上端に階層の色の帯を引き、その下に見出しと説明を
+     * そろえて置く。見出し・説明・色はconfig。
+     *
+     * @param  list<array{0: float, 1: float}>  $columns  列の[左(in), 幅(in)]
+     * @param  list<array{heading: string, description: string}>  $labels
+     * @param  list<int>  $levels  各列の階層(色の番号)
+     */
+    private function addTreeColumnHeadings(Slide $slide, array $columns, array $labels, array $levels): void
+    {
+        $fills = (array) config('admin_comparison_pptx.site_hierarchy_level_fill');
+
+        foreach ($columns as $i => [$left, $width]) {
+            $label = $labels[$i] ?? ['heading' => '', 'description' => ''];
+            $this->addFilledRect($slide, $left, self::TREE_HEADINGS_TOP_IN, $width, 0.05, (string) ($fills[$levels[$i]] ?? self::NAVY));
+
+            $box = $slide->createRichTextShape();
+            $this->position($box, $left, self::TREE_HEADINGS_TOP_IN + 0.06, $width, 0.4);
+            $box->setInsetLeft(0)->setInsetRight(0)->setInsetTop(2)->setInsetBottom(0);
+            $box->setWrap(RichText::WRAP_SQUARE);
+            $this->font($box->getActiveParagraph()->createTextRun($label['heading']), 10, true, self::NAVY);
+            $this->font($box->createParagraph()->createTextRun($label['description']), 8, false, self::MUTED);
+        }
+    }
+
+    /**
+     * 依頼CR-3: コーポレートTOPが決まったときの4列の木。
+     * 列1 コーポレートTOP(ホスト名)/ 列2 コーポレートのメニュー(採用の箱を強調、他は名前だけ薄く)/
+     * 列3 採用サイトの区分(箱の下にURLのパス)/ 列4 各ページ。階層が深いほど色を薄くする。
+     *
+     * @param  array<string, mixed>  $tree
+     */
+    private function addCorporateTree(Slide $slide, array $tree): void
+    {
+        $corporate = $tree['corporate'];
+        [$c1, $c2, $c3, $c4] = self::TREE4_COLUMNS;
+        $fills = (array) config('admin_comparison_pptx.site_hierarchy_level_fill');
+        $texts = (array) config('admin_comparison_pptx.site_hierarchy_level_text');
+        $accent = (string) config('admin_comparison_pptx.site_hierarchy_accent_color');
+
+        $this->addTreeColumnHeadings(
+            $slide,
+            [$c1, $c2, $c3, $c4],
+            (array) config('admin_comparison_pptx.site_hierarchy_columns_corporate'),
+            [0, 1, 2, 3],
+        );
+
+        // 列3・列4: 採用サイトの区分と各ページ(行の高さは各ページの行数で決まる)。
+        $branches = $tree['branches'];
+        $pitch = self::TREE_LINE_PITCH_IN;
+        $y = self::TREE_TOP_IN;
+        $centers = [];
+        foreach ($branches as $branch) {
+            $lineCount = count($branch['pages']) + ($branch['other_page_count'] > 0 ? 1 : 0);
+            $rowHeight = max(self::TREE_BRANCH_BOX_HEIGHT_IN + 0.04, $lineCount * $pitch + 0.02);
+            $center = $y + $rowHeight / 2;
+            $centers[] = $center;
+
+            $this->addLevelBox($slide, $c3[0], $center - self::TREE_BRANCH_BOX_HEIGHT_IN / 2, $c3[1], self::TREE_BRANCH_BOX_HEIGHT_IN, (string) $fills[2], null);
+            $this->addBranchBoxText($slide, $branch, $center, $c3[0], $c3[1], (string) $texts[2]);
+            $this->addLevelPages($slide, $branch, $center, $lineCount, $c3, $c4, (string) $fills[3], (string) $texts[3]);
+
+            $y += $rowHeight + self::TREE_ROW_GAP_IN;
+        }
+
+        if ($branches === []) {
+            $box = $slide->createRichTextShape();
+            $this->position($box, $c3[0], self::TREE_TOP_IN, $c4[0] + $c4[1] - $c3[0], 0.5);
+            $box->setWrap(RichText::WRAP_SQUARE);
+            $this->font($box->getActiveParagraph()->createTextRun(sprintf((string) config('admin_comparison_pptx.site_hierarchy_empty_text'), $tree['origin_url'])), 11, false, self::MUTED);
+        } else {
+            $unplaced = (int) ($tree['unplaced_page_count'] ?? 0);
+            if ($tree['other_branch_count'] > 0 || $unplaced > 0) {
+                $parts = [];
+                if ($tree['other_branch_count'] > 0) {
+                    $parts[] = sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_other_branches_template'), $tree['other_branch_count']);
+                }
+                if ($unplaced > 0) {
+                    $parts[] = sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_unplaced_template'), $unplaced);
+                }
+                $box = $slide->createRichTextShape();
+                $this->position($box, $c3[0], $y, $c4[0] + $c4[1] - $c3[0], 0.22);
+                $box->setInsetLeft(0);
+                $this->font($box->getActiveParagraph()->createTextRun(implode('　／　', $parts)), 9, false, self::MUTED);
+                $y += 0.22;
+            }
+        }
+
+        // 列2: 採用の箱(強調)。列3の枝の真ん中に高さをそろえる。
+        $mid = $centers === [] ? self::TREE_TOP_IN + 0.4 : ($centers[0] + $centers[count($centers) - 1]) / 2;
+        $redirected = (bool) ($tree['top']['input_redirected'] ?? false);
+        $recruitHeight = 0.62 + ($redirected ? 0.2 : 0.0);
+        $recruitTop = max(self::TREE_TOP_IN, $mid - $recruitHeight / 2);
+        $recruitCenter = $recruitTop + $recruitHeight / 2;
+
+        $this->addLevelBox($slide, $c2[0], $recruitTop, $c2[1], $recruitHeight, (string) $fills[1], $accent);
+        $box = $slide->createRichTextShape();
+        $this->position($box, $c2[0], $recruitTop, $c2[1], $recruitHeight);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $this->font($box->getActiveParagraph()->createTextRun($this->wrapOrEllipsizeForLines((string) $corporate['recruit_label'], $c2[1] - 0.1, 11.0, true, 1)), 11, true, (string) $texts[1]);
+        $this->font($box->createParagraph()->createTextRun($this->truncateToWidth((string) ($tree['recruit_path'] ?? ''), 36)), 8, false, (string) $texts[1]);
+        if ($redirected) {
+            // 依頼CR-3: 転送の一言は、採用の箱の中に置く。
+            $this->font($box->createParagraph()->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_tree_top_redirected_note')), 8, false, (string) $texts[1]);
+        }
+
+        // 列2: 採用以外のメニュー(名前だけ、薄く)。採用の箱の下に並べる。
+        $otherColor = (string) config('admin_comparison_pptx.site_hierarchy_other_menu_text');
+        $otherBorder = (string) config('admin_comparison_pptx.site_hierarchy_other_menu_border');
+        $otherTop = $recruitTop + $recruitHeight + 0.12;
+        $otherCenters = [];
+        // 免責文の固定位置(罫線)より上に収まる件数まで。収まらない分は「ほかN」にまとめる。
+        $fit = max(0, (int) floor((self::HIERARCHY_AXIS_CAVEAT_RULE_TOP_IN - 0.08 - $otherTop - 0.2) / 0.3));
+        $hidden = max(0, count($corporate['other_menu']) - $fit);
+        $corporate['other_menu'] = array_slice($corporate['other_menu'], 0, $fit);
+        $corporate['other_menu_more'] += $hidden;
+        foreach ($corporate['other_menu'] as $k => $name) {
+            $top = $otherTop + $k * 0.3;
+            $this->addLevelBox($slide, $c2[0], $top, $c2[1], 0.24, self::WHITE, null);
+            $this->drawRectOutline($slide, $c2[0], $top, $c2[1], 0.24, $otherBorder, 0.75);
+            $text = $slide->createRichTextShape();
+            $this->position($text, $c2[0], $top, $c2[1], 0.24);
+            $text->setInsetTop(0)->setInsetBottom(0);
+            $text->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $this->font($text->getActiveParagraph()->createTextRun($this->wrapOrEllipsizeForLines($name, $c2[1] - 0.1, 8.0, false, 1)), 8, false, $otherColor);
+            $otherCenters[] = $top + 0.12;
+        }
+        if ($corporate['other_menu_more'] > 0) {
+            $top = $otherTop + count($corporate['other_menu']) * 0.3;
+            $text = $slide->createRichTextShape();
+            $this->position($text, $c2[0], $top, $c2[1], 0.2);
+            $text->setInsetLeft(0)->setInsetTop(0)->setInsetBottom(0);
+            $this->font($text->getActiveParagraph()->createTextRun(sprintf((string) config('admin_comparison_pptx.corporate_top_other_menu_other_template'), $corporate['other_menu_more'])), 8, false, $otherColor);
+        }
+
+        // 列1: コーポレートTOP(ホスト名)。採用の箱と同じ高さ。
+        $topHeight = 0.62;
+        $topBoxTop = $recruitCenter - $topHeight / 2;
+        $this->addLevelBox($slide, $c1[0], $topBoxTop, $c1[1], $topHeight, (string) $fills[0], null);
+        $hostBox = $slide->createRichTextShape();
+        $this->position($hostBox, $c1[0], $topBoxTop, $c1[1], $topHeight);
+        $hostBox->setWrap(RichText::WRAP_SQUARE);
+        $hostBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $this->font($hostBox->getActiveParagraph()->createTextRun($this->wrapOrEllipsizeForLines((string) $corporate['host'], $c1[1] - 0.1, 9.0, true, 2)), 9, true, (string) $texts[0]);
+
+        // 線: コーポレートTOP → 第1階層(採用の箱は濃く、他は薄く)、採用の箱 → 採用サイトの区分。
+        $trunk1 = ($c1[0] + $c1[1] + $c2[0]) / 2;
+        $this->drawLine($slide, [$c1[0] + $c1[1], $recruitCenter], [$c2[0], $recruitCenter], self::NAVY, 1.25);
+        if ($otherCenters !== []) {
+            $this->drawLine($slide, [$trunk1, $recruitCenter], [$trunk1, $otherCenters[count($otherCenters) - 1]], $otherBorder, 0.75);
+            foreach ($otherCenters as $center) {
+                $this->drawLine($slide, [$trunk1, $center], [$c2[0], $center], $otherBorder, 0.75);
+            }
+        }
+        if ($centers !== []) {
+            $trunk2 = ($c2[0] + $c2[1] + $c3[0]) / 2;
+            $this->drawLine($slide, [$c2[0] + $c2[1], $recruitCenter], [$trunk2, $recruitCenter], self::NAVY, 1.25);
+            $this->drawLine($slide, [$trunk2, min($recruitCenter, $centers[0])], [$trunk2, max($recruitCenter, $centers[count($centers) - 1])], self::NAVY, 1.25);
+            foreach ($centers as $center) {
+                $this->drawLine($slide, [$trunk2, $center], [$c3[0], $center], self::NAVY, 1.25);
+            }
+        }
+
+        // 点線の「追加を検討したい導線」: 第2階層の列の下に置く(収まる件数まで。残りは「ほかN」)。
+        $this->addCorporateRecommendations($slide, $tree['recommended_names'] ?? [], $y, $c3);
+    }
+
+    /**
+     * 階層の色で塗った箱。$outlineを渡すと、その色の太い枠(強調)。
+     */
+    private function addLevelBox(Slide $slide, float $left, float $top, float $width, float $height, string $fill, ?string $outline): void
+    {
+        $this->addFilledRect($slide, $left, $top, $width, $height, $fill);
+        if ($outline !== null) {
+            $this->drawRectOutline($slide, $left, $top, $width, $height, $outline, 2.25);
+        }
+    }
+
+    /**
+     * 第2階層(列3)の箱の中身: 名前と、その下にURLのパスとページ数。
+     *
+     * @param  array{name: string, page_count: int, path?: ?string}  $branch
+     */
+    private function addBranchBoxText(Slide $slide, array $branch, float $center, float $left, float $width, string $textColor): void
+    {
+        $top = $center - self::TREE_BRANCH_BOX_HEIGHT_IN / 2;
+        $box = $slide->createRichTextShape();
+        $this->position($box, $left, $top, $width, self::TREE_BRANCH_BOX_HEIGHT_IN);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $this->font($box->getActiveParagraph()->createTextRun($this->wrapOrEllipsizeForLines($branch['name'], $width - 0.1, 10.0, true, 1)), 10, true, $textColor);
+        $this->font($box->createParagraph()->createTextRun($this->branchSubLine($branch)), 8, false, $textColor);
+    }
+
+    /**
+     * 箱の2行目: URLのパス(あれば)と「（Nページ）」。
+     *
+     * @param  array{page_count: int, path?: ?string}  $branch
+     */
+    private function branchSubLine(array $branch): string
+    {
+        $count = sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_page_count_template'), $branch['page_count']);
+        $path = trim((string) ($branch['path'] ?? ''));
+
+        return $path !== '' ? $path.'　'.$count : $count;
+    }
+
+    /**
+     * 第3階層(列4): 枝の右にページ名を数件並べ、残りは「ほかNページ」。各行は階層の色の細い帯の上。
+     *
+     * @param  array{pages: list<string>, other_page_count: int}  $branch
+     * @param  array{0: float, 1: float}  $branchColumn
+     * @param  array{0: float, 1: float}  $pageColumn
+     */
+    private function addLevelPages(Slide $slide, array $branch, float $center, int $lineCount, array $branchColumn, array $pageColumn, string $fill, string $textColor): void
+    {
+        if ($lineCount === 0) {
+            return;
+        }
+
+        $pitch = self::TREE_LINE_PITCH_IN;
+        $blockTop = $center - $lineCount * $pitch / 2;
+        $lines = $branch['pages'];
+        if ($branch['other_page_count'] > 0) {
+            $lines[] = sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_other_pages_template'), $branch['other_page_count']);
+        }
+
+        $bracketX = $pageColumn[0] - 0.15;
+        $centers = [];
+        foreach ($lines as $k => $line) {
+            $isOther = $branch['other_page_count'] > 0 && $k === count($lines) - 1;
+            $lineCenter = $blockTop + $k * $pitch + $pitch / 2;
+            $centers[] = $lineCenter;
+
+            if (! $isOther) {
+                $this->addFilledRect($slide, $pageColumn[0], $lineCenter - $pitch / 2 + 0.008, $pageColumn[1], $pitch - 0.016, $fill);
+            }
+            $box = $slide->createRichTextShape();
+            $this->position($box, $pageColumn[0], $lineCenter - $pitch / 2, $pageColumn[1], $pitch);
+            $box->setInsetLeft(5)->setInsetRight(3)->setInsetTop(0)->setInsetBottom(0);
+            $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $text = $isOther ? $line : $this->wrapOrEllipsizeForLines($line, $pageColumn[1], 8.0, false, 1);
+            $this->font($box->getActiveParagraph()->createTextRun($text), 8, false, $isOther ? self::DIM : $textColor);
+
+            $this->drawLine($slide, [$bracketX, $lineCenter], [$pageColumn[0], $lineCenter], self::DIM, 0.75);
+        }
+
+        $this->drawLine($slide, [$branchColumn[0] + $branchColumn[1], $center], [$bracketX, $center], self::DIM, 0.75);
+        $this->drawLine($slide, [$bracketX, min($center, $centers[0])], [$bracketX, max($center, $centers[count($centers) - 1])], self::DIM, 0.75);
+    }
+
+    /**
+     * 点線の枝(追加を検討したい導線): 第2階層の列の下。収まる件数まで並べ、残りは「ほかN」にまとめる。
+     * 色・点線は従来のまま。
+     *
+     * @param  list<string>  $names
+     * @param  array{0: float, 1: float}  $column
+     */
+    private function addCorporateRecommendations(Slide $slide, array $names, float $top, array $column): void
+    {
+        if ($names === []) {
+            return;
+        }
+
+        $limit = (int) config('admin_comparison_pptx.site_hierarchy_tree_recommended_limit');
+        $headingTop = $top + 0.1;
+        $itemsTop = $headingTop + 0.3;
+        $bottomLimit = self::HIERARCHY_AXIS_CAVEAT_RULE_TOP_IN - 0.05;
+        $fit = (int) floor(($bottomLimit - $itemsTop - 0.2) / self::TREE_RECOMMENDED_PITCH_IN);
+        $shownCount = max(0, min($limit, $fit, count($names)));
+        if ($shownCount === 0) {
+            return;
+        }
+
+        $shown = array_slice($names, 0, $shownCount);
+        $otherCount = count($names) - $shownCount;
+
+        $heading = $slide->createRichTextShape();
+        $this->position($heading, $column[0] + 0.3, $headingTop, $column[1] - 0.3 + 1.0, 0.24);
+        $heading->setInsetLeft(0);
+        $this->font($heading->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_recommended_heading')), 10, true, self::GAP_TEXT);
+
+        $itemLeft = $column[0] + 0.3;
+        $itemWidth = $column[1] - 0.3;
+        $spineX = $column[0] + 0.12;
+        $lastCenter = $itemsTop;
+        foreach ($shown as $k => $name) {
+            $itemTop = $itemsTop + $k * self::TREE_RECOMMENDED_PITCH_IN;
+            $center = $itemTop + self::TREE_RECOMMENDED_ITEM_HEIGHT_IN / 2;
+            $lastCenter = $center;
+
+            $this->addFilledRect($slide, $itemLeft, $itemTop, $itemWidth, self::TREE_RECOMMENDED_ITEM_HEIGHT_IN, self::WHITE);
+            $this->drawRectOutline($slide, $itemLeft, $itemTop, $itemWidth, self::TREE_RECOMMENDED_ITEM_HEIGHT_IN, self::GAP_TEXT, 1.0, Border::DASH_DASH);
+
+            $box = $slide->createRichTextShape();
+            $this->position($box, $itemLeft, $itemTop, $itemWidth, self::TREE_RECOMMENDED_ITEM_HEIGHT_IN);
+            $box->setInsetTop(0)->setInsetBottom(0);
+            $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $this->font($box->getActiveParagraph()->createTextRun($this->wrapOrEllipsizeForLines($name, $itemWidth, 9.0, false, 1)), 9, false, self::GAP_TEXT);
+
+            $this->drawLine($slide, [$spineX, $center], [$itemLeft, $center], self::GAP_TEXT, 1.0, Border::DASH_DASH);
+        }
+
+        if ($otherCount > 0) {
+            $otherTop = $itemsTop + $shownCount * self::TREE_RECOMMENDED_PITCH_IN;
+            $box = $slide->createRichTextShape();
+            $this->position($box, $itemLeft, $otherTop, $itemWidth, 0.2);
+            $box->setInsetLeft(0)->setInsetTop(0)->setInsetBottom(0);
+            $this->font($box->getActiveParagraph()->createTextRun(sprintf((string) config('admin_comparison_pptx.site_hierarchy_tree_recommended_other_template'), $otherCount)), 8, false, self::MUTED);
+        }
+
+        $this->drawLine($slide, [$spineX, $headingTop + 0.24], [$spineX, $lastCenter], self::GAP_TEXT, 1.0, Border::DASH_DASH);
     }
 
     /** 表示幅(全角=2)基準で、収まらない分を省略記号にする(URL用)。 */
