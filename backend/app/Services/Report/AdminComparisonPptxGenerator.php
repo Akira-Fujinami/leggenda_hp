@@ -64,6 +64,32 @@ class AdminComparisonPptxGenerator
 {
     private const PX_PER_INCH = 96;
 
+    // 依頼CQ-4: 「トップメッセージと人事制度」のページの配置(in)。
+    private const TM_SUBTITLE_TOP_IN = 1.4;
+
+    private const TM_BODY_TOP_IN = 1.95;
+
+    private const TM_BODY_BOTTOM_IN = 6.25;
+
+    private const TM_LEFT_WIDTH_IN = 4.2;
+
+    private const TM_RIGHT_LEFT_IN = 5.4;
+
+    private const TM_KEYWORD_WIDTH_IN = 1.75;
+
+    private const TM_KEYWORD_GAP_IN = 0.12;
+
+    private const TM_ROW_GAP_IN = 0.1;
+
+    private const TM_ROW_MAX_HEIGHT_IN = 1.5;
+
+    private const TM_CELL_GAP_IN = 0.1;
+
+    private const TM_CELL_PADDING_IN = 0.14;
+
+    // 作られなかった会社の注記(比較のページの、ヘキサゴンの下・出典行の上)。
+    private const TM_MISSING_NOTE_TOP_IN = 6.34;
+
     private const SLIDE_WIDTH_IN = 13.333;
 
     private const SLIDE_HEIGHT_IN = 7.5;
@@ -426,6 +452,9 @@ class AdminComparisonPptxGenerator
             $this->addWheelSelfColumn($slide, $data['companies'][0], $data['axes'], $selfReadable);
             $this->addWheelCompetitorColumn($slide, array_slice($data['companies'], 1), $data['axes'], $layout);
             $this->addMatrixSection($slide, $data['companies'], $data['axes'], $selfReadable, $layout);
+            if (($data['top_message_missing_note'] ?? null) !== null) {
+                $this->addTopMessageMissingNote($slide, (string) $data['top_message_missing_note']);
+            }
             $this->addFooter($slide, $data['source_note'], $data['page_number']);
         });
     }
@@ -2003,6 +2032,286 @@ class AdminComparisonPptxGenerator
         $this->font($run, 11, false, self::BODY_TEXT);
     }
 
+
+    /**
+     * 依頼CQ-4(2026-10-09): 「{企業名}：トップメッセージと人事制度」。1社1ページ・文字だけ
+     * (写真・ロゴ・画像は載せない ―― 差し込みの仕組みが外部参照を拒否する)。
+     *
+     * 左: 「TOP MESSAGE」の見出しとquote(メッセージの箱は写真の場所まで縦に広げる)。
+     * 右: キーワードを最大4段。各段に制度を最大3つ(太字でname、続けてdetail)。
+     * 下: 出典(使ったページのタイトル)と、固定の一文(対応づけは自動で整理したもの)。
+     * 見出しは会社名とテーマだけ。評価の言葉は作らない。
+     *
+     * 文字が箱に収まらないときは、まず文字を小さくし(下限はconfigの比)、下限でも
+     * 収まらなければその段の制度を1つ減らす。
+     *
+     * @param  array{company_name: string, quote: string, keywords: list<array{keyword: string, programs: list<array{name: string, detail: string}>}>, sources: list<string>}  $page
+     */
+    public function generateTopMessageSlide(array $page): string
+    {
+        return $this->renderSingleSlide(function (Slide $slide) use ($page): void {
+            $this->addKicker($slide);
+            $this->addTopMessageTitle($slide, $page['company_name']);
+
+            $subtitle = $slide->createRichTextShape();
+            $this->position($subtitle, self::LEFT_IN, self::TM_SUBTITLE_TOP_IN, self::CONTENT_WIDTH_IN, 0.3);
+            $subtitle->setWrap(RichText::WRAP_SQUARE);
+            $this->font($subtitle->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_subtitle')), 11, false, self::MUTED);
+
+            $this->addTopMessageQuote($slide, $page['quote']);
+            $this->addTopMessageRows($slide, $page['keywords']);
+            $this->addNoteFooter($slide, $this->topMessageSourceNote($page['sources']));
+        });
+    }
+
+    private function addTopMessageTitle(Slide $slide, string $companyName): void
+    {
+        $template = (string) config('admin_comparison_pptx.top_message_title');
+        $maxPt = (int) config('admin_comparison_pptx.top_message_title_max_pt');
+        $minPt = min($maxPt, (int) config('admin_comparison_pptx.top_message_title_min_pt'));
+
+        $title = sprintf($template, $companyName);
+        $size = $minPt;
+        for ($pt = $maxPt; $pt >= $minPt; $pt--) {
+            if (mb_strwidth($title, 'UTF-8') <= $this->maxUnitsPerLine(self::CONTENT_WIDTH_IN, (float) $pt, true)) {
+                $size = $pt;
+                break;
+            }
+        }
+
+        // 下限でも1行に収まらない極端に長い名前だけ、名前を省略記号で切る。
+        if (mb_strwidth($title, 'UTF-8') > $this->maxUnitsPerLine(self::CONTENT_WIDTH_IN, (float) $size, true)) {
+            $fixed = mb_strwidth(sprintf($template, ''), 'UTF-8');
+            $room = $this->maxUnitsPerLine(self::CONTENT_WIDTH_IN, (float) $size, true) - $fixed - 2;
+            $title = sprintf($template, $this->truncateToDisplayWidth($companyName, max(2, $room)).'…');
+        }
+
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, 0.86, self::CONTENT_WIDTH_IN, 0.55);
+        $this->font($box->getActiveParagraph()->createTextRun($title), $size, true, self::NAVY);
+    }
+
+    private function addTopMessageQuote(Slide $slide, string $quote): void
+    {
+        $height = self::TM_BODY_BOTTOM_IN - self::TM_BODY_TOP_IN;
+
+        $this->addFilledRect($slide, self::LEFT_IN, self::TM_BODY_TOP_IN, self::TM_LEFT_WIDTH_IN, $height, self::SELF_TINT);
+        $this->addFilledRect($slide, self::LEFT_IN, self::TM_BODY_TOP_IN, 0.06, $height, self::COPPER);
+
+        $heading = $slide->createRichTextShape();
+        $this->position($heading, self::LEFT_IN + 0.25, self::TM_BODY_TOP_IN + 0.15, self::TM_LEFT_WIDTH_IN - 0.5, 0.3);
+        $this->font($heading->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_left_heading')), 11, true, self::COPPER);
+
+        $boxLeft = self::LEFT_IN + 0.25;
+        $boxTop = self::TM_BODY_TOP_IN + 0.55;
+        $boxWidth = self::TM_LEFT_WIDTH_IN - 0.5;
+        $boxHeight = $height - 0.8;
+
+        $maxPt = (int) config('admin_comparison_pptx.top_message_quote_max_pt');
+        $floor = max(7, (int) round($maxPt * (float) config('admin_comparison_pptx.top_message_min_font_ratio')));
+        $size = $floor;
+        for ($pt = $maxPt; $pt >= $floor; $pt--) {
+            if ($this->topMessageTextHeight($quote, $boxWidth, $pt, true) <= $boxHeight) {
+                $size = $pt;
+                break;
+            }
+        }
+
+        $box = $slide->createRichTextShape();
+        $this->position($box, $boxLeft, $boxTop, $boxWidth, $boxHeight);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $this->font($box->getActiveParagraph()->createTextRun($quote), $size, true, self::NAVY);
+    }
+
+    /**
+     * @param  list<array{keyword: string, programs: list<array{name: string, detail: string}>}>  $keywords
+     */
+    private function addTopMessageRows(Slide $slide, array $keywords): void
+    {
+        $keywords = array_slice($keywords, 0, 4);
+        $count = count($keywords);
+        if ($count === 0) {
+            return;
+        }
+
+        $bodyHeight = self::TM_BODY_BOTTOM_IN - self::TM_BODY_TOP_IN;
+        $rowHeight = min(self::TM_ROW_MAX_HEIGHT_IN, ($bodyHeight - ($count - 1) * self::TM_ROW_GAP_IN) / $count);
+        $groupHeight = $count * $rowHeight + ($count - 1) * self::TM_ROW_GAP_IN;
+        $top = self::TM_BODY_TOP_IN + ($bodyHeight - $groupHeight) / 2;
+
+        $programsLeft = self::TM_RIGHT_LEFT_IN + self::TM_KEYWORD_WIDTH_IN + self::TM_KEYWORD_GAP_IN;
+        $programsWidth = self::LEFT_IN + self::CONTENT_WIDTH_IN - $programsLeft;
+
+        foreach ($keywords as $keyword) {
+            $this->addTopMessageKeywordCell($slide, $keyword['keyword'], $top, $rowHeight);
+            $this->addTopMessageProgramCells($slide, $keyword['programs'], $programsLeft, $programsWidth, $top, $rowHeight);
+            $top += $rowHeight + self::TM_ROW_GAP_IN;
+        }
+    }
+
+    private function addTopMessageKeywordCell(Slide $slide, string $keyword, float $top, float $height): void
+    {
+        $this->addFilledRect($slide, self::TM_RIGHT_LEFT_IN, $top, self::TM_KEYWORD_WIDTH_IN, $height, self::NAVY);
+
+        $maxPt = (int) config('admin_comparison_pptx.top_message_keyword_max_pt');
+        $floor = max(7, (int) round($maxPt * (float) config('admin_comparison_pptx.top_message_min_font_ratio')));
+        $width = self::TM_KEYWORD_WIDTH_IN - 0.1;
+        $size = $floor;
+        $text = $keyword;
+        for ($pt = $maxPt; $pt >= $floor; $pt--) {
+            if ($this->topMessageTextHeight($keyword, $width, $pt, true) <= $height - 0.1) {
+                $size = $pt;
+                break;
+            }
+        }
+        // 下限の大きさでも収まらないときだけ、収まる行数で省略する(キーワードは本文の語のため通常は起きない)。
+        if ($this->topMessageTextHeight($keyword, $width, $size, true) > $height - 0.1) {
+            $text = $this->wrapOrEllipsizeForLines($keyword, $width, (float) $size, true, max(1, (int) floor(($height - 0.1) / ($size * 1.25 / 72))));
+        }
+
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::TM_RIGHT_LEFT_IN, $top, self::TM_KEYWORD_WIDTH_IN, $height);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $paragraph = $box->getActiveParagraph();
+        $paragraph->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+
+        // 2行になる長さは、1文字だけの行(「…づく／り」)が出ないよう、ほぼ半分に分ける(企業名と同じ処理)。
+        $lines = (int) ceil(mb_strwidth($text, 'UTF-8') / $this->maxUnitsPerLine($width, (float) $size, true));
+        if ($lines === 2) {
+            $this->renderBalancedLines($paragraph, $text, $width, (float) $size, true, self::WHITE);
+        } else {
+            $this->font($paragraph->createTextRun($text), $size, true, self::WHITE);
+        }
+    }
+
+    /**
+     * 制度を横に並べる。全部が収まる大きさが下限を下回るなら、最後の制度を1つ減らして
+     * 幅を広げ、もう一度試す(1つになるまで)。
+     *
+     * @param  list<array{name: string, detail: string}>  $programs
+     */
+    private function addTopMessageProgramCells(Slide $slide, array $programs, float $left, float $width, float $top, float $height): void
+    {
+        $programs = array_slice($programs, 0, 3);
+
+        for ($shown = count($programs); $shown >= 1; $shown--) {
+            $cellWidth = ($width - ($shown - 1) * self::TM_CELL_GAP_IN) / $shown;
+            $sizes = $this->fitTopMessageCells(array_slice($programs, 0, $shown), $cellWidth, $height);
+            if ($sizes === null && $shown > 1) {
+                continue;
+            }
+            // 1つにしても収まらない場合は、下限の大きさで描く(この段の中身は検証済みの短い文章のため、通常は起きない)。
+            $sizes ??= $this->topMessageFloorSizes();
+
+            foreach (array_slice($programs, 0, $shown) as $i => $program) {
+                $cellLeft = $left + $i * ($cellWidth + self::TM_CELL_GAP_IN);
+                $this->addFilledRect($slide, $cellLeft, $top, $cellWidth, $height, self::BAND);
+                $this->drawRectOutline($slide, $cellLeft, $top, $cellWidth, $height, self::RULE, 0.75);
+
+                $box = $slide->createRichTextShape();
+                $this->position($box, $cellLeft, $top, $cellWidth, $height);
+                $box->setWrap(RichText::WRAP_SQUARE);
+                $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+                $namePara = $box->getActiveParagraph();
+                $this->font($namePara->createTextRun($program['name']), $sizes[0], true, self::NAVY);
+                if ($program['detail'] !== '') {
+                    $detailPara = $box->createParagraph();
+                    $this->font($detailPara->createTextRun($program['detail']), $sizes[1], false, self::BODY_TEXT);
+                }
+            }
+
+            return;
+        }
+    }
+
+    /**
+     * 全部のセルが高さに収まる最大の大きさ([nameのpt, detailのpt])。nameとdetailは
+     * 同じ比で小さくする。下限(最大値 × config比)でも収まらなければnull。
+     *
+     * @param  list<array{name: string, detail: string}>  $programs
+     * @return ?array{0: int, 1: int}
+     */
+    private function fitTopMessageCells(array $programs, float $cellWidth, float $cellHeight): ?array
+    {
+        $nameMax = (int) config('admin_comparison_pptx.top_message_program_name_max_pt');
+        $detailMax = (int) config('admin_comparison_pptx.top_message_program_detail_max_pt');
+        [$nameFloor] = $this->topMessageFloorSizes();
+
+        for ($name = $nameMax; $name >= $nameFloor; $name--) {
+            $detail = max(7, (int) round($detailMax * $name / $nameMax));
+            $fits = true;
+            foreach ($programs as $program) {
+                $used = $this->topMessageTextHeight($program['name'], $cellWidth, $name, true)
+                    + ($program['detail'] !== '' ? $this->topMessageTextHeight($program['detail'], $cellWidth, $detail, false) : 0)
+                    + self::TM_CELL_PADDING_IN;
+                if ($used > $cellHeight) {
+                    $fits = false;
+                    break;
+                }
+            }
+            if ($fits) {
+                return [$name, $detail];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array{0: int, 1: int}
+     */
+    private function topMessageFloorSizes(): array
+    {
+        $ratio = (float) config('admin_comparison_pptx.top_message_min_font_ratio');
+        $nameMax = (int) config('admin_comparison_pptx.top_message_program_name_max_pt');
+        $detailMax = (int) config('admin_comparison_pptx.top_message_program_detail_max_pt');
+
+        return [max(7, (int) round($nameMax * $ratio)), max(7, (int) round($detailMax * $ratio))];
+    }
+
+    /**
+     * 文字を折り返して置いたときの高さ(in)の見積もり。1行に入る表示幅(maxUnitsPerLine、
+     * 社名の折り返しと同じ保守的な係数)で行数を数え、行の高さを文字の大きさの1.25倍とする。
+     */
+    private function topMessageTextHeight(string $text, float $widthIn, int $sizePt, bool $bold): float
+    {
+        $lines = max(1, (int) ceil(mb_strwidth($text, 'UTF-8') / $this->maxUnitsPerLine($widthIn, (float) $sizePt, $bold)));
+
+        return $lines * $sizePt * 1.25 / 72;
+    }
+
+    /**
+     * 下の出典: 「出典：」+ 使ったページのタイトル(長ければ切る)+ 固定の一文。
+     *
+     * @param  list<string>  $sources
+     */
+    private function topMessageSourceNote(array $sources): string
+    {
+        $max = (int) config('admin_comparison_pptx.top_message_source_label_max_chars');
+        $labels = array_map(
+            fn (string $label) => mb_strlen($label) > $max ? mb_substr($label, 0, $max).'…' : $label,
+            $sources,
+        );
+
+        $head = $labels === []
+            ? ''
+            : config('admin_comparison_pptx.top_message_source_prefix').implode((string) config('admin_comparison_pptx.top_message_source_separator'), $labels).'。';
+
+        return $head.config('admin_comparison_pptx.top_message_disclaimer');
+    }
+
+    /**
+     * 依頼CQ-4: 作られなかった会社があるとき、比較のページの下に注記を1行足す。
+     */
+    private function addTopMessageMissingNote(Slide $slide, string $note): void
+    {
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, self::TM_MISSING_NOTE_TOP_IN, self::CONTENT_WIDTH_IN, 0.26);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $this->font($box->getActiveParagraph()->createTextRun($note), 8, false, self::GAP_TEXT);
+    }
 
     /**
      * wrapOrEllipsizeForLines・estimateLineCount・splitBalancedForTwoLinesが

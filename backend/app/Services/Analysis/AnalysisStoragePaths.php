@@ -52,6 +52,15 @@ class AnalysisStoragePaths
         return $this->metadataDir($analysisId, $websiteAnalysisId).'/'.$filename;
     }
 
+    /**
+     * 依頼CQ-3: トップメッセージ × 人事制度の結果(JSON)。マイグレーションは足さず、
+     * 分析の保存先の中に置く ―― 依頼CIのデータ削除(analysisDir()ごと削除)でいっしょに消える。
+     */
+    public function topMessageInsightPath(int $analysisId, int $websiteAnalysisId): string
+    {
+        return $this->base($analysisId, $websiteAnalysisId).'/top_message_insight.json';
+    }
+
     private function base(int $analysisId, int $websiteAnalysisId): string
     {
         return "analyses/{$analysisId}/websites/{$websiteAnalysisId}";

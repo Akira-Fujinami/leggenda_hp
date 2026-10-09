@@ -717,4 +717,31 @@ return [
     'site_hierarchy_tree_mode_note_url' => 'TOPのメニューから項目を十分に読み取れなかったため、URLの階層にもとづいて描いています。',
     'site_hierarchy_tree_recommended_note' => '点線は、調査で関心の高い情報のうち、巡回した範囲では確認できなかった導線の例です。',
 
+    /*
+    |--------------------------------------------------------------------------
+    | 依頼CQ-4: トップメッセージ × 人事制度のページ(1社1ページ、文字だけ)
+    |--------------------------------------------------------------------------
+    | 結果はconfig/top_message_insight.phpの仕組み(サーバー側の確認を通ったものだけ)。
+    | 見出しは会社名とテーマだけで、評価の言葉は作らない。写真・ロゴ・画像は載せない。
+    */
+    'top_message_title' => '%s：トップメッセージと人事制度',
+    'top_message_subtitle' => 'トップメッセージのキーワードと、関連すると思われる制度を、サイトの記述から整理しています。',
+    'top_message_left_heading' => 'TOP MESSAGE',
+    // 出典: 使ったページのタイトル(無ければURLのパス)を並べ、続けて固定の一文。
+    'top_message_source_prefix' => '出典：',
+    'top_message_source_separator' => '、',
+    'top_message_source_label_max_chars' => 20,
+    'top_message_disclaimer' => 'キーワードと制度の対応づけは、サイトの記述をもとに自動で整理したものです。',
+    // 作られなかった会社があるとき、比較のページの注記に足す1行。%sは企業名(複数ならまとめて並べる)。
+    'top_message_missing_note' => 'トップメッセージのページを確認できなかったため、%sの分は作成していません。',
+    'top_message_missing_note_separator' => '、',
+    // 文字の大きさ(pt)。収まらないときは下限(最大値 × 比)まで小さくし、それでも収まらなければ制度を1つ減らす。
+    'top_message_quote_max_pt' => 22,
+    'top_message_keyword_max_pt' => 12,
+    'top_message_program_name_max_pt' => 11,
+    'top_message_program_detail_max_pt' => 9,
+    'top_message_min_font_ratio' => 0.75,
+    'top_message_title_max_pt' => 25,
+    'top_message_title_min_pt' => 18,
+
 ];

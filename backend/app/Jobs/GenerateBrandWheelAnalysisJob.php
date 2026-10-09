@@ -23,6 +23,7 @@ use App\Services\BrandWheel\BrandWheelImprovementSuggestionDispatcher;
 use App\Services\BrandWheel\BrandWheelReportEligibility;
 use App\Services\BrandWheel\Data\BrandWheelAnalysisInput;
 use App\Services\Lead\LeadSessionService;
+use App\Services\TopMessageInsight\TopMessageInsightDispatcher;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -451,6 +452,11 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
         // (BrandWheelImprovementSuggestionDispatcher参照)。診断本体の進捗・
         // 完了判定には影響させない(判定後の副作用として呼ぶだけ)。
         app(BrandWheelImprovementSuggestionDispatcher::class)->dispatchIfReady($analysisId);
+
+        // 依頼CQ-3: 比較(AdminComparison)では、この会社のブランド・ホイールの判定が終わった
+        // あとに、トップメッセージ × 人事制度のジョブを1回だけ起動する。判定・進捗・完了判定には
+        // 影響させない(起動に失敗しても例外は出ない ―― TopMessageInsightDispatcher参照)。
+        app(TopMessageInsightDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
     }
 
     /**

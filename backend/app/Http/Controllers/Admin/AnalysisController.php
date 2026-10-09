@@ -223,10 +223,22 @@ class AnalysisController extends Controller
             // generateExplanationSlide()参照)。
             // 依頼CL-4(2026-10-05): 「求職者が知りたい情報と、自社サイト」
             // (CL-2)を「足りないもの」の次に加え、5枚にした。
+            // 依頼CQ-4(2026-10-09): 「足りないもの」の次に、トップメッセージ × 人事制度を
+            // 自社 → 競合(入力順)で1社1ページ差し込む。作られなかった会社は飛ばし、
+            // 比較のページの注記に1行足す。結果は保存済みのファイルを読むだけで、AIは呼ばない。
+            $topMessage = $dataBuilder->buildTopMessageData($analysis, $viewModel);
+            $data['top_message_missing_note'] = $topMessage['missing_note'];
+
+            $topMessageSlides = [];
+            foreach ($topMessage['pages'] as $topMessagePage) {
+                $topMessageSlides[] = $slideGenerator->generateTopMessageSlide($topMessagePage);
+            }
+
             $slideBytesList = [
                 $slideGenerator->generateExplanationSlide(),
                 $slideGenerator->generate($data),
                 $slideGenerator->generateMissingItemsSlide($data),
+                ...$topMessageSlides,
                 $slideGenerator->generateSurveyComparisonSlide($data),
                 $slideGenerator->generateSiteHierarchySlide($data, $tree),
             ];

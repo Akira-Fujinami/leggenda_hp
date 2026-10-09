@@ -2,7 +2,10 @@
 
 namespace App\Services\Report;
 
+use App\Models\Analysis;
+use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelMultiSiteComparisonComposer;
+use App\Services\TopMessageInsight\TopMessageInsightStore;
 use App\Support\Report\MultiSiteReportViewModel;
 
 /**
@@ -45,7 +48,103 @@ use App\Support\Report\MultiSiteReportViewModel;
  */
 class AdminComparisonPptxDataBuilder
 {
-    public function __construct(private readonly CandidateSurveyCatalog $surveyCatalog = new CandidateSurveyCatalog) {}
+    public function __construct(
+        private readonly CandidateSurveyCatalog $surveyCatalog = new CandidateSurveyCatalog,
+        private readonly ?TopMessageInsightStore $topMessageStore = null,
+    ) {}
+
+    /**
+     * 依頼CQ-4: 「トップメッセージ × 人事制度」のページ(1社1ページ)のデータ。並びは自社 → 競合
+     * (競合は入力順 = websites.display_order、MultiSiteReportViewModelBuilderと同じ)。
+     * 結果のファイル(TopMessageInsightStore、サーバー側の確認を通ったものだけが入っている)を
+     * 読むだけで、AIは呼ばない。
+     *
+     *  - status=created               → pagesに加える。
+     *  - status=not_created           → 作られなかった会社として、missing_note(比較のページの注記1行)に載せる。
+     *  - ファイルが無い(まだ/対象外)  → 何も出さない(作られなかったとは言い切れないため)。
+     *
+     * @return array{pages: list<array{company_name: string, quote: string, keywords: list<array{keyword: string, programs: list<array{name: string, detail: string}>}>, sources: list<string>}>, missing_note: ?string}
+     */
+    public function buildTopMessageData(Analysis $analysis, MultiSiteReportViewModel $viewModel): array
+    {
+        $analysis->loadMissing('websiteAnalyses.website');
+        $store = $this->topMessageStore ?? app(TopMessageInsightStore::class);
+
+        $self = $analysis->websiteAnalyses->first(fn (WebsiteAnalysis $wa) => (bool) $wa->website?->is_primary);
+        $competitors = $analysis->websiteAnalyses
+            ->filter(fn (WebsiteAnalysis $wa) => ! (bool) $wa->website?->is_primary)
+            ->sortBy(fn (WebsiteAnalysis $wa) => $wa->website?->display_order ?? PHP_INT_MAX)
+            ->values();
+
+        $entries = [];
+        if ($self !== null) {
+            $entries[] = [$viewModel->selfCompanyDisplayName, $self];
+        }
+        foreach ($competitors as $index => $wa) {
+            $entries[] = [(string) ($viewModel->competitors[$index]['name'] ?? $wa->website?->name ?? ''), $wa];
+        }
+
+        $pages = [];
+        $missing = [];
+        foreach ($entries as [$name, $wa]) {
+            $result = $store->read((int) $wa->analysis_id, (int) $wa->id);
+            if ($result === null) {
+                continue;
+            }
+
+            $page = $this->topMessagePageFromResult($name, $result);
+            if ($page !== null) {
+                $pages[] = $page;
+            } else {
+                $missing[] = $name;
+            }
+        }
+
+        return [
+            'pages' => $pages,
+            'missing_note' => $missing === []
+                ? null
+                : sprintf((string) config('admin_comparison_pptx.top_message_missing_note'), implode((string) config('admin_comparison_pptx.top_message_missing_note_separator'), $missing)),
+        ];
+    }
+
+    /**
+     * 結果のファイル(status=created)を、スライド1枚ぶんのデータにする。作られていない/壊れている
+     * ときはnull。ここでは文章を作らない(ファイルにある値をそのまま渡す)。
+     *
+     * @param  array<string, mixed>  $result
+     * @return ?array{company_name: string, quote: string, keywords: list<array{keyword: string, programs: list<array{name: string, detail: string}>}>, sources: list<string>}
+     */
+    public function topMessagePageFromResult(string $companyName, array $result): ?array
+    {
+        if (($result['status'] ?? null) !== 'created' || ! is_string($result['quote'] ?? null) || trim($result['quote']) === '') {
+            return null;
+        }
+
+        $keywords = [];
+        foreach ((array) ($result['keywords'] ?? []) as $keyword) {
+            $programs = [];
+            foreach ((array) ($keyword['programs'] ?? []) as $program) {
+                if (is_string($program['name'] ?? null) && $program['name'] !== '') {
+                    $programs[] = ['name' => $program['name'], 'detail' => (string) ($program['detail'] ?? '')];
+                }
+            }
+            if (is_string($keyword['keyword'] ?? null) && $keyword['keyword'] !== '' && $programs !== []) {
+                $keywords[] = ['keyword' => $keyword['keyword'], 'programs' => $programs];
+            }
+        }
+
+        if ($keywords === []) {
+            return null;
+        }
+
+        return [
+            'company_name' => $companyName,
+            'quote' => $result['quote'],
+            'keywords' => $keywords,
+            'sources' => array_values(array_filter(array_map(fn ($source) => is_string($source['title'] ?? null) ? $source['title'] : null, (array) ($result['sources'] ?? [])))),
+        ];
+    }
 
     /**
      * @return array{

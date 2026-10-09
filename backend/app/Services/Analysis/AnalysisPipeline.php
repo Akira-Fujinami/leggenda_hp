@@ -588,6 +588,13 @@ class AnalysisPipeline
             return;
         }
 
+        // 依頼CQ追補 CQA-5: トップメッセージ × 人事制度のジョブが終わるまで待つ(config
+        // ('top_message_insight.enabled')がtrueの比較のみ。既定のfalseでは常に待たない)。
+        // ジョブが終わった時点(TopMessageInsightDispatcher::afterFinished())で、ここへ戻ってくる。
+        if (app(\App\Services\TopMessageInsight\TopMessageInsightGate::class)->shouldWait($websiteAnalysis)) {
+            return;
+        }
+
         FinalizeWebsiteAnalysisJob::dispatch($websiteAnalysis->analysis_id, $websiteAnalysisId)
             ->onQueue(JobType::FinalizeWebsiteAnalysis->queueName());
     }
