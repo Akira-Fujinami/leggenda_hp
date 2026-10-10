@@ -30,14 +30,16 @@ class TopMessageInsightServiceTest extends TestCase
 
     // ---------------------------------------------------------------- CQ-1 / CQ-2
 
-    public function test_the_message_page_is_found_by_url_title_or_link_text(): void
+    public function test_the_message_page_is_found_by_url_title_or_h1_but_not_by_link_text_alone(): void
     {
         $wa = $this->makeComparisonWebsiteAnalysis();
         $base = 'https://self.example.com/recruit';
-        // 1) URLに"message" 2) タイトルに"トップメッセージ" 3) URLにもタイトルにも無いが、トップページのリンクの文字が"代表挨拶"
-        $this->addHomepage($wa, "{$base}/", $this->htmlPage('採用', '採用です。', '<a href="'.$base.'/greeting/">代表挨拶</a>'));
+        // 1) URLに"message" 2) タイトルに"トップメッセージ" 3) URLにもタイトルにも無いが、<h1>が"代表挨拶"
+        // 4) URL・タイトル・<h1>のどれにも無く、トップページのリンクの文字だけが"代表挨拶"(依頼CSA-5: 候補にならない)
+        $this->addHomepage($wa, "{$base}/", $this->htmlPage('採用', '採用です。', '<a href="'.$base.'/greeting/">代表挨拶</a><a href="'.$base.'/link-only/">代表挨拶</a>'));
         $this->addCrawledPage($wa, "{$base}/a/", null, $this->htmlPage('トップメッセージ', '代表の二番目の候補です。'));
-        $this->addCrawledPage($wa, "{$base}/greeting/", null, $this->htmlPage('ご挨拶', '代表の三番目の候補です。'));
+        $this->addCrawledPage($wa, "{$base}/greeting/", null, $this->htmlPage('ご挨拶', '代表の三番目の候補です。', '<h1>代表挨拶</h1>'));
+        $this->addCrawledPage($wa, "{$base}/link-only/", null, $this->htmlPage('ご挨拶', '代表の本文ですが、リンクの文字だけでは通りません。'));
         $this->addCrawledPage($wa, "{$base}/other/", 'その他', $this->htmlPage('その他', '候補ではありません。'));
         $this->addCrawledPage($wa, "{$base}/message/", null, $this->htmlPage('x', '代表の一番目の候補です。'));
 

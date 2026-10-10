@@ -2777,7 +2777,7 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * @param  list<array{name: string, excerpt: string, source: string}>  $rows
+     * @param  list<array{kind?: string, name: string, excerpt: string, source: string}>  $rows  kind='category'は分類の見出し(区切りの行)
      */
     private function addTopMessageDraftPrograms(Slide $slide, array $rows, int $hidden): void
     {
@@ -2821,6 +2821,10 @@ class AdminComparisonPptxGenerator
         $padding = 0.1;
 
         $heightOf = function (array $row, int $pt) use ($widths, $padding): float {
+            if (($row['kind'] ?? 'program') === 'category') {
+                return $this->topMessageTextHeight($row['name'], $widths[0] + $widths[1] + $widths[2], $pt, true) + $padding;
+            }
+
             return max(
                 $this->topMessageTextHeight($row['name'], $widths[0], $pt, true),
                 $row['excerpt'] !== '' ? $this->topMessageTextHeight($row['excerpt'], $widths[1], $pt, false) : 0.0,
@@ -2845,13 +2849,55 @@ class AdminComparisonPptxGenerator
             }
         }
         while (count($shown) > 1 && $total($shown, $size, $hidden) > $available) {
-            array_pop($shown);
+            // 依頼CSA-3: 後ろから外すのは、表の末尾ではなく「選んだ順(order)の最後」の候補
+            // (表の末尾から外すと、最後のページの候補から先に消えて1ページだけが残る)。orderが無い行は表の並び順。
+            $drop = null;
+            foreach ($shown as $k => $row) {
+                if (($row['kind'] ?? 'program') === 'category') {
+                    continue;
+                }
+                if ($drop === null || ($row['order'] ?? $k) >= ($shown[$drop]['order'] ?? $drop)) {
+                    $drop = $k;
+                }
+            }
+            if ($drop === null) {
+                break;
+            }
+            array_splice($shown, $drop, 1);
             $hidden++;
+            // 下に候補が残らなくなった区切りの行(次が無い・別の出典・同じかより浅い区切り)は出さない。
+            do {
+                $changed = false;
+                foreach ($shown as $k => $row) {
+                    if (($row['kind'] ?? 'program') !== 'category') {
+                        continue;
+                    }
+                    $next = $shown[$k + 1] ?? null;
+                    if ($next === null
+                        || $next['source'] !== $row['source']
+                        || (($next['kind'] ?? 'program') === 'category' && ($next['level'] ?? 0) <= ($row['level'] ?? 0))) {
+                        array_splice($shown, $k, 1);
+                        $changed = true;
+                        break;
+                    }
+                }
+            } while ($changed && $shown !== []);
         }
 
         $y = $rowsTop;
         foreach ($shown as $row) {
             $rowHeight = $heightOf($row, $size);
+            if (($row['kind'] ?? 'program') === 'category') {
+                $this->addFilledRect($slide, $left, $y, $width, $rowHeight - 0.01, (string) config('admin_comparison_pptx.top_message_draft_category_fill'));
+                $cell = $slide->createRichTextShape();
+                $this->position($cell, $left, $y, $width, $rowHeight);
+                $cell->setWrap(RichText::WRAP_SQUARE);
+                $cell->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+                $this->font($cell->getActiveParagraph()->createTextRun($row['name']), $size, true, self::NAVY);
+                $y += $rowHeight;
+
+                continue;
+            }
             $cells = [[$row['name'], true, self::NAVY, $size], [$row['excerpt'], false, self::BODY_TEXT, $size], [$row['source'], false, self::MUTED, max(7, $size - 1)]];
             foreach ($cells as $i => [$text, $bold, $color, $pt]) {
                 if ($text === '') {

@@ -6,10 +6,10 @@ use App\Enums\PageType;
 use App\Models\AnalysisCrawledPage;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
-use App\Services\Analysis\CrawlLinkExtractor;
 use App\Services\Analysis\CrawlOriginScopeResolver;
 use App\Services\Analysis\HtmlSeoAnalyzer;
 use App\Services\Analysis\PageHtmlResolver;
+use App\Services\TopMessageDraft\TopMessageDraftExtractor;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -20,28 +20,24 @@ use Illuminate\Support\Facades\Storage;
  * 巡回の順や件数は変えない(読むだけ)。50件の中に無ければ「見つからない」でよい。
  * ブランド・ホイールの判定には一切影響させない。
  *
- * メッセージのページは、URL・タイトル・「そのページへのリンクの文字」のいずれかに
- * config('top_message_insight.message_page_keywords')の語を含むものを候補にする。
- * リンクの文字は、トップページ・採用ページ内のすべての<a>から取る(メニューに限らず
- * フッターや本文のリンクも含む)。制度のページは、URL・タイトルだけで見る。
+ * メッセージのページは、URL・<title>・<h1>のいずれかに
+ * config('top_message_insight.message_page_keywords')の語を含むものを候補にする
+ * (依頼CSA-5: そのページへのリンクの文字だけでは通さない)。制度のページは、URL・タイトルだけで見る。
  * 並びは、起点URL配下(CrawlOriginScopeResolver)を先に、次に本文の文字数が多い順。
  */
 class TopMessagePageFinder
 {
-    private const LINK_LABEL_MAX_CHARS = 80;
-
     public function __construct(
         private readonly PageHtmlResolver $htmlResolver,
         private readonly HtmlSeoAnalyzer $htmlSeoAnalyzer,
-        private readonly CrawlLinkExtractor $linkExtractor,
         private readonly CrawlOriginScopeResolver $originScopeResolver,
+        private readonly TopMessageDraftExtractor $draftExtractor,
     ) {}
 
     public function find(WebsiteAnalysis $websiteAnalysis): TopMessageSelection
     {
         $pool = $this->collectPool($websiteAnalysis);
         $scope = $this->originScopeResolver->resolveScope($websiteAnalysis);
-        $linkLabels = $this->collectLinkLabels($websiteAnalysis);
 
         $messageKeywords = $this->keywords('message_page_keywords');
         $primaryKeywords = $this->keywords('program_page_keywords_primary');
@@ -55,9 +51,10 @@ class TopMessagePageFinder
             $pool[$key]['title'] = $title;
 
             $urlAndTitle = $entry['url'].' '.($title ?? '');
-            $labels = implode(' ', $linkLabels[$this->urlKey($entry['url'])] ?? []);
 
-            if ($this->containsAny($urlAndTitle.' '.$labels, $messageKeywords)) {
+            // 依頼CSA-5: URL・<title>・<h1>のどれかに語があること。URL・タイトルで当たらないときだけ<h1>を見る。
+            if ($this->containsAny($urlAndTitle, $messageKeywords)
+                || $this->containsAny($this->firstHeading($this->readHtml($entry['model'])), $messageKeywords)) {
                 $messageKeywordMatches[] = $key;
             }
             if ($this->containsAny($urlAndTitle, $primaryKeywords)) {
@@ -68,9 +65,10 @@ class TopMessagePageFinder
         }
 
         // CQA-1: 語に当たったページのうち、本文に代表者を示す語があり、インタビュー系でないものだけ。
+        // 依頼CSA-5: 代表者を示す語は、ヘッダー・フッター・ナビの外(本文の中)にあること。
         $messageCandidates = [];
         foreach ($this->rank($pool, $messageKeywordMatches, $scope) as $page) {
-            if ($page->text !== '' && $this->hasRepresentativeWord($page->text) && ! $this->isInterviewPage($page->url, $page->title)) {
+            if ($page->text !== '' && $this->hasRepresentativeWord((string) $page->html) && ! $this->isInterviewPage($page->url, $page->title)) {
                 $messageCandidates[] = $page;
             }
         }
@@ -106,15 +104,21 @@ class TopMessagePageFinder
         );
     }
 
-    private function hasRepresentativeWord(string $text): bool
+    private function hasRepresentativeWord(string $html): bool
     {
-        foreach ((array) config('top_message_insight.representative_words', []) as $word) {
-            if ((string) $word !== '' && mb_stripos($text, (string) $word) !== false) {
-                return true;
-            }
+        return $this->draftExtractor->hasWordOutsideChrome($html, array_map('strval', (array) config('top_message_insight.representative_words', [])));
+    }
+
+    /**
+     * 最初の<h1>の文字(無ければ空)。保存済みのHTMLの文字列だけを見る。
+     */
+    private function firstHeading(?string $html): string
+    {
+        if ($html === null || preg_match('~<h1\b[^>]*>(.*?)</h1>~isu', $html, $m) !== 1) {
+            return '';
         }
 
-        return false;
+        return trim((string) preg_replace('/\s+/u', ' ', html_entity_decode(strip_tags($m[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8')));
     }
 
     /**
@@ -215,66 +219,6 @@ class TopMessagePageFinder
         }
 
         return $pool;
-    }
-
-    /**
-     * トップページ・採用ページ内の<a>を、リンク先のURL(絶対URL化)ごとの文字の一覧にする。
-     *
-     * @return array<string, list<string>>
-     */
-    private function collectLinkLabels(WebsiteAnalysis $websiteAnalysis): array
-    {
-        $labels = [];
-
-        foreach (AnalysisPage::query()
-            ->where('website_analysis_id', $websiteAnalysis->id)
-            ->whereIn('page_type', [PageType::Homepage, PageType::Recruit])
-            ->get() as $page) {
-            $html = $this->readHtml($page);
-            if ($html === null) {
-                continue;
-            }
-            $pageUrl = (string) ($page->final_url ?? $page->url);
-
-            foreach ($this->extractLinks($html) as [$href, $label]) {
-                $absolute = $this->linkExtractor->resolveHref($pageUrl, $href);
-                if ($absolute === null) {
-                    continue;
-                }
-                $key = $this->urlKey($absolute);
-                if (! in_array($label, $labels[$key] ?? [], true)) {
-                    $labels[$key][] = $label;
-                }
-            }
-        }
-
-        return $labels;
-    }
-
-    /**
-     * @return list<array{0: string, 1: string}> [href, 文字]
-     */
-    private function extractLinks(string $html): array
-    {
-        $dom = new \DOMDocument;
-        $previous = libxml_use_internal_errors(true);
-        $dom->loadHTML('<?xml encoding="utf-8"?>'.$html, LIBXML_NOENT | LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
-        libxml_clear_errors();
-        libxml_use_internal_errors($previous);
-
-        $links = [];
-        foreach ((new \DOMXPath($dom))->query('//a[@href]') ?: [] as $node) {
-            if (! $node instanceof \DOMElement) {
-                continue;
-            }
-            $label = trim((string) preg_replace('/\s+/u', ' ', $node->textContent));
-            if ($label === '') {
-                continue;
-            }
-            $links[] = [$node->getAttribute('href'), mb_substr($label, 0, self::LINK_LABEL_MAX_CHARS)];
-        }
-
-        return $links;
     }
 
     /**

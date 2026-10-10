@@ -35,6 +35,26 @@ class TopMessageDraftTest extends TestCase
 
     // ---- 抜き出し(サービス) ----
 
+    /**
+     * 制度の候補(分類の見出しを除く)を、ページの優先順・ページ内の出現順に平らにしたもの。
+     *
+     * @param  list<TopMessagePage>  $pages
+     * @return list<array{name: string, excerpt: string, url: string}>
+     */
+    private function programs(array $pages): array
+    {
+        $rows = [];
+        foreach ((new TopMessageDraftExtractor)->programItemsByPage($pages) as $page) {
+            foreach ($page['items'] as $item) {
+                if ($item['kind'] === 'program') {
+                    $rows[] = ['name' => $item['name'], 'excerpt' => $item['excerpt'], 'url' => $page['url']];
+                }
+            }
+        }
+
+        return $rows;
+    }
+
     private function messageHtml(string $main, string $outside = ''): string
     {
         return '<html><head><title>代表メッセージ | 例社</title></head><body><header><h1>HEADER-HEADING</h1></header><nav><h2>NAV-HEADING</h2><ul><li>NAV-ITEM-LONG-ENOUGH-TO-BE-A-SENTENCE-IN-A-LIST</li></ul></nav>'
@@ -45,16 +65,15 @@ class TopMessageDraftTest extends TestCase
     {
         $sentence = '私たちは、お客様と社員の成長を第一に考え、ものづくりを通じて社会に貢献します。';
         $quoted = '「ものづくりは人づくり」だと私たちは強く信じています、これからも変わりません。';
-        $found = (new TopMessageDraftExtractor)->messageCandidates($this->messageHtml(
-            '<h1>代表メッセージ</h1><p>代表取締役社長 山田　太郎</p><p>'.$sentence.'</p><p>'.$quoted.'</p>',
-        ));
+        $main = '<h1>経営者からのご挨拶</h1><p>代表取締役社長 山田　太郎</p><p>'.$sentence.'</p><p>'.$quoted.'</p>';
+        $found = (new TopMessageDraftExtractor)->messageCandidates($this->messageHtml($main));
 
         $this->assertContains($sentence, $found['lines'], '文は言い換えず、そのまま');
         $this->assertContains($quoted, $found['lines']);
         $this->assertContains('代表取締役社長 山田 太郎', $found['lines'], '話し手の行(空白の畳み込みだけ)');
-        $this->assertContains('代表メッセージ', $found['lines'], '見出し');
+        $this->assertContains('経営者からのご挨拶', $found['lines'], '見出し');
         foreach ($found['lines'] as $line) {
-            $this->assertStringContainsString($line, preg_replace('/\s+/u', ' ', strip_tags($this->messageHtml('<h1>代表メッセージ</h1><p>代表取締役社長 山田　太郎</p><p>'.$sentence.'</p><p>'.$quoted.'</p>'))), '候補はすべてHTMLの文字そのまま');
+            $this->assertStringContainsString($line, preg_replace('/\s+/u', ' ', strip_tags($this->messageHtml($main))), '候補はすべてHTMLの文字そのまま');
         }
     }
 
@@ -82,7 +101,7 @@ class TopMessageDraftTest extends TestCase
             $this->assertStringNotContainsString($outside, $joined);
         }
 
-        $programs = (new TopMessageDraftExtractor)->programCandidates([new TopMessagePage('https://e.example.com/t', '研修制度', '本文', true, 2, $this->messageHtml('<h2>本文の制度</h2><p>説明です。</p>'))]);
+        $programs = $this->programs([new TopMessagePage('https://e.example.com/t', '研修制度', '本文', true, 2, $this->messageHtml('<h2>本文の制度</h2><p>説明です。</p>'))]);
         $this->assertSame(['本文の制度'], array_column($programs, 'name'), 'ヘッダー・フッター・ナビの見出しは制度の候補にならない');
     }
 
@@ -102,19 +121,19 @@ class TopMessageDraftTest extends TestCase
     public function test_generic_headings_are_not_program_candidates_and_a_name_appears_once_across_pages(): void
     {
         $page = fn (string $url, string $body) => new TopMessagePage($url, 'ページ', '本文', true, 2, '<html><body><main>'.$body.'</main></body></html>');
-        $rows = (new TopMessageDraftExtractor)->programCandidates([
+        $rows = $this->programs([
             $page('https://e.example.com/a', '<h2>お問い合わせ</h2><h2>ENTRY</h2><h3>MENU</h3><h3>関連リンク</h3><h3>よくある質問</h3><h2>新人研修</h2><p>説明A</p><h2>家賃補助</h2><p>説明B</p>'),
             $page('https://e.example.com/b', '<h2>新人研修</h2><p>別の説明</p><h2>資格取得支援</h2><p>説明C</p>'),
         ]);
 
         $this->assertSame(['新人研修', '家賃補助', '資格取得支援'], array_column($rows, 'name'));
         $this->assertSame('説明A', $rows[0]['excerpt'], '同じ名前は最初のものだけ');
-        $this->assertSame('https://e.example.com/a', $rows[0]['source_url']);
+        $this->assertSame('https://e.example.com/a', $rows[0]['url']);
     }
 
     public function test_the_excerpt_keeps_numbers_and_comes_from_the_text_right_after_the_candidate(): void
     {
-        $rows = (new TopMessageDraftExtractor)->programCandidates([new TopMessagePage('https://e.example.com/a', '福利厚生', '本文', true, 2,
+        $rows = $this->programs([new TopMessagePage('https://e.example.com/a', '福利厚生', '本文', true, 2,
             '<html><body><main><h2>家賃補助</h2><p>最大80%を、入社から36カ月まで支給します。</p><dl><dt>年間休日</dt><dd>120日(2024年度)</dd></dl><table><tr><th>資格取得</th><td>月額15,000円</td></tr></table></main></body></html>',
         )]);
 
@@ -126,7 +145,7 @@ class TopMessageDraftTest extends TestCase
 
     public function test_an_excerpt_over_the_limit_is_cut_with_an_ellipsis(): void
     {
-        $rows = (new TopMessageDraftExtractor)->programCandidates([new TopMessagePage('https://e.example.com/a', '福利厚生', '本文', true, 2,
+        $rows = $this->programs([new TopMessagePage('https://e.example.com/a', '福利厚生', '本文', true, 2,
             '<html><body><main><h2>家賃補助</h2><p>'.str_repeat('あ', 80).'</p></main></body></html>',
         )]);
 

@@ -20,14 +20,18 @@ class TopMessageDraftExtractor
     private const SENTENCE_TAGS = ['p', 'li', 'dd', 'td', 'blockquote', 'div', 'figcaption'];
 
     /**
-     * @return array{lines: list<string>, total: int} lines=選んだ候補(ページの中の出現順)、total=見つかった候補の総数(speakerを含む)
+     * 依頼CSA-2: ページの<title>と同じ文字(<title>を区切りで分けた各部分と同じ文字を含む)は、候補にしない。
+     *
+     * @return array{lines: list<string>, total: int, dropped_title: int} lines=選んだ候補(ページの中の出現順)、total=見つかった候補の総数(speakerを含む)、dropped_title=ページの題名と同じで外した数
      */
-    public function messageCandidates(string $html): array
+    public function messageCandidates(string $html, ?string $pageTitle = null): array
     {
         $xpath = $this->load($html);
         if ($xpath === null) {
-            return ['lines' => [], 'total' => 0];
+            return ['lines' => [], 'total' => 0, 'dropped_title' => 0];
         }
+        $titleKeys = $this->titleKeys($xpath, $pageTitle);
+        $droppedTitle = 0;
 
         $minLen = (int) config('top_message_draft.message_sentence_min_chars');
         $maxLen = (int) config('top_message_draft.message_sentence_max_chars');
@@ -60,13 +64,22 @@ class TopMessageDraftExtractor
             if (in_array($tag, ['h1', 'h2', 'h3'], true)) {
                 $text = $this->collapse($element->textContent);
                 if ($text !== '' && mb_strlen($text) >= $headingMin && ! $this->isGeneric($text) && ! isset($seen[$text])) {
-                    $seen[$text] = true;
-                    $headings[] = ['text' => $this->clip($text, $maxLen), 'order' => $order];
+                    if (isset($titleKeys[$this->looseKey($text)])) {
+                        $droppedTitle++;
+                    } else {
+                        $seen[$text] = true;
+                        $headings[] = ['text' => $this->clip($text, $maxLen), 'order' => $order];
+                    }
                 }
             } elseif (in_array($tag, self::SENTENCE_TAGS, true) && $this->isLeafBlock($element)) {
                 foreach ($this->lines($element->textContent) as $line) {
                     foreach ($this->sentences($line) as $sentence) {
                         if (mb_strlen($sentence) < $minLen || isset($seen[$sentence]) || $this->matchesAny($sentence, $excludePatterns)) {
+                            continue;
+                        }
+                        if (isset($titleKeys[$this->looseKey($sentence)])) {
+                            $droppedTitle++;
+
                             continue;
                         }
                         $seen[$sentence] = true;
@@ -100,39 +113,50 @@ class TopMessageDraftExtractor
         return [
             'lines' => array_map(fn (array $row) => $row['text'], $picked),
             'total' => ($speaker !== null ? 1 : 0) + count($headings) + count($sentences),
+            'dropped_title' => $droppedTitle,
         ];
     }
 
     /**
-     * ページの優先順に、制度の候補(見出し h2〜h4・dt・th)と、その直後の本文(p・dd・td)の先頭を抜き出す。
-     * 同じ文字の候補は最初のものだけ。
+     * ページの優先順に、ページごとの制度の候補(見出し h2〜h4・dt・th)と、その直後の本文(p・dd・td)の先頭を抜き出す。
+     * 同じ文字の候補は最初のページのものだけ。
+     *
+     * 依頼CSA-1: 末尾が「：」の見出しは外す。CSA-2: ページの<title>(と、その区切りの各部分)と同じ見出しは外す。
+     * CSA-4: 次の見出しが同じページの中で自分より深い見出しは、制度の名前ではなく分類の見出しなので
+     * kind='category'(件数に数えない・区切りの行)にする。外した数は dropped に理由別に持つ。
      *
      * @param  list<TopMessagePage>  $pages
-     * @return list<array{name: string, excerpt: string, source_title: string, source_url: string}>
+     * @return list<array{url: string, source_title: string, items: list<array{kind: string, level: int, name: string, excerpt: string}>, dropped: array{colon: int, title: int, category: int}}>
      */
-    public function programCandidates(array $pages): array
+    public function programItemsByPage(array $pages): array
     {
-        $candidates = [];
         $seen = [];
+        $result = [];
 
         foreach ($pages as $page) {
-            foreach ($this->programsOf((string) $page->html) as $row) {
-                $key = $this->normalize($row['name']);
-                if (isset($seen[$key])) {
-                    continue;
+            $dropped = ['colon' => 0, 'title' => 0, 'category' => 0];
+            $items = [];
+            foreach ($this->programsOf((string) $page->html, $page->title, $dropped) as $row) {
+                if ($row['kind'] === 'program') {
+                    $key = $this->normalize($row['name']);
+                    if (isset($seen[$key])) {
+                        continue;
+                    }
+                    $seen[$key] = true;
                 }
-                $seen[$key] = true;
-                $candidates[] = ['name' => $row['name'], 'excerpt' => $row['excerpt'], 'source_title' => $this->sourceLabel($page->url, $page->title), 'source_url' => $page->url];
+                $items[] = $row;
             }
+            $result[] = ['url' => $page->url, 'source_title' => $this->sourceLabel($page->url, $page->title), 'items' => $items, 'dropped' => $dropped];
         }
 
-        return $candidates;
+        return $result;
     }
 
     /**
-     * @return list<array{name: string, excerpt: string}>
+     * @param  array{colon: int, title: int, category: int}  $dropped
+     * @return list<array{kind: string, level: int, name: string, excerpt: string}>
      */
-    private function programsOf(string $html): array
+    private function programsOf(string $html, ?string $pageTitle, array &$dropped): array
     {
         $xpath = $this->load($html);
         if ($xpath === null) {
@@ -142,6 +166,8 @@ class TopMessageDraftExtractor
         $minLen = (int) config('top_message_draft.program_name_min_chars');
         $maxLen = (int) config('top_message_draft.program_name_max_chars');
         $excerptMax = (int) config('top_message_draft.program_excerpt_max_chars');
+        $suffixes = array_values(array_filter(array_map('strval', (array) config('top_message_draft.program_name_excluded_suffixes')), fn (string $s) => $s !== ''));
+        $titleKeys = $this->titleKeys($xpath, $pageTitle);
 
         $tokens = [];
         foreach ($xpath->query('//*[self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6 or self::dt or self::th or self::p or self::dd or self::td]') ?: [] as $element) {
@@ -151,9 +177,10 @@ class TopMessageDraftExtractor
         }
 
         $rows = [];
+        $consumed = [];
         foreach ($tokens as $i => $element) {
             $tag = strtolower($element->tagName);
-            if (! in_array($tag, ['h2', 'h3', 'h4', 'dt', 'th'], true) || $this->isExcluded($element)) {
+            if (isset($consumed[$i]) || ! in_array($tag, ['h2', 'h3', 'h4', 'dt', 'th'], true) || $this->isExcluded($element)) {
                 continue;
             }
             $name = $this->collapse($element->textContent);
@@ -161,9 +188,41 @@ class TopMessageDraftExtractor
             if ($length < $minLen || $length > $maxLen || $this->isGeneric($name) || preg_match('/^[\d\s\p{P}\p{S}]+$/u', $name) === 1) {
                 continue;
             }
+            foreach ($suffixes as $suffix) {
+                if (str_ends_with($name, $suffix)) {
+                    $dropped['colon']++;
+
+                    continue 2;
+                }
+            }
+            if (isset($titleKeys[$this->looseKey($name)])) {
+                $dropped['title']++;
+
+                continue;
+            }
+
+            // 依頼CSA-4: 自分より深い見出しが、同じかより浅い見出しが来るまでに2つ以上あれば分類の見出し。
+            // 1つだけなら制度の名前とし、その見出しの文字を抜粋にする(その下の本文は使わない)。
+            $level = ctype_digit(substr($tag, 1)) ? (int) substr($tag, 1) : 0;
+            $deeperExcerpt = null;
+            if ($level > 0) {
+                $deeper = $this->deeperHeadings($tokens, $i, $level);
+                if (count($deeper) >= 2) {
+                    $dropped['category']++;
+                    $rows[] = ['kind' => 'category', 'level' => $level, 'name' => $name, 'excerpt' => ''];
+
+                    continue;
+                }
+                if (count($deeper) === 1) {
+                    $deeperExcerpt = $this->collapse($tokens[$deeper[0]]->textContent);
+                    $consumed[$deeper[0]] = true;
+                }
+            }
 
             $excerpt = '';
-            if ($tag === 'dt') {
+            if ($deeperExcerpt !== null) {
+                $excerpt = $deeperExcerpt;
+            } elseif ($tag === 'dt') {
                 $excerpt = $this->siblingText($element, 'dd');
             } elseif ($tag === 'th') {
                 $excerpt = $this->siblingText($element, 'td');
@@ -186,10 +245,108 @@ class TopMessageDraftExtractor
             }
             $excerpt = $excerpt === $name ? '' : $this->clip($excerpt, $excerptMax);
 
-            $rows[] = ['name' => $name, 'excerpt' => $excerpt];
+            $rows[] = ['kind' => 'program', 'level' => $level, 'name' => $name, 'excerpt' => $excerpt];
         }
 
         return $rows;
+    }
+
+    /**
+     * $index番目の見出し($level)の後ろで、同じかより浅い見出しが来るまでの、より深い見出し(h1〜h6、ヘッダー等の外)の位置。
+     *
+     * @param  list<\DOMElement>  $tokens
+     * @return list<int>
+     */
+    private function deeperHeadings(array $tokens, int $index, int $level): array
+    {
+        $found = [];
+        for ($j = $index + 1; $j < count($tokens); $j++) {
+            if (preg_match('/^h([1-6])$/', strtolower($tokens[$j]->tagName), $m) !== 1 || $this->isExcluded($tokens[$j])) {
+                continue;
+            }
+            if ((int) $m[1] <= $level) {
+                break;
+            }
+            $found[] = $j;
+        }
+
+        return $found;
+    }
+
+    /**
+     * 依頼CSA-2: ページの<title>(HTMLのもの・渡されたもの)と、それを区切り(階層図と同じconfig)で分けた各部分の、
+     * 比較用の文字(空白・全角半角の違いを無視)の集合。
+     *
+     * @return array<string, true>
+     */
+    private function titleKeys(\DOMXPath $xpath, ?string $fallbackTitle): array
+    {
+        $titles = [];
+        $node = $xpath->query('//title')?->item(0);
+        if ($node !== null) {
+            $titles[] = $this->collapse($node->textContent);
+        }
+        if ($fallbackTitle !== null) {
+            $titles[] = $this->collapse($fallbackTitle);
+        }
+
+        $separators = array_values(array_filter(array_map('strval', (array) config('admin_comparison_pptx.site_hierarchy_tree_title_separators', [])), fn (string $s) => $s !== ''));
+        $keys = [];
+        foreach ($titles as $title) {
+            if ($title === '') {
+                continue;
+            }
+            $keys[$this->looseKey($title)] = true;
+            $parts = $separators === [] ? [$title] : (preg_split('/'.implode('|', array_map(fn (string $s) => preg_quote($s, '/'), $separators)).'/u', $title) ?: [$title]);
+            foreach ($parts as $part) {
+                $part = $this->collapse($part);
+                if ($part !== '') {
+                    $keys[$this->looseKey($part)] = true;
+                }
+            }
+        }
+        unset($keys['']);
+
+        return $keys;
+    }
+
+    /**
+     * 比較用(空白を除き、全角半角の違い・大文字小文字を無視する)。記号は残す。表示には使わない。
+     */
+    private function looseKey(string $text): string
+    {
+        return mb_strtolower((string) preg_replace('/[\s\x{3000}\x{00A0}]+/u', '', mb_convert_kana($text, 'asKV')));
+    }
+
+    /**
+     * 本文の文字のうち、サイト共通のヘッダー・フッター・ナビ・サイドバー(タグ・role・class/id)の外に、
+     * 指定の語のどれかがあるか。依頼CSA-5(代表者を示す語が本文の中にあること)に使う。
+     *
+     * @param  list<string>  $words
+     */
+    public function hasWordOutsideChrome(string $html, array $words): bool
+    {
+        $xpath = $this->load($html);
+        if ($xpath === null) {
+            return false;
+        }
+        $words = array_values(array_filter($words, fn (string $w) => $w !== ''));
+
+        foreach ($xpath->query('//body//text()') ?: [] as $textNode) {
+            $text = $textNode->textContent;
+            $hit = false;
+            foreach ($words as $word) {
+                if (mb_stripos($text, $word) !== false) {
+                    $hit = true;
+                    break;
+                }
+            }
+            if ($hit && $textNode->parentNode instanceof \DOMElement && ! $this->isExcluded($textNode->parentNode)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function siblingText(\DOMElement $element, string $tag): string

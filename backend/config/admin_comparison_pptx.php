@@ -817,5 +817,7 @@ return [
     'top_message_draft_message_max_pt' => 12,
     'top_message_draft_row_max_pt' => 10,
     'top_message_draft_url_max_units' => 64,
+    // 依頼CSA-4: 分類の見出しの区切りの行(太字・薄い背景・抜粋の列は空ける)。
+    'top_message_draft_category_fill' => 'E6EAF0',
 
 ];

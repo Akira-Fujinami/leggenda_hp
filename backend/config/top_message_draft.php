@@ -55,6 +55,12 @@ return [
     */
     'program_name_min_chars' => 2,
     'program_name_max_chars' => 25,
+
+    /*
+    | 依頼CSA-1: 末尾がこの文字の見出しは、制度の名前ではなく絞り込みや表の項目名の書き方なので、候補にしない
+    | (文字の前後の空白を除いてから見る)。
+    */
+    'program_name_excluded_suffixes' => [':', '：'],
     'program_excerpt_max_chars' => 50,
     'program_total_max' => 12,
 

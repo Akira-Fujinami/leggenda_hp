@@ -229,7 +229,9 @@ class AdminComparisonSiteHierarchyBuilder
             // 打ち切る ―― そうしないと、たまたま先に見つかった
             // privacypolicy等が優先枠を占有し、あとから見つかった
             // 判断材料になるページが弾かれてしまう)。
-            $branches[$branchKey]['labels'][] = ['label' => $label, 'deprioritized' => $this->isDeprioritizedSampleLabel($label)];
+            // 依頼CSA-6: 枝そのもののページ(パスセグメントが枝の1つだけ=枝のURLと同じページ)には印を付け、
+            // 第3階層には出さない(ページ数には数えたまま)。
+            $branches[$branchKey]['labels'][] = ['label' => $label, 'deprioritized' => $this->isDeprioritizedSampleLabel($label), 'own' => count($segments) === 1];
         }
 
         return [$branches, $flatPageLabels, $pagesWithinOrigin, $outsideCounts];
@@ -670,17 +672,12 @@ class AdminComparisonSiteHierarchyBuilder
         $branches = [];
         $fullNames = [];
         foreach ($groups as $segment => $info) {
-            $labels = $this->deprioritizeSamplePages($info['labels'], PHP_INT_MAX);
+            // 依頼CSA-6: 枝そのもののページは、枝の名前の由来に関わらず第3階層に出さない(ページ数には数えたまま)。
+            $labels = $this->deprioritizeSamplePages(
+                array_values(array_filter($info['labels'], fn (array $l) => ! ($l['own'] ?? false))),
+                PHP_INT_MAX,
+            );
             $linkName = $linkNames[(string) $segment] ?? null;
-            // 枝の名前にしたインデックスページのtitleは、第2階層にも重ねて出さない
-            // (ページ数には数えたまま)。リンクの文字を名前にしたときは、titleは名前ではないので残す。
-            if ($info['index_title'] !== null && $linkName === null) {
-                $position = array_search($info['index_title'], $labels, true);
-                if ($position !== false) {
-                    unset($labels[$position]);
-                    $labels = array_values($labels);
-                }
-            }
             // 依頼CP-3: 枝の名前にしたページ名は、第2階層と同じ処理(共通の接尾辞・接頭辞は
             // hydrateTitles()で落とし済み)のあと、上限の長さで切る(切るだけ。言い換えない)。
             $fullName = $linkName ?? $info['index_title'] ?? $this->decodeSegmentForDisplay((string) $segment);

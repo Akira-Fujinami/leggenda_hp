@@ -70,7 +70,7 @@ return [
         '研修', '教育', '育成', '福利厚生', '制度', '働き方',
         'benefit', 'welfare', 'training', 'workstyle',
     ],
-    'program_page_keywords_secondary' => ['募集要項', '待遇', 'career'],
+    'program_page_keywords_secondary' => ['募集要項', '待遇'],
 
     /*
     | 制度のページから除く(CQA-2)。

@@ -7,10 +7,12 @@ use App\Models\AnalysisCrawledPage;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\CrawlOriginScopeResolver;
+use App\Services\Report\AdminComparisonPptxGenerator;
 use App\Services\Report\AdminComparisonSiteHierarchyBuilder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
+use ZipArchive;
 
 /**
  * 依頼CL-3(2026-10-05): 階層図を「TOP → 第1階層(TOPのメニュー) → 第2階層(その先の
@@ -34,6 +36,19 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
     private function builder(): AdminComparisonSiteHierarchyBuilder
     {
         return app(AdminComparisonSiteHierarchyBuilder::class);
+    }
+
+    private function slideXml(string $bytes): string
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'sx');
+        file_put_contents($tmp, $bytes);
+        $zip = new ZipArchive;
+        $zip->open($tmp);
+        $xml = html_entity_decode((string) $zip->getFromName('ppt/slides/slide1.xml'), ENT_QUOTES | ENT_XML1, 'UTF-8');
+        $zip->close();
+        @unlink($tmp);
+
+        return $xml;
     }
 
     private function html(string $menu, string $main = '', string $footer = ''): string
@@ -750,6 +765,53 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
         $this->assertSame(['私たちのビジョン'], $tree['branches'][0]['pages']);
         $this->assertSame(0, $tree['unplaced_page_count']);
         $this->assertSame(['カルチャー'], $tree['first_level_labels']);
+    }
+
+    /**
+     * 依頼CSA-6: 第3階層には、その枝のURLと同じページを出さない(末尾の/の違いは同じ)。枝のページ数には数えたまま。
+     * 第3階層が空になる枝は、行も線も描かない。
+     */
+    public function test_the_page_of_the_branch_itself_is_not_listed_in_the_third_level_but_is_still_counted(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, null);
+        $this->crawled($wa, 'https://example.com/recruit/culture/', 'カルチャー');
+        $this->crawled($wa, 'https://example.com/recruit/culture/vision', '私たちのビジョン');
+        $this->crawled($wa, 'https://example.com/recruit/culture/value', '大切にしたい価値観');
+        // 1ページしかない枝(1つは末尾の/が無い、もう1つは有る)。
+        $this->crawled($wa, 'https://example.com/recruit/forfresh', '新卒の皆様へ');
+        $this->crawled($wa, 'https://example.com/recruit/campaign/', '面白採用キャンペーン');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame('url', $tree['mode']);
+        $byName = collect($tree['branches'])->keyBy('name');
+        $this->assertSame(['私たちのビジョン', '大切にしたい価値観'], $byName['カルチャー']['pages'], '枝そのもののページ(カルチャー)は第3階層に出ない');
+        $this->assertSame(3, $byName['カルチャー']['page_count'], '枝のページ数は、枝そのもののページも数える(いまのまま)');
+        $this->assertSame([], $byName['新卒の皆様へ']['pages']);
+        $this->assertSame(1, $byName['新卒の皆様へ']['page_count']);
+        $this->assertSame([], $byName['面白採用キャンペーン']['pages']);
+        $this->assertSame(1, $byName['面白採用キャンペーン']['page_count']);
+        $this->assertSame(0, $byName['新卒の皆様へ']['other_page_count']);
+
+        // スライド: 第3階層が空の枝は、同じ名前を第3階層にもう一度出さない(名前は箱の1回だけ)。
+        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide(['recommended_site_flow_names' => []], $tree));
+        $this->assertSame(1, substr_count($xml, '新卒の皆様へ'));
+        $this->assertSame(1, substr_count($xml, '面白採用キャンペーン'));
+    }
+
+    public function test_the_page_of_the_branch_itself_is_not_listed_even_when_the_branch_is_named_by_a_link_text(): void
+    {
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->recruitPage($wa, null);
+        $this->crawled($wa, 'https://example.com/recruit/culture/', 'カルチャーのページ');
+        $this->crawled($wa, 'https://example.com/recruit/culture/vision', '私たちのビジョン', $this->html('', '<a href="/recruit/culture/">カルチャー</a>'));
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertSame('カルチャー', $tree['branches'][0]['name'], '枝の名前はリンクの文字');
+        $this->assertSame(['私たちのビジョン'], $tree['branches'][0]['pages'], '枝の名前の由来に関わらず、枝そのもののページは第3階層に出ない');
+        $this->assertSame(2, $tree['branches'][0]['page_count']);
     }
 
     /**

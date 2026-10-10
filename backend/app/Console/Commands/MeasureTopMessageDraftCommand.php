@@ -114,24 +114,46 @@ class MeasureTopMessageDraftCommand extends Command
                 count($page['message']['lines'] ?? []),
                 $page['message']['hidden'] ?? 0,
             ));
+            $programRows = $page['programs']['rows'] ?? [];
             $this->line(sprintf(
-                '  制度の候補: %d件(ほか%d件)',
-                count($page['programs']['rows'] ?? []),
+                '  制度の候補: %d件(ほか%d件) 区切りの行: %d、候補の総数(分類の見出しを除く): %d',
+                count(array_filter($programRows, fn (array $r) => ($r['kind'] ?? 'program') === 'program')),
                 $page['programs']['hidden'] ?? 0,
+                count(array_filter($programRows, fn (array $r) => ($r['kind'] ?? 'program') === 'category')),
+                $page['programs']['candidate_total'] ?? 0,
+            ));
+            $perSource = [];
+            foreach ($programRows as $r) {
+                if (($r['kind'] ?? 'program') === 'program') {
+                    $perSource[$r['source']] = ($perSource[$r['source']] ?? 0) + 1;
+                }
+            }
+            $this->line('  出典ごとの候補の件数: '.implode('、', array_map(fn ($name, $n) => "{$name} {$n}件", array_keys($perSource), $perSource)));
+            $dropped = $page['programs']['dropped'] ?? [];
+            $this->line(sprintf(
+                '  外れた行(CSA-1 末尾が「：」: %d、CSA-2 ページの題名と同じ 制度: %d・メッセージ: %d、CSA-4 分類の見出し: %d)',
+                $dropped['colon'] ?? 0,
+                $dropped['title'] ?? 0,
+                $dropped['title_in_message'] ?? 0,
+                $dropped['category'] ?? 0,
             ));
             $this->line('  使った制度のページ: '.implode(' ', array_map(fn ($u) => "[{$u}]", $page['programs']['page_urls'] ?? [])));
 
             if (isset($expected[$key])) {
-                $names = array_map(fn (array $r) => $r['name'], $page['programs']['rows'] ?? []);
+                $names = array_map(fn (array $r) => $r['name'], array_filter($page['programs']['rows'] ?? [], fn (array $r) => ($r['kind'] ?? 'program') === 'program'));
                 $hits = [];
                 foreach ($expected[$key] as $want) {
                     $hits[$want] = $this->contains($names, $want);
                 }
                 // 上限(1社あたりの件数)で切る前の、全候補にも当たるか。
-                $allNames = array_map(
-                    fn (array $r) => $r['name'],
-                    $extractor->programCandidates(array_slice($selection->programPages, 0, (int) config('top_message_draft.program_pages_max'))),
-                );
+                $allNames = [];
+                foreach ($extractor->programItemsByPage(array_slice($selection->programPages, 0, (int) config('top_message_draft.program_pages_max'))) as $found) {
+                    foreach ($found['items'] as $item) {
+                        if ($item['kind'] === 'program') {
+                            $allNames[] = $item['name'];
+                        }
+                    }
+                }
                 $this->line(sprintf('  見本との重なり: 上限で切った後 %d / %d件、切る前(全候補%d件) %d / %d件(指定した名前のうち)', count(array_filter($hits)), count($hits), count($allNames), count(array_filter(array_map(fn ($w) => $this->contains($allNames, $w), $expected[$key]))), count($hits)));
                 foreach ($hits as $want => $hit) {
                     $this->line('    '.($hit ? '○' : '×').($this->contains($allNames, $want) ? '(全候補には有)' : '(全候補にも無)').' '.$want);
