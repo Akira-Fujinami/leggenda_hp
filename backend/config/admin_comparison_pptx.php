@@ -794,4 +794,28 @@ return [
     // 汎用の言葉(リンクの文字がこれだけのものは枝名の候補から外す。大文字小文字を区別しない)。
     'site_hierarchy_link_name_generic_words' => ['詳しく見る', 'もっと見る', 'もっと', 'MORE', 'VIEW MORE', 'READ MORE', 'こちら', '詳細', '詳細はこちら', '続きを読む', 'CLICK', 'LINK', '>', '→'],
 
+    /*
+    |--------------------------------------------------------------------------
+    | 依頼CS(2026-10-10): トップメッセージと制度の「素材ページ」(社内用・下書き)
+    |--------------------------------------------------------------------------
+    | 抜き出しの語・上限はconfig/top_message_draft.php。ここは文言・色・大きさだけ。
+    */
+    'top_message_draft_title' => '%s：トップメッセージと制度の素材',
+    'top_message_draft_band_text' => '社内用・下書き　お客様にお見せする前に、仕上げたページと差し替えてください。',
+    'top_message_draft_band_fill' => 'C62828',
+    'top_message_draft_band_text_color' => 'FFFFFF',
+    'top_message_draft_band_pt' => 16,
+    'top_message_draft_left_heading' => 'メッセージの候補',
+    'top_message_draft_right_heading' => '制度の候補',
+    'top_message_draft_columns' => ['制度の候補', '抜粋', '出典'],
+    'top_message_draft_column_widths_in' => [2.0, 3.4, 1.5],
+    'top_message_draft_no_message' => 'トップメッセージのページを確認できませんでした。',
+    'top_message_draft_no_programs' => '制度の候補を確認できませんでした。',
+    'top_message_draft_disclaimer' => 'サイトの文章を機械的に抜き出したものです。キーワードの整理と、メッセージと制度の対応づけは行っていません。',
+    'top_message_draft_more' => 'ほか%d件',
+    'top_message_draft_bullet' => '・',
+    'top_message_draft_message_max_pt' => 12,
+    'top_message_draft_row_max_pt' => 10,
+    'top_message_draft_url_max_units' => 64,
+
 ];

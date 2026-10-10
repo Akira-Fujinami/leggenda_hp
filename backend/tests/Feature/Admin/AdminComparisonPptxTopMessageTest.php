@@ -29,6 +29,8 @@ class AdminComparisonPptxTopMessageTest extends TestCase
     {
         parent::setUp();
         Storage::fake('analysis');
+        // 依頼CS: 素材ページが有効なあいだはCQのAIのページを出さない。これはCQ(AI)側の動きを見るテスト。
+        config(['top_message_draft.enabled' => false]);
     }
 
     /**

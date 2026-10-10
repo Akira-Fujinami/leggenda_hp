@@ -5,6 +5,7 @@ namespace App\Services\Report;
 use App\Models\Analysis;
 use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelMultiSiteComparisonComposer;
+use App\Services\TopMessageDraft\TopMessageDraftBuilder;
 use App\Services\TopMessageInsight\TopMessageInsightStore;
 use App\Support\Report\MultiSiteReportViewModel;
 
@@ -51,6 +52,7 @@ class AdminComparisonPptxDataBuilder
     public function __construct(
         private readonly CandidateSurveyCatalog $surveyCatalog = new CandidateSurveyCatalog,
         private readonly ?TopMessageInsightStore $topMessageStore = null,
+        private readonly ?TopMessageDraftBuilder $topMessageDraftBuilder = null,
     ) {}
 
     /**
@@ -106,6 +108,48 @@ class AdminComparisonPptxDataBuilder
                 ? null
                 : sprintf((string) config('admin_comparison_pptx.top_message_missing_note'), implode((string) config('admin_comparison_pptx.top_message_missing_note_separator'), $missing)),
         ];
+    }
+
+    /**
+     * 依頼CS-4: 「トップメッセージと制度の素材」(社内用・下書き)のページ(1社1ページ)のデータ。
+     * 並びは自社 → 競合(入力順 = websites.display_order)。保存済みのHTMLから機械的に抜き出すだけで、
+     * AIも外部通信も使わない。候補が1件も無い会社はページを作らない。
+     * config('top_message_draft.enabled')がfalseなら、空を返す。
+     *
+     * @return list<array<string, mixed>> TopMessageDraftBuilder::build()の形
+     */
+    public function buildTopMessageDraftData(Analysis $analysis, MultiSiteReportViewModel $viewModel): array
+    {
+        if (! (bool) config('top_message_draft.enabled')) {
+            return [];
+        }
+
+        $analysis->loadMissing('websiteAnalyses.website');
+        $builder = $this->topMessageDraftBuilder ?? app(TopMessageDraftBuilder::class);
+
+        $self = $analysis->websiteAnalyses->first(fn (WebsiteAnalysis $wa) => (bool) $wa->website?->is_primary);
+        $competitors = $analysis->websiteAnalyses
+            ->filter(fn (WebsiteAnalysis $wa) => ! (bool) $wa->website?->is_primary)
+            ->sortBy(fn (WebsiteAnalysis $wa) => $wa->website?->display_order ?? PHP_INT_MAX)
+            ->values();
+
+        $entries = [];
+        if ($self !== null) {
+            $entries[] = [$viewModel->selfCompanyDisplayName, $self];
+        }
+        foreach ($competitors as $index => $wa) {
+            $entries[] = [(string) ($viewModel->competitors[$index]['name'] ?? $wa->website?->name ?? ''), $wa];
+        }
+
+        $pages = [];
+        foreach ($entries as [$name, $wa]) {
+            $page = $builder->build($wa, $name);
+            if ($page !== null) {
+                $pages[] = $page;
+            }
+        }
+
+        return $pages;
     }
 
     /**

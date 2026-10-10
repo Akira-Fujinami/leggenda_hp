@@ -76,7 +76,8 @@ class TopMessagePageFinder
         }
         $message = $messageCandidates[0] ?? null;
         $messageUrlKey = $message !== null ? $this->urlKey($message->url) : null;
-        $messageIsJapanese = $message !== null && $this->japaneseRatio($message->text) >= (float) config('top_message_insight.japanese_ratio_threshold', 0.2);
+        // 依頼CS: メッセージのページが無いときも、日本語の制度のページだけを見る(英語のページを混ぜない)。
+        $messageIsJapanese = $message === null || $this->japaneseRatio($message->text) >= (float) config('top_message_insight.japanese_ratio_threshold', 0.2);
 
         // CQA-2: 一覧の続き・求人一覧・(メッセージが日本語なら)日本語でないページを除く。
         $programKeys = array_values(array_filter(
@@ -290,12 +291,14 @@ class TopMessagePageFinder
         $pages = [];
         foreach ($candidates as $order => $key) {
             $entry = $pool[$key];
-            $text = $this->readBodyText($entry['model']);
+            // 依頼CS: 素材ページ(AIなし)がHTMLそのものを読めるよう、保存済みのHTMLも持たせる。
+            $html = $this->readHtml($entry['model']);
+            $text = $html === null ? '' : trim($this->htmlSeoAnalyzer->extractBodyText($html, excludeNavigation: true));
             $inScope = $scope === null || $this->originScopeResolver->isWithinScope($entry['url'], $entry['final_url'], $scope);
             $pages[] = [
                 'order' => $order,
                 'tier' => $tiers[$key] ?? 0,
-                'page' => new TopMessagePage($entry['url'], $entry['title'], $text, $inScope, mb_strlen($text)),
+                'page' => new TopMessagePage($entry['url'], $entry['title'], $text, $inScope, mb_strlen($text), $html),
             ];
         }
 

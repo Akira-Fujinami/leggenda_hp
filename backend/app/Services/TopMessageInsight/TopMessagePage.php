@@ -15,6 +15,7 @@ final class TopMessagePage
         public readonly string $text,
         public readonly bool $inScope = true,
         public readonly int $fullTextLength = 0,
+        public readonly ?string $html = null,
     ) {}
 
     /**
@@ -37,6 +38,6 @@ final class TopMessagePage
 
     public function withText(string $text): self
     {
-        return new self($this->url, $this->title, $text, $this->inScope, $this->fullTextLength);
+        return new self($this->url, $this->title, $text, $this->inScope, $this->fullTextLength, $this->html);
     }
 }

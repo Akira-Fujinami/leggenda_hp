@@ -226,12 +226,21 @@ class AnalysisController extends Controller
             // 依頼CQ-4(2026-10-09): 「足りないもの」の次に、トップメッセージ × 人事制度を
             // 自社 → 競合(入力順)で1社1ページ差し込む。作られなかった会社は飛ばし、
             // 比較のページの注記に1行足す。結果は保存済みのファイルを読むだけで、AIは呼ばない。
-            $topMessage = $dataBuilder->buildTopMessageData($analysis, $viewModel);
-            $data['top_message_missing_note'] = $topMessage['missing_note'];
-
+            // 依頼CS(2026-10-10): 素材ページ(社内用・下書き)が有効なら、AIのページ(CQ)は出さず、
+            // 素材ページだけを同じ位置へ入れる。素材は保存済みのHTMLから機械的に抜き出す
+            // (AIも外部通信も無い)。無効(top_message_draft.enabled=false)のときだけ、従来のCQの動き。
             $topMessageSlides = [];
-            foreach ($topMessage['pages'] as $topMessagePage) {
-                $topMessageSlides[] = $slideGenerator->generateTopMessageSlide($topMessagePage);
+            if ((bool) config('top_message_draft.enabled')) {
+                $data['top_message_missing_note'] = null;
+                foreach ($dataBuilder->buildTopMessageDraftData($analysis, $viewModel) as $draftPage) {
+                    $topMessageSlides[] = $slideGenerator->generateTopMessageDraftSlide($draftPage);
+                }
+            } else {
+                $topMessage = $dataBuilder->buildTopMessageData($analysis, $viewModel);
+                $data['top_message_missing_note'] = $topMessage['missing_note'];
+                foreach ($topMessage['pages'] as $topMessagePage) {
+                    $topMessageSlides[] = $slideGenerator->generateTopMessageSlide($topMessagePage);
+                }
             }
 
             $slideBytesList = [
