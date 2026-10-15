@@ -595,6 +595,12 @@ class AnalysisPipeline
             return;
         }
 
+        // 依頼CT: 自社の枝ごとの判定のジョブが終わるまで待つ(config('branch_survey_items.enabled')がtrueの比較のみ)。
+        // ジョブが終わった時点(BranchSurveyItemsDispatcher::afterFinished())で、ここへ戻ってくる。
+        if (app(\App\Services\BranchSurveyItems\BranchSurveyItemsGate::class)->shouldWait($websiteAnalysis)) {
+            return;
+        }
+
         FinalizeWebsiteAnalysisJob::dispatch($websiteAnalysis->analysis_id, $websiteAnalysisId)
             ->onQueue(JobType::FinalizeWebsiteAnalysis->queueName());
     }

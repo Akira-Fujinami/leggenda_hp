@@ -283,6 +283,32 @@ class AdminComparisonPptxInsertTest extends TestCase
     }
 
     /**
+     * 依頼CT-2: PPTXのダウンロードでは、保存済みの「枝ごとの情報」のファイルを読むだけ。AIを呼ばず、外部へ通信しない。
+     */
+    public function test_the_download_reads_the_stored_branch_survey_result_without_calling_the_ai_or_the_network(): void
+    {
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+        \Illuminate\Support\Facades\Http::fake();
+        app()->instance(\App\Services\BranchSurveyItems\BranchSurveyItemsProviderFactory::class, new class extends \App\Services\BranchSurveyItems\BranchSurveyItemsProviderFactory
+        {
+            public function make(): \App\Services\BranchSurveyItems\BranchSurveyItemsProvider
+            {
+                throw new \RuntimeException('ダウンロードでAIの設定を作ってはいけない');
+            }
+        });
+        $analysis = $this->makeComparisonAnalysis();
+        $self = $analysis->websiteAnalyses()->whereHas('website', fn ($q) => $q->where('is_primary', true))->firstOrFail();
+        app(\App\Services\BranchSurveyItems\BranchSurveyItemsStore::class)->write($analysis->id, $self->id, ['status' => 'done', 'top' => null, 'branches' => [], 'job_failed' => 'x']);
+        $this->attachPptx($analysis, $this->makeMinimalDeck(['内容1', '参照元']));
+
+        $response = $this->asAdmin()->get(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false));
+
+        $response->assertOk();
+        $response->streamedContent();
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    /**
      * 依頼CJ-2(2026-10-01): 無料診断を経由しない比較(起点なし)でも、
      * 差し込みダウンロードは無改修で動く(kind=AdminComparisonのみを見る
      * ため、source_analysis_idの有無に依存しない)。

@@ -6,6 +6,7 @@ use App\Enums\AnalysisKind;
 use App\Jobs\FetchCorporateTopJob;
 use App\Models\Analysis;
 use App\Models\WebsiteAnalysis;
+use App\Services\BranchSurveyItems\BranchSurveyItemsDispatcher;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -20,7 +21,14 @@ class CorporateTopDispatcher
 
     public function dispatchFor(int $analysisId, ?int $websiteAnalysisId): void
     {
-        if ($websiteAnalysisId === null || ! (bool) config('admin_comparison_pptx.corporate_top_enabled', true)) {
+        if ($websiteAnalysisId === null) {
+            return;
+        }
+
+        // 依頼CT: コーポレートTOPを取得しない設定のときは、取得を待たずに枝ごとの判定へ進む。
+        if (! (bool) config('admin_comparison_pptx.corporate_top_enabled', true)) {
+            app(BranchSurveyItemsDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
+
             return;
         }
 
@@ -36,9 +44,13 @@ class CorporateTopDispatcher
             }
 
             if ($this->store->exists($analysisId, $websiteAnalysisId)) {
+                // 取得済み: 取得ジョブは出さないので、ここから枝ごとの判定へ進む(依頼CT)。
+                app(BranchSurveyItemsDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
+
                 return;
             }
 
+            // 取得ジョブが終わったあと(成功・失敗のどちらでも)、枝ごとの判定へ進む(FetchCorporateTopJob)。
             FetchCorporateTopJob::dispatch($websiteAnalysisId)->onQueue('analysis');
         } catch (\Throwable $e) {
             Log::warning('Corporate top dispatch failed', [
@@ -46,6 +58,9 @@ class CorporateTopDispatcher
                 'website_analysis_id' => $websiteAnalysisId,
                 'exception' => $e::class,
             ]);
+
+            // 取得ジョブを出せなかったときも、枝ごとの判定は進める(階層図はいまの描き方になるだけ)。
+            app(BranchSurveyItemsDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
         }
     }
 }

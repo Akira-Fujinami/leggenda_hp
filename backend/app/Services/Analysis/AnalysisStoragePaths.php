@@ -62,6 +62,15 @@ class AnalysisStoragePaths
     }
 
     /**
+     * 依頼CT: 階層図の枝ごと・TOPページの、調査14項目の判定結果(JSON)。マイグレーションは足さず、
+     * 分析の保存先の中に置く ―― analysisDir()ごとの削除(依頼CIのデータ削除)でいっしょに消える。
+     */
+    public function branchSurveyItemsPath(int $analysisId, int $websiteAnalysisId): string
+    {
+        return $this->base($analysisId, $websiteAnalysisId).'/branch_survey_items.json';
+    }
+
+    /**
      * 依頼CR-1: 階層図のTOPにするコーポレートサイトのTOPページ(静的HTML)。巡回の50件には数えず、
      * 巡回の保存先(raw/の巡回ページ)とは別のファイル名で置く。analysisDir()ごとの削除で消える。
      */

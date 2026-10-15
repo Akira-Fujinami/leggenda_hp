@@ -212,6 +212,15 @@ class AnalysisController extends Controller
                 ? $hierarchyBuilder->buildTree($selfWebsiteAnalysis)
                 : $hierarchyBuilder->emptyTree();
 
+            // 依頼CT: 比較の流れの中で保存済みの「枝ごとの情報」(調査14項目の判定結果)を階層図に添える。
+            // 保存済みのファイルを読むだけで、ここでAIを呼ばない・通信しない(ファイルが無ければ従来の描き方のまま)。
+            if ($selfWebsiteAnalysis !== null) {
+                $tree = app(\App\Services\BranchSurveyItems\BranchSurveyItemsPresenter::class)->apply(
+                    $tree,
+                    app(\App\Services\BranchSurveyItems\BranchSurveyItemsStore::class)->read((int) $selfWebsiteAnalysis->analysis_id, (int) $selfWebsiteAnalysis->id),
+                );
+            }
+
             // 依頼CN-A3: 実線の枝(メニューの項目、畳まれた枝を含む)に同じ主題がある導線は、
             // 点線の枝に出さない。
             $data['recommended_site_flow_names'] = app(\App\Services\Report\RecommendedFlowFilter::class)

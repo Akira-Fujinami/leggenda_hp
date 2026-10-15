@@ -285,6 +285,8 @@ class AdminComparisonPptxDataBuilder
             'self_material_sufficient' => $viewModel->selfMaterialSufficient,
             'companies' => $companies,
             'axes' => $axes,
+            // 依頼CT-1: 見出しの下の「強み」「弱み」の一文(点数から決まった形で作る。AIは使わない)。
+            'strength_weakness' => (new ComparisonStrengthWeaknessComposer)->compose($companies, $axes, $viewModel->selfReadable),
             'missing_items' => $missingItems,
             'survey_comparison' => $this->buildSurveyComparison($viewModel),
             'candidate_survey_source_note' => (string) config('brand_wheel_candidate_survey.source_note'),

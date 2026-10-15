@@ -148,12 +148,20 @@ class AdminComparisonPptxGenerator
     // ------------------------------------------------------------------
 
     /** 3列の見出し行の上端と高さ。見出しの下に細い罫線を引く。 */
-    private const WHEEL_HEADING_TOP_IN = 1.52;
+    private const WHEEL_HEADING_TOP_IN = 1.8;
 
     private const WHEEL_HEADING_HEIGHT_IN = 0.28;
 
+    /** 依頼CT: 第4列で、名前が1つの列に収まるかの見積もりに掛ける余裕(折り返し・省略が起きる手前で、その行を1つで使う)。 */
+    private const SURVEY_WIDTH_MARGIN = 1.35;
+
+    /** 依頼CT-1: 見出しの下の「強み」「弱み」の2行の位置と高さ。 */
+    private const WHEEL_STRENGTH_TOP_IN = 1.42;
+
+    private const WHEEL_STRENGTH_HEIGHT_IN = 0.36;
+
     /** 3列の本体(見出しの下)の上端と下端。ここに収まるように各列を組む。 */
-    private const WHEEL_BODY_TOP_IN = 1.95;
+    private const WHEEL_BODY_TOP_IN = 2.1;
 
     private const WHEEL_BODY_BOTTOM_IN = 6.3;
 
@@ -462,6 +470,7 @@ class AdminComparisonPptxGenerator
         return $this->renderSingleSlide(function (Slide $slide) use ($data, $selfReadable, $layout): void {
             $this->addKicker($slide);
             $this->addTitle($slide, 'ブランド・ホイール比較');
+            $this->addStrengthWeakness($slide, $data['strength_weakness'] ?? null);
             $this->addWheelColumnHeadings($slide, $layout);
             $this->addWheelSelfColumn($slide, $data['companies'][0], $data['axes'], $selfReadable);
             $this->addWheelCompetitorColumn($slide, array_slice($data['companies'], 1), $data['axes'], $layout);
@@ -471,6 +480,39 @@ class AdminComparisonPptxGenerator
             }
             $this->addFooter($slide, $data['source_note'], $data['page_number']);
         });
+    }
+
+    /**
+     * 依頼CT-1: 見出しの下の「強み：」「弱み：」の2行(点数から決まった形の一文)。読み取れた記述が少ない
+     * 会社があるときは、代わりに1行の文言だけ。出すものが無い(null)ときは何も描かない。
+     *
+     * @param  ?array{notice: ?string, strength: ?string, weakness: ?string}  $text
+     */
+    private function addStrengthWeakness(Slide $slide, ?array $text): void
+    {
+        if ($text === null) {
+            return;
+        }
+
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, self::WHEEL_STRENGTH_TOP_IN, self::CONTENT_WIDTH_IN, self::WHEEL_STRENGTH_HEIGHT_IN);
+        $box->setInsetLeft(0)->setInsetRight(0)->setInsetTop(0)->setInsetBottom(0);
+        $box->setWrap(RichText::WRAP_SQUARE);
+
+        if ($text['notice'] !== null) {
+            $this->font($box->getActiveParagraph()->createTextRun($text['notice']), 9.5, false, self::MUTED);
+
+            return;
+        }
+
+        $labels = (array) config('admin_comparison_pptx.strength_weakness_labels');
+        $first = true;
+        foreach (['strength', 'weakness'] as $key) {
+            $paragraph = $first ? $box->getActiveParagraph() : $box->createParagraph();
+            $first = false;
+            $this->font($paragraph->createTextRun((string) ($labels[$key] ?? '')), 10.5, true, self::NAVY);
+            $this->font($paragraph->createTextRun((string) $text[$key]), 10.5, false, self::BODY_TEXT);
+        }
     }
 
     /**
@@ -1189,12 +1231,16 @@ class AdminComparisonPptxGenerator
      * どちらも「この1枚の内容の前提・出典を、footerに必ず明記する」という
      * 同じ役割のため、共通化した。
      */
-    private function addNoteFooter(Slide $slide, string $note): void
+    private function addNoteFooter(Slide $slide, string $note, ?string $extraLine = null): void
     {
         $source = $slide->createRichTextShape();
         $this->position($source, self::LEFT_IN, 6.42, self::CONTENT_WIDTH_IN, 0.4);
         $source->setWrap(RichText::WRAP_SQUARE);
         $this->font($source->getActiveParagraph()->createTextRun($note), 8, false, self::MUTED);
+        // 依頼CT: 注記に1行足す(別の段落)。
+        if ($extraLine !== null) {
+            $this->font($source->createParagraph()->createTextRun($extraLine), 8, false, self::MUTED);
+        }
 
         $logo = $slide->createRichTextShape();
         $this->position($logo, self::LEFT_IN, 6.98, 3.0, 0.3);
@@ -1611,10 +1657,16 @@ class AdminComparisonPptxGenerator
                 $this->addTreeColumnHeadings(
                     $slide,
                     [[self::TREE_TOP_LEFT_IN, self::TREE_TOP_WIDTH_IN], [self::TREE_BRANCH_LEFT_IN, self::TREE_BRANCH_WIDTH_IN], [self::TREE_PAGE_LEFT_IN, self::TREE_PAGE_WIDTH_IN]],
-                    (array) config('admin_comparison_pptx.site_hierarchy_columns_recruit'),
+                    (array) config(($tree['survey'] ?? null) !== null ? 'admin_comparison_pptx.site_hierarchy_columns_recruit_survey' : 'admin_comparison_pptx.site_hierarchy_columns_recruit'),
                     [0, 1, 2],
                 );
                 $topBottom = $this->addTreeTop($slide, $tree['top'], $tree['mode'] === 'menu');
+                // 依頼CT: 採用サイトのTOPで確認できた情報を、TOPの箱の下に箇条書き(点線の欄はその下から)。
+                if (($tree['survey']['top'] ?? null) !== null) {
+                    $topCell = $tree['survey']['top'];
+                    $this->addSurveyTopItems($slide, $topCell, self::TREE_TOP_LEFT_IN, $topBottom + 0.06, self::TREE_TOP_WIDTH_IN);
+                    $topBottom += 0.06 + (count($topCell['items']) + ($topCell['more'] > 0 ? 1 : 0) + ($topCell['state'] !== 'ok' ? 1 : 0)) * 0.2;
+                }
                 $this->addTreeBranches($slide, $tree);
                 $this->addTreeRecommendations($slide, $data['recommended_site_flow_names'], $topBottom);
             }
@@ -1625,7 +1677,9 @@ class AdminComparisonPptxGenerator
             // 依頼CB-3必須: footerには、通常の出典行(addFooter())ではなく
             // 巡回範囲についての注記を出す。
             $note = sprintf((string) config('admin_comparison_pptx.site_hierarchy_crawl_scope_note'), (int) config('brand_wheel.crawl_max_pages'));
-            $this->addNoteFooter($slide, $note);
+            // 依頼CT: 枝ごとの情報は、AIがページの文章を読んで判定したものであることを1行足す。
+            $extra = ($tree['survey'] ?? null) !== null ? (string) $tree['survey']['footnote'] : null;
+            $this->addNoteFooter($slide, $note, $extra);
         });
     }
 
@@ -1655,7 +1709,14 @@ class AdminComparisonPptxGenerator
         $this->position($box, self::LEFT_IN, self::TREE_NOTES_TOP_IN, self::CONTENT_WIDTH_IN, self::TREE_NOTES_HEIGHT_IN);
         $box->setInsetLeft(0)->setInsetRight(0);
         $box->setWrap(RichText::WRAP_SQUARE);
-        $this->font($box->getActiveParagraph()->createTextRun($scope), 9, false, self::MUTED);
+        // 依頼CT: 枝ごとの情報の件数に偏りがあるときだけ、見出しの下に一文(評価・推測の言葉は使わない)。
+        $headline = $tree['survey']['headline'] ?? null;
+        if ($headline !== null) {
+            $this->font($box->getActiveParagraph()->createTextRun($headline), 10.5, true, self::NAVY);
+            $this->font($box->createParagraph()->createTextRun($scope), 9, false, self::MUTED);
+        } else {
+            $this->font($box->getActiveParagraph()->createTextRun($scope), 9, false, self::MUTED);
+        }
         $this->font($box->createParagraph()->createTextRun($mode), 8, false, self::MUTED);
         // 依頼CM-2: 起点をサイトの一番上まで広げて描いたときは、そのことを図の中で示す。
         if ($tree['origin_widened'] ?? false) {
@@ -1763,14 +1824,27 @@ class AdminComparisonPptxGenerator
         $y = self::TREE_TOP_IN;
         $centers = [];
 
-        foreach ($branches as $branch) {
-            $lineCount = count($branch['pages']) + ($branch['other_page_count'] > 0 ? 1 : 0);
+        $survey = $tree['survey'] ?? null;
+        foreach ($branches as $i => $branch) {
+            $cell = $survey['branches'][$i] ?? null;
+            $lineCount = $survey !== null
+                ? $this->surveyRowCount($cell, self::TREE_PAGE_WIDTH_IN)
+                : count($branch['pages']) + ($branch['other_page_count'] > 0 ? 1 : 0);
             $rowHeight = max(self::TREE_BRANCH_BOX_HEIGHT_IN + 0.04, $lineCount * $pitch + 0.02);
             $center = $y + $rowHeight / 2;
             $centers[] = $center;
 
-            $this->addTreeBranchBox($slide, $branch, $center);
-            $this->addTreeSecondLevel($slide, $branch, $center, $lineCount);
+            if ($survey !== null) {
+                // 依頼CT: 枝の箱は情報の有無で塗り分け、右に確認できた情報を並べる。
+                $fills = (array) config('admin_comparison_pptx.site_hierarchy_level_fill');
+                $boxTop = $center - self::TREE_BRANCH_BOX_HEIGHT_IN / 2;
+                $this->addSurveyBranchBox($slide, $cell, self::TREE_BRANCH_LEFT_IN, $boxTop, self::TREE_BRANCH_WIDTH_IN, (string) $fills[2]);
+                $this->addBranchBoxText($slide, $branch, $center, self::TREE_BRANCH_LEFT_IN, self::TREE_BRANCH_WIDTH_IN, self::NAVY);
+                $this->addSurveyItems($slide, $cell, $center, $lineCount, [self::TREE_BRANCH_LEFT_IN, self::TREE_BRANCH_WIDTH_IN], [self::TREE_PAGE_LEFT_IN, self::TREE_PAGE_WIDTH_IN], self::BODY_TEXT);
+            } else {
+                $this->addTreeBranchBox($slide, $branch, $center);
+                $this->addTreeSecondLevel($slide, $branch, $center, $lineCount);
+            }
 
             $y += $rowHeight + self::TREE_ROW_GAP_IN;
         }
@@ -1967,10 +2041,12 @@ class AdminComparisonPptxGenerator
         $texts = (array) config('admin_comparison_pptx.site_hierarchy_level_text');
         $accent = (string) config('admin_comparison_pptx.site_hierarchy_accent_color');
 
+        // 依頼CT: 枝ごとの判定結果があるとき($tree['survey'])は、列3の箱を情報の有無で塗り分け、列4に確認できた情報を並べる。
+        $survey = $tree['survey'] ?? null;
         $this->addTreeColumnHeadings(
             $slide,
             [$c1, $c2, $c3, $c4],
-            (array) config('admin_comparison_pptx.site_hierarchy_columns_corporate'),
+            (array) config($survey !== null ? 'admin_comparison_pptx.site_hierarchy_columns_corporate_survey' : 'admin_comparison_pptx.site_hierarchy_columns_corporate'),
             [0, 1, 2, 3],
         );
 
@@ -1979,15 +2055,24 @@ class AdminComparisonPptxGenerator
         $pitch = self::TREE_LINE_PITCH_IN;
         $y = self::TREE_TOP_IN;
         $centers = [];
-        foreach ($branches as $branch) {
-            $lineCount = count($branch['pages']) + ($branch['other_page_count'] > 0 ? 1 : 0);
+        foreach ($branches as $i => $branch) {
+            $cell = $survey['branches'][$i] ?? null;
+            $lineCount = $survey !== null
+                ? $this->surveyRowCount($cell, $c4[1])
+                : count($branch['pages']) + ($branch['other_page_count'] > 0 ? 1 : 0);
             $rowHeight = max(self::TREE_BRANCH_BOX_HEIGHT_IN + 0.04, $lineCount * $pitch + 0.02);
             $center = $y + $rowHeight / 2;
             $centers[] = $center;
 
-            $this->addLevelBox($slide, $c3[0], $center - self::TREE_BRANCH_BOX_HEIGHT_IN / 2, $c3[1], self::TREE_BRANCH_BOX_HEIGHT_IN, (string) $fills[2], null);
-            $this->addBranchBoxText($slide, $branch, $center, $c3[0], $c3[1], (string) $texts[2]);
-            $this->addLevelPages($slide, $branch, $center, $lineCount, $c3, $c4, (string) $fills[3], (string) $texts[3]);
+            if ($survey !== null) {
+                $this->addSurveyBranchBox($slide, $cell, $c3[0], $center - self::TREE_BRANCH_BOX_HEIGHT_IN / 2, $c3[1], (string) $fills[2]);
+                $this->addBranchBoxText($slide, $branch, $center, $c3[0], $c3[1], (string) $texts[2]);
+                $this->addSurveyItems($slide, $cell, $center, $lineCount, $c3, $c4, (string) $texts[3]);
+            } else {
+                $this->addLevelBox($slide, $c3[0], $center - self::TREE_BRANCH_BOX_HEIGHT_IN / 2, $c3[1], self::TREE_BRANCH_BOX_HEIGHT_IN, (string) $fills[2], null);
+                $this->addBranchBoxText($slide, $branch, $center, $c3[0], $c3[1], (string) $texts[2]);
+                $this->addLevelPages($slide, $branch, $center, $lineCount, $c3, $c4, (string) $fills[3], (string) $texts[3]);
+            }
 
             $y += $rowHeight + self::TREE_ROW_GAP_IN;
         }
@@ -2072,6 +2157,10 @@ class AdminComparisonPptxGenerator
         $hostBox->setWrap(RichText::WRAP_SQUARE);
         $hostBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $this->font($hostBox->getActiveParagraph()->createTextRun($this->wrapOrEllipsizeForLines((string) $corporate['host'], $c1[1] - 0.1, 9.0, true, 2)), 9, true, (string) $texts[0]);
+        // 依頼CT: TOPページで確認できた情報を、箱の下に箇条書き。
+        if ($survey !== null && ($survey['top'] ?? null) !== null) {
+            $this->addSurveyTopItems($slide, $survey['top'], $c1[0], $topBoxTop + $topHeight + 0.06, $c1[1]);
+        }
 
         // 線: コーポレートTOP → 第1階層(採用の箱は濃く、他は薄く)、採用の箱 → 採用サイトの区分。
         $trunk1 = ($c1[0] + $c1[1] + $c2[0]) / 2;
@@ -2093,6 +2182,176 @@ class AdminComparisonPptxGenerator
 
         // 点線の「追加を検討したい導線」: 第2階層の列の下に置く(収まる件数まで。残りは「ほかN」)。
         $this->addCorporateRecommendations($slide, $tree['recommended_names'] ?? [], $y, $c3);
+    }
+
+    /**
+     * 依頼CT: 枝の箱。確認できた情報が1つ以上ある枝は階層の色で塗りつぶし、0件の枝は白(枠のみ)、
+     * 判定できなかった枝は別の色の塗り(白にはしない)。
+     *
+     * @param  ?array{state: string, count: int}  $cell
+     */
+    private function addSurveyBranchBox(Slide $slide, ?array $cell, float $left, float $top, float $width, string $levelFill): void
+    {
+        $height = self::TREE_BRANCH_BOX_HEIGHT_IN;
+        $border = (string) config('admin_comparison_pptx.branch_survey_empty_border');
+
+        if ($cell === null || $cell['state'] !== 'ok') {
+            $this->addFilledRect($slide, $left, $top, $width, $height, (string) config('admin_comparison_pptx.branch_survey_failed_fill'));
+            $this->drawRectOutline($slide, $left, $top, $width, $height, $border, 0.75);
+
+            return;
+        }
+
+        if ($cell['count'] > 0) {
+            $this->addFilledRect($slide, $left, $top, $width, $height, $levelFill);
+
+            return;
+        }
+
+        $this->addFilledRect($slide, $left, $top, $width, $height, self::WHITE);
+        $this->drawRectOutline($slide, $left, $top, $width, $height, $border, 1.0);
+    }
+
+    /**
+     * 依頼CT: 第4列に並べる文(確認できた情報の名前に「・」を付けたもの、超えた分は「ほかN件」)。
+     * 判定できなかった枝は文言の1つだけ。0件の枝は空。
+     *
+     * @param  ?array{state: string, items: list<string>, more: int}  $cell
+     * @return list<string>
+     */
+    private function surveyLines(?array $cell): array
+    {
+        if ($cell === null || $cell['state'] !== 'ok') {
+            return [(string) config('branch_survey_items.failed_text')];
+        }
+
+        $lines = array_map(fn (string $name) => '・'.$name, $cell['items']);
+        if ($cell['more'] > 0) {
+            $lines[] = sprintf((string) config('branch_survey_items.items_other_template'), $cell['more']);
+        }
+
+        return $lines;
+    }
+
+    /**
+     * 依頼CT: 第4列の並べ方。2列に並べる。1つの列に収まらない長さの名前は、その行を1つで使う(切らない)。
+     * 判定できなかった枝は文言の1行。
+     *
+     * @param  list<string>  $lines
+     * @return list<array{row: int, col: int, span: int}>  $linesと同じ順
+     */
+    private function surveyLayout(array $lines, float $columnWidth, bool $failed): array
+    {
+        if ($failed) {
+            return array_map(fn () => ['row' => 0, 'col' => 0, 'span' => 2], $lines);
+        }
+
+        $cellWidth = ($columnWidth - 0.1) / 2;
+        $placement = [];
+        $row = 0;
+        $col = 0;
+        foreach ($lines as $line) {
+            // 8ptの全角1文字 = 8/72in。全角=表示幅2。
+            $wide = mb_strwidth($line, 'UTF-8') * 8 / 144 * self::SURVEY_WIDTH_MARGIN > $cellWidth - 0.05;
+            if ($wide) {
+                if ($col !== 0) {
+                    $row++;
+                    $col = 0;
+                }
+                $placement[] = ['row' => $row, 'col' => 0, 'span' => 2];
+                $row++;
+
+                continue;
+            }
+            $placement[] = ['row' => $row, 'col' => $col, 'span' => 1];
+            if ($col === 1) {
+                $row++;
+                $col = 0;
+            } else {
+                $col = 1;
+            }
+        }
+
+        return $placement;
+    }
+
+    /**
+     * 依頼CT: 第4列の行数。
+     *
+     * @param  ?array{state: string, items: list<string>, more: int}  $cell
+     */
+    private function surveyRowCount(?array $cell, float $columnWidth): int
+    {
+        $lines = $this->surveyLines($cell);
+        if ($lines === []) {
+            return 0;
+        }
+
+        $placement = $this->surveyLayout($lines, $columnWidth, $cell === null || $cell['state'] !== 'ok');
+
+        return max(array_column($placement, 'row')) + 1;
+    }
+
+    /**
+     * 依頼CT: 第4列。枝の右に、確認できた情報(調査の項目名)を割合の高い順に2列で並べ、超えた分は「ほかN件」。
+     * 判定できなかった枝は「判定できませんでした」。0件の枝は何も並べない。
+     *
+     * @param  array{state: string, items: list<string>, more: int}|null  $cell
+     * @param  array{0: float, 1: float}  $branchColumn
+     * @param  array{0: float, 1: float}  $itemColumn
+     */
+    private function addSurveyItems(Slide $slide, ?array $cell, float $center, int $rowCount, array $branchColumn, array $itemColumn, string $textColor): void
+    {
+        $lines = $this->surveyLines($cell);
+        if ($lines === []) {
+            return;
+        }
+
+        $failed = $cell === null || $cell['state'] !== 'ok';
+        $pitch = self::TREE_LINE_PITCH_IN;
+        $blockTop = $center - $rowCount * $pitch / 2;
+        $cellWidth = ($itemColumn[1] - 0.1) / 2;
+        $placement = $this->surveyLayout($lines, $itemColumn[1], $failed);
+
+        foreach ($lines as $k => $line) {
+            $at = $placement[$k];
+            $width = $at['span'] === 2 ? $itemColumn[1] : $cellWidth;
+            $isOther = ! $failed && $cell['more'] > 0 && $k === count($lines) - 1;
+
+            $box = $slide->createRichTextShape();
+            $this->position($box, $itemColumn[0] + $at['col'] * ($cellWidth + 0.1), $blockTop + $at['row'] * $pitch, $width, $pitch);
+            $box->setInsetLeft(2)->setInsetRight(0)->setInsetTop(0)->setInsetBottom(0);
+            $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $text = $isOther || $failed ? $line : $this->wrapOrEllipsizeForLines($line, $width - 0.05, 8.0, false, 1);
+            $this->font($box->getActiveParagraph()->createTextRun($text), 8, false, $failed || $isOther ? self::MUTED : $textColor);
+        }
+
+        $this->drawLine($slide, [$branchColumn[0] + $branchColumn[1], $center], [$itemColumn[0] - 0.05, $center], self::DIM, 0.75);
+    }
+
+    /**
+     * 依頼CT: 第1列のTOPの箱の下に、TOPページで確認できた情報を箇条書きにする(上限を超えた分は「ほかN件」)。
+     * 判定できなかったときは「判定できませんでした」。0件のときは何も書かない。
+     *
+     * @param  array{state: string, items: list<string>, more: int}  $cell
+     */
+    private function addSurveyTopItems(Slide $slide, array $cell, float $left, float $top, float $width): void
+    {
+        $failed = $cell['state'] !== 'ok';
+        $lines = $this->surveyLines($cell);
+        if ($lines === []) {
+            return;
+        }
+
+        $box = $slide->createRichTextShape();
+        $this->position($box, $left, $top, $width, count($lines) * 0.2 + 0.1);
+        $box->setInsetLeft(2)->setInsetRight(0)->setInsetTop(0)->setInsetBottom(0);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        foreach ($lines as $k => $line) {
+            $paragraph = $k === 0 ? $box->getActiveParagraph() : $box->createParagraph();
+            $isOther = ! $failed && $cell['more'] > 0 && $k === count($lines) - 1;
+            $this->font($paragraph->createTextRun($line), 8, false, $failed || $isOther ? self::MUTED : self::BODY_TEXT);
+        }
     }
 
     /**

@@ -775,6 +775,40 @@ return [
         ['heading' => '第1階層', 'description' => '採用サイトの区分'],
         ['heading' => '第2階層', 'description' => '各ページ'],
     ],
+    /*
+    |--------------------------------------------------------------------------
+    | 依頼CT-1: ブランド・ホイール比較の見出しの下の「強み」「弱み」の一文
+    |--------------------------------------------------------------------------
+    | 6領域の点数から決まった形で作る(AIは使わない、ComparisonStrengthWeaknessComposer)。
+    | 書式の引数 — 強み(上回る): 1=領域名 2=自社の点 3=領域の項目数 4=競合の社数 5=競合の最高点。
+    | 強み(並ぶ・自社の中で最も高い): 1〜3まで。弱み: 1〜3、4=競合の最高点 5=最高点の会社(複数なら「ほか」つき)。
+    | 「ありません」「発信していない」のような断定はしない。
+    */
+    'strength_weakness_labels' => ['strength' => '強み：', 'weakness' => '弱み：'],
+    'strength_weakness_strength_over' => '%1$sは%2$d/%3$dで、競合%4$d社の最高（%5$d/%3$d）を上回っています。',
+    'strength_weakness_strength_equal' => '%1$sは%2$d/%3$dで、競合の最高と並んでいます。',
+    'strength_weakness_strength_self_top' => '%1$sは%2$d/%3$dで、自社の中で最も高い領域です。',
+    'strength_weakness_weakness_gap' => '%1$sは%2$d/%3$dで、競合の最高（%4$d/%3$d・%5$s）との差が最も大きい領域です。',
+    'strength_weakness_weakness_none' => 'すべての領域で、競合の最高と同じか上回っています。',
+    'strength_weakness_names_more' => 'ほか',
+    // 依頼CHの「件数での比較に適さない」会社(自社・競合)があるとき、強み・弱みの代わりに出す1行。
+    'strength_weakness_insufficient' => '読み取れた記述が少ない会社があるため、強み・弱みは表示していません。',
+
+    // 依頼CT: 枝ごとの判定結果があるとき(branch_survey_items)の列の見出し。最後の列は「確認できた情報」。
+    'site_hierarchy_columns_corporate_survey' => [
+        ['heading' => 'HP Top', 'description' => '確認できた情報'],
+        ['heading' => '第1階層', 'description' => 'コーポレートのメニュー'],
+        ['heading' => '第2階層', 'description' => '採用サイトの区分'],
+        ['heading' => '第3階層', 'description' => '確認できた情報'],
+    ],
+    'site_hierarchy_columns_recruit_survey' => [
+        ['heading' => '採用サイトTOP', 'description' => '確認できた情報'],
+        ['heading' => '第1階層', 'description' => '採用サイトの区分'],
+        ['heading' => '第2階層', 'description' => '確認できた情報'],
+    ],
+    // 依頼CT: 確認できた情報が0件の枝は白(この色の枠)。判定できなかった枝はこの色の塗り(白にはしない)。
+    'branch_survey_empty_border' => '9AA6B4',
+    'branch_survey_failed_fill' => 'E6EAF0',
     // 階層が深くなるほど薄くする(濃紺 → 青 → 薄い青 → 白に近い色)。文字の色は箱の色ごと。
     'site_hierarchy_level_fill' => ['12243F', '2F5D9E', 'D6E4F5', 'F3F7FC'],
     'site_hierarchy_level_text' => ['FFFFFF', 'FFFFFF', '12243F', '0C1726'],

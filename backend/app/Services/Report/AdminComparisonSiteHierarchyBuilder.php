@@ -208,7 +208,7 @@ class AdminComparisonSiteHierarchyBuilder
             // ページとして扱う(依頼CB-3由来の既存動作、変更しない)。
             if (count($segments) === 1 && str_contains($segments[0], '.')) {
                 $label = $title !== '' ? $title : $this->decodeSegmentForDisplay($segments[0]);
-                $flatPageLabels[] = ['label' => $label, 'deprioritized' => $this->isDeprioritizedSampleLabel($label)];
+                $flatPageLabels[] = ['label' => $label, 'deprioritized' => $this->isDeprioritizedSampleLabel($label), 'id' => $page->id];
 
                 continue;
             }
@@ -231,7 +231,7 @@ class AdminComparisonSiteHierarchyBuilder
             // 判断材料になるページが弾かれてしまう)。
             // 依頼CSA-6: 枝そのもののページ(パスセグメントが枝の1つだけ=枝のURLと同じページ)には印を付け、
             // 第3階層には出さない(ページ数には数えたまま)。
-            $branches[$branchKey]['labels'][] = ['label' => $label, 'deprioritized' => $this->isDeprioritizedSampleLabel($label), 'own' => count($segments) === 1];
+            $branches[$branchKey]['labels'][] = ['label' => $label, 'deprioritized' => $this->isDeprioritizedSampleLabel($label), 'own' => count($segments) === 1, 'id' => $page->id];
         }
 
         return [$branches, $flatPageLabels, $pagesWithinOrigin, $outsideCounts];
@@ -490,6 +490,109 @@ class AdminComparisonSiteHierarchyBuilder
         return $result;
     }
 
+    /**
+     * 依頼CT: URL版の枝のページid(枝そのもののページを先頭に、あとは見つかった順)。
+     *
+     * @param  list<array{label: string, deprioritized: bool, own?: bool, id?: int}>  $labels
+     * @return list<int>
+     */
+    private function branchPageIds(array $labels): array
+    {
+        $own = [];
+        $rest = [];
+        foreach ($labels as $label) {
+            if (! isset($label['id'])) {
+                continue;
+            }
+            if ($label['own'] ?? false) {
+                $own[] = (int) $label['id'];
+            } else {
+                $rest[] = (int) $label['id'];
+            }
+        }
+
+        return [...$own, ...$rest];
+    }
+
+    /**
+     * 依頼CT: 枝を結果のファイルの中で見分けるキー(箱の下のパス。無ければ名前)。
+     *
+     * @param  array<string, mixed>  $branch
+     */
+    public static function surveyBranchKey(array $branch): string
+    {
+        $path = trim((string) ($branch['path'] ?? ''));
+
+        return $path !== '' ? $path : (string) ($branch['name'] ?? '');
+    }
+
+    /**
+     * 依頼CT: 枝ごとのAI判定の入力。$treeの枝(第3列、上限まで)ごとに、その枝に属する巡回済みページの
+     * 保存済みHTMLを、TOPページ(コーポレートTOPが決まっていればそのHTML、無ければ採用サイトのTOP)の
+     * HTMLを返す。保存済みのファイルを読むだけで、通信はしない(巡回のやり直し・追加の取得はしない)。
+     *
+     * @param  array<string, mixed>  $tree  buildTree()の結果
+     * @return array{top: ?array{label: string, html: string}, branches: list<array{key: string, name: string, htmls: list<string>}>}
+     */
+    public function surveyInputs(WebsiteAnalysis $websiteAnalysis, array $tree): array
+    {
+        $max = (int) config('branch_survey_items.max_branches', 6);
+        $wanted = [];
+        foreach (array_slice((array) ($tree['branches'] ?? []), 0, $max) as $branch) {
+            foreach ((array) ($branch['page_ids'] ?? []) as $id) {
+                $wanted[(int) $id] = true;
+            }
+        }
+
+        $pagesById = [];
+        if ($wanted !== []) {
+            foreach (AnalysisCrawledPage::query()->whereIn('id', array_keys($wanted))->get(['id', 'raw_html_path', 'rendered_html_path']) as $page) {
+                $pagesById[$page->id] = $page;
+            }
+        }
+
+        $branches = [];
+        foreach (array_slice((array) ($tree['branches'] ?? []), 0, $max) as $branch) {
+            $htmls = [];
+            foreach ((array) ($branch['page_ids'] ?? []) as $id) {
+                $page = $pagesById[(int) $id] ?? null;
+                $html = $page === null ? null : ($this->readStoredHtml($page->rendered_html_path) ?? $this->readStoredHtml($page->raw_html_path));
+                if ($html !== null) {
+                    $htmls[] = $html;
+                }
+            }
+            $branches[] = ['key' => self::surveyBranchKey($branch), 'name' => (string) $branch['name'], 'htmls' => $htmls];
+        }
+
+        return ['top' => $this->surveyTopHtml($websiteAnalysis, $tree), 'branches' => $branches];
+    }
+
+    /**
+     * @param  array<string, mixed>  $tree
+     * @return ?array{label: string, html: string}
+     */
+    private function surveyTopHtml(WebsiteAnalysis $websiteAnalysis, array $tree): ?array
+    {
+        $analysisId = (int) $websiteAnalysis->analysis_id;
+        $id = (int) $websiteAnalysis->id;
+
+        if (($tree['corporate'] ?? null) !== null) {
+            $html = $this->corporateStore()->readHtml($analysisId, $id);
+            if ($html !== null) {
+                return ['label' => (string) $tree['corporate']['host'], 'html' => $html];
+            }
+        }
+
+        $sourceScope = $this->scopeResolver->resolveScope($websiteAnalysis);
+        if ($sourceScope === null) {
+            return null;
+        }
+        $top = $this->readTopPage($websiteAnalysis, $sourceScope, $this->fetchedPages($websiteAnalysis));
+        $first = $top['htmls'][0] ?? null;
+
+        return $first === null ? null : ['label' => (string) ($tree['top']['url'] ?? ''), 'html' => $first['html']];
+    }
+
     private function corporateStore(): CorporateTopStore
     {
         return $this->corporateStore ?? app(CorporateTopStore::class);
@@ -689,6 +792,8 @@ class AdminComparisonSiteHierarchyBuilder
                 'page_count' => $info['count'],
                 'pages' => array_slice($labels, 0, $secondLimit),
                 'other_page_count' => max(0, count($labels) - $secondLimit),
+                // 依頼CT: 枝に属する巡回済みページ(枝そのもののページを先頭に)。枝ごとのAI判定の入力になる。
+                'page_ids' => $this->branchPageIds($info['labels']),
             ];
         }
 
@@ -701,6 +806,7 @@ class AdminComparisonSiteHierarchyBuilder
                 'page_count' => count($flatLabels),
                 'pages' => array_slice($labels, 0, $secondLimit),
                 'other_page_count' => max(0, count($labels) - $secondLimit),
+                'page_ids' => $this->branchPageIds($flatLabels),
             ];
         }
 
@@ -931,6 +1037,7 @@ class AdminComparisonSiteHierarchyBuilder
                 'page_count' => count($children) + ($itemPages[$i] !== null ? 1 : 0),
                 'pages' => array_slice($labels, 0, $secondLimit),
                 'other_page_count' => max(0, count($labels) - $secondLimit),
+                'page_ids' => array_values(array_filter([$itemPages[$i]?->id, ...array_map(fn (AnalysisCrawledPage $page) => $page->id, $children)], fn ($id) => $id !== null)),
             ];
         }
 

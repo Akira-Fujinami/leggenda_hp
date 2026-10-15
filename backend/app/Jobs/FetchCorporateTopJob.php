@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\WebsiteAnalysis;
+use App\Services\BranchSurveyItems\BranchSurveyItemsDispatcher;
 use App\Services\CorporateTop\CorporateTopService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -55,6 +56,9 @@ class FetchCorporateTopJob implements ShouldBeUnique, ShouldQueue
                 'exception' => $e::class,
             ]);
         }
+
+        // 依頼CT: 取得が終わった(成功・失敗のどちらでも)あとに、枝ごとの判定へ進む。
+        app(BranchSurveyItemsDispatcher::class)->dispatchFor((int) $websiteAnalysis->analysis_id, (int) $websiteAnalysis->id);
     }
 
     public function failed(?\Throwable $exception): void
@@ -63,5 +67,11 @@ class FetchCorporateTopJob implements ShouldBeUnique, ShouldQueue
             'website_analysis_id' => $this->websiteAnalysisId,
             'exception' => $exception !== null ? $exception::class : null,
         ]);
+
+        // 依頼CT: 取得が途中で打ち切られても、枝ごとの判定(と、それを待つ比較の完了)は進める。
+        $websiteAnalysis = WebsiteAnalysis::find($this->websiteAnalysisId);
+        if ($websiteAnalysis !== null) {
+            app(BranchSurveyItemsDispatcher::class)->dispatchFor((int) $websiteAnalysis->analysis_id, (int) $websiteAnalysis->id);
+        }
     }
 }
