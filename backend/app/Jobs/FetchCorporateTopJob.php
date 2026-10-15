@@ -59,6 +59,8 @@ class FetchCorporateTopJob implements ShouldBeUnique, ShouldQueue
 
         // 依頼CT: 取得が終わった(成功・失敗のどちらでも)あとに、枝ごとの判定へ進む。
         app(BranchSurveyItemsDispatcher::class)->dispatchFor((int) $websiteAnalysis->analysis_id, (int) $websiteAnalysis->id);
+        // 依頼CX: 自社の第一印象(コーポレートTOP・採用TOP)のジョブも、同じ場所から起こす(既定は無効)。
+        app(\App\Services\SiteFirstImpression\SiteFirstImpressionDispatcher::class)->dispatchFor((int) $websiteAnalysis->analysis_id, (int) $websiteAnalysis->id);
     }
 
     public function failed(?\Throwable $exception): void
@@ -72,6 +74,8 @@ class FetchCorporateTopJob implements ShouldBeUnique, ShouldQueue
         $websiteAnalysis = WebsiteAnalysis::find($this->websiteAnalysisId);
         if ($websiteAnalysis !== null) {
             app(BranchSurveyItemsDispatcher::class)->dispatchFor((int) $websiteAnalysis->analysis_id, (int) $websiteAnalysis->id);
+            // 依頼CX: 自社の第一印象(コーポレートTOP・採用TOP)のジョブも、同じ場所から起こす(既定は無効)。
+            app(\App\Services\SiteFirstImpression\SiteFirstImpressionDispatcher::class)->dispatchFor((int) $websiteAnalysis->analysis_id, (int) $websiteAnalysis->id);
         }
     }
 }

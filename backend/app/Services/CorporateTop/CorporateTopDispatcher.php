@@ -28,6 +28,8 @@ class CorporateTopDispatcher
         // 依頼CT: コーポレートTOPを取得しない設定のときは、取得を待たずに枝ごとの判定へ進む。
         if (! (bool) config('admin_comparison_pptx.corporate_top_enabled', true)) {
             app(BranchSurveyItemsDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
+            // 依頼CX: 自社の第一印象(コーポレートTOP・採用TOP)のジョブも、同じ場所から起こす(既定は無効)。
+            app(\App\Services\SiteFirstImpression\SiteFirstImpressionDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
 
             return;
         }
@@ -46,6 +48,8 @@ class CorporateTopDispatcher
             if ($this->store->exists($analysisId, $websiteAnalysisId)) {
                 // 取得済み: 取得ジョブは出さないので、ここから枝ごとの判定へ進む(依頼CT)。
                 app(BranchSurveyItemsDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
+                // 依頼CX: 自社の第一印象(コーポレートTOP・採用TOP)のジョブも、同じ場所から起こす(既定は無効)。
+                app(\App\Services\SiteFirstImpression\SiteFirstImpressionDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
 
                 return;
             }
@@ -61,6 +65,8 @@ class CorporateTopDispatcher
 
             // 取得ジョブを出せなかったときも、枝ごとの判定は進める(階層図はいまの描き方になるだけ)。
             app(BranchSurveyItemsDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
+            // 依頼CX: 自社の第一印象(コーポレートTOP・採用TOP)のジョブも、同じ場所から起こす(既定は無効)。
+            app(\App\Services\SiteFirstImpression\SiteFirstImpressionDispatcher::class)->dispatchFor($analysisId, $websiteAnalysisId);
         }
     }
 }

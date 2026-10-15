@@ -16,7 +16,7 @@ use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 
 /**
- * 依頼CV: 強み・弱みの一文(機械が選んだ1項目・1社から、AIが書く)を、保存済みの巡回結果とブランド・ホイールの判定結果で測る。
+ * 依頼CV・CW: 強み・弱みの一文(機械が選んだ1項目・1社から、AIが引用する一節を選び、文はサーバーが組み立てる)を、保存済みの巡回結果とブランド・ホイールの判定結果で測る。
  * 自社と競合は「ラベル:website_analysis_id」で指定する(ラベルが企業名として材料・文に出る)。
  *
  * AIを呼ぶのは次の2種類だけで、合計が --max-ai-calls(既定0=呼ばない)を超える見込みなら、1回も呼ばずに止まる:
@@ -24,7 +24,7 @@ use Illuminate\Console\Command;
  *                          結果は --cache-file に置き、DBは書き換えない(本番のジョブにある通知・改善提案の起動などの副作用を持ち込まない)。
  *                          判定の前に、巡回結果から入力を作れるか(AIを使わず)確かめ、作れない会社があれば1回も呼ばずに止まる。
  *  - --live              : 強み・弱みの一文(1回。--repeat なら、同じ材料でもう1回)。結果のファイルは作らない。
- * 出力は、取り上げた項目・会社、依頼CT-1の文、AIの文とquote、確認で落ちた理由の符号。根拠の文は出さない。
+ * 出力は、取り上げた項目・会社、依頼CT-1の文、AIが選んだ引用と組み立てた文、確認で落ちた理由の符号。根拠の文は出さない。
  *
  * 開発・検証専用。本番で実行されうる経路には登録しない。
  */
@@ -209,10 +209,10 @@ class MeasureStrengthWeaknessSentenceCommand extends Command
                 $a = $first['candidates'][$key] ?? [];
                 $b = $second['candidates'][$key] ?? [];
                 $this->line(sprintf(
-                    '  %s: AIの文が%s / quoteが%s / 確認の結果が%s',
+                    '  %s: AIが選んだ引用が%s / 組み立てた文が%s / 確認の結果が%s',
                     $name,
-                    ($a['sentence'] ?? null) === ($b['sentence'] ?? null) ? '同じ' : '違う',
                     ($a['quote'] ?? null) === ($b['quote'] ?? null) ? '同じ' : '違う',
+                    ($first[$key]['sentence'] ?? null) === ($second[$key]['sentence'] ?? null) ? '同じ' : '違う',
                     $first['rejected'][$key] === $second['rejected'][$key] ? '同じ' : '違う',
                 ));
             }
@@ -242,11 +242,11 @@ class MeasureStrengthWeaknessSentenceCommand extends Command
             }
             if ($result[$key] !== null) {
                 $this->line("  {$name}(確認を通った): ".$result[$key]['sentence']);
-                $this->line('    quote: '.$result[$key]['quote']);
+                $this->line('    AIが選んだ引用: '.$result[$key]['quote']);
             } else {
                 $this->line("  {$name}: 確認を通らなかった → CT-1の文に戻る。理由: ".implode('、', $result['rejected'][$key]));
                 // 測定のために、確認前のAIの文を見せる(ファイルにもログにも置かない)。
-                $this->line('    (AIが書いた文) '.($result['candidates'][$key]['sentence'] ?? '').' / quote: '.($result['candidates'][$key]['quote'] ?? ''));
+                $this->line('    (AIが選んだ引用) '.($result['candidates'][$key]['quote'] ?? ''));
             }
         }
         $this->line(sprintf('  トークン 入力%d / 出力%d  model=%s prompt=%s', (int) $result['usage_input_tokens'], (int) $result['usage_output_tokens'], (string) $result['model'], (string) $result['prompt_version']));

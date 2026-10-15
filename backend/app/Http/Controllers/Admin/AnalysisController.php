@@ -267,6 +267,13 @@ class AnalysisController extends Controller
                 $slideGenerator->generateSiteHierarchySlide($data, $tree),
             ];
 
+            // 依頼CX: 自社サイトの第一印象(社内用・下書き)。「自社サイトの階層図」の次。保存済みの結果のファイルを読むだけで、
+            // ここでAIを呼ばない・通信しない(無効のとき・ファイルが無いとき・ページが作られなかったときは、入れない)。
+            $firstImpression = $dataBuilder->buildSiteFirstImpressionPage($analysis);
+            if ($firstImpression !== null) {
+                $slideBytesList[] = $slideGenerator->generateSiteFirstImpressionSlide($firstImpression);
+            }
+
             $baseDeckPath = Storage::disk('analysis')->path($attachment->storage_path);
             $mergedPath = $inserter->insert($baseDeckPath, $slideBytesList);
 

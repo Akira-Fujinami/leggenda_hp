@@ -7,9 +7,9 @@ use App\Services\ComparisonCommentary\ComparisonCommentaryException;
 use Illuminate\Support\Facades\Log;
 
 /**
- * 依頼CV: 比較(Analysis)の強み・弱みの一文を作って保存する。流れ: 材料(機械が選んだ1項目・1社)を作る(AIを使わない)
- * → 取り上げる対象があるときだけAIを1回呼ぶ(強み・弱みをまとめて) → 強み・弱みそれぞれをサーバー側で材料と突き合わせる
- * (StrengthWeaknessSentenceVerifier) → ファイルに置く。
+ * 依頼CV・CW: 比較(Analysis)の強み・弱みの一文を作って保存する。流れ: 材料(機械が選んだ1項目・1社)を作る(AIを使わない)
+ * → 取り上げる対象があるときだけAIを1回呼ぶ(強み・弱みの引用する一節をまとめて選ばせる) → 引用をサーバー側で材料と突き合わせる
+ * (StrengthWeaknessSentenceVerifier) → 通った引用を、決まった形の文に入れる(StrengthWeaknessSentenceAssembler) → ファイルに置く。
  *
  * - 結果のファイルが既にあれば、AIを呼び直さない(force=trueを除く)。同じ比較でPPTXを何度ダウンロードしても、
  *   AIは呼ばれない(PPTXを作る側はファイルを読むだけ)。
@@ -103,10 +103,12 @@ class StrengthWeaknessSentenceService
         $base['candidates'] = [];
         foreach (['strength', 'weakness'] as $side) {
             if ($material[$side] === null) {
-                continue;   // 対象が無い側は、AIに書かせていない。依頼CT-1の文のまま。
+                continue;   // 対象が無い側は、AIに選ばせていない。依頼CT-1の文のまま。
             }
-            $base['candidates'][$side] = (array) ($outcome['decoded'][$side] ?? []);
-            $checked = $this->verifier->verify($side, $base['candidates'][$side], $material);
+            // AIが選ぶのは引用だけ(依頼CW)。文は、確認を通った引用から、サーバーが組み立てる。
+            $quote = $outcome['decoded'][$side.'_quote'] ?? null;
+            $base['candidates'][$side] = ['quote' => is_string($quote) ? $quote : null];
+            $checked = $this->verifier->verify($side, is_string($quote) ? $quote : null, $material);
             $base[$side] = $checked['value'];
             $base['rejected'][$side] = $checked['reasons'];
         }

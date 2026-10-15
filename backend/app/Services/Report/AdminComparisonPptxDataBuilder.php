@@ -111,6 +111,48 @@ class AdminComparisonPptxDataBuilder
     }
 
     /**
+     * 依頼CX-4: 「サイトの第一印象(求職者目線)」(社内用・下書き)のページのデータ。保存済みの結果のファイル
+     * (SiteFirstImpressionStore、サーバー側の確認を通った点だけが入っている)を読むだけで、AIも外部通信も使わない。
+     * config('site_first_impression.enabled')がfalseのとき・ファイルが無いとき・ページが作られなかったとき(page=null)は null。
+     * 注記は、見たページのURLと、AIが作成した日付から作る(config)。
+     *
+     * @return ?array{company_name: string, good: list<array{title: string, body: string}>, bad: list<array{title: string, body: string}>, note: string}
+     */
+    public function buildSiteFirstImpressionPage(Analysis $analysis): ?array
+    {
+        if (! (bool) config('site_first_impression.enabled')) {
+            return null;
+        }
+
+        $result = app(\App\Services\SiteFirstImpression\SiteFirstImpressionStore::class)->read((int) $analysis->id);
+        $page = is_array($result['page'] ?? null) ? $result['page'] : null;
+        if ($page === null || ($page['good'] ?? []) === [] || ($page['bad'] ?? []) === []) {
+            return null;
+        }
+
+        $date = '';
+        try {
+            $date = now()->parse((string) ($result['generated_at'] ?? ''))->format((string) config('admin_comparison_pptx.site_first_impression_date_format'));
+        } catch (\Throwable) {
+            $date = '';
+        }
+
+        $sources = (array) ($page['sources'] ?? []);
+        $note = count($sources) >= 2
+            ? sprintf((string) config('admin_comparison_pptx.site_first_impression_note'), (string) $sources[0]['url'], (string) $sources[1]['url'], $date)
+            : sprintf((string) config('admin_comparison_pptx.site_first_impression_note_single'), (string) ($sources[0]['label'] ?? ''), (string) ($sources[0]['url'] ?? ''), $date);
+
+        $strip = fn (array $point) => ['title' => (string) $point['title'], 'body' => (string) $point['body']];
+
+        return [
+            'company_name' => (string) $page['company_name'],
+            'good' => array_map($strip, (array) $page['good']),
+            'bad' => array_map($strip, (array) $page['bad']),
+            'note' => $note,
+        ];
+    }
+
+    /**
      * 依頼CS-4: 「トップメッセージと制度の素材」(社内用・下書き)のページ(1社1ページ)のデータ。
      * 並びは自社 → 競合(入力順 = websites.display_order)。保存済みのHTMLから機械的に抜き出すだけで、
      * AIも外部通信も使わない。候補が1件も無い会社はページを作らない。

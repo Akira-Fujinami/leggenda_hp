@@ -71,6 +71,23 @@ class AnalysisStoragePaths
     }
 
     /**
+     * 依頼CX: 自社のコーポレートTOP・採用TOPの「第一印象」(AIの所見のうち、サーバー側の確認を通った点だけ)のJSON。
+     * マイグレーションは足さず、分析の保存先の中に置く ―― analysisDir()ごとの削除(依頼CIのデータ削除)でいっしょに消える。
+     */
+    public function siteFirstImpressionPath(int $analysisId): string
+    {
+        return $this->analysisDir($analysisId).'/site_first_impression.json';
+    }
+
+    /**
+     * 依頼CX: 第一印象の材料にした画面の画像(AIに渡すだけで、スライドには入れない)。analysisDir()ごとの削除で消える。
+     */
+    public function siteFirstImpressionImagePath(int $analysisId, string $filename): string
+    {
+        return $this->analysisDir($analysisId).'/site_first_impression/'.$filename;
+    }
+
+    /**
      * 依頼CV: 比較(Analysis)単位の「強み・弱みの一文」(機械が選んだ1項目・1社から、AIが書き、サーバー側の確認を通ったものだけ)の
      * JSON。マイグレーションは足さず、分析の保存先の中に置く ―― analysisDir()ごとの削除(依頼CIのデータ削除)でいっしょに消える。
      */

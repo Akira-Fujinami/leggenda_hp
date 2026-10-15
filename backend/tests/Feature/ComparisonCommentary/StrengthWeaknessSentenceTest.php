@@ -18,6 +18,7 @@ use App\Services\Admin\LeadCompanyDeletionService;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\ComparisonCommentary\ComparisonCommentaryException;
 use App\Services\StrengthWeaknessSentence\OpenAiStrengthWeaknessSentenceProvider;
+use App\Services\StrengthWeaknessSentence\StrengthWeaknessSentenceAssembler;
 use App\Services\StrengthWeaknessSentence\StrengthWeaknessSentenceDispatcher;
 use App\Services\StrengthWeaknessSentence\StrengthWeaknessSentenceMaterialBuilder;
 use App\Services\StrengthWeaknessSentence\StrengthWeaknessSentenceProvider;
@@ -33,8 +34,9 @@ use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
- * 依頼CV: 強み・弱みの一文を、機械が選んだ「1項目・1社」から AI で書く。材料(CV-1)・サーバー側の確認(CV-3)・流れ(CV-5)・
- * 測定コマンド。根拠の文・企業名はすべて人工のもの。AIは呼ばず、固定の出力を返す偽物を使う。
+ * 依頼CV・CW: 強み・弱みの一文。機械が選んだ「1項目・1社」から、AIは「引用する一節」を選ぶだけで、文はサーバーが
+ * 決まった形で組み立てる。材料・サーバー側の確認(引用)・文の組み立て・流れ・測定コマンド。
+ * 根拠の文・企業名はすべて人工のもの。AIは呼ばず、固定の出力を返す偽物を使う。
  */
 class StrengthWeaknessSentenceTest extends TestCase
 {
@@ -113,25 +115,24 @@ class StrengthWeaknessSentenceTest extends TestCase
         ]);
     }
 
-    /** 標準の比較で、確認をすべて通る出力(引用の「」は書かず、{QUOTE}とする。依頼CV追補)。 */
+    /** 標準の比較で、確認をすべて通る出力(AIが選ぶのは引用だけ。依頼CW)。 */
     private function goodOutput(): array
     {
         return [
-            'strength' => [
-                'quote' => 'purposeについて具体的に書いています',
-                'sentence' => '自社は{QUOTE}と記載しており、競合3社では読み取れなかった内容を示しています。',
-            ],
-            'weakness' => [
-                'quote' => 'social_contributionについて具体的に書いています',
-                'sentence' => '社会貢献活動は自社サイトから読み取れませんでしたが、A社は{QUOTE}と記載しています。',
-            ],
+            'strength_quote' => 'purposeについて具体的に書いています',
+            'weakness_quote' => 'social_contributionについて具体的に書いています',
         ];
     }
 
-    /** {QUOTE}を「quote」に置き換えた文(サーバーが入れる)。 */
-    private function filled(array $side): string
+    /** 標準の比較で、サーバーが組み立てる文。 */
+    private function expectedStrength(): string
     {
-        return str_replace('{QUOTE}', '「'.$side['quote'].'」', $side['sentence']);
+        return 'パーパスは、競合3社のいずれからも読み取れなかった内容で、自社は「purposeについて具体的に書いています」と記載しています。';
+    }
+
+    private function expectedWeakness(): string
+    {
+        return '社会貢献活動は自社サイトから読み取れませんでしたが、A社は「social_contributionについて具体的に書いています」と記載しています。';
     }
 
     /**
@@ -162,7 +163,7 @@ class StrengthWeaknessSentenceTest extends TestCase
 
             public function promptVersion(): string
             {
-                return 'v1';
+                return 'v3';
             }
 
             public function write(array $material): array
@@ -193,9 +194,9 @@ class StrengthWeaknessSentenceTest extends TestCase
         return app(StrengthWeaknessSentenceMaterialBuilder::class)->build($analysis);
     }
 
-    private function verify(string $side, array $output, Analysis $analysis): array
+    private function verify(string $side, ?string $quote, Analysis $analysis): array
     {
-        return app(StrengthWeaknessSentenceVerifier::class)->verify($side, $output, $this->material($analysis));
+        return app(StrengthWeaknessSentenceVerifier::class)->verify($side, $quote, $this->material($analysis));
     }
 
     // ------------------------------------------------------------------ CV-1 材料
@@ -207,6 +208,7 @@ class StrengthWeaknessSentenceTest extends TestCase
         $this->assertSame('ok', $material['status']);
         // 強み: 自社だけの強み(競合の○が半数未満)のうち、競合の○が最も少ないパーパス(0社)。自社の根拠の文は全文。
         $this->assertSame('purpose', $material['strength']['key']);
+        $this->assertSame('unique', $material['strength']['basis']);
         $this->assertSame($this->evidence('自社', 'purpose'), $material['strength']['evidence']);
         $this->assertSame(3, $material['strength']['competitor_count']);
         $this->assertSame(0, $material['strength']['matched']);
@@ -216,7 +218,6 @@ class StrengthWeaknessSentenceTest extends TestCase
         $this->assertSame('A社', $material['weakness']['company']);
         $this->assertSame($this->evidence('A社', 'social_contribution'), $material['weakness']['evidence']);
         $this->assertSame(2, $material['weakness']['matched']);
-        $this->assertSame(3, $material['weakness']['competitor_count']);
         // プロンプトに載せる部分には、検証用の会社名の一覧を含めない。
         $visible = app(StrengthWeaknessSentenceMaterialBuilder::class)->visible($material);
         $this->assertArrayNotHasKey('competitors', $visible);
@@ -236,6 +237,7 @@ class StrengthWeaknessSentenceTest extends TestCase
         $material = $this->material($analysis);
 
         $this->assertSame('project_initiative', $material['strength']['key']);
+        $this->assertSame('half', $material['strength']['basis']);
         $this->assertSame(2, $material['strength']['matched']);
         $this->assertSame('social_contribution', $material['weakness']['key']);
         $this->assertSame('C', $material['weakness']['company_label']);
@@ -259,12 +261,11 @@ class StrengthWeaknessSentenceTest extends TestCase
         $this->assertNull($result['weakness']);
     }
 
-    public function test_when_only_one_side_has_a_target_only_that_side_is_asked_and_the_other_stays_ct1(): void
+    public function test_when_only_one_side_has_a_target_only_that_side_is_given_to_the_ai_and_the_other_stays_ct1(): void
     {
-        // 強みの対象は無く(自社○の項目は競合全員が○で、調査項目にも結び付かない)、弱みの対象はある。
+        // 強みの対象は無く(自社○の項目は競合全員が○で、調査項目にも結び付かない)、弱みの対象はある(パーパス。取り上げる競合はA社)。
         $analysis = $this->makeComparison(['social_contribution'], [['social_contribution', 'purpose'], ['social_contribution', 'purpose']]);
-        // 弱みの対象は、競合が○で自社×のパーパス(取り上げる競合はA社)。
-        $fake = $this->fakeProvider(['strength' => ['quote' => '', 'sentence' => ''], 'weakness' => ['quote' => 'purposeについて具体的に書いています', 'sentence' => 'パーパスは自社サイトから読み取れませんでしたが、A社は{QUOTE}と記載しています。']]);
+        $fake = $this->fakeProvider(['strength_quote' => null, 'weakness_quote' => 'purposeについて具体的に書いています']);
 
         $material = $this->material($analysis);
         $this->assertNull($material['strength']);
@@ -276,121 +277,177 @@ class StrengthWeaknessSentenceTest extends TestCase
         $this->assertNull($fake->materials[0]['strength']);
         $this->assertNull($result['strength']);
         $this->assertSame([], $result['rejected']['strength'], '対象が無い側は確認しない');
-        $this->assertNotNull($result['weakness']);
+        $this->assertSame('パーパスは自社サイトから読み取れませんでしたが、A社は「purposeについて具体的に書いています」と記載しています。', $result['weakness']['sentence']);
     }
 
-    // ------------------------------------------------------------------ CV-3 サーバー側の確認
+    // ------------------------------------------------------------------ CW-2 サーバーが組み立てる文
 
-    public function test_a_sentence_that_meets_every_check_is_used_with_the_quote(): void
+    public function test_the_sentence_is_assembled_by_the_server_in_the_fixed_form_for_each_way_the_strength_was_chosen(): void
     {
-        $analysis = $this->standard();
+        $assembler = app(StrengthWeaknessSentenceAssembler::class);
+        $quote = 'ある制度の内容を表す一節です';
 
-        foreach (['strength', 'weakness'] as $side) {
-            $checked = $this->verify($side, $this->goodOutput()[$side], $analysis);
-            $this->assertSame([], $checked['reasons'], $side);
-            $this->assertTrue($checked['ok']);
-            $this->assertSame($this->goodOutput()[$side]['quote'], $checked['value']['quote']);
-            // サーバーが{QUOTE}を「quote」に置き換えた文が、使われる。
-            $this->assertSame($this->filled($this->goodOutput()[$side]), $checked['value']['sentence']);
-            $this->assertStringNotContainsString('{QUOTE}', $checked['value']['sentence']);
+        // 自社だけの強み: 競合のうち○がM社のとき。
+        $this->assertSame(
+            "給与水準は、競合3社のうち1社からしか読み取れなかった内容で、自社は「{$quote}」と記載しています。",
+            $assembler->assemble('strength', ['name' => '給与水準', 'basis' => 'unique', 'competitor_count' => 3, 'matched' => 1, 'survey' => null], $quote),
+        );
+        // M=0 のときは「いずれからも」。
+        $this->assertSame(
+            "給与水準は、競合3社のいずれからも読み取れなかった内容で、自社は「{$quote}」と記載しています。",
+            $assembler->assemble('strength', ['name' => '給与水準', 'basis' => 'unique', 'competitor_count' => 3, 'matched' => 0, 'survey' => null], $quote),
+        );
+        // 半数ちょうども同じ形。
+        $this->assertSame(
+            "給与水準は、競合4社のうち2社からしか読み取れなかった内容で、自社は「{$quote}」と記載しています。",
+            $assembler->assemble('strength', ['name' => '給与水準', 'basis' => 'half', 'competitor_count' => 4, 'matched' => 2, 'survey' => null], $quote),
+        );
+        // 求職者調査の割合で選んだ強み: 割合は小数第1位(.0は付けない)。競合との差は書かない。
+        $this->assertSame(
+            "求職者の23.8%が知りたい実現できるキャリアパスについて、自社は「{$quote}」と記載しています。",
+            $assembler->assemble('strength', ['name' => '成長機会', 'basis' => 'survey', 'competitor_count' => 3, 'matched' => 3, 'survey' => ['name' => '実現できるキャリアパス', 'percentage' => 23.8]], $quote),
+        );
+        $this->assertStringContainsString('求職者の17%が知りたい', $assembler->assemble('strength', ['name' => 'x', 'basis' => 'survey', 'competitor_count' => 3, 'matched' => 3, 'survey' => ['name' => '企業の事業・サービス', 'percentage' => 17.0]], $quote));
+        // 弱み: 競合は、企業名(記号表示のときは「競合C」)。自社は「読み取れませんでした」。
+        $this->assertSame(
+            "福利厚生は自社サイトから読み取れませんでしたが、競合Cは「{$quote}」と記載しています。",
+            $assembler->assemble('weakness', ['name' => '福利厚生', 'company' => '競合C'], $quote),
+        );
+    }
+
+    public function test_the_assembled_sentence_has_no_evaluation_or_what_is_conveyed_and_no_claim_of_absence(): void
+    {
+        $assembler = app(StrengthWeaknessSentenceAssembler::class);
+        $quote = 'ある制度の内容を表す一節です';
+        $sentences = [
+            $assembler->assemble('strength', ['name' => '項目', 'basis' => 'unique', 'competitor_count' => 3, 'matched' => 1, 'survey' => null], $quote),
+            $assembler->assemble('strength', ['name' => '項目', 'basis' => 'survey', 'competitor_count' => 3, 'matched' => 1, 'survey' => ['name' => '調査項目', 'percentage' => 10.5]], $quote),
+            $assembler->assemble('weakness', ['name' => '項目', 'company' => 'A社'], $quote),
+        ];
+
+        foreach ($sentences as $sentence) {
+            foreach (array_merge((array) config('comparison_commentary.forbidden_words'), ['伝わります', '具体像']) as $word) {
+                $this->assertStringNotContainsString((string) $word, $sentence);
+            }
         }
     }
 
-    /**
-     * @return array<string, array{0: string, 1: callable(array): array, 2: string}>
-     */
-    public static function brokenOutputs(): array
+    public function test_a_sentence_over_the_limit_makes_that_side_ct1(): void
     {
-        $replace = fn (array $changes) => fn (array $o) => array_replace($o, $changes);
+        $analysis = $this->standard();
+        config(['strength_weakness_sentence.sentence_limit_chars' => 50]);
 
+        $strength = $this->verify('strength', $this->goodOutput()['strength_quote'], $analysis);
+
+        $this->assertFalse($strength['ok']);
+        $this->assertSame(['sentence_too_long'], $strength['reasons']);
+
+        config(['strength_weakness_sentence.sentence_limit_chars' => 100]);
+        $this->assertTrue($this->verify('strength', $this->goodOutput()['strength_quote'], $analysis)['ok']);
+    }
+
+    // ------------------------------------------------------------------ CW-3 サーバー側の確認(引用)
+
+    public function test_a_quote_that_meets_every_check_is_used_in_the_assembled_sentence(): void
+    {
+        $analysis = $this->standard();
+
+        $strength = $this->verify('strength', $this->goodOutput()['strength_quote'], $analysis);
+        $weakness = $this->verify('weakness', $this->goodOutput()['weakness_quote'], $analysis);
+
+        $this->assertSame([], $strength['reasons']);
+        $this->assertSame($this->expectedStrength(), $strength['value']['sentence']);
+        $this->assertSame($this->goodOutput()['strength_quote'], $strength['value']['quote']);
+        $this->assertSame([], $weakness['reasons']);
+        $this->assertSame($this->expectedWeakness(), $weakness['value']['sentence']);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string, 2: string}> [側, quote, 落ちる理由]
+     */
+    public static function brokenQuotes(): array
+    {
         return [
-            '{QUOTE}が無い(弱み)' => ['weakness', $replace(['sentence' => '社会貢献活動は自社サイトから読み取れませんでしたが、A社は記載しています。']), 'placeholder_count'],
-            '{QUOTE}が2つ(強み)' => ['strength', $replace(['sentence' => '自社は{QUOTE}と{QUOTE}を記載しています。']), 'placeholder_count'],
-            '文に「」がある(弱み・本番で落ちた形)' => ['weakness', $replace(['sentence' => '社会貢献活動は自社サイトから読み取れませんでしたが、A社は「{QUOTE}」と記載しています。']), 'bracketed_word_not_quote'],
-            '文に項目名の「」がある(弱み)' => ['weakness', $replace(['sentence' => '「社会貢献活動」は自社サイトから読み取れませんでしたが、A社は{QUOTE}と記載しています。']), 'bracketed_word_not_quote'],
-            '文に『』がある(強み)' => ['strength', $replace(['sentence' => '自社は『給与』について{QUOTE}と記載しています。']), 'bracketed_word_not_quote'],
-            '会社名だけの引用(弱み)' => ['weakness', $replace(['quote' => 'A社は', 'sentence' => '社会貢献活動は自社サイトから読み取れませんでしたが、A社は{QUOTE}と記載しています。']), 'quote_company_name_only'],
-            '会社名だけの引用(強み・自社名の言い換え)' => ['strength', $replace(['quote' => '自社テストは', 'sentence' => '自社は{QUOTE}と記載しています。']), 'quote_company_name_only'],
-            '会社名と助詞だけで8字に満たない残り' => ['weakness', $replace(['quote' => 'A社は具体的に', 'sentence' => '社会貢献活動は自社サイトから読み取れませんでしたが、A社は{QUOTE}と記載しています。']), 'quote_company_name_only'],
-            'quoteが根拠の文に無い(強み)' => ['strength', $replace(['quote' => '材料に無い言葉をここに書きます', 'sentence' => '自社は{QUOTE}と記載しています。']), 'quote_not_in_evidence'],
-            'quoteが根拠の文に無い(弱み・自社の根拠)' => ['weakness', $replace(['quote' => '自社はpurposeについて具体的に書いています', 'sentence' => 'A社は{QUOTE}と記載していますが、自社サイトから読み取れませんでした。']), 'quote_not_in_evidence'],
-            'quoteが短い' => ['strength', $replace(['quote' => '具体的に書いてい', 'sentence' => '自社は{QUOTE}と記載しています。']), 'quote_length'],
-            'quoteが長い' => ['weakness', $replace(['quote' => 'A社はsocial_contributionについて具体的に書いています', 'sentence' => 'A社は{QUOTE}と記載していますが、自社サイトから読み取れませんでした。']), 'quote_length'],
-            'quoteが「は」で終わる' => ['strength', $replace(['quote' => '自社はpurposeについては', 'sentence' => '自社は{QUOTE}と記載しています。']), 'quote_bad_ending'],
-            'quoteが「では」で終わる' => ['weakness', $replace(['quote' => 'social_contributionについて具体的に書いています。では', 'sentence' => '自社サイトから読み取れませんでしたが、A社は{QUOTE}と記載しています。']), 'quote_bad_ending'],
-            'quoteが「の」で終わる' => ['strength', $replace(['quote' => '自社はpurposeについて具体的の', 'sentence' => '自社は{QUOTE}と記載しています。']), 'quote_bad_ending'],
-            '渡していない企業名(強みに競合の名前)' => ['strength', $replace(['sentence' => 'A社と違い、自社は{QUOTE}と記載しています。']), 'company_not_allowed'],
-            '渡していない企業名(弱みに別の競合)' => ['weakness', $replace(['sentence' => '社会貢献活動は自社サイトから読み取れませんでしたが、A社とB社は{QUOTE}と記載しています。']), 'company_not_allowed'],
-            '材料に無い数字(強み)' => ['strength', $replace(['sentence' => '自社は{QUOTE}と記載しており、競合777社では読み取れなかった内容です。']), 'number_not_in_material'],
-            '材料に無い数字(弱み・全角)' => ['weakness', $replace(['sentence' => '社会貢献活動は自社サイトから読み取れませんでしたが、競合９９９社のA社は{QUOTE}と記載しています。']), 'number_not_in_material'],
-            '禁止の言葉(弱み・無い断定)' => ['weakness', $replace(['sentence' => '社会貢献活動は自社サイトには記載がありません。A社は{QUOTE}と記載しています。']), 'forbidden_word'],
-            '禁止の言葉(強み・評価)' => ['strength', $replace(['sentence' => '自社は{QUOTE}と記載しており、優れた内容です。']), 'forbidden_word'],
-            '禁止の言葉(強み・懸念)' => ['strength', $replace(['sentence' => '自社は{QUOTE}と記載していますが、懸念が残ります。']), 'forbidden_word'],
-            '置き換えたあとに100字超え' => ['strength', fn (array $o) => array_replace($o, ['sentence' => '自社は{QUOTE}と記載しており、'.str_repeat('競合3社では読み取れなかった内容を示しています。', 4)]), 'too_long'],
-            '文が空' => ['weakness', $replace(['sentence' => '']), 'empty_sentence'],
+            '根拠の文に無い(強み)' => ['strength', '材料に無い言葉をここに書きます', 'quote_not_in_evidence'],
+            '根拠の文に無い(弱み・自社の根拠)' => ['weakness', '自社はpurposeについて具体的に書いています', 'quote_not_in_evidence'],
+            '短い' => ['strength', '具体的に書いてい', 'quote_length'],
+            '長い' => ['weakness', 'A社はsocial_contributionについて具体的に書いています', 'quote_length'],
+            '会社名だけ(弱み)' => ['weakness', 'A社は', 'quote_company_name_only'],
+            '会社名だけ(強み・自社名の言い換え)' => ['strength', '自社テストは', 'quote_company_name_only'],
+            '会社名と助詞だけで8字に満たない残り' => ['weakness', 'A社は具体的に', 'quote_company_name_only'],
+            '末尾が「は」' => ['strength', '自社はpurposeについては', 'quote_bad_ending'],
+            '末尾が「では」' => ['weakness', 'social_contributionについて具体的に書いてはでは', 'quote_bad_ending'],
+            '末尾が「の」' => ['strength', '自社はpurposeについて具体的の', 'quote_bad_ending'],
+            '末尾が「が」' => ['strength', 'purposeについて具体的に書いていますが', 'quote_bad_ending'],
+            '末尾が「を」' => ['strength', 'purposeについて具体的に書くことを', 'quote_bad_ending'],
+            '末尾が「に」' => ['strength', 'purposeについて具体的に書くことに', 'quote_bad_ending'],
+            '末尾が「も」' => ['strength', 'purposeについて具体的に書くことも', 'quote_bad_ending'],
+            '末尾が「て」(文の途中で切れる)' => ['weakness', 'social_contributionについて具体的に書いて', 'quote_bad_ending'],
+            '末尾が「よう」(文の途中で切れる)' => ['weakness', 'social_contributionについて具体的に書けるよう', 'quote_bad_ending'],
+            '末尾が「ため」(文の途中で切れる)' => ['strength', 'purposeについて具体的に書くため', 'quote_bad_ending'],
+            '末尾が「など」' => ['strength', 'purposeについて具体的に書くなど', 'quote_bad_ending'],
+            '感想の言葉「感じ」' => ['weakness', 'social_contributionについて具体的に書いていると感じた', 'quote_feeling_word'],
+            '感想の言葉「痛感」' => ['weakness', 'social_contributionの大切さを痛感しました', 'quote_feeling_word'],
+            '感想の言葉「思った」' => ['strength', 'purposeについて具体的に書こうと思った', 'quote_feeling_word'],
+            '感想の言葉「印象」' => ['strength', 'purposeについて具体的な印象が強い', 'quote_feeling_word'],
+            '「」を含む' => ['weakness', 'social_contributionについて「具体的」に書いています', 'quote_has_bracket'],
+            '『』を含む' => ['strength', 'purposeについて『具体的』に書いています', 'quote_has_bracket'],
+            '禁止の言葉' => ['weakness', 'social_contributionについて具体的に懸念がある書き方です', 'forbidden_word'],
+            '空' => ['strength', '', 'empty_quote'],
         ];
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('brokenOutputs')]
-    public function test_a_sentence_that_fails_any_check_is_rejected_for_that_side_only(string $side, callable $break, string $reason): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('brokenQuotes')]
+    public function test_a_quote_that_fails_any_check_makes_that_side_ct1_and_only_that_side(string $side, string $quote, string $reason): void
     {
         $analysis = $this->standard();
         $good = $this->goodOutput();
-        $broken = $break($good[$side]);
 
-        $checked = $this->verify($side, $broken, $analysis);
+        $checked = $this->verify($side, $quote, $analysis);
         $this->assertFalse($checked['ok']);
         $this->assertContains($reason, $checked['reasons']);
         $this->assertNull($checked['value']);
 
         // もう片方は影響されない。
         $other = $side === 'strength' ? 'weakness' : 'strength';
-        $this->assertTrue($this->verify($other, $good[$other], $analysis)['ok']);
+        $this->assertTrue($this->verify($other, $good[$other.'_quote'], $analysis)['ok']);
 
-        // 保存される結果では、その側だけnull(依頼CT-1の文に戻る)。落ちた理由の符号は残り、文の中身は残らない。
-        $this->fakeProvider([$side => $broken] + $good);
+        // 保存される結果では、その側だけnull(依頼CT-1の文に戻る)。落ちた理由の符号は残り、引用の中身は残らない。
+        $this->fakeProvider([$side.'_quote' => $quote] + $good);
         $result = app(StrengthWeaknessSentenceService::class)->generate($analysis, true);
         $this->assertNull($result[$side]);
         $this->assertNotNull($result[$other]);
         $this->assertContains($reason, $result['rejected'][$side]);
-        $this->assertStringNotContainsString('について具体的に書いています', json_encode($result['rejected'], JSON_UNESCAPED_UNICODE));
+        $this->assertStringNotContainsString('について', json_encode($result['rejected'], JSON_UNESCAPED_UNICODE));
     }
 
-    public function test_the_company_name_check_also_catches_the_name_without_the_legal_form_and_a_wrong_symbol(): void
+    public function test_the_company_name_check_also_catches_the_name_without_the_legal_form_and_symbols_are_written_as_competitor_and_symbol(): void
     {
-        $analysis = $this->standard();
         // 自社名「株式会社自社テスト」から法人格を除いた「自社テスト」だけの引用も、会社名だけとして落とす。
-        $output = ['quote' => '自社テストの自社テスト', 'sentence' => '自社は{QUOTE}と記載しています。'];
-        $this->assertContains('quote_company_name_only', $this->verify('strength', $output, $analysis)['reasons']);
+        $this->assertContains('quote_company_name_only', $this->verify('strength', '自社テストの自社テスト', $this->standard())['reasons']);
 
-        // 記号で見出しを出す比較(競合4社)では、「競合X」のXが取り上げた競合の記号でなければ落とす。
+        // 記号で見出しを出す比較(競合4社)では、文の競合は「競合C」。
         $four = $this->makeComparison(['project_initiative'], [['project_initiative'], ['project_initiative'], ['social_contribution'], ['social_contribution']]);
-        $good = ['quote' => 'social_contributionについて具体的に書いています', 'sentence' => '社会貢献活動は自社サイトから読み取れませんでしたが、競合Cは{QUOTE}と記載しています。'];
-        $this->assertTrue($this->verify('weakness', $good, $four)['ok']);
-        $wrong = ['sentence' => str_replace('競合C', '競合D', $good['sentence'])] + $good;
-        $this->assertContains('company_not_allowed', $this->verify('weakness', $wrong, $four)['reasons']);
+        $ok = $this->verify('weakness', 'social_contributionについて具体的に書いています', $four);
+        $this->assertTrue($ok['ok']);
+        $this->assertStringContainsString('競合Cは「social_contributionについて具体的に書いています」', $ok['value']['sentence']);
     }
 
-    public function test_a_bracket_inside_the_quote_is_fine_because_the_server_puts_the_brackets_around_it(): void
+    public function test_a_quote_may_be_taken_across_spaces_and_width_differences_of_the_evidence(): void
     {
         $material = [
-            'strength' => ['key' => 'purpose', 'evidence' => '私たちは『挑戦』を大切にする文化があります。', 'competitor_count' => 3, 'matched' => 0, 'survey' => null], 'weakness' => null,
-            'self_names' => ['自社'], 'competitors' => [['label' => 'A社', 'name' => 'A社', 'variants' => ['A社']]], 'symbol_mode' => false,
+            'strength' => ['key' => 'purpose', 'name' => 'パーパス', 'basis' => 'unique', 'survey' => null, 'evidence' => '年間 ２０日の 有給休暇を、全員が取得できます。', 'competitor_count' => 3, 'matched' => 0],
+            'weakness' => null, 'self_names' => ['自社'], 'competitors' => [['label' => 'A社', 'name' => 'A社', 'variants' => ['A社']]], 'symbol_mode' => false,
         ];
-        $verifier = app(StrengthWeaknessSentenceVerifier::class);
-        $quote = '私たちは『挑戦』を大切にする文化があります';
 
-        $checked = $verifier->verify('strength', ['quote' => $quote, 'sentence' => '自社は{QUOTE}と記載しています。'], $material);
+        $checked = app(StrengthWeaknessSentenceVerifier::class)->verify('strength', '年間20日の有給休暇を、全員が取得できます', $material);
 
-        $this->assertTrue($checked['ok']);
-        $this->assertSame("自社は「{$quote}」と記載しています。", $checked['value']['sentence']);
-        // AIがsentenceに括弧を書いたら、quoteが同じでも落とす。
-        $this->assertContains('bracketed_word_not_quote', $verifier->verify('strength', ['quote' => $quote, 'sentence' => "自社は「{$quote}」と{QUOTE}を記載しています。"], $material)['reasons']);
+        $this->assertTrue($checked['ok'], implode(',', $checked['reasons']));
     }
 
     // ------------------------------------------------------------------ 流れ(材料 → AI → 確認 → 保存)
 
-    public function test_the_ai_is_called_once_for_both_sides_and_the_verified_result_is_stored(): void
+    public function test_the_ai_is_called_once_for_both_sides_and_the_server_assembles_the_sentences_from_the_verified_quotes(): void
     {
         $analysis = $this->standard();
         $fake = $this->fakeProvider($this->goodOutput());
@@ -399,8 +456,9 @@ class StrengthWeaknessSentenceTest extends TestCase
 
         $this->assertSame(1, $fake->calls);
         $this->assertSame('purpose', $fake->materials[0]['strength']['key']);
-        $this->assertSame($this->filled($this->goodOutput()['strength']), $result['strength']['sentence']);
-        $this->assertSame($this->goodOutput()['weakness']['quote'], $result['weakness']['quote']);
+        $this->assertSame($this->expectedStrength(), $result['strength']['sentence']);
+        $this->assertSame($this->expectedWeakness(), $result['weakness']['sentence']);
+        $this->assertSame($this->goodOutput()['weakness_quote'], $result['weakness']['quote']);
         $this->assertSame(['strength' => 'purpose', 'strength_basis' => 'unique', 'weakness' => ['item' => 'social_contribution', 'company' => 'A社']], $result['targets']);
         Storage::disk('analysis')->assertExists("analyses/{$analysis->id}/strength_weakness_sentence.json");
 
@@ -409,33 +467,56 @@ class StrengthWeaknessSentenceTest extends TestCase
         $this->assertSame(1, $fake->calls);
     }
 
-    public function test_the_prompt_has_the_material_the_rules_and_the_quote_first_schema(): void
+    public function test_the_ai_output_is_only_the_quotes_and_a_sentence_written_by_the_ai_is_ignored(): void
+    {
+        $analysis = $this->standard();
+        // AIが文を書いてきても(スキーマ違反)、使わない。使うのは、確認を通った引用から組み立てた文だけ。
+        $this->fakeProvider($this->goodOutput() + ['strength' => ['sentence' => 'AIが書いた文です。'], 'sentence' => 'AIが書いた文です。']);
+
+        $result = app(StrengthWeaknessSentenceService::class)->generate($analysis);
+
+        $this->assertSame($this->expectedStrength(), $result['strength']['sentence']);
+        $this->assertStringNotContainsString('AIが書いた', json_encode($result, JSON_UNESCAPED_UNICODE));
+    }
+
+    public function test_the_prompt_asks_for_quotes_only_with_the_rules_and_no_example_sentence(): void
     {
         $provider = new OpenAiStrengthWeaknessSentenceProvider;
         $builder = app(StrengthWeaknessSentenceMaterialBuilder::class);
         $prompt = $provider->buildPrompt($builder->visible($builder->fromBase(app(\App\Services\ComparisonCommentary\ComparisonCommentaryMaterialBuilder::class)->build($this->standard()))));
 
-        // 材料: 項目名・定義・社数・会社・根拠の文(全文)。
+        // 材料: 項目名・定義・根拠の文(全文)。
         $this->assertStringContainsString('パーパス', $prompt);
         $this->assertStringContainsString((string) config('brand_wheel.axes.will_activity.sub_element_definitions.purpose'), $prompt);
-        $this->assertStringContainsString('競合3社のうち、この内容を読み取れたのは0社', $prompt);
         $this->assertStringContainsString($this->evidence('自社', 'purpose'), $prompt);
         $this->assertStringContainsString($this->evidence('A社', 'social_contribution'), $prompt);
-        // 規則。
-        $this->assertStringContainsString('100字以内', $prompt);
-        // 引用の「」はサーバーが入れる({QUOTE}を1つ、括弧は書かせない)。
-        $this->assertStringContainsString('{QUOTE}', $prompt);
-        $this->assertStringContainsString('「」も『』も一切書かない', $prompt);
+        // 規則: 引用だけ選ぶ。文は書かせない。長さ・選ばないもの。
+        $this->assertStringContainsString('文は書かないでください', $prompt);
         $this->assertStringContainsString('10〜35字', $prompt);
-        $this->assertStringContainsString('「マネーフォワードでは」', $prompt);
-        $this->assertStringContainsString('読み取れませんでした', $prompt);
+        $this->assertStringContainsString('会社名だけの部分', $prompt);
+        $this->assertStringContainsString('個人の感想・心情', $prompt);
+        $this->assertStringContainsString('文の途中で切れる部分', $prompt);
+        foreach ((array) config('strength_weakness_sentence.quote_feeling_words') as $word) {
+            $this->assertStringContainsString((string) $word, $prompt);
+        }
+        foreach ((array) config('strength_weakness_sentence.quote_bad_endings') as $ending) {
+            $this->assertStringContainsString((string) $ending, $prompt);
+        }
         foreach ((array) config('comparison_commentary.forbidden_words') as $word) {
             $this->assertStringContainsString((string) $word, $prompt, '禁止の言葉は依頼CUと同じ一覧をプロンプトにも載せる');
         }
-        // 出力は quote → sentence の順(先に引用を決めさせる)。
+        // 文の例は書かない(引用の良い例・悪い例だけ)。「求職者に何が伝わるか」の一言も、{QUOTE}の目印も無い。
+        $this->assertStringNotContainsString('記載しています', $prompt);
+        $this->assertStringNotContainsString('伝わります', $prompt);
+        $this->assertStringNotContainsString('具体像', $prompt);
+        $this->assertStringNotContainsString('{QUOTE}', $prompt);
+        $this->assertStringContainsString('良い例', $prompt);
+        $this->assertStringContainsString('悪い例', $prompt);
+        // 出力は引用だけ(nullを許す)。
         $schema = $provider->buildResponseSchema();
-        $this->assertSame(['strength', 'weakness'], $schema['required']);
-        $this->assertSame(['quote', 'sentence'], array_keys($schema['properties']['strength']['properties']));
+        $this->assertSame(['strength_quote', 'weakness_quote'], $schema['required']);
+        $this->assertSame(['string', 'null'], $schema['properties']['strength_quote']['type']);
+        $this->assertArrayNotHasKey('sentence', $schema['properties']);
         $this->assertFalse($schema['additionalProperties']);
     }
 
@@ -453,10 +534,10 @@ class StrengthWeaknessSentenceTest extends TestCase
         $this->assertSame(0, $fake->calls);
     }
 
-    public function test_the_log_has_only_counts_and_reason_codes(): void
+    public function test_the_log_has_only_counts_reason_codes_and_the_basis(): void
     {
         $analysis = $this->standard();
-        $this->fakeProvider(['strength' => ['quote' => 'purposeについて具体的に書いています', 'sentence' => '自社は{QUOTE}と記載していますが、懸念があります。']] + $this->goodOutput());
+        $this->fakeProvider(['strength_quote' => 'purposeについて懸念がある書き方です'] + $this->goodOutput());
         Log::spy();
 
         app(StrengthWeaknessSentenceService::class)->generate($analysis);
@@ -467,9 +548,91 @@ class StrengthWeaknessSentenceTest extends TestCase
             }
             $json = json_encode($context, JSON_UNESCAPED_UNICODE);
 
-            // 強みをどの選び方で選んだかが出る(依頼CV追補)。
-            return str_contains($json, '"strength_basis":"unique"') && str_contains($json, 'forbidden_word') && ! str_contains($json, '懸念') && ! str_contains($json, 'A社') && ! str_contains($json, '具体的に書いています');
+            return str_contains($json, '"strength_basis":"unique"') && str_contains($json, 'forbidden_word') && str_contains($json, 'quote_not_in_evidence')
+                && ! str_contains($json, '懸念') && ! str_contains($json, 'A社') && ! str_contains($json, '具体的に書いています');
         })->once();
+    }
+
+    // ------------------------------------------------------------------ CVA-2 強みの選び方(求職者調査の割合)
+
+    public function test_the_unique_strength_and_exactly_half_come_before_the_survey_basis(): void
+    {
+        $unique = $this->material($this->standard());
+        $this->assertSame('unique', $unique['strength']['basis']);
+        $this->assertNull($unique['strength']['survey']);
+
+        // 競合4社(記号)で、自社○の項目の競合の○が2社(半数ちょうど)。
+        $half = $this->material($this->makeComparison(['project_initiative'], [['project_initiative'], ['project_initiative'], ['brand_recognition'], ['social_contribution']]));
+        $this->assertSame('half', $half['strength']['basis']);
+    }
+
+    public function test_when_there_is_no_unique_or_half_item_the_item_tied_to_the_survey_item_with_the_highest_percentage_is_chosen(): void
+    {
+        // 自社○: purpose(調査: 企業のビジョンや理念 16.0%) と business_expansion(企業の事業・サービス 17.0%)。競合3社のうち purpose は3社、business_expansion は2社が○。
+        $material = $this->material($this->makeComparison(['purpose', 'business_expansion'], [
+            ['purpose', 'business_expansion'],
+            ['purpose', 'business_expansion'],
+            ['purpose'],
+        ]));
+
+        $this->assertSame('survey', $material['strength']['basis']);
+        $this->assertSame('business_expansion', $material['strength']['key']);
+        $this->assertSame('企業の事業・サービス', $material['strength']['survey']['name']);
+        $this->assertSame(17.0, $material['strength']['survey']['percentage']);
+        $this->assertSame($this->evidence('自社', 'business_expansion'), $material['strength']['evidence'], '根拠の文は自社のもの');
+    }
+
+    public function test_with_the_same_percentage_the_item_with_fewer_competitors_comes_first_then_the_table_order(): void
+    {
+        // business_expansion と competitiveness は、どちらも 企業の事業・サービス(17.0%)。
+        $fewer = $this->material($this->makeComparison(['business_expansion', 'competitiveness'], [
+            ['business_expansion', 'competitiveness'],
+            ['business_expansion', 'competitiveness'],
+            ['business_expansion'],
+        ]));
+        $this->assertSame('survey', $fewer['strength']['basis']);
+        $this->assertSame('competitiveness', $fewer['strength']['key'], '○の競合が少ない項目(2社)が、3社の項目より先');
+
+        $order = $this->material($this->makeComparison(['business_expansion', 'competitiveness'], [
+            ['business_expansion', 'competitiveness'],
+            ['business_expansion', 'competitiveness'],
+            ['business_expansion', 'competitiveness'],
+        ]));
+        $this->assertSame('business_expansion', $order['strength']['key'], '同数なら、比較表の並び順で先の項目');
+    }
+
+    public function test_an_item_without_a_survey_item_is_never_chosen_for_the_survey_basis_and_then_the_strength_stays_ct1(): void
+    {
+        // 社会貢献活動は、調査項目に結び付かない(survey_option=null)。自社が○でも、強みには選ばれない。
+        $material = $this->material($this->makeComparison(['social_contribution'], [['social_contribution', 'purpose'], ['social_contribution', 'purpose'], ['social_contribution', 'purpose']]));
+
+        $this->assertNull($material['strength'], '選べないときは、AIに渡さずCT-1');
+        $this->assertSame('purpose', $material['weakness']['key']);
+    }
+
+    public function test_the_survey_basis_sentence_is_assembled_with_the_percentage_and_the_survey_item(): void
+    {
+        $analysis = $this->makeComparison(['purpose', 'business_expansion'], [['purpose', 'business_expansion'], ['purpose', 'business_expansion'], ['purpose']]);
+        $this->fakeProvider(['strength_quote' => 'business_expansionについて具体的に書いています', 'weakness_quote' => null]);
+
+        $result = app(StrengthWeaknessSentenceService::class)->generate($analysis);
+
+        $this->assertSame('求職者の17%が知りたい企業の事業・サービスについて、自社は「business_expansionについて具体的に書いています」と記載しています。', $result['strength']['sentence']);
+        $this->assertSame('survey', $result['targets']['strength_basis']);
+    }
+
+    public function test_the_basis_is_stored_and_none_when_the_strength_could_not_be_chosen(): void
+    {
+        $fake = $this->fakeProvider($this->goodOutput());
+        $service = app(StrengthWeaknessSentenceService::class);
+
+        $survey = $service->generate($this->makeComparison(['purpose', 'business_expansion'], [['purpose', 'business_expansion'], ['purpose', 'business_expansion'], ['purpose']]));
+        $this->assertSame('survey', $survey['targets']['strength_basis']);
+
+        $none = $service->generate($this->makeComparison(['social_contribution'], [['social_contribution', 'purpose'], ['social_contribution', 'purpose'], ['social_contribution', 'purpose']]));
+        $this->assertSame('none', $none['targets']['strength_basis']);
+        $this->assertNull($none['strength']);
+        $this->assertSame(2, $fake->calls);
     }
 
     // ------------------------------------------------------------------ CV-5 いつ実行するか
@@ -624,107 +787,6 @@ class StrengthWeaknessSentenceTest extends TestCase
         app(LeadCompanyDeletionService::class)->destroy($company, $company->company_name);
 
         Storage::disk('analysis')->assertMissing($path);
-    }
-
-    // ------------------------------------------------------------------ CVA-2 強みの選び方(求職者調査の割合)
-
-    /** 自社○の項目を、競合の半数以上が○(= 自社だけの強みでも半数ちょうどでもない)にした比較。競合3社。 */
-    private function noUniqueStrength(array $self, array $perCompetitor): Analysis
-    {
-        return $this->makeComparison($self, $perCompetitor);
-    }
-
-    public function test_the_unique_strength_and_exactly_half_come_before_the_survey_basis(): void
-    {
-        $unique = $this->material($this->standard());
-        $this->assertSame('unique', $unique['strength']['basis']);
-        $this->assertNull($unique['strength']['survey']);
-
-        // 競合4社(記号)で、自社○の項目の競合の○が2社(半数ちょうど)。
-        $half = $this->material($this->makeComparison(['project_initiative'], [['project_initiative'], ['project_initiative'], ['brand_recognition'], ['social_contribution']]));
-        $this->assertSame('half', $half['strength']['basis']);
-    }
-
-    public function test_when_there_is_no_unique_or_half_item_the_item_tied_to_the_survey_item_with_the_highest_percentage_is_chosen(): void
-    {
-        // 自社○: purpose(調査: 企業のビジョンや理念 16.0%) と business_expansion(企業の事業・サービス 17.0%)。競合3社のうち purpose は3社、business_expansion は2社が○。
-        $analysis = $this->noUniqueStrength(['purpose', 'business_expansion'], [
-            ['purpose', 'business_expansion'],
-            ['purpose', 'business_expansion'],
-            ['purpose'],
-        ]);
-
-        $material = $this->material($analysis);
-
-        $this->assertSame('survey', $material['strength']['basis']);
-        $this->assertSame('business_expansion', $material['strength']['key']);
-        $this->assertSame('企業の事業・サービス', $material['strength']['survey']['name']);
-        $this->assertSame(17.0, $material['strength']['survey']['percentage']);
-        $this->assertSame($this->evidence('自社', 'business_expansion'), $material['strength']['evidence'], '根拠の文は自社のもの');
-    }
-
-    public function test_with_the_same_percentage_the_item_with_fewer_competitors_comes_first_then_the_table_order(): void
-    {
-        // business_expansion と competitiveness は、どちらも 企業の事業・サービス(17.0%)。
-        $fewer = $this->material($this->noUniqueStrength(['business_expansion', 'competitiveness'], [
-            ['business_expansion', 'competitiveness'],
-            ['business_expansion', 'competitiveness'],
-            ['business_expansion'],
-        ]));
-        $this->assertSame('survey', $fewer['strength']['basis']);
-        $this->assertSame('competitiveness', $fewer['strength']['key'], '○の競合が少ない項目(2社)が、3社の項目より先');
-
-        $order = $this->material($this->noUniqueStrength(['business_expansion', 'competitiveness'], [
-            ['business_expansion', 'competitiveness'],
-            ['business_expansion', 'competitiveness'],
-            ['business_expansion', 'competitiveness'],
-        ]));
-        $this->assertSame('business_expansion', $order['strength']['key'], '同数なら、比較表の並び順で先の項目');
-    }
-
-    public function test_an_item_without_a_survey_item_is_never_chosen_for_the_survey_basis_and_then_the_strength_stays_ct1(): void
-    {
-        // 社会貢献活動は、調査項目に結び付かない(survey_option=null)。自社が○でも、強みには選ばれない。
-        $analysis = $this->noUniqueStrength(['social_contribution'], [['social_contribution', 'purpose'], ['social_contribution', 'purpose'], ['social_contribution', 'purpose']]);
-
-        $material = $this->material($analysis);
-
-        $this->assertNull($material['strength'], '選べないときは、AIに書かせずCT-1');
-        $this->assertSame('purpose', $material['weakness']['key']);
-    }
-
-    public function test_the_survey_name_and_percentage_are_in_the_prompt_without_the_competitor_difference_and_the_percentage_passes_the_number_check(): void
-    {
-        $analysis = $this->noUniqueStrength(['purpose', 'business_expansion'], [['purpose', 'business_expansion'], ['purpose', 'business_expansion'], ['purpose']]);
-        $builder = app(StrengthWeaknessSentenceMaterialBuilder::class);
-        $material = $this->material($analysis);
-        $prompt = (new OpenAiStrengthWeaknessSentenceProvider)->buildPrompt($builder->visible($material));
-
-        $this->assertStringContainsString('求職者の17%が知りたい情報: 企業の事業・サービス', $prompt);
-        $this->assertStringContainsString('「求職者の17%が知りたい企業の事業・サービスについて、自社が具体的に書いていること」', $prompt);
-        $this->assertStringContainsString('競合との差や、競合の社数は書かない', $prompt);
-        $this->assertStringNotContainsString('競合3社のうち、この内容を読み取れたのは', explode('【弱み】', $prompt)[0], '強みの材料には競合の社数を載せない');
-
-        $verifier = app(StrengthWeaknessSentenceVerifier::class);
-        $quote = 'business_expansionについて具体的に書いています';
-        $ok = $verifier->verify('strength', ['quote' => $quote, 'sentence' => '求職者の17%が知りたい企業の事業・サービスについて、自社は{QUOTE}と具体的に書いています。'], $material);
-        $this->assertTrue($ok['ok'], implode(',', $ok['reasons']));
-        $bad = $verifier->verify('strength', ['quote' => $quote, 'sentence' => '求職者の23%が知りたい企業の事業・サービスについて、自社は{QUOTE}と具体的に書いています。'], $material);
-        $this->assertContains('number_not_in_material', $bad['reasons']);
-    }
-
-    public function test_the_basis_is_stored_and_none_when_the_strength_could_not_be_chosen(): void
-    {
-        $fake = $this->fakeProvider($this->goodOutput());
-        $service = app(StrengthWeaknessSentenceService::class);
-
-        $survey = $service->generate($this->noUniqueStrength(['purpose', 'business_expansion'], [['purpose', 'business_expansion'], ['purpose', 'business_expansion'], ['purpose']]));
-        $this->assertSame('survey', $survey['targets']['strength_basis']);
-
-        $none = $service->generate($this->noUniqueStrength(['social_contribution'], [['social_contribution', 'purpose'], ['social_contribution', 'purpose'], ['social_contribution', 'purpose']]));
-        $this->assertSame('none', $none['targets']['strength_basis']);
-        $this->assertNull($none['strength']);
-        $this->assertSame(2, $fake->calls);
     }
 
     // ------------------------------------------------------------------ 測定コマンド

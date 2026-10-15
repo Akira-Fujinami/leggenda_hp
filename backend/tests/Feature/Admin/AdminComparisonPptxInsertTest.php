@@ -427,6 +427,72 @@ class AdminComparisonPptxInsertTest extends TestCase
     }
 
     // ------------------------------------------------------------------
+    // 依頼CX: サイトの第一印象(社内用・下書き)。PPTXのダウンロードでは、保存済みのファイルを読むだけ(AIも通信も無い)。
+    // ------------------------------------------------------------------
+
+    public function test_the_download_adds_the_first_impression_slide_after_the_hierarchy_slide_from_the_saved_file_without_the_ai_or_the_network(): void
+    {
+        config(['site_first_impression.enabled' => true]);
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+        \Illuminate\Support\Facades\Http::fake();
+        app()->instance(\App\Services\SiteFirstImpression\SiteFirstImpressionProviderFactory::class, new class extends \App\Services\SiteFirstImpression\SiteFirstImpressionProviderFactory
+        {
+            public function make(): \App\Services\SiteFirstImpression\SiteFirstImpressionProvider
+            {
+                throw new \RuntimeException('ダウンロードでAIの設定を作ってはいけない');
+            }
+        });
+        $analysis = $this->makeComparisonAnalysis();
+        app(\App\Services\SiteFirstImpression\SiteFirstImpressionStore::class)->write($analysis->id, [
+            'status' => 'done', 'generated_at' => now()->toIso8601String(),
+            'page' => [
+                'company_name' => '自社テスト',
+                'good' => [['title' => '良い点の見出しです', 'body' => '良い点の本文です。', 'evidence' => [['id' => 'corp-nav-1', 'text' => 'x']]]],
+                'bad' => [['title' => '悪い点の見出しです', 'body' => '悪い点の本文です。', 'evidence' => [['id' => 'corp-nav-1', 'text' => 'x']]]],
+                'sources' => [['label' => 'コーポレートTOP', 'url' => 'https://corp.example.com/'], ['label' => '採用TOP', 'url' => 'https://self.example.com/recruit/']],
+            ],
+        ]);
+        $this->attachPptx($analysis, $this->makeMinimalDeck(['内容1', '参照元']));
+
+        $response = $this->asAdmin()->get(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false));
+
+        $response->assertOk();
+        $tmp = $this->reservedTempPath('downloaded', 'pptx');
+        file_put_contents($tmp, $response->streamedContent());
+        $zip = new ZipArchive;
+        $this->assertTrue($zip->open($tmp) === true);
+        preg_match_all('/<p:sldId\s/', (string) $zip->getFromName('ppt/presentation.xml'), $m);
+        $this->assertCount(8, $m[0], '元の2枚 + 差し込み5枚 + 第一印象1枚(階層図の次)');
+        // 最後に差し込んだ1枚(第一印象)が、階層図の次にある。
+        $slides = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = (string) $zip->getNameIndex($i);
+            if (preg_match('#^ppt/slides/slide(\d+)\.xml$#', $name, $n) === 1) {
+                $slides[(int) $n[1]] = html_entity_decode((string) $zip->getFromName($name), ENT_QUOTES | ENT_XML1, 'UTF-8');
+            }
+        }
+        $zip->close();
+        @unlink($tmp);
+        $found = array_keys(array_filter($slides, fn (string $xml) => str_contains($xml, 'サイトの第一印象（求職者目線）')));
+        $this->assertCount(1, $found);
+        $this->assertStringContainsString('良い点の見出しです', $slides[$found[0]]);
+        $this->assertStringNotContainsString('<p:pic', $slides[$found[0]], '画像はスライドに入れない');
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+
+        // 無効のとき・ページが作られなかったときは、入れない(7枚のまま)。
+        config(['site_first_impression.enabled' => false]);
+        $off = $this->asAdmin()->get(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false));
+        $tmp = $this->reservedTempPath('downloaded', 'pptx');
+        file_put_contents($tmp, $off->streamedContent());
+        $zip = new ZipArchive;
+        $zip->open($tmp);
+        preg_match_all('/<p:sldId\s/', (string) $zip->getFromName('ppt/presentation.xml'), $m);
+        $zip->close();
+        @unlink($tmp);
+        $this->assertCount(7, $m[0]);
+    }
+
+    // ------------------------------------------------------------------
     // 依頼CU: 強み・弱みの一文(AI)。PPTXのダウンロードでは、保存済みのファイルを読むだけ。
     // ------------------------------------------------------------------
 

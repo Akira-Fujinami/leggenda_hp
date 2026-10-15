@@ -601,6 +601,12 @@ class AnalysisPipeline
             return;
         }
 
+        // 依頼CX: 自社の第一印象(コーポレートTOP・採用TOP)のジョブが終わるまで待つ(config('site_first_impression.enabled')がtrueの比較のみ)。
+        // ジョブが終わった時点(SiteFirstImpressionDispatcher::afterFinished())で、ここへ戻ってくる。
+        if (app(\App\Services\SiteFirstImpression\SiteFirstImpressionGate::class)->shouldWait($websiteAnalysis)) {
+            return;
+        }
+
         FinalizeWebsiteAnalysisJob::dispatch($websiteAnalysis->analysis_id, $websiteAnalysisId)
             ->onQueue(JobType::FinalizeWebsiteAnalysis->queueName());
     }

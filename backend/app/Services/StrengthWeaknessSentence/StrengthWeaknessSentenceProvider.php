@@ -3,7 +3,7 @@
 namespace App\Services\StrengthWeaknessSentence;
 
 /**
- * 依頼CV-2: 機械が選んだ「1項目・1社」の材料から、強み・弱みの一文を1回の呼び出しでまとめて書くAIの呼び出し口。
+ * 依頼CV-2・CW-1: 機械が選んだ「1項目・1社」の材料から、強み・弱みそれぞれの引用する一節を1回の呼び出しでまとめて選ぶAIの呼び出し口。
  * テストでは固定の出力を返す偽物に差し替える。
  */
 interface StrengthWeaknessSentenceProvider

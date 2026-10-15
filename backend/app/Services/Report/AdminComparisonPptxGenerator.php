@@ -2981,7 +2981,98 @@ class AdminComparisonPptxGenerator
         });
     }
 
-    private function addTopMessageDraftBand(Slide $slide): void
+    /**
+     * 依頼CX-4: 「{自社名}：サイトの第一印象(求職者目線)」(社内用・下書き)。上に赤い帯(素材ページと同じ)。左に「良いイメージ」、
+     * 右に「悪いイメージ」。各点は太字のtitleと、その下のbody。下に注記(見た2ページのURLと日付)。画像は入れない(AIに渡しただけ)。
+     * 文字が箱に収まらないときは、まず文字を小さくし(下限はtop_message_min_font_ratio)、それでも収まらなければ後ろの点から減らして
+     * 「ほかN件」と出す。AIの出力は、サーバー側の確認(SiteFirstImpressionVerifier)を通った点だけがここに来る。
+     *
+     * @param  array{company_name: string, good: list<array{title: string, body: string}>, bad: list<array{title: string, body: string}>, note: string}  $page
+     */
+    public function generateSiteFirstImpressionSlide(array $page): string
+    {
+        return $this->renderSingleSlide(function (Slide $slide) use ($page): void {
+            $this->addTopMessageDraftBand($slide, (string) config('admin_comparison_pptx.site_first_impression_band_text'));
+            $this->addKicker($slide);
+            $this->addTopMessageTitle($slide, $page['company_name'], (string) config('admin_comparison_pptx.site_first_impression_title'));
+
+            $gap = 0.3;
+            $width = (self::CONTENT_WIDTH_IN - $gap) / 2;
+            $headings = (array) config('admin_comparison_pptx.site_first_impression_headings');
+            $this->addFirstImpressionColumn($slide, (string) $headings['good'], $page['good'], self::LEFT_IN, $width, self::NAVY);
+            $this->addFirstImpressionColumn($slide, (string) $headings['bad'], $page['bad'], self::LEFT_IN + $width + $gap, $width, self::COPPER);
+            $this->addNoteFooter($slide, $page['note']);
+        });
+    }
+
+    /**
+     * @param  list<array{title: string, body: string}>  $points
+     */
+    private function addFirstImpressionColumn(Slide $slide, string $heading, array $points, float $left, float $width, string $accent): void
+    {
+        $top = self::TM_DRAFT_BODY_TOP_IN;
+        $height = self::TM_BODY_BOTTOM_IN - $top;
+        $this->addFilledRect($slide, $left, $top, $width, $height, self::SELF_TINT);
+        $this->addFilledRect($slide, $left, $top, 0.06, $height, $accent);
+
+        $innerLeft = $left + 0.25;
+        $innerWidth = $width - 0.4;
+
+        $title = $slide->createRichTextShape();
+        $this->position($title, $innerLeft, $top + 0.08, $innerWidth, 0.3);
+        $this->font($title->getActiveParagraph()->createTextRun($heading), 12, true, $accent);
+
+        $boxTop = $top + 0.45;
+        $boxHeight = self::TM_BODY_BOTTOM_IN - 0.1 - $boxTop;
+        $box = $slide->createRichTextShape();
+        $this->position($box, $innerLeft, $boxTop, $innerWidth, $boxHeight);
+        $box->setWrap(RichText::WRAP_SQUARE);
+
+        $maxPt = (int) config('admin_comparison_pptx.site_first_impression_body_max_pt');
+        $floor = max(7, (int) round($maxPt * (float) config('admin_comparison_pptx.top_message_min_font_ratio')));
+        $gapIn = (float) config('admin_comparison_pptx.site_first_impression_point_gap_in');
+
+        $needs = function (array $shown, int $pt, int $hidden) use ($innerWidth, $gapIn): float {
+            $used = 0.0;
+            foreach ($shown as $point) {
+                $used += $this->topMessageTextHeight($point['title'], $innerWidth, $pt + 1, true) + $this->topMessageTextHeight($point['body'], $innerWidth, $pt, false) + $gapIn;
+            }
+
+            return $used + ($hidden > 0 ? $pt * 1.25 / 72 + $gapIn : 0);
+        };
+
+        $shown = $points;
+        $hidden = 0;
+        $size = $floor;
+        for ($pt = $maxPt; $pt >= $floor; $pt--) {
+            if ($needs($shown, $pt, $hidden) <= $boxHeight) {
+                $size = $pt;
+                break;
+            }
+        }
+        while (count($shown) > 1 && $needs($shown, $size, $hidden) > $boxHeight) {
+            array_pop($shown);
+            $hidden++;
+        }
+
+        $first = true;
+        foreach ($shown as $point) {
+            $titleParagraph = $first ? $box->getActiveParagraph() : $box->createParagraph();
+            $first = false;
+            $this->font($titleParagraph->createTextRun($point['title']), $size + 1, true, self::NAVY);
+            $bodyParagraph = $box->createParagraph();
+            $bodyParagraph->setSpacingAfter((int) round($gapIn * 72));
+            $this->font($bodyParagraph->createTextRun($point['body']), $size, false, self::BODY_TEXT);
+        }
+        if ($hidden > 0) {
+            $this->font($box->createParagraph()->createTextRun(sprintf((string) config('admin_comparison_pptx.site_first_impression_more'), $hidden)), $size, false, self::MUTED);
+        }
+    }
+
+    /**
+     * @param  ?string  $text  帯の文言。省略(null)なら、素材ページ(依頼CS)の文言
+     */
+    private function addTopMessageDraftBand(Slide $slide, ?string $text = null): void
     {
         $this->addFilledRect($slide, 0, 0, self::SLIDE_WIDTH_IN, self::TM_DRAFT_BAND_HEIGHT_IN, (string) config('admin_comparison_pptx.top_message_draft_band_fill'));
 
@@ -2990,7 +3081,7 @@ class AdminComparisonPptxGenerator
         $box->setWrap(RichText::WRAP_SQUARE);
         $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $this->font(
-            $box->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_draft_band_text')),
+            $box->getActiveParagraph()->createTextRun($text ?? (string) config('admin_comparison_pptx.top_message_draft_band_text')),
             (int) config('admin_comparison_pptx.top_message_draft_band_pt'),
             true,
             (string) config('admin_comparison_pptx.top_message_draft_band_text_color'),
