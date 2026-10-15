@@ -811,7 +811,8 @@ return [
     | 弱みの書式の引数: 1=項目名 2=競合(企業名。記号で見出しを出すときは symbol_label_template を通す) 3=競合の根拠の一節
     */
     'strength_weakness_detail' => [
-        'enabled' => (bool) env('STRENGTH_WEAKNESS_DETAIL_ENABLED', true),
+        // 依頼CV: 一節が会社名だけの切れ端になったため、既定をfalseに戻した(この文は出力経路から外している)。
+        'enabled' => (bool) env('STRENGTH_WEAKNESS_DETAIL_ENABLED', false),
         // 一節の長さ(文字)と、数字・固有の名前(カタカナ語・英字)を含む節を先に使うためのパターン。
         'snippet_min_chars' => 8,
         'snippet_max_chars' => 40,

@@ -16,11 +16,11 @@ namespace App\Services\Report;
  * 依頼CHの「件数での比較に適さない」会社(自社・競合)が1社でもあるときは、強み・弱みは出さず、1行の文言だけ。
  * 自社の判定が成立していない(self_readable=false)とき、競合がいないときは、何も出さない(null)。
  *
- * 依頼CUA: 項目と根拠の一節で書いた文($detail、AIを使わない。StrengthWeaknessDetailComposer)があるときは、強み・弱みとも
- * その文を使う(作れなかった側はnullなので、上のCT-1の一文のまま)。依頼CU: AIが書いて、サーバー側の確認
- * (ComparisonCommentaryVerifier)を通った弱みの文($commentary)があるときだけ、弱みをAIの文に置き換える(AIの強みは使わない。
- * AIの文が落ちたら、CT-1ではなく$detailの文のまま)。
- * 注記: ai_used=AIの弱みを使った、detail_used=AIを使わない文を使った(スライドの注記・文字の大きさに使う)。
+ * 依頼CV: AIが書いて、サーバー側の確認(StrengthWeaknessSentenceVerifier)を通った一文($commentary、
+ * StrengthWeaknessSentenceStoreのファイル)があるときは、その側をAIの文に置き換える(強み・弱みそれぞれ。落ちた側・対象が無い側は
+ * nullなので、上のCT-1の文のまま)。$detail(依頼CUAの一節の文、AIを使わない)は引数として残してあるが、比較ページの出力経路では
+ * 渡さない(一節が会社名だけの切れ端になったため)。
+ * 注記: ai_used=AIの文を使った、detail_used=$detailの文を使った(スライドの注記・文字の大きさに使う)。
  * 点数による「読み取れた記述が少ない」の判定は、これらより先に効く。
  */
 class ComparisonStrengthWeaknessComposer
@@ -28,7 +28,7 @@ class ComparisonStrengthWeaknessComposer
     /**
      * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies  先頭が自社
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
-     * @param  ?array<string, mixed>  $commentary  ComparisonCommentaryStoreが読んだ結果(weaknessは確認を通った文かnull。strengthは使わない)
+     * @param  ?array<string, mixed>  $commentary  ComparisonCommentaryStoreが読んだ結果(strength/weaknessは確認を通った文かnull)
      * @param  ?array{strength: ?string, weakness: ?string}  $detail  StrengthWeaknessDetailComposerの文(AIを使わない)
      * @return ?array{notice: ?string, strength: ?string, weakness: ?string, ai_used: bool, detail_used: bool}
      */
@@ -53,14 +53,15 @@ class ComparisonStrengthWeaknessComposer
 
         $detailStrength = $this->aiSentence($detail, 'strength');
         $detailWeakness = $this->aiSentence($detail, 'weakness');
+        $aiStrength = $this->aiSentence($commentary, 'strength');
         $aiWeakness = $this->aiSentence($commentary, 'weakness');
 
         return [
             'notice' => null,
-            'strength' => $detailStrength ?? $this->strength($rows, count($competitors)),
+            'strength' => $aiStrength ?? $detailStrength ?? $this->strength($rows, count($competitors)),
             'weakness' => $aiWeakness ?? $detailWeakness ?? $this->weakness($rows, $competitors),
-            'ai_used' => $aiWeakness !== null,
-            'detail_used' => $detailStrength !== null || ($aiWeakness === null && $detailWeakness !== null),
+            'ai_used' => $aiStrength !== null || $aiWeakness !== null,
+            'detail_used' => ($aiStrength === null && $detailStrength !== null) || ($aiWeakness === null && $detailWeakness !== null),
         ];
     }
 

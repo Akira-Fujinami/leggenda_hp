@@ -520,9 +520,9 @@ class ComparisonCommentaryTest extends TestCase
         $ct1 = $composer->compose($companies, $axes, true);
         $this->assertFalse($ct1['ai_used']);
 
-        // 依頼CUA-4: AIの強みは(ファイルにあっても)使わない。
+        // 依頼CV: 確認を通ったAIの強みも使う(依頼CUAの「強みは使わない」は、依頼CVで置き換えた)。
         $both = $composer->compose($companies, $axes, true, ['strength' => ['sentence' => 'AIの強みの一文です。'], 'weakness' => ['sentence' => 'AIの弱みの一文です。']]);
-        $this->assertSame($ct1['strength'], $both['strength']);
+        $this->assertSame('AIの強みの一文です。', $both['strength']);
         $this->assertSame('AIの弱みの一文です。', $both['weakness']);
         $this->assertTrue($both['ai_used']);
 
@@ -539,7 +539,7 @@ class ComparisonCommentaryTest extends TestCase
         // スライド: AIの文を使ったときだけ注記が1行出る。
         $generator = app(\App\Services\Report\AdminComparisonPptxGenerator::class);
         $base = ['self_company_name' => '自社', 'self_readable' => true, 'companies' => $companies, 'axes' => $axes, 'source_note' => 'n', 'page_number' => null];
-        $note = (string) config('admin_comparison_pptx.strength_weakness_ai_note');
+        $note = (string) config('strength_weakness_sentence.note');
         $this->assertStringContainsString($note, $this->slideXml($generator->generate($base + ['strength_weakness' => $weakOnly])));
         $this->assertStringNotContainsString($note, $this->slideXml($generator->generate($base + ['strength_weakness' => $none])));
     }
@@ -555,132 +555,6 @@ class ComparisonCommentaryTest extends TestCase
         @unlink($path);
 
         return $xml;
-    }
-
-    // ------------------------------------------------------------------ CU-4 いつ実行するか
-
-    public function test_when_disabled_nothing_is_dispatched_nothing_is_waited_for_and_no_ai_is_called(): void
-    {
-        config(['comparison_commentary.enabled' => false]);
-        Queue::fake();
-        $analysis = $this->standard();
-        $fake = $this->fakeProvider($this->goodOutput());
-
-        app(AnalysisPipeline::class)->maybeFinalizeAnalysis($analysis->id);
-
-        Queue::assertNotPushed(GenerateComparisonCommentaryJob::class);
-        Queue::assertPushed(FinalizeAnalysisJob::class);
-        $this->assertSame(0, $fake->calls);
-        $this->assertFalse(app(ComparisonCommentaryDispatcher::class)->holdFinalization($analysis));
-    }
-
-    public function test_the_default_of_enabled_is_false(): void
-    {
-        $this->assertFalse((require base_path('config/comparison_commentary.php'))['enabled']);
-        $this->assertStringContainsString("env('COMPARISON_COMMENTARY_ENABLED', false)", (string) file_get_contents(base_path('config/comparison_commentary.php')));
-    }
-
-    public function test_when_enabled_the_comparison_waits_for_the_job_and_finishes_after_it(): void
-    {
-        Queue::fake();
-        $analysis = $this->standard();
-        $fake = $this->fakeProvider($this->goodOutput());
-
-        app(AnalysisPipeline::class)->maybeFinalizeAnalysis($analysis->id);
-
-        // 全社の判定が終わっているので、ジョブが出て、診断全体の完了はまだ。
-        Queue::assertPushed(GenerateComparisonCommentaryJob::class, 1);
-        Queue::assertNotPushed(FinalizeAnalysisJob::class);
-
-        (new GenerateComparisonCommentaryJob($analysis->id))->handle(app(ComparisonCommentaryService::class), app(ComparisonCommentaryDispatcher::class));
-
-        $this->assertSame(1, $fake->calls);
-        Queue::assertPushed(FinalizeAnalysisJob::class, 1);
-        $this->assertTrue(app(ComparisonCommentaryStore::class)->exists($analysis->id));
-    }
-
-    public function test_the_job_is_dispatched_only_after_every_company_has_finished(): void
-    {
-        Queue::fake();
-        $analysis = $this->standard();
-        $wa = $analysis->websiteAnalyses()->first();
-        $wa->update(['status' => WebsiteAnalysisStatus::Running]);
-
-        app(AnalysisPipeline::class)->maybeFinalizeAnalysis($analysis->id);
-
-        Queue::assertNotPushed(GenerateComparisonCommentaryJob::class);
-        Queue::assertNotPushed(FinalizeAnalysisJob::class);
-    }
-
-    public function test_a_failing_job_leaves_the_ct1_sentence_and_the_comparison_still_finishes(): void
-    {
-        Queue::fake();
-        $analysis = $this->standard();
-        $this->fakeProvider(fn () => throw new \RuntimeException('想定外の失敗'));
-
-        app(AnalysisPipeline::class)->maybeFinalizeAnalysis($analysis->id);
-        Queue::assertNotPushed(FinalizeAnalysisJob::class);
-
-        (new GenerateComparisonCommentaryJob($analysis->id))->handle(app(ComparisonCommentaryService::class), app(ComparisonCommentaryDispatcher::class));
-
-        $stored = app(ComparisonCommentaryStore::class)->read($analysis->id);
-        $this->assertSame('RuntimeException', $stored['job_failed']);
-        $this->assertNull($stored['strength']);
-        $this->assertNull($stored['weakness']);
-        Queue::assertPushed(FinalizeAnalysisJob::class, 1);
-    }
-
-    public function test_an_ai_error_is_recorded_and_the_comparison_still_finishes(): void
-    {
-        Queue::fake();
-        $analysis = $this->standard();
-        $this->fakeProvider(fn () => throw new ComparisonCommentaryException('AI_RATE_LIMITED', 'レート制限'));
-
-        app(AnalysisPipeline::class)->maybeFinalizeAnalysis($analysis->id);
-        (new GenerateComparisonCommentaryJob($analysis->id))->handle(app(ComparisonCommentaryService::class), app(ComparisonCommentaryDispatcher::class));
-
-        $stored = app(ComparisonCommentaryStore::class)->read($analysis->id);
-        $this->assertSame('AI_RATE_LIMITED', $stored['skipped']);
-        $this->assertNull($stored['strength']);
-        Queue::assertPushed(FinalizeAnalysisJob::class, 1);
-    }
-
-    public function test_a_job_that_is_killed_by_the_worker_also_unblocks_the_comparison(): void
-    {
-        Queue::fake();
-        $analysis = $this->standard();
-        app(AnalysisPipeline::class)->maybeFinalizeAnalysis($analysis->id);
-        Queue::assertNotPushed(FinalizeAnalysisJob::class);
-
-        (new GenerateComparisonCommentaryJob($analysis->id))->failed(new \RuntimeException('timeout'));
-
-        $this->assertSame('RuntimeException', app(ComparisonCommentaryStore::class)->read($analysis->id)['job_failed']);
-        Queue::assertPushed(FinalizeAnalysisJob::class, 1);
-    }
-
-    public function test_the_wait_ends_after_the_configured_minutes_even_if_the_job_never_comes(): void
-    {
-        Queue::fake();
-        $analysis = $this->standard();
-        $analysis->websiteAnalyses()->toBase()->update(['updated_at' => now()->subMinutes(30)]);
-
-        app(AnalysisPipeline::class)->maybeFinalizeAnalysis($analysis->id);
-
-        Queue::assertNotPushed(GenerateComparisonCommentaryJob::class);
-        Queue::assertPushed(FinalizeAnalysisJob::class, 1);
-    }
-
-    public function test_a_regular_diagnosis_and_a_comparison_without_brand_wheel_are_not_touched(): void
-    {
-        Queue::fake();
-        $analysis = $this->standard();
-        $analysis->update(['skip_brand_wheel' => true]);
-
-        app(AnalysisPipeline::class)->maybeFinalizeAnalysis($analysis->id);
-        Queue::assertNotPushed(GenerateComparisonCommentaryJob::class);
-
-        $analysis->update(['skip_brand_wheel' => false, 'kind' => AnalysisKind::LeadDiagnosis]);
-        $this->assertFalse(app(ComparisonCommentaryDispatcher::class)->holdFinalization($analysis->fresh()));
     }
 
     // ------------------------------------------------------------------ データ削除・ダウンロード

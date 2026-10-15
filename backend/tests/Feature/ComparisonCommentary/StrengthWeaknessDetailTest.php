@@ -27,6 +27,13 @@ class StrengthWeaknessDetailTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // 依頼CV: 一節の文は既定で出さない(STRENGTH_WEAKNESS_DETAIL_ENABLEDの既定をfalseに戻した)。ここでは仕組みそのものを試す。
+        config(['admin_comparison_pptx.strength_weakness_detail.enabled' => true]);
+    }
+
     private function composer(): StrengthWeaknessDetailComposer
     {
         return app(StrengthWeaknessDetailComposer::class);
@@ -296,10 +303,8 @@ class StrengthWeaknessDetailTest extends TestCase
 
     // ------------------------------------------------------------------ 既定・無効・材料が作れないとき
 
-    public function test_the_default_is_enabled_and_when_disabled_nothing_is_written(): void
+    public function test_when_disabled_nothing_is_written(): void
     {
-        $this->assertStringContainsString("env('STRENGTH_WEAKNESS_DETAIL_ENABLED', true)", (string) file_get_contents(base_path('config/admin_comparison_pptx.php')));
-        $this->assertTrue((require base_path('config/admin_comparison_pptx.php'))['strength_weakness_detail']['enabled']);
 
         config(['admin_comparison_pptx.strength_weakness_detail.enabled' => false]);
         $out = $this->composer()->compose($this->material([$this->item(1, 'purpose', 'パーパス', true, '私たちは社会の課題を解決します。', [['A社', false, ''], ['B社', false, ''], ['C社', false, '']])]));
@@ -393,9 +398,9 @@ class StrengthWeaknessDetailTest extends TestCase
         $this->assertTrue($only['detail_used']);
         $this->assertFalse($only['ai_used']);
 
-        // AIの弱みが通ったとき: 弱みだけAI。強みはAIの強み(ファイルにあっても)ではなくCUAの文。
+        // AIの文が通ったとき(依頼CV): その側はAIの文。AIの強みも使う(CUAの文より優先)。
         $both = $composer->compose($companies, $axes, true, $ai, $detail);
-        $this->assertSame('CUAの強みの一文です。', $both['strength']);
+        $this->assertSame('AIの強みの一文です。', $both['strength']);
         $this->assertSame('AIの弱みの一文です。', $both['weakness']);
         $this->assertTrue($both['ai_used']);
 
@@ -433,7 +438,7 @@ class StrengthWeaknessDetailTest extends TestCase
         $generator = app(AdminComparisonPptxGenerator::class);
         $base = ['self_company_name' => '自社', 'self_readable' => true, 'companies' => $companies, 'axes' => $axes, 'source_note' => 'n', 'page_number' => null];
         $detailNote = (string) config('admin_comparison_pptx.strength_weakness_detail.note');
-        $aiNote = (string) config('admin_comparison_pptx.strength_weakness_ai_note');
+        $aiNote = (string) config('strength_weakness_sentence.note');
         $detail = ['strength' => 'CUAの強みの一文です。', 'weakness' => 'CUAの弱みの一文です。'];
 
         $xml = fn (array $text) => $this->slideXml($generator->generate($base + ['strength_weakness' => $text]));

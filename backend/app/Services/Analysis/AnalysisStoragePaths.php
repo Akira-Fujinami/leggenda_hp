@@ -71,6 +71,15 @@ class AnalysisStoragePaths
     }
 
     /**
+     * 依頼CV: 比較(Analysis)単位の「強み・弱みの一文」(機械が選んだ1項目・1社から、AIが書き、サーバー側の確認を通ったものだけ)の
+     * JSON。マイグレーションは足さず、分析の保存先の中に置く ―― analysisDir()ごとの削除(依頼CIのデータ削除)でいっしょに消える。
+     */
+    public function strengthWeaknessSentencePath(int $analysisId): string
+    {
+        return $this->analysisDir($analysisId).'/strength_weakness_sentence.json';
+    }
+
+    /**
      * 依頼CU: 比較(Analysis)単位の「強み・弱みの一文」(AIが書き、サーバー側の確認を通ったものだけ)のJSON。
      * マイグレーションは足さず、分析の保存先の中に置く ―― analysisDir()ごとの削除(依頼CIのデータ削除)でいっしょに消える。
      */

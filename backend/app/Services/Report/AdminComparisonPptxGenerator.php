@@ -480,7 +480,7 @@ class AdminComparisonPptxGenerator
                 // 依頼CU-5: AIの弱みを使ったときは、AIが作成した旨の注記。依頼CUA-5: AIを使わない文(項目と根拠の一節)を
                 // 使ったときは、その旨の注記。どちらでもない(依頼CT-1の文)ときは足さない。
                 ($data['strength_weakness']['ai_used'] ?? false)
-                    ? (string) config('admin_comparison_pptx.strength_weakness_ai_note')
+                    ? (string) config('strength_weakness_sentence.note')
                     : (($data['strength_weakness']['detail_used'] ?? false) ? (string) config('admin_comparison_pptx.strength_weakness_detail.note') : null),
             ], fn ($note) => $note !== null && $note !== ''));
             if ($notes !== []) {

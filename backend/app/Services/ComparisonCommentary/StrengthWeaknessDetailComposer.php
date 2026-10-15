@@ -20,6 +20,10 @@ use App\Models\Analysis;
  * 一節が選べない項目は飛ばす。文が上限(config、既定100字)を超えるときは、同じ根拠の文の別の候補(短いもの)に替え、
  * それでも超えるなら次の項目、最後は null。文言・閾値はすべて config('admin_comparison_pptx.strength_weakness_detail')。
  * 材料を作れない(読み取れた記述が少ない会社がある等)ときは何も作らない(null)。
+ *
+ * 依頼CV: 本番で一節が会社名だけの切れ端になったため、この文(compose)は比較ページの出力経路から外した
+ * (config('admin_comparison_pptx.strength_weakness_detail.enabled')の既定はfalse)。項目・会社の選び方(pick)は、
+ * 依頼CVの AI の材料に使う。
  */
 class StrengthWeaknessDetailComposer
 {
@@ -34,6 +38,71 @@ class StrengthWeaknessDetailComposer
     public function composeForAnalysis(Analysis $analysis): array
     {
         return $this->compose($this->materials->build($analysis));
+    }
+
+    /**
+     * 依頼CV-1: 取り上げる「1項目・1社」を、依頼CU追補の決まりのまま機械が選ぶ(一節は選ばない。文も作らない)。
+     *  強み: 自社だけの強み(自社○・競合の○が半数未満)を、競合の○が少ない順(同数は項目の並び順)に、無ければ
+     *        自社○で競合の○が半数ちょうどの項目。自社の根拠の文が空の項目は飛ばす。
+     *  弱み: 自社の穴(自社×・競合の○が半数以上)を、競合の○が多い順(同数は項目の並び順)に。会社は、その項目が○で
+     *        根拠の文がある競合のうち、比較表の並び順で最初の会社。
+     * 対象が無い側は null(依頼CT-1の文)。
+     *
+     * @param  array<string, mixed>  $material  ComparisonCommentaryMaterialBuilder::build()の戻り値
+     * @return array{strength: ?array{item: array<string, mixed>, kind: string}, weakness: ?array{item: array<string, mixed>, company: array<string, mixed>}}
+     */
+    public function pick(array $material): array
+    {
+        $none = ['strength' => null, 'weakness' => null];
+        if (($material['status'] ?? null) !== 'ok') {
+            return $none;
+        }
+
+        $n = (int) $material['competitor_count'];
+        $half = $n * (float) config('comparison_commentary.majority_ratio', 0.5);
+
+        $under = [];
+        $exactHalf = [];
+        $holes = [];
+        foreach ((array) $material['items'] as $item) {
+            $count = (int) $item['competitor_matched_count'];
+            if ($item['self_matched']) {
+                if (trim((string) $item['self_evidence']) === '') {
+                    continue;
+                }
+                if ($count < $half) {
+                    $under[] = $item;
+                } elseif (abs($count - $half) < 1e-9) {
+                    $exactHalf[] = $item;
+                }
+            } elseif ($count > 0 && $count >= $half) {
+                $holes[] = $item;
+            }
+        }
+        $byCountThenOrder = fn (array $a, array $b) => [$a['competitor_matched_count'], $a['order']] <=> [$b['competitor_matched_count'], $b['order']];
+        usort($under, $byCountThenOrder);
+        usort($exactHalf, $byCountThenOrder);
+        usort($holes, fn (array $a, array $b) => [$b['competitor_matched_count'], $a['order']] <=> [$a['competitor_matched_count'], $b['order']]);
+
+        $strength = null;
+        if ($under !== []) {
+            $strength = ['item' => $under[0], 'kind' => 'only'];
+        } elseif ($exactHalf !== []) {
+            $strength = ['item' => $exactHalf[0], 'kind' => 'half'];
+        }
+
+        $weakness = null;
+        foreach ($holes as $item) {
+            foreach ((array) $item['competitors'] as $competitor) {
+                if ($competitor['matched'] && trim((string) $competitor['evidence']) !== '') {
+                    $weakness = ['item' => $item, 'company' => $competitor];
+
+                    break 2;
+                }
+            }
+        }
+
+        return ['strength' => $strength, 'weakness' => $weakness];
     }
 
     /**

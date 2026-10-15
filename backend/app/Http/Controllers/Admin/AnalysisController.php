@@ -201,16 +201,13 @@ class AnalysisController extends Controller
 
         try {
             $viewModel = $viewModelBuilder->build($analysis);
-            // 依頼CU: 保存済みの「強み・弱みの一文」(AIが書き、サーバー側の確認を通ったもの)を読むだけ。
-            // ここでAIを呼ばない・通信しない(無効のとき・ファイルが無いときは、依頼CT-1の一文のまま)。
-            $commentary = (bool) config('comparison_commentary.enabled')
-                ? app(\App\Services\ComparisonCommentary\ComparisonCommentaryStore::class)->read((int) $analysis->id)
+            // 依頼CV: 保存済みの「強み・弱みの一文」(機械が選んだ1項目・1社から、AIが書き、サーバー側の確認を通ったもの)を
+            // 読むだけ。ここでAIを呼ばない・通信しない(無効のとき・ファイルが無いとき・確認で落ちた側は、依頼CT-1の文のまま)。
+            // 依頼CUの一文(AI)・依頼CUAの一節の文は、出力経路から外した。
+            $commentary = (bool) config('strength_weakness_sentence.enabled')
+                ? app(\App\Services\StrengthWeaknessSentence\StrengthWeaknessSentenceStore::class)->read((int) $analysis->id)
                 : null;
-            // 依頼CUA: 項目と根拠の一節で書いた強み・弱み(AIを使わない。保存済みの判定結果を読むだけ)。
-            $detail = (bool) config('admin_comparison_pptx.strength_weakness_detail.enabled')
-                ? app(\App\Services\ComparisonCommentary\StrengthWeaknessDetailComposer::class)->composeForAnalysis($analysis)
-                : null;
-            $data = $dataBuilder->build($viewModel, $commentary, $detail);
+            $data = $dataBuilder->build($viewModel, $commentary);
 
             // 依頼CB-3: 階層図は自社(is_primary)のWebsiteAnalysisの
             // analysis_crawled_pagesから組み立てる ―― ViewModel/$dataは

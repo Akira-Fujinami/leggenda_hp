@@ -447,11 +447,11 @@ class AdminComparisonPptxInsertTest extends TestCase
             ]);
         }
         $sentence = 'AIが書いた弱みの一文です。';
-        app(\App\Services\ComparisonCommentary\ComparisonCommentaryStore::class)->write($analysis->id, [
+        app(\App\Services\StrengthWeaknessSentence\StrengthWeaknessSentenceStore::class)->write($analysis->id, [
             'status' => 'done', 'skipped' => null,
             'strength' => null,
-            'weakness' => ['sentence' => $sentence, 'items' => ['social_contribution'], 'quotes' => [], 'companies' => []],
-            'rejected' => ['strength' => [], 'weakness' => []],
+            'weakness' => ['sentence' => $sentence, 'quote' => '引用の言葉をここに入れます'],
+            'rejected' => ['strength' => ['quote_bad_ending'], 'weakness' => []],
         ]);
         $this->attachPptx($analysis, $this->makeMinimalDeck(['内容1', '参照元']));
 
@@ -480,12 +480,13 @@ class AdminComparisonPptxInsertTest extends TestCase
 
     public function test_the_download_uses_the_stored_ai_sentence_and_adds_the_note_without_calling_the_ai_or_the_network(): void
     {
-        config(['comparison_commentary.enabled' => true]);
+        // 依頼CUAの一節の文を有効にしていても、出力経路から外してあるので、出ない(依頼CV)。
+        config(['strength_weakness_sentence.enabled' => true, 'admin_comparison_pptx.strength_weakness_detail.enabled' => true]);
         \Illuminate\Support\Facades\Http::preventStrayRequests();
         \Illuminate\Support\Facades\Http::fake();
-        app()->instance(\App\Services\ComparisonCommentary\ComparisonCommentaryProviderFactory::class, new class extends \App\Services\ComparisonCommentary\ComparisonCommentaryProviderFactory
+        app()->instance(\App\Services\StrengthWeaknessSentence\StrengthWeaknessSentenceProviderFactory::class, new class extends \App\Services\StrengthWeaknessSentence\StrengthWeaknessSentenceProviderFactory
         {
-            public function make(): \App\Services\ComparisonCommentary\ComparisonCommentaryProvider
+            public function make(): \App\Services\StrengthWeaknessSentence\StrengthWeaknessSentenceProvider
             {
                 throw new \RuntimeException('ダウンロードでAIの設定を作ってはいけない');
             }
@@ -497,15 +498,17 @@ class AdminComparisonPptxInsertTest extends TestCase
         $response->assertOk();
         $text = $this->downloadedSlideText($response);
         $this->assertStringContainsString($sentence, $text);
-        $this->assertStringContainsString((string) config('admin_comparison_pptx.strength_weakness_ai_note'), $text);
-        // 依頼CUA-4: 強みはAIの文ではなく、AIを使わない文(項目と根拠の一節)か、点数から作ったCT-1の一文。
+        $this->assertStringContainsString((string) config('strength_weakness_sentence.note'), $text);
+        // 確認で落ちた側(強み)は、点数から作ったCT-1の文のまま。機械の一節の文(依頼CUA)は出ない。
         $this->assertStringContainsString('強み：', $text);
+        $this->assertStringNotContainsString((string) config('admin_comparison_pptx.strength_weakness_detail.note'), $text);
+        $this->assertStringNotContainsString('と記載しています', $text);
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
 
     public function test_when_disabled_the_download_ignores_the_stored_sentence_and_shows_no_note(): void
     {
-        config(['comparison_commentary.enabled' => false, 'admin_comparison_pptx.strength_weakness_detail.enabled' => false]);
+        config(['strength_weakness_sentence.enabled' => false, 'admin_comparison_pptx.strength_weakness_detail.enabled' => true]);
         [$analysis, $sentence] = $this->makeComparisonWithCommentary();
 
         $response = $this->asAdmin()->get(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false));
@@ -513,7 +516,7 @@ class AdminComparisonPptxInsertTest extends TestCase
         $text = $this->downloadedSlideText($response);
         $this->assertStringNotContainsString($sentence, $text);
         $this->assertStringNotContainsString((string) config('admin_comparison_pptx.strength_weakness_detail.note'), $text);
-        $this->assertStringNotContainsString((string) config('admin_comparison_pptx.strength_weakness_ai_note'), $text);
+        $this->assertStringNotContainsString((string) config('strength_weakness_sentence.note'), $text);
         $this->assertStringContainsString('強み：', $text);
     }
 
