@@ -11,7 +11,8 @@ namespace App\Services\StrengthWeaknessSentence;
  *  3. quote から、比較に入っている全社の企業名(法人格を除いた言い換えを含む)を除いた残りが config の長さ以上(既定 8字)
  *     ―― 会社名だけの引用を落とす
  *  4. quote が「は」「では」「が」「の」「を」「に」「も」(config)で終わらない ―― 切れ端の引用を落とす
- *  5. sentence の中の「」『』で囲まれた言葉(いちばん外側のもの)が1組だけで、quote と一致する
+ *  5. (依頼CV追補) 引用の「」はサーバーが入れる: AIは sentence の中に {QUOTE} をちょうど1つ書き、sentence に「」『』を1つも書かない。
+ *     サーバーが {QUOTE} を「quote」に置き換えてから、1〜4・6〜9 を確かめる(旧5「」の中が quote と一致する、は、これで置き換わった)
  *  6. sentence に出てくる企業名は、渡した会社だけ(強みは自社だけ、弱みは自社と取り上げた競合だけ)。
  *     記号で見出しを出す比較では、「競合X」のXが取り上げた競合の記号であること
  *  7. sentence の数字が、すべて材料(根拠の文・競合の社数)の中にある
@@ -32,7 +33,11 @@ class StrengthWeaknessSentenceVerifier
 
     public const REASON_QUOTE_ENDING = 'quote_bad_ending';
 
+    /** sentence(置き換える前)に「」『』がある。 */
     public const REASON_BRACKET = 'bracketed_word_not_quote';
+
+    /** sentence の {QUOTE} が、ちょうど1つでない。 */
+    public const REASON_PLACEHOLDER = 'placeholder_count';
 
     public const REASON_COMPANY = 'company_not_allowed';
 
@@ -59,6 +64,24 @@ class StrengthWeaknessSentenceVerifier
         }
 
         $reasons = [];
+
+        // 5. 引用の「」はサーバーが入れる: {QUOTE}がちょうど1つ、「」『』は1つも無い(置き換える前の文で確かめる)。
+        $placeholder = (string) config('strength_weakness_sentence.quote_placeholder');
+        if ($placeholder === '' || substr_count($sentence, $placeholder) !== 1) {
+            $reasons[] = self::REASON_PLACEHOLDER;
+        }
+        foreach ((array) config('strength_weakness_sentence.quote_brackets', []) as [$open, $close]) {
+            if (str_contains($sentence, (string) $open) || str_contains($sentence, (string) $close)) {
+                $reasons[] = self::REASON_BRACKET;
+
+                break;
+            }
+        }
+        // 置き換えたあとの文で、残りの確認(6〜9)を行う({QUOTE}が1つでないときは、置き換えずにそのまま)。
+        if ($placeholder !== '' && substr_count($sentence, $placeholder) === 1) {
+            $sentence = str_replace($placeholder, '「'.$quote.'」', $sentence);
+        }
+
         $evidence = (string) $target['evidence'];
         $normalizedQuote = $this->normalize($quote);
 
@@ -87,19 +110,13 @@ class StrengthWeaknessSentenceVerifier
             }
         }
 
-        // 5. 「」は1組だけで、quoteと一致する
-        $bracketed = $this->bracketed($sentence);
-        if (count($bracketed) !== 1 || $this->normalize($bracketed[0]) !== $normalizedQuote) {
-            $reasons[] = self::REASON_BRACKET;
-        }
-
         // 6. 渡した会社だけ
         if (! $this->companiesOk($side, $sentence, $material)) {
             $reasons[] = self::REASON_COMPANY;
         }
 
-        // 7. 数字
-        $materialNumbers = $this->numbers($evidence.' '.$target['competitor_count'].' '.$target['matched']);
+        // 7. 数字(根拠の文・競合の社数・調査の割合。調査の割合は、強みを調査の割合で選んだときの材料)
+        $materialNumbers = $this->numbers($evidence.' '.$target['competitor_count'].' '.$target['matched'].' '.($target['survey']['percentage'] ?? ''));
         foreach ($this->numbers($sentence) as $number) {
             if (! in_array($number, $materialNumbers, true)) {
                 $reasons[] = self::REASON_NUMBER;
@@ -182,57 +199,6 @@ class StrengthWeaknessSentenceVerifier
         }
 
         return true;
-    }
-
-    /**
-     * 文の中の、「」『』で囲まれた言葉(いちばん外側のものだけ)。外側の括弧の中にある括弧は、引用した言葉の一部。
-     * 閉じていない・開いていない括弧は、空の言葉として数える(quoteとは一致しない)。
-     *
-     * @return list<string>
-     */
-    private function bracketed(string $sentence): array
-    {
-        $pairs = [];
-        foreach ((array) config('strength_weakness_sentence.quote_brackets', []) as [$open, $close]) {
-            $pairs[$open] = $close;
-        }
-        $opens = array_keys($pairs);
-        $closes = array_values($pairs);
-
-        $words = [];
-        $stack = [];
-        $buffer = '';
-        foreach (mb_str_split($sentence) as $char) {
-            if (in_array($char, $opens, true)) {
-                $stack[] = $pairs[$char];
-                if (count($stack) > 1) {
-                    $buffer .= $char;
-                }
-
-                continue;
-            }
-            if ($stack !== [] && $char === end($stack)) {
-                array_pop($stack);
-                if ($stack === []) {
-                    $words[] = $buffer;
-                    $buffer = '';
-                } else {
-                    $buffer .= $char;
-                }
-
-                continue;
-            }
-            if ($stack !== []) {
-                $buffer .= $char;
-            } elseif (in_array($char, $closes, true)) {
-                $words[] = '';
-            }
-        }
-        if ($stack !== []) {
-            $words[] = $buffer;
-        }
-
-        return $words;
     }
 
     /**

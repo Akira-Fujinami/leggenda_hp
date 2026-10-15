@@ -262,7 +262,8 @@ class MeasureStrengthWeaknessSentenceCommand extends Command
         $this->line('競合: '.implode('、', array_column($material['competitors'], 'label')));
         if ($material['strength'] !== null) {
             $s = $material['strength'];
-            $this->line("取り上げる強み: {$s['axis']}／{$s['name']}(競合{$s['competitor_count']}社のうち{$s['matched']}社)  自社の根拠の文 ".mb_strlen($s['evidence']).'字');
+            $survey = is_array($s['survey']) ? sprintf(' / 調査項目: %s %s%%', $s['survey']['name'], $s['survey']['percentage']) : '';
+            $this->line("取り上げる強み: {$s['axis']}／{$s['name']}(競合{$s['competitor_count']}社のうち{$s['matched']}社)  選び方(strength_basis): {$s['basis']}{$survey}  自社の根拠の文 ".mb_strlen($s['evidence']).'字');
         } else {
             $this->line('取り上げる強み: なし(→ AIに書かせない。CT-1の文)');
         }

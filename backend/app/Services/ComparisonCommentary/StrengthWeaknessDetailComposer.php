@@ -3,6 +3,7 @@
 namespace App\Services\ComparisonCommentary;
 
 use App\Models\Analysis;
+use App\Services\Report\CandidateSurveyCatalog;
 
 /**
  * 依頼CUA-2/3: 強み・弱みの一文を、「項目」と「根拠の一節」で書く(AIを使わない。同じ入力から必ず同じ文になる)。
@@ -30,6 +31,7 @@ class StrengthWeaknessDetailComposer
     public function __construct(
         private readonly ComparisonCommentaryMaterialBuilder $materials,
         private readonly EvidenceSnippetSelector $snippets,
+        private readonly CandidateSurveyCatalog $survey = new CandidateSurveyCatalog,
     ) {}
 
     /**
@@ -42,14 +44,16 @@ class StrengthWeaknessDetailComposer
 
     /**
      * 依頼CV-1: 取り上げる「1項目・1社」を、依頼CU追補の決まりのまま機械が選ぶ(一節は選ばない。文も作らない)。
-     *  強み: 自社だけの強み(自社○・競合の○が半数未満)を、競合の○が少ない順(同数は項目の並び順)に、無ければ
-     *        自社○で競合の○が半数ちょうどの項目。自社の根拠の文が空の項目は飛ばす。
+     *  強み: 自社だけの強み(自社○・競合の○が半数未満)を、競合の○が少ない順(同数は項目の並び順)に(基準 unique)、無ければ
+     *        自社○で競合の○が半数ちょうどの項目(half)、それも無ければ依頼CV追補: 自社が○の項目のうち、求職者調査の割合が
+     *        最も高い調査項目に結び付く項目(survey。対応表 brand_wheel_candidate_survey.mapping。結び付く調査項目が無い項目は除く。
+     *        同じ割合なら、○の競合が少ない項目 → 項目の並び順)。自社の根拠の文が空の項目は飛ばす。
      *  弱み: 自社の穴(自社×・競合の○が半数以上)を、競合の○が多い順(同数は項目の並び順)に。会社は、その項目が○で
      *        根拠の文がある競合のうち、比較表の並び順で最初の会社。
      * 対象が無い側は null(依頼CT-1の文)。
      *
      * @param  array<string, mixed>  $material  ComparisonCommentaryMaterialBuilder::build()の戻り値
-     * @return array{strength: ?array{item: array<string, mixed>, kind: string}, weakness: ?array{item: array<string, mixed>, company: array<string, mixed>}}
+     * @return array{strength: ?array{item: array<string, mixed>, kind: string, survey?: array{key: string, name: string, percentage: float}}, weakness: ?array{item: array<string, mixed>, company: array<string, mixed>}}
      */
     public function pick(array $material): array
     {
@@ -63,6 +67,7 @@ class StrengthWeaknessDetailComposer
 
         $under = [];
         $exactHalf = [];
+        $selfItems = [];
         $holes = [];
         foreach ((array) $material['items'] as $item) {
             $count = (int) $item['competitor_matched_count'];
@@ -70,6 +75,7 @@ class StrengthWeaknessDetailComposer
                 if (trim((string) $item['self_evidence']) === '') {
                     continue;
                 }
+                $selfItems[] = $item;
                 if ($count < $half) {
                     $under[] = $item;
                 } elseif (abs($count - $half) < 1e-9) {
@@ -86,9 +92,25 @@ class StrengthWeaknessDetailComposer
 
         $strength = null;
         if ($under !== []) {
-            $strength = ['item' => $under[0], 'kind' => 'only'];
+            $strength = ['item' => $under[0], 'kind' => 'unique'];
         } elseif ($exactHalf !== []) {
             $strength = ['item' => $exactHalf[0], 'kind' => 'half'];
+        } else {
+            // 依頼CV追補: 自社が○の項目のうち、求職者調査の割合が最も高い調査項目に結び付く項目(結び付かない項目は除く)。
+            $best = null;
+            foreach ($selfItems as $item) {
+                $option = $this->survey->optionForSubElement((string) $item['axis_key'], (string) $item['key']);
+                if ($option === null) {
+                    continue;
+                }
+                $rank = [-$option['percentage'], $item['competitor_matched_count'], $item['order']];
+                if ($best === null || $rank < $best['rank']) {
+                    $best = ['rank' => $rank, 'item' => $item, 'option' => $option];
+                }
+            }
+            if ($best !== null) {
+                $strength = ['item' => $best['item'], 'kind' => 'survey', 'survey' => $best['option']];
+            }
         }
 
         $weakness = null;

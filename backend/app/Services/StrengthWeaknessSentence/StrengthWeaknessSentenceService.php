@@ -63,6 +63,7 @@ class StrengthWeaknessSentenceService
             'weakness' => null,
             'targets' => [
                 'strength' => $material['strength']['key'] ?? null,
+                'strength_basis' => $material['strength']['basis'] ?? 'none',
                 'weakness' => isset($material['weakness']) ? ['item' => $material['weakness']['key'], 'company' => $material['weakness']['company_label']] : null,
             ],
             'rejected' => ['strength' => [], 'weakness' => []],
@@ -124,7 +125,7 @@ class StrengthWeaknessSentenceService
             'skipped' => null,
             'strength' => null,
             'weakness' => null,
-            'targets' => ['strength' => null, 'weakness' => null],
+            'targets' => ['strength' => null, 'strength_basis' => 'none', 'weakness' => null],
             'rejected' => ['strength' => [], 'weakness' => []],
             'job_failed' => $reason,
             'prompt_version' => (string) config('strength_weakness_sentence.prompt_version'),
@@ -146,6 +147,8 @@ class StrengthWeaknessSentenceService
             'analysis_id' => $analysisId,
             'skipped' => $result['skipped'],
             'ai_calls' => $result['ai_calls'],
+            // 依頼CV追補: 強みをどの選び方で選んだか(unique=自社だけの強み / half=半数ちょうど / survey=求職者調査の割合 / none=選べなかった)
+            'strength_basis' => $result['targets']['strength_basis'] ?? 'none',
             'strength_used' => $result['strength'] !== null,
             'weakness_used' => $result['weakness'] !== null,
             'rejected_strength' => $result['rejected']['strength'],

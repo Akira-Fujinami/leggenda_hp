@@ -151,6 +151,7 @@ class ComparisonCommentaryMaterialBuilder
                 $allItems[] = [
                     'order' => $order,
                     'key' => $subKey,
+                    'axis_key' => (string) $axisKey,
                     'axis' => (string) ($axis['name_ja'] ?? $axisKey),
                     'name' => (string) $subName,
                     'self_matched' => $selfHas,

@@ -31,7 +31,7 @@ return [
     'wait_max_minutes' => (int) env('STRENGTH_WEAKNESS_SENTENCE_WAIT_MAX_MINUTES', 10),
 
     /* プロンプトの版。プロンプト本文(OpenAiStrengthWeaknessSentenceProvider)を変えたら上げる。結果のファイルに記録する。 */
-    'prompt_version' => 'v1',
+    'prompt_version' => 'v2', // v2: 引用の「」はサーバーが入れる({QUOTE})、強みの選び方に求職者調査の割合を足した
 
     /* AI呼び出しのHTTPタイムアウト(秒)と出力トークンの上限。 */
     'timeout' => (int) env('STRENGTH_WEAKNESS_SENTENCE_TIMEOUT', 90),
@@ -56,8 +56,11 @@ return [
     /* quoteの末尾がこれらの助詞のときは落とす(切れ端の引用を落とすため)。 */
     'quote_bad_endings' => ['では', 'は', 'が', 'の', 'を', 'に', 'も'],
 
-    /* 文の中の「」『』で囲まれた言葉は、1組だけで、quoteと一致しなければならない。 */
+    /* sentence(置き換える前)には、これらの括弧を1つも書かせない(引用の「」はサーバーが入れる)。 */
     'quote_brackets' => [['「', '」'], ['『', '』']],
+
+    /* 引用を入れる場所の目印。AIは sentence の中にちょうど1つ書き、サーバーが「quote」に置き換える。 */
+    'quote_placeholder' => '{QUOTE}',
 
     /* 文の長さの上限(文字)。プロンプトでも同じ値を伝える。 */
     'sentence_limit_chars' => 100,

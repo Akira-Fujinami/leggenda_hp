@@ -10,7 +10,8 @@ use App\Services\ComparisonCommentary\StrengthWeaknessDetailComposer;
  * 依頼CV-1: 強み・弱みの一文の材料(AIを使わない)。取り上げる「1項目・1社」を、依頼CU追補の決まりのまま機械が選び
  * (StrengthWeaknessDetailComposer::pick())、その根拠の文(全文)に、項目名・定義・競合の社数を添える。
  *
- *  強み: 自社の項目(自社だけの強み → 競合の○が半数ちょうど)と、自社の根拠の文
+ *  強み: 自社の項目(自社だけの強み → 競合の○が半数ちょうど → 依頼CV追補: 求職者調査の割合が最も高い調査項目に結び付く項目)と、
+ *        自社の根拠の文。選び方は basis(unique / half / survey)に入れる。survey のときは、調査項目の名前と割合(survey)も添える
  *  弱み: 自社の穴の項目と、その項目が○の競合のうち比較表の並び順で最初の会社と、その会社の根拠の文
  *
  * 対象が無い側はnull(その側は依頼CT-1の文)。両方とも無ければ、材料を作らない(status=skipped、AIも呼ばない)。
@@ -69,6 +70,9 @@ class StrengthWeaknessSentenceMaterialBuilder
                 'evidence' => trim((string) $item['self_evidence']),
                 'competitor_count' => $n,
                 'matched' => (int) $item['competitor_matched_count'],
+                // 選び方: unique(自社だけの強み) / half(競合の○が半数ちょうど) / survey(求職者調査の割合が最も高い調査項目)。
+                'basis' => (string) $picked['strength']['kind'],
+                'survey' => $picked['strength']['survey'] ?? null,
             ];
         }
 
