@@ -2829,7 +2829,7 @@ class AdminComparisonPptxGenerator
      *
      * @param  list<array{name: string, detail: string}>  $programs
      */
-    private function addTopMessageProgramCells(Slide $slide, array $programs, float $left, float $width, float $top, float $height): void
+    private function addTopMessageProgramCells(Slide $slide, array $programs, float $left, float $width, float $top, float $height, ?string $fill = null): void
     {
         $programs = array_slice($programs, 0, 3);
 
@@ -2844,7 +2844,7 @@ class AdminComparisonPptxGenerator
 
             foreach (array_slice($programs, 0, $shown) as $i => $program) {
                 $cellLeft = $left + $i * ($cellWidth + self::TM_CELL_GAP_IN);
-                $this->addFilledRect($slide, $cellLeft, $top, $cellWidth, $height, self::BAND);
+                $this->addFilledRect($slide, $cellLeft, $top, $cellWidth, $height, $fill ?? self::BAND);
                 $this->drawRectOutline($slide, $cellLeft, $top, $cellWidth, $height, self::RULE, 0.75);
 
                 $box = $slide->createRichTextShape();
@@ -2971,6 +2971,11 @@ class AdminComparisonPptxGenerator
      */
     public function generateTopMessageDraftSlide(array $page): string
     {
+        // 依頼CZ: AIが選び、サーバー側の確認を通ったパネルがあるときは、パネルのページにする(無いときは、これまでの素材ページ)。
+        if (is_array($page['panel'] ?? null)) {
+            return $this->generateTopMessagePanelSlide($page);
+        }
+
         return $this->renderSingleSlide(function (Slide $slide) use ($page): void {
             $this->addTopMessageDraftBand($slide);
             $this->addKicker($slide);
@@ -2979,6 +2984,183 @@ class AdminComparisonPptxGenerator
             $this->addTopMessageDraftPrograms($slide, $page['programs']['rows'], $page['programs']['hidden']);
             $this->addNoteFooter($slide, (string) config('admin_comparison_pptx.top_message_draft_disclaimer'));
         });
+    }
+
+    /**
+     * 依頼CZ-4: 「{企業名}：トップメッセージと制度」(社内用・下書き)のパネル。素材ページ(CS)と同じ赤い帯・見出し・注記の位置。
+     * 左: 小見出し・話者・出典のページ名、その下の濃い色のパネルに、核の一文を大きな「」で、続けて本文の文。
+     * 右: キーワードごとの帯(2色を交互に)。各帯に、制度のカード(最大3枚)。カードは太字の制度名と、その下に説明
+     * (AIが制度の抜粋から選んだ一節。サーバー側の確認で落ちた制度は名前だけ)。画像は入れない。
+     *
+     * 文字が箱に収まらないときは、まず文字を小さくし(下限はtop_message_min_font_ratio)、下限でも収まらなければ、
+     * 左は後ろの本文の文から、右は後ろの帯から減らす。
+     *
+     * @param  array{company_name: string, panel: array{speaker: ?string, source_title: ?string, core: string, body: list<string>, keywords: list<array{phrase: string, programs: list<array{name: string, summary: ?string}>}>}}  $page
+     */
+    private function generateTopMessagePanelSlide(array $page): string
+    {
+        $panel = $page['panel'];
+
+        return $this->renderSingleSlide(function (Slide $slide) use ($page, $panel): void {
+            $this->addTopMessageDraftBand($slide);
+            $this->addKicker($slide);
+            $this->addTopMessageTitle($slide, $page['company_name'], (string) config('admin_comparison_pptx.top_message_panel_title'));
+            $this->addPanelLeft($slide, $panel);
+            $this->addPanelRight($slide, $panel['keywords']);
+            $this->addNoteFooter($slide, sprintf((string) config('admin_comparison_pptx.top_message_panel_note'), $page['company_name'], (string) ($panel['source_title'] ?? '')));
+        });
+    }
+
+    /**
+     * @param  array{speaker: ?string, source_title: ?string, core: string, body: list<string>}  $panel
+     */
+    private function addPanelLeft(Slide $slide, array $panel): void
+    {
+        $top = self::TM_DRAFT_BODY_TOP_IN;
+        $width = self::TM_DRAFT_LEFT_WIDTH_IN;
+
+        $heading = $slide->createRichTextShape();
+        $this->position($heading, self::LEFT_IN, $top, $width, 0.3);
+        $this->font($heading->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_panel_left_heading')), 12, true, self::COPPER);
+
+        $label = $slide->createRichTextShape();
+        $this->position($label, self::LEFT_IN, $top + 0.32, $width, 0.5);
+        $label->setWrap(RichText::WRAP_SQUARE);
+        $labelParagraph = $label->getActiveParagraph();
+        $speaker = trim((string) ($panel['speaker'] ?? ''));
+        $source = trim((string) ($panel['source_title'] ?? ''));
+        if ($speaker !== '') {
+            $this->font($labelParagraph->createTextRun($this->truncateToDisplayWidth($speaker, 50)), 11, true, self::NAVY);
+        }
+        if ($source !== '') {
+            $sourceParagraph = $speaker !== '' ? $label->createParagraph() : $labelParagraph;
+            $this->font($sourceParagraph->createTextRun($this->truncateToDisplayWidth($source, 50)), 9, false, self::MUTED);
+        }
+
+        $boxTop = $top + 0.9;
+        $boxHeight = self::TM_BODY_BOTTOM_IN - $boxTop;
+        $this->addFilledRect($slide, self::LEFT_IN, $boxTop, $width, $boxHeight, self::NAVY);
+
+        $innerLeft = self::LEFT_IN + 0.3;
+        $innerWidth = $width - 0.6;
+        $innerHeight = $boxHeight - 0.4;
+
+        $core = (string) config('admin_comparison_pptx.top_message_panel_quote_open').$panel['core'].(string) config('admin_comparison_pptx.top_message_panel_quote_close');
+        $maxPt = (int) config('admin_comparison_pptx.top_message_panel_core_max_pt');
+        $floor = max(8, (int) round($maxPt * (float) config('admin_comparison_pptx.top_message_min_font_ratio')));
+        $ratio = (float) config('admin_comparison_pptx.top_message_panel_body_ratio');
+        $gap = 0.14;
+
+        $needs = function (array $body, int $pt) use ($core, $innerWidth, $ratio, $gap): float {
+            $bodyPt = max(8, (int) round($pt * $ratio));
+            $used = $this->topMessageTextHeight($core, $innerWidth, $pt, true);
+            foreach ($body as $sentence) {
+                $used += $gap + $this->topMessageTextHeight($sentence, $innerWidth, $bodyPt, false);
+            }
+
+            return $used;
+        };
+
+        $body = $panel['body'];
+        $size = $floor;
+        for ($pt = $maxPt; $pt >= $floor; $pt--) {
+            if ($needs($body, $pt) <= $innerHeight) {
+                $size = $pt;
+                break;
+            }
+        }
+        while ($body !== [] && $needs($body, $size) > $innerHeight) {
+            array_pop($body);
+        }
+
+        $box = $slide->createRichTextShape();
+        $this->position($box, $innerLeft, $boxTop + 0.2, $innerWidth, $innerHeight);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $coreParagraph = $box->getActiveParagraph();
+        $coreParagraph->setSpacingAfter((int) round($gap * 72));
+        $this->font($coreParagraph->createTextRun($core), $size, true, self::WHITE);
+        $bodyPt = max(8, (int) round($size * $ratio));
+        foreach ($body as $sentence) {
+            $paragraph = $box->createParagraph();
+            $paragraph->setSpacingAfter((int) round($gap * 72));
+            $this->font($paragraph->createTextRun($sentence), $bodyPt, false, self::WHITE);
+        }
+    }
+
+    /**
+     * @param  list<array{phrase: string, programs: list<array{name: string, summary: ?string}>}>  $keywords
+     */
+    private function addPanelRight(Slide $slide, array $keywords): void
+    {
+        $left = self::TM_DRAFT_RIGHT_LEFT_IN;
+        $width = self::LEFT_IN + self::CONTENT_WIDTH_IN - $left;
+        $top = self::TM_DRAFT_BODY_TOP_IN;
+
+        $heading = $slide->createRichTextShape();
+        $this->position($heading, $left, $top, $width, 0.3);
+        $this->font($heading->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_panel_right_heading')), 12, true, self::COPPER);
+
+        $keywords = array_slice($keywords, 0, (int) config('top_message_panel.keywords_max'));
+        $bandsTop = $top + 0.42;
+        $available = self::TM_BODY_BOTTOM_IN - $bandsTop;
+        $labelWidth = (float) config('admin_comparison_pptx.top_message_panel_keyword_width_in');
+        $cardsLeft = $left + $labelWidth + 0.1;
+        $cardsWidth = $left + $width - $cardsLeft - 0.1;
+        $gap = self::TM_ROW_GAP_IN;
+
+        // 全部の帯のカードが下限の文字の大きさで収まる帯の数まで、後ろの帯から減らす(1つになるまで)。
+        $shown = count($keywords);
+        for (; $shown >= 1; $shown--) {
+            $rowHeight = min(self::TM_ROW_MAX_HEIGHT_IN, ($available - ($shown - 1) * $gap) / $shown);
+            $fits = true;
+            foreach (array_slice($keywords, 0, $shown) as $keyword) {
+                $cards = $this->panelCards($keyword['programs']);
+                $cellWidth = ($cardsWidth - (count($cards) - 1) * self::TM_CELL_GAP_IN) / max(1, count($cards));
+                if ($this->fitTopMessageCells($cards, $cellWidth, $rowHeight - 0.16) === null) {
+                    $fits = false;
+                    break;
+                }
+            }
+            if ($fits) {
+                break;
+            }
+        }
+        $shown = max(1, $shown);
+        $rowHeight = min(self::TM_ROW_MAX_HEIGHT_IN, ($available - ($shown - 1) * $gap) / $shown);
+
+        $colors = array_values((array) config('admin_comparison_pptx.top_message_panel_band_colors'));
+        $y = $bandsTop;
+        foreach (array_slice($keywords, 0, $shown) as $i => $keyword) {
+            $this->addFilledRect($slide, $left, $y, $width, $rowHeight, (string) ($colors[$i % max(1, count($colors))] ?? self::BAND));
+
+            $label = $slide->createRichTextShape();
+            $this->position($label, $left + 0.1, $y, $labelWidth - 0.1, $rowHeight);
+            $label->setWrap(RichText::WRAP_SQUARE);
+            $label->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $maxPt = (int) config('admin_comparison_pptx.top_message_keyword_max_pt');
+            $floor = max(7, (int) round($maxPt * (float) config('admin_comparison_pptx.top_message_min_font_ratio')));
+            $size = $floor;
+            for ($pt = $maxPt; $pt >= $floor; $pt--) {
+                if ($this->topMessageTextHeight($keyword['phrase'], $labelWidth - 0.2, $pt, true) <= $rowHeight - 0.1) {
+                    $size = $pt;
+                    break;
+                }
+            }
+            $this->font($label->getActiveParagraph()->createTextRun($keyword['phrase']), $size, true, self::NAVY);
+
+            $this->addTopMessageProgramCells($slide, $this->panelCards($keyword['programs']), $cardsLeft, $cardsWidth, $y + 0.08, $rowHeight - 0.16, self::WHITE);
+            $y += $rowHeight + $gap;
+        }
+    }
+
+    /**
+     * @param  list<array{name: string, summary: ?string}>  $programs
+     * @return list<array{name: string, detail: string}>
+     */
+    private function panelCards(array $programs): array
+    {
+        return array_map(fn (array $p) => ['name' => $p['name'], 'detail' => (string) ($p['summary'] ?? '')], array_slice($programs, 0, (int) config('top_message_panel.programs_per_keyword_max')));
     }
 
     /**

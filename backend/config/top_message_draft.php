@@ -84,4 +84,25 @@ return [
     'excluded_ancestor_tags' => ['header', 'footer', 'nav', 'aside', 'script', 'style', 'noscript', 'template'],
     'excluded_ancestor_roles' => ['navigation', 'banner', 'contentinfo', 'complementary'],
     'excluded_ancestor_class_pattern' => '~(^|[\s_-])(nav|navi|navigation|gnav|globalnav|menu|footer|header|sidebar|breadcrumb|breadcrumbs|drawer|hamburger)($|[\s_-])~i',
+    /*
+    |--------------------------------------------------------------------------
+    | 依頼CZ-1: パネル(トップメッセージと制度)の材料の整え方(AIなし)。素材ページ(CS)の抜き出しとは別に使う。
+    |--------------------------------------------------------------------------
+    | 語・割合・上限をここに置く。会社ごとの語の一覧は作らない。
+    */
+    // メッセージの文として数える最小の長さ(文字)と、1文の最大の長さ(これを超える文は材料に入れない)。
+    'panel_sentence_min_chars' => 10,
+    'panel_sentence_max_chars' => 200,
+
+    // この見出し(空白・記号を除き大文字小文字を区別せず、全体が一致)の下は、次の「同じか上の」見出しまで、メッセージの文から除く。
+    'panel_related_headings' => ['関連記事', '関連リンク', '関連コンテンツ', 'あわせて読みたい', 'おすすめ記事', 'RELATED', 'RELATED ARTICLES', 'RELATED LINKS', 'Related Posts'],
+
+    // その要素の文字のうち、リンク(a)の中の文字がこの割合以上の文は、リンクの文字だけの文として除く(記事タイトルのリンクなど)。
+    'panel_link_text_ratio' => 0.6,
+
+    // 制度の抜粋の上限(文字)。素材ページの50字とは別に、パネルでは全文(この長さまで)を材料にする。
+    'panel_program_excerpt_max_chars' => 200,
+
+    // 制度の候補を取るページのうち、ページ名またはURLのパスにこの語を含むページ(募集要項・求人一覧)の候補は、制度ではなく求人のため除く。
+    'panel_job_page_words' => ['募集要項', '求人', '募集職種', '職種一覧', '募集一覧', 'job-list', 'joblist', 'jobs', 'requirements', 'entry', 'job_list', 'positions'],
 ];

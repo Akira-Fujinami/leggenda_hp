@@ -118,6 +118,148 @@ class TopMessageDraftExtractor
     }
 
     /**
+     * 依頼CZ-1: パネル用のメッセージの材料。ページの本文を文単位に分け、ページの上の順にID(m-1, m-2…)を振る。
+     * 文は、HTMLの中の文字そのまま(空白の畳み込みだけ)。言い換え・要約・つなぎ合わせ・「…」での切り詰めをしない。
+     *
+     * 除くもの(理由別に件数を数える):
+     *  - related_section: 「関連記事」などの見出し(config panel_related_headings)の下、次の同じか上の見出しまで
+     *  - link_text: 要素の文字のうち、リンク(a)の中の文字がconfig panel_link_text_ratio以上(記事タイトルのリンクなど)
+     *  - title: ページの<title>と同じ(依頼CSA-2と同じ)
+     *  - short_or_long: 短すぎる文・長すぎる文・除外の型(sentence_exclude_patterns)
+     * 話し手(役職・氏名)は、素材ページ(CS)と同じ取り方で1行。
+     *
+     * @return array{speaker: ?string, sentences: list<array{id: string, text: string}>, dropped: array{related_section: int, link_text: int, title: int, short_or_long: int}}
+     */
+    public function panelMessage(string $html, ?string $pageTitle = null): array
+    {
+        $dropped = ['related_section' => 0, 'link_text' => 0, 'title' => 0, 'short_or_long' => 0];
+        $xpath = $this->load($html);
+        if ($xpath === null) {
+            return ['speaker' => null, 'sentences' => [], 'dropped' => $dropped];
+        }
+        $titleKeys = $this->titleKeys($xpath, $pageTitle);
+        $minLen = (int) config('top_message_draft.panel_sentence_min_chars');
+        $maxLen = (int) config('top_message_draft.panel_sentence_max_chars');
+        $ratio = (float) config('top_message_draft.panel_link_text_ratio');
+        $excludePatterns = array_values(array_filter((array) config('top_message_draft.sentence_exclude_patterns'), 'is_string'));
+        $related = array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.panel_related_headings'));
+
+        $speaker = null;
+        $skipLevel = null;
+        $seen = [];
+        $sentences = [];
+
+        foreach ($xpath->query('//*[self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6 or self::p or self::li or self::dd or self::dt or self::td or self::th or self::blockquote or self::div or self::figcaption]') ?: [] as $element) {
+            if (! $element instanceof \DOMElement || $this->isExcluded($element)) {
+                continue;
+            }
+            $tag = strtolower($element->tagName);
+            $isHeading = preg_match('/^h([1-6])$/', $tag, $m) === 1;
+            $level = $isHeading ? (int) $m[1] : 0;
+            $leaf = $this->isLeafBlock($element);
+            $text = $leaf || $isHeading ? $this->collapse($element->textContent) : '';
+
+            // 「関連記事」などの見出しは、見出しでない短い行(葉の要素で文字が全体一致)も区切りとして扱う(次の見出しまで)。
+            if (($isHeading || $leaf) && $text !== '' && in_array($this->normalize($text), $related, true)) {
+                $skipLevel = $isHeading ? $level : 6;
+
+                continue;
+            }
+            if ($isHeading && $skipLevel !== null && $level <= $skipLevel) {
+                $skipLevel = null;
+            }
+
+            if ($speaker === null && $leaf && $skipLevel === null) {
+                foreach ($this->lines($element->textContent) as $line) {
+                    if ($this->isSpeakerLine($line)) {
+                        $speaker = $line;
+                        $seen[$line] = true;
+                        break;
+                    }
+                }
+            }
+
+            $isSentenceBlock = $isHeading ? $level <= 3 : (in_array($tag, self::SENTENCE_TAGS, true) && $leaf);
+            if (! $isSentenceBlock) {
+                continue;
+            }
+
+            $lines = $this->lines($element->textContent);
+            if ($skipLevel !== null) {
+                $dropped['related_section'] += $this->countSentences($lines);
+
+                continue;
+            }
+            $linkRatio = $this->linkTextRatio($element);
+            if ($linkRatio > 0 && $linkRatio >= $ratio) {
+                $dropped['link_text'] += $this->countSentences($lines);
+
+                continue;
+            }
+            foreach ($lines as $line) {
+                foreach ($isHeading ? [$line] : $this->sentences($line) as $sentence) {
+                    if ($isHeading && $this->isGeneric($sentence)) {
+                        continue;
+                    }
+                    $length = mb_strlen($sentence);
+                    if ($length < $minLen || $length > $maxLen || $this->matchesAny($sentence, $excludePatterns)) {
+                        $dropped['short_or_long']++;
+
+                        continue;
+                    }
+                    if (isset($seen[$sentence])) {
+                        continue;
+                    }
+                    if (isset($titleKeys[$this->looseKey($sentence)])) {
+                        $dropped['title']++;
+
+                        continue;
+                    }
+                    $seen[$sentence] = true;
+                    $sentences[] = ['id' => 'm-'.(count($sentences) + 1), 'text' => $sentence];
+                }
+            }
+        }
+
+        return ['speaker' => $speaker, 'sentences' => $sentences, 'dropped' => $dropped];
+    }
+
+    /**
+     * @param  list<string>  $lines
+     */
+    private function countSentences(array $lines): int
+    {
+        $count = 0;
+        foreach ($lines as $line) {
+            $count += count($this->sentences($line));
+        }
+
+        return $count;
+    }
+
+    /**
+     * 要素の文字のうち、リンク(a)の中の文字の割合(0〜1)。文字が無ければ0。要素自身がリンクの内側にあるときは1。
+     */
+    private function linkTextRatio(\DOMElement $element): float
+    {
+        $total = mb_strlen((string) preg_replace('/[\s\x{3000}\x{00A0}]+/u', '', $element->textContent));
+        if ($total === 0) {
+            return 0.0;
+        }
+        for ($node = $element->parentNode; $node instanceof \DOMElement; $node = $node->parentNode) {
+            if (strtolower($node->tagName) === 'a') {
+                return 1.0;
+            }
+        }
+        $linked = 0;
+        foreach ($element->getElementsByTagName('a') as $anchor) {
+            $linked += mb_strlen((string) preg_replace('/[\s\x{3000}\x{00A0}]+/u', '', $anchor->textContent));
+        }
+
+        return min(1.0, $linked / $total);
+    }
+
+    /**
      * ページの優先順に、ページごとの制度の候補(見出し h2〜h4・dt・th)と、その直後の本文(p・dd・td)の先頭を抜き出す。
      * 同じ文字の候補は最初のページのものだけ。
      *
@@ -128,7 +270,7 @@ class TopMessageDraftExtractor
      * @param  list<TopMessagePage>  $pages
      * @return list<array{url: string, source_title: string, items: list<array{kind: string, level: int, name: string, excerpt: string}>, dropped: array{colon: int, title: int, category: int}}>
      */
-    public function programItemsByPage(array $pages): array
+    public function programItemsByPage(array $pages, ?int $excerptMax = null): array
     {
         $seen = [];
         $result = [];
@@ -136,7 +278,7 @@ class TopMessageDraftExtractor
         foreach ($pages as $page) {
             $dropped = ['colon' => 0, 'title' => 0, 'category' => 0];
             $items = [];
-            foreach ($this->programsOf((string) $page->html, $page->title, $dropped) as $row) {
+            foreach ($this->programsOf((string) $page->html, $page->title, $dropped, $excerptMax) as $row) {
                 if ($row['kind'] === 'program') {
                     $key = $this->normalize($row['name']);
                     if (isset($seen[$key])) {
@@ -156,7 +298,7 @@ class TopMessageDraftExtractor
      * @param  array{colon: int, title: int, category: int}  $dropped
      * @return list<array{kind: string, level: int, name: string, excerpt: string}>
      */
-    private function programsOf(string $html, ?string $pageTitle, array &$dropped): array
+    private function programsOf(string $html, ?string $pageTitle, array &$dropped, ?int $excerptMax = null): array
     {
         $xpath = $this->load($html);
         if ($xpath === null) {
@@ -165,7 +307,7 @@ class TopMessageDraftExtractor
 
         $minLen = (int) config('top_message_draft.program_name_min_chars');
         $maxLen = (int) config('top_message_draft.program_name_max_chars');
-        $excerptMax = (int) config('top_message_draft.program_excerpt_max_chars');
+        $excerptMax ??= (int) config('top_message_draft.program_excerpt_max_chars');
         $suffixes = array_values(array_filter(array_map('strval', (array) config('top_message_draft.program_name_excluded_suffixes')), fn (string $s) => $s !== ''));
         $titleKeys = $this->titleKeys($xpath, $pageTitle);
 

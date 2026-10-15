@@ -88,6 +88,16 @@ class AnalysisStoragePaths
     }
 
     /**
+     * 依頼CZ: 比較(Analysis)単位の「トップメッセージと制度のパネル」(AIが選び、サーバー側の確認を通ったものだけ)のJSON。
+     * 会社(WebsiteAnalysis)ごとの結果を1つのファイルに持つ。マイグレーションは足さず、分析の保存先の中に置く ――
+     * analysisDir()ごとの削除(依頼CIのデータ削除)でいっしょに消える。
+     */
+    public function topMessagePanelPath(int $analysisId): string
+    {
+        return $this->analysisDir($analysisId).'/top_message_panel.json';
+    }
+
+    /**
      * 依頼CV: 比較(Analysis)単位の「強み・弱みの一文」(機械が選んだ1項目・1社から、AIが書き、サーバー側の確認を通ったものだけ)の
      * JSON。マイグレーションは足さず、分析の保存先の中に置く ―― analysisDir()ごとの削除(依頼CIのデータ削除)でいっしょに消える。
      */

@@ -7,6 +7,7 @@ use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelMultiSiteComparisonComposer;
 use App\Services\TopMessageDraft\TopMessageDraftBuilder;
 use App\Services\TopMessageInsight\TopMessageInsightStore;
+use App\Services\TopMessagePanel\TopMessagePanelStore;
 use App\Support\Report\MultiSiteReportViewModel;
 
 /**
@@ -183,10 +184,24 @@ class AdminComparisonPptxDataBuilder
             $entries[] = [(string) ($viewModel->competitors[$index]['name'] ?? $wa->website?->name ?? ''), $wa];
         }
 
+        // 依頼CZ: AIが選び、サーバー側の確認を通ったパネル(保存済みのファイルを読むだけ。ここでAIを呼ばない・通信しない)。
+        // 無効のとき・ファイルが無いとき・会社のパネルが作られなかったときは、パネルを付けない(素材ページのまま)。
+        $panelStore = (bool) config('top_message_panel.enabled') ? app(TopMessagePanelStore::class) : null;
+
         $pages = [];
         foreach ($entries as [$name, $wa]) {
             $page = $builder->build($wa, $name);
             if ($page !== null) {
+                $stored = $panelStore?->panelFor((int) $analysis->id, (int) $wa->id);
+                if ($stored !== null) {
+                    $page['panel'] = [
+                        'speaker' => $stored['speaker'] ?? null,
+                        'source_title' => $stored['message_title'] ?? null,
+                        'core' => (string) $stored['panel']['core']['text'],
+                        'body' => array_map(fn (array $row) => (string) $row['text'], (array) ($stored['panel']['body'] ?? [])),
+                        'keywords' => (array) ($stored['panel']['keywords'] ?? []),
+                    ];
+                }
                 $pages[] = $page;
             }
         }

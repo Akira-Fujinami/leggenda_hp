@@ -641,6 +641,12 @@ class AnalysisPipeline
             return;
         }
 
+        // 依頼CZ: 各社のトップメッセージと制度のパネルを作るジョブ(AIで選ばせる)が終わるまで待つ(config('top_message_panel.enabled')がtrueの比較のみ。
+        // 既定のfalseでは常に待たない)。ジョブが終わった時点(TopMessagePanelDispatcher::afterFinished())で、ここへ戻ってくる。
+        if (app(\App\Services\TopMessagePanel\TopMessagePanelDispatcher::class)->holdFinalization($analysis)) {
+            return;
+        }
+
         FinalizeAnalysisJob::dispatch($analysisId)->onQueue(JobType::FinalizeAnalysis->queueName());
     }
 }

@@ -975,6 +975,24 @@ return [
     'site_first_impression_point_gap_in' => 0.12,
     'site_first_impression_url_max_units' => 56,
     'top_message_draft_bullet' => '・',
+
+    /*
+    | 依頼CZ-4: トップメッセージと制度のパネル(AIが選び、サーバー側の確認を通ったものだけ。config/top_message_panel.php)。
+    | 赤い帯・注記の位置は素材ページと同じ。ここは文言・色・大きさだけ。
+    */
+    'top_message_panel_title' => '%s：トップメッセージと制度',
+    'top_message_panel_left_heading' => 'トップメッセージ',
+    'top_message_panel_right_heading' => 'トップメッセージのキーワードと、関連していると思われる制度',
+    'top_message_panel_quote_open' => '「',
+    'top_message_panel_quote_close' => '」',
+    'top_message_panel_core_max_pt' => 20,
+    // 本文の文字の大きさ = 核の一文の大きさ × この比。
+    'top_message_panel_body_ratio' => 0.55,
+    'top_message_panel_keyword_width_in' => 1.55,
+    // キーワードの帯の色(上から交互に使う)。
+    'top_message_panel_band_colors' => ['DCE6F2', 'F1E6D6'],
+    // 引数: 1=会社名 2=メッセージのページ名
+    'top_message_panel_note' => '出典：%1$s 採用サイト「%2$s」ほか。キーワードと制度の対応づけは AI が選んだもので、社内での確認が必要です。',
     'top_message_draft_message_max_pt' => 12,
     'top_message_draft_row_max_pt' => 10,
     'top_message_draft_url_max_units' => 64,
