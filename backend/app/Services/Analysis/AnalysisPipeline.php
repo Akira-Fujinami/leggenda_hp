@@ -628,6 +628,13 @@ class AnalysisPipeline
             return;
         }
 
+        // 依頼CU: 全社のブランド・ホイールの判定が終わったあとに、強み・弱みの一文を書くジョブを1回だけ起動し、
+        // 終わるまで診断全体の完了を待つ(config('comparison_commentary.enabled')がtrueの比較のみ。既定のfalseでは常に待たない)。
+        // ジョブが終わった時点(ComparisonCommentaryDispatcher::afterFinished())で、ここへ戻ってくる。
+        if (app(\App\Services\ComparisonCommentary\ComparisonCommentaryDispatcher::class)->holdFinalization($analysis)) {
+            return;
+        }
+
         FinalizeAnalysisJob::dispatch($analysisId)->onQueue(JobType::FinalizeAnalysis->queueName());
     }
 }

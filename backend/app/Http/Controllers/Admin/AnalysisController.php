@@ -201,7 +201,12 @@ class AnalysisController extends Controller
 
         try {
             $viewModel = $viewModelBuilder->build($analysis);
-            $data = $dataBuilder->build($viewModel);
+            // 依頼CU: 保存済みの「強み・弱みの一文」(AIが書き、サーバー側の確認を通ったもの)を読むだけ。
+            // ここでAIを呼ばない・通信しない(無効のとき・ファイルが無いときは、依頼CT-1の一文のまま)。
+            $commentary = (bool) config('comparison_commentary.enabled')
+                ? app(\App\Services\ComparisonCommentary\ComparisonCommentaryStore::class)->read((int) $analysis->id)
+                : null;
+            $data = $dataBuilder->build($viewModel, $commentary);
 
             // 依頼CB-3: 階層図は自社(is_primary)のWebsiteAnalysisの
             // analysis_crawled_pagesから組み立てる ―― ViewModel/$dataは

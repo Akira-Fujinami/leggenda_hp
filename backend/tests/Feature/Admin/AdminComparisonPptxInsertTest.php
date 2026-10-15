@@ -427,6 +427,95 @@ class AdminComparisonPptxInsertTest extends TestCase
     }
 
     // ------------------------------------------------------------------
+    // 依頼CU: 強み・弱みの一文(AI)。PPTXのダウンロードでは、保存済みのファイルを読むだけ。
+    // ------------------------------------------------------------------
+
+    /**
+     * @return array{0: Analysis, 1: string} 比較(自社と競合が読み取れている)と、強みの一文
+     */
+    private function makeComparisonWithCommentary(): array
+    {
+        $analysis = $this->makeComparisonAnalysis();
+        $axes = fn (array $keys) => [['axis_key' => 'will_activity', 'matched_sub_elements' => array_map(fn (string $k) => ['key' => $k, 'evidence' => "{$k}の根拠"], $keys), 'discarded_sub_elements' => [], 'claimed_sub_element_count' => count($keys), 'state' => 'partial']];
+        foreach ($analysis->websiteAnalyses()->with('website')->get() as $wa) {
+            BrandWheelAnalysisResult::query()->where('website_analysis_id', $wa->id)->delete();
+            BrandWheelAnalysisResult::factory()->create([
+                'analysis_id' => $analysis->id,
+                'website_analysis_id' => $wa->id,
+                'status' => 'success',
+                'axes' => $axes($wa->website->is_primary ? ['purpose', 'business_expansion'] : ['business_expansion']),
+            ]);
+        }
+        $sentence = 'AIが書いた強みの一文です。';
+        app(\App\Services\ComparisonCommentary\ComparisonCommentaryStore::class)->write($analysis->id, [
+            'status' => 'done', 'skipped' => null,
+            'strength' => ['sentence' => $sentence, 'items' => ['purpose'], 'quotes' => [], 'companies' => []],
+            'weakness' => null, 'rejected' => ['strength' => [], 'weakness' => ['items_invalid']],
+        ]);
+        $this->attachPptx($analysis, $this->makeMinimalDeck(['内容1', '参照元']));
+
+        return [$analysis, $sentence];
+    }
+
+    /** ダウンロードしたPPTXの全スライドのテキスト(XMLの実体参照は戻す)。 */
+    private function downloadedSlideText(\Illuminate\Testing\TestResponse $response): string
+    {
+        $tmp = $this->reservedTempPath('downloaded', 'pptx');
+        file_put_contents($tmp, $response->streamedContent());
+        $zip = new ZipArchive;
+        $this->assertTrue($zip->open($tmp) === true);
+        $text = '';
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = (string) $zip->getNameIndex($i);
+            if (preg_match('#^ppt/slides/slide\d+\.xml$#', $name) === 1) {
+                $text .= html_entity_decode((string) $zip->getFromName($name), ENT_QUOTES | ENT_XML1, 'UTF-8');
+            }
+        }
+        $zip->close();
+        @unlink($tmp);
+
+        return $text;
+    }
+
+    public function test_the_download_uses_the_stored_ai_sentence_and_adds_the_note_without_calling_the_ai_or_the_network(): void
+    {
+        config(['comparison_commentary.enabled' => true]);
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+        \Illuminate\Support\Facades\Http::fake();
+        app()->instance(\App\Services\ComparisonCommentary\ComparisonCommentaryProviderFactory::class, new class extends \App\Services\ComparisonCommentary\ComparisonCommentaryProviderFactory
+        {
+            public function make(): \App\Services\ComparisonCommentary\ComparisonCommentaryProvider
+            {
+                throw new \RuntimeException('ダウンロードでAIの設定を作ってはいけない');
+            }
+        });
+        [$analysis, $sentence] = $this->makeComparisonWithCommentary();
+
+        $response = $this->asAdmin()->get(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false));
+
+        $response->assertOk();
+        $text = $this->downloadedSlideText($response);
+        $this->assertStringContainsString($sentence, $text);
+        $this->assertStringContainsString((string) config('admin_comparison_pptx.strength_weakness_ai_note'), $text);
+        // 通らなかった側(弱み)は、点数から作ったCT-1の一文のまま。
+        $this->assertStringContainsString('弱み：', $text);
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_when_disabled_the_download_ignores_the_stored_sentence_and_shows_no_note(): void
+    {
+        config(['comparison_commentary.enabled' => false]);
+        [$analysis, $sentence] = $this->makeComparisonWithCommentary();
+
+        $response = $this->asAdmin()->get(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false));
+
+        $text = $this->downloadedSlideText($response);
+        $this->assertStringNotContainsString($sentence, $text);
+        $this->assertStringNotContainsString((string) config('admin_comparison_pptx.strength_weakness_ai_note'), $text);
+        $this->assertStringContainsString('強み：', $text);
+    }
+
+    // ------------------------------------------------------------------
     // 回帰確認: 既存の比較PDFダウンロードが変わらず動くこと。
     // ------------------------------------------------------------------
 

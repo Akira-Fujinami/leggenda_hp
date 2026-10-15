@@ -191,6 +191,7 @@ class AdminComparisonPptxDataBuilder
     }
 
     /**
+     * @param  ?array<string, mixed>  $commentary  依頼CU: ComparisonCommentaryStoreが読んだ結果(無ければnull)
      * @return array{
      *     self_company_name: string,
      *     self_readable: bool,
@@ -224,7 +225,7 @@ class AdminComparisonPptxDataBuilder
      *     page_number: ?string,
      * }
      */
-    public function build(MultiSiteReportViewModel $viewModel): array
+    public function build(MultiSiteReportViewModel $viewModel, ?array $commentary = null): array
     {
         $totalItems = count($viewModel->comparisonTable);
 
@@ -286,7 +287,9 @@ class AdminComparisonPptxDataBuilder
             'companies' => $companies,
             'axes' => $axes,
             // 依頼CT-1: 見出しの下の「強み」「弱み」の一文(点数から決まった形で作る。AIは使わない)。
-            'strength_weakness' => (new ComparisonStrengthWeaknessComposer)->compose($companies, $axes, $viewModel->selfReadable),
+            // 依頼CU: $commentary(保存済みの、AIが書いて確認を通った一文)があれば、その側はAIの文を使う。
+            // ここで読むのは渡された配列だけ ―― AIも外部通信も使わない。
+            'strength_weakness' => (new ComparisonStrengthWeaknessComposer)->compose($companies, $axes, $viewModel->selfReadable, $commentary),
             'missing_items' => $missingItems,
             'survey_comparison' => $this->buildSurveyComparison($viewModel),
             'candidate_survey_source_note' => (string) config('brand_wheel_candidate_survey.source_note'),

@@ -791,6 +791,13 @@ return [
     'strength_weakness_weakness_gap' => '%1$sは%2$d/%3$dで、競合の最高（%4$d/%3$d・%5$s）との差が最も大きい領域です。',
     'strength_weakness_weakness_none' => 'すべての領域で、競合の最高と同じか上回っています。',
     'strength_weakness_names_more' => 'ほか',
+    // 依頼CU-5: 強み・弱みの一文にAIの文を使ったときだけ、比較のページの注記に1行足す。AIの文(60〜90字)は
+    // CT-1の文より長いので、小さい文字(pt)にする。1行(ラベルを含む)に入る字数(ai_line_chars、その大きさでの実測)を
+    // 超える文は、1行に収まる大きさまで下げる(下限 ai_min_font_size)。
+    'strength_weakness_ai_note' => '強み・弱みの一文は、各社の判定結果と根拠の文をもとに AI が作成したものです。',
+    'strength_weakness_ai_font_size' => 9,
+    'strength_weakness_ai_line_chars' => 86,
+    'strength_weakness_ai_min_font_size' => 7.5,
     // 依頼CHの「件数での比較に適さない」会社(自社・競合)があるとき、強み・弱みの代わりに出す1行。
     'strength_weakness_insufficient' => '読み取れた記述が少ない会社があるため、強み・弱みは表示していません。',
 

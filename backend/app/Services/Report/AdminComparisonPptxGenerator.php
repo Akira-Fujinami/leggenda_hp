@@ -475,8 +475,13 @@ class AdminComparisonPptxGenerator
             $this->addWheelSelfColumn($slide, $data['companies'][0], $data['axes'], $selfReadable);
             $this->addWheelCompetitorColumn($slide, array_slice($data['companies'], 1), $data['axes'], $layout);
             $this->addMatrixSection($slide, $data['companies'], $data['axes'], $selfReadable, $layout);
-            if (($data['top_message_missing_note'] ?? null) !== null) {
-                $this->addTopMessageMissingNote($slide, (string) $data['top_message_missing_note']);
+            $notes = array_values(array_filter([
+                $data['top_message_missing_note'] ?? null,
+                // 依頼CU-5: 強み・弱みの一文にAIの文を使ったときだけ、注記に1行足す。
+                ($data['strength_weakness']['ai_used'] ?? false) ? (string) config('admin_comparison_pptx.strength_weakness_ai_note') : null,
+            ], fn ($note) => $note !== null && $note !== ''));
+            if ($notes !== []) {
+                $this->addWheelNotes($slide, $notes);
             }
             $this->addFooter($slide, $data['source_note'], $data['page_number']);
         });
@@ -486,7 +491,7 @@ class AdminComparisonPptxGenerator
      * 依頼CT-1: 見出しの下の「強み：」「弱み：」の2行(点数から決まった形の一文)。読み取れた記述が少ない
      * 会社があるときは、代わりに1行の文言だけ。出すものが無い(null)ときは何も描かない。
      *
-     * @param  ?array{notice: ?string, strength: ?string, weakness: ?string}  $text
+     * @param  ?array{notice: ?string, strength: ?string, weakness: ?string, ai_used?: bool}  $text
      */
     private function addStrengthWeakness(Slide $slide, ?array $text): void
     {
@@ -506,13 +511,37 @@ class AdminComparisonPptxGenerator
         }
 
         $labels = (array) config('admin_comparison_pptx.strength_weakness_labels');
+        $size = $this->strengthWeaknessFontSize($text, $labels);
         $first = true;
         foreach (['strength', 'weakness'] as $key) {
             $paragraph = $first ? $box->getActiveParagraph() : $box->createParagraph();
             $first = false;
-            $this->font($paragraph->createTextRun((string) ($labels[$key] ?? '')), 10.5, true, self::NAVY);
-            $this->font($paragraph->createTextRun((string) $text[$key]), 10.5, false, self::BODY_TEXT);
+            $this->font($paragraph->createTextRun((string) ($labels[$key] ?? '')), $size, true, self::NAVY);
+            $this->font($paragraph->createTextRun((string) $text[$key]), $size, false, self::BODY_TEXT);
         }
+    }
+
+    /**
+     * 依頼CU: AIの文(60〜100字)はCT-1の文より長い。2行(強み・弱み)を1行ずつに収めるため、AIの文を使うときだけ、
+     * 長い方の行がconfigの1行の字数に収まる大きさまで文字を小さくする(下限あり)。CT-1の文は従来の大きさ。
+     *
+     * @param  array{strength: ?string, weakness: ?string, ai_used?: bool}  $text
+     * @param  array<string, string>  $labels
+     */
+    private function strengthWeaknessFontSize(array $text, array $labels): float
+    {
+        if (! ($text['ai_used'] ?? false)) {
+            return 10.5;
+        }
+
+        $base = (float) config('admin_comparison_pptx.strength_weakness_ai_font_size');
+        $capacity = (int) config('admin_comparison_pptx.strength_weakness_ai_line_chars');
+        $longest = 0;
+        foreach (['strength', 'weakness'] as $key) {
+            $longest = max($longest, mb_strlen((string) ($labels[$key] ?? '')) + mb_strlen((string) $text[$key]));
+        }
+
+        return $longest <= $capacity ? $base : max((float) config('admin_comparison_pptx.strength_weakness_ai_min_font_size'), round($base * $capacity / $longest, 1));
     }
 
     /**
@@ -2908,14 +2937,23 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * 依頼CQ-4: 作られなかった会社があるとき、比較のページの下に注記を1行足す。
+     * 比較のページの下の注記(ヘキサゴンの下・出典行の上)。1行ずつ。依頼CQ-4の「作られなかった会社」と、
+     * 依頼CU-5の「AIが作成した一文」の旨。2行になるときは、1行目を上へ寄せて出典行に重ならないようにする。
+     *
+     * @param  list<string>  $notes
      */
-    private function addTopMessageMissingNote(Slide $slide, string $note): void
+    private function addWheelNotes(Slide $slide, array $notes): void
     {
+        $lineHeight = 0.14;
         $box = $slide->createRichTextShape();
-        $this->position($box, self::LEFT_IN, self::TM_MISSING_NOTE_TOP_IN, self::CONTENT_WIDTH_IN, 0.26);
+        $this->position($box, self::LEFT_IN, self::TM_MISSING_NOTE_TOP_IN - $lineHeight * (count($notes) - 1), self::CONTENT_WIDTH_IN, 0.26 + $lineHeight * (count($notes) - 1));
         $box->setWrap(RichText::WRAP_SQUARE);
-        $this->font($box->getActiveParagraph()->createTextRun($note), 8, false, self::GAP_TEXT);
+        $first = true;
+        foreach ($notes as $note) {
+            $paragraph = $first ? $box->getActiveParagraph() : $box->createParagraph();
+            $first = false;
+            $this->font($paragraph->createTextRun($note), 8, false, self::GAP_TEXT);
+        }
     }
 
     /**

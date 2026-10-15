@@ -15,15 +15,20 @@ namespace App\Services\Report;
  *
  * 依頼CHの「件数での比較に適さない」会社(自社・競合)が1社でもあるときは、強み・弱みは出さず、1行の文言だけ。
  * 自社の判定が成立していない(self_readable=false)とき、競合がいないときは、何も出さない(null)。
+ *
+ * 依頼CU: AIが書いて、サーバー側の確認(ComparisonCommentaryVerifier)を通った一文($commentary)があるときは、
+ * 強み・弱みそれぞれ、その文を使う(通らなかった側はnullなので、上のCT-1の一文のまま)。AIの文を使った側が1つでもあれば
+ * ai_used=true(スライドの注記に1行足す)。点数による「読み取れた記述が少ない」の判定は、AIの文より先に効く。
  */
 class ComparisonStrengthWeaknessComposer
 {
     /**
      * @param  list<array{name: string, matched: int, total: int, is_self: bool, material_sufficient: bool}>  $companies  先頭が自社
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
-     * @return ?array{notice: ?string, strength: ?string, weakness: ?string}
+     * @param  ?array<string, mixed>  $commentary  ComparisonCommentaryStoreが読んだ結果(strength/weaknessは確認を通った文かnull)
+     * @return ?array{notice: ?string, strength: ?string, weakness: ?string, ai_used: bool}
      */
-    public function compose(array $companies, array $axes, bool $selfReadable): ?array
+    public function compose(array $companies, array $axes, bool $selfReadable, ?array $commentary = null): ?array
     {
         $competitors = array_values(array_filter($companies, fn (array $c) => ! $c['is_self']));
         if (! $selfReadable || $competitors === [] || $axes === []) {
@@ -32,7 +37,7 @@ class ComparisonStrengthWeaknessComposer
 
         foreach ($companies as $company) {
             if (! ($company['material_sufficient'] ?? true)) {
-                return ['notice' => (string) config('admin_comparison_pptx.strength_weakness_insufficient'), 'strength' => null, 'weakness' => null];
+                return ['notice' => (string) config('admin_comparison_pptx.strength_weakness_insufficient'), 'strength' => null, 'weakness' => null, 'ai_used' => false];
             }
         }
 
@@ -42,11 +47,25 @@ class ComparisonStrengthWeaknessComposer
             $rows[] = ['index' => $index, 'axis' => $axis, 'self' => (int) $axis['self_count'], 'best' => $best];
         }
 
+        $aiStrength = $this->aiSentence($commentary, 'strength');
+        $aiWeakness = $this->aiSentence($commentary, 'weakness');
+
         return [
             'notice' => null,
-            'strength' => $this->strength($rows, count($competitors)),
-            'weakness' => $this->weakness($rows, $competitors),
+            'strength' => $aiStrength ?? $this->strength($rows, count($competitors)),
+            'weakness' => $aiWeakness ?? $this->weakness($rows, $competitors),
+            'ai_used' => $aiStrength !== null || $aiWeakness !== null,
         ];
+    }
+
+    /**
+     * @param  ?array<string, mixed>  $commentary
+     */
+    private function aiSentence(?array $commentary, string $side): ?string
+    {
+        $sentence = $commentary[$side]['sentence'] ?? null;
+
+        return is_string($sentence) && trim($sentence) !== '' ? trim($sentence) : null;
     }
 
     /**
