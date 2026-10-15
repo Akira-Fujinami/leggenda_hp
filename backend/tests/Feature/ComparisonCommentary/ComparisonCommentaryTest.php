@@ -359,12 +359,18 @@ class ComparisonCommentaryTest extends TestCase
         $other = $side === 'strength' ? 'weakness' : 'strength';
         $this->assertTrue($this->verify($other, $good[$other], $analysis)['ok']);
 
-        // 保存される結果では、その側だけnull(依頼CT-1の一文に戻る)。落ちた理由の符号は残り、文の中身は残らない。
+        // 保存される結果。依頼CUA-4: AIの強みは使わない(出力は無視され、常にnull・確認もしない)。弱みは、確認で落ちたらnull
+        // (依頼CUAの文、無ければ依頼CT-1の一文に戻る)。落ちた理由の符号は残り、文の中身は残らない。
         $this->fakeProvider([$side => $broken] + $good);
         $result = app(ComparisonCommentaryService::class)->generate($analysis, true);
-        $this->assertNull($result[$side]);
-        $this->assertNotNull($result[$other]);
-        $this->assertContains($reason, $result['rejected'][$side]);
+        $this->assertNull($result['strength']);
+        $this->assertSame([], $result['rejected']['strength']);
+        if ($side === 'weakness') {
+            $this->assertNull($result['weakness']);
+            $this->assertContains($reason, $result['rejected']['weakness']);
+        } else {
+            $this->assertNotNull($result['weakness']);
+        }
         $this->assertStringNotContainsString($this->evidence('自社', 'purpose'), json_encode($result['rejected'], JSON_UNESCAPED_UNICODE));
     }
 
@@ -413,7 +419,9 @@ class ComparisonCommentaryTest extends TestCase
         $this->assertSame(['purpose', 'business_expansion'], array_column($fake->materials[0]['only_strengths'], 'key'));
         // 検証用の対応表(24項目の○×)はプロンプトに載せない。
         $this->assertArrayNotHasKey('self_matched_by_key', $fake->materials[0]);
-        $this->assertSame($this->goodOutput()['strength']['sentence'], $result['strength']['sentence']);
+        // 依頼CUA-4: AIの強みは使わない。弱みだけが確認を通って残る。
+        $this->assertNull($result['strength']);
+        $this->assertSame($this->goodOutput()['weakness']['sentence'], $result['weakness']['sentence']);
         Storage::disk('analysis')->assertExists("analyses/{$analysis->id}/comparison_commentary.json");
 
         // 結果のファイルがあれば、AIは呼び直さない。
@@ -484,7 +492,7 @@ class ComparisonCommentaryTest extends TestCase
     public function test_the_log_has_only_counts_and_reason_codes(): void
     {
         $analysis = $this->standard();
-        $this->fakeProvider(['strength' => ['sentence' => '懸念があります。', 'items' => ['purpose'], 'quotes' => []]] + $this->goodOutput());
+        $this->fakeProvider(['weakness' => ['sentence' => '懸念があります。', 'items' => ['social_contribution'], 'quotes' => [], 'companies' => []]] + $this->goodOutput());
         \Illuminate\Support\Facades\Log::spy();
 
         app(ComparisonCommentaryService::class)->generate($analysis);
@@ -512,8 +520,9 @@ class ComparisonCommentaryTest extends TestCase
         $ct1 = $composer->compose($companies, $axes, true);
         $this->assertFalse($ct1['ai_used']);
 
+        // 依頼CUA-4: AIの強みは(ファイルにあっても)使わない。
         $both = $composer->compose($companies, $axes, true, ['strength' => ['sentence' => 'AIの強みの一文です。'], 'weakness' => ['sentence' => 'AIの弱みの一文です。']]);
-        $this->assertSame('AIの強みの一文です。', $both['strength']);
+        $this->assertSame($ct1['strength'], $both['strength']);
         $this->assertSame('AIの弱みの一文です。', $both['weakness']);
         $this->assertTrue($both['ai_used']);
 

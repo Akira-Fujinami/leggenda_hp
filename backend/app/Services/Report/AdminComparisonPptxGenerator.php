@@ -477,8 +477,11 @@ class AdminComparisonPptxGenerator
             $this->addMatrixSection($slide, $data['companies'], $data['axes'], $selfReadable, $layout);
             $notes = array_values(array_filter([
                 $data['top_message_missing_note'] ?? null,
-                // 依頼CU-5: 強み・弱みの一文にAIの文を使ったときだけ、注記に1行足す。
-                ($data['strength_weakness']['ai_used'] ?? false) ? (string) config('admin_comparison_pptx.strength_weakness_ai_note') : null,
+                // 依頼CU-5: AIの弱みを使ったときは、AIが作成した旨の注記。依頼CUA-5: AIを使わない文(項目と根拠の一節)を
+                // 使ったときは、その旨の注記。どちらでもない(依頼CT-1の文)ときは足さない。
+                ($data['strength_weakness']['ai_used'] ?? false)
+                    ? (string) config('admin_comparison_pptx.strength_weakness_ai_note')
+                    : (($data['strength_weakness']['detail_used'] ?? false) ? (string) config('admin_comparison_pptx.strength_weakness_detail.note') : null),
             ], fn ($note) => $note !== null && $note !== ''));
             if ($notes !== []) {
                 $this->addWheelNotes($slide, $notes);
@@ -525,12 +528,12 @@ class AdminComparisonPptxGenerator
      * 依頼CU: AIの文(60〜100字)はCT-1の文より長い。2行(強み・弱み)を1行ずつに収めるため、AIの文を使うときだけ、
      * 長い方の行がconfigの1行の字数に収まる大きさまで文字を小さくする(下限あり)。CT-1の文は従来の大きさ。
      *
-     * @param  array{strength: ?string, weakness: ?string, ai_used?: bool}  $text
+     * @param  array{strength: ?string, weakness: ?string, ai_used?: bool, detail_used?: bool}  $text
      * @param  array<string, string>  $labels
      */
     private function strengthWeaknessFontSize(array $text, array $labels): float
     {
-        if (! ($text['ai_used'] ?? false)) {
+        if (! ($text['ai_used'] ?? false) && ! ($text['detail_used'] ?? false)) {
             return 10.5;
         }
 

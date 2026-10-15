@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Log;
  *   AIは呼ばれない(PPTXを作る側はファイルを読むだけ)。
  * - 自社の判定が成立していない・競合がいない・読み取れた記述が少ない会社がある・競合の判定が成立していないときは、
  *   AIを呼ばない(skippedとして記録する)。
+ * - 依頼CUA-4: AIの強みは使わない(出力を無視する)。強みは常に null、弱みだけを確認する。
  * - 確認で落ちた側は null(依頼CT-1の一文に戻る)。落ちた理由の符号を件数としてログに出す。文の中身はログに出さない。
  * - AI呼び出しの再試行はここでは行わない(呼び出し回数を増やさないため。HTTPの再試行はプロバイダ側の既存設定)。
  */
@@ -93,13 +94,11 @@ class ComparisonCommentaryService
         $base['usage_input_tokens'] = (int) $outcome['usage_input_tokens'];
         $base['usage_output_tokens'] = (int) $outcome['usage_output_tokens'];
 
-        $base['candidates'] = [];
-        foreach (['strength', 'weakness'] as $side) {
-            $base['candidates'][$side] = (array) ($outcome['decoded'][$side] ?? []);
-            $checked = $this->verifier->verify($side, $base['candidates'][$side], $material);
-            $base[$side] = $checked['value'];
-            $base['rejected'][$side] = $checked['reasons'];
-        }
+        // 依頼CUA-4: AIの強みは使わない(測定で浅かったため。出力は無視し、確認もしない)。弱みだけを確認する。
+        $base['candidates'] = ['weakness' => (array) ($outcome['decoded']['weakness'] ?? [])];
+        $checked = $this->verifier->verify('weakness', $base['candidates']['weakness'], $material);
+        $base['weakness'] = $checked['value'];
+        $base['rejected']['weakness'] = $checked['reasons'];
 
         return $base;
     }

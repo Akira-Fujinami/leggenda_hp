@@ -446,11 +446,12 @@ class AdminComparisonPptxInsertTest extends TestCase
                 'axes' => $axes($wa->website->is_primary ? ['purpose', 'business_expansion'] : ['business_expansion']),
             ]);
         }
-        $sentence = 'AIが書いた強みの一文です。';
+        $sentence = 'AIが書いた弱みの一文です。';
         app(\App\Services\ComparisonCommentary\ComparisonCommentaryStore::class)->write($analysis->id, [
             'status' => 'done', 'skipped' => null,
-            'strength' => ['sentence' => $sentence, 'items' => ['purpose'], 'quotes' => [], 'companies' => []],
-            'weakness' => null, 'rejected' => ['strength' => [], 'weakness' => ['items_invalid']],
+            'strength' => null,
+            'weakness' => ['sentence' => $sentence, 'items' => ['social_contribution'], 'quotes' => [], 'companies' => []],
+            'rejected' => ['strength' => [], 'weakness' => []],
         ]);
         $this->attachPptx($analysis, $this->makeMinimalDeck(['内容1', '参照元']));
 
@@ -497,20 +498,21 @@ class AdminComparisonPptxInsertTest extends TestCase
         $text = $this->downloadedSlideText($response);
         $this->assertStringContainsString($sentence, $text);
         $this->assertStringContainsString((string) config('admin_comparison_pptx.strength_weakness_ai_note'), $text);
-        // 通らなかった側(弱み)は、点数から作ったCT-1の一文のまま。
-        $this->assertStringContainsString('弱み：', $text);
+        // 依頼CUA-4: 強みはAIの文ではなく、AIを使わない文(項目と根拠の一節)か、点数から作ったCT-1の一文。
+        $this->assertStringContainsString('強み：', $text);
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
 
     public function test_when_disabled_the_download_ignores_the_stored_sentence_and_shows_no_note(): void
     {
-        config(['comparison_commentary.enabled' => false]);
+        config(['comparison_commentary.enabled' => false, 'admin_comparison_pptx.strength_weakness_detail.enabled' => false]);
         [$analysis, $sentence] = $this->makeComparisonWithCommentary();
 
         $response = $this->asAdmin()->get(route('admin.analyses.comparison-report.pptx-insert', $analysis->id, false));
 
         $text = $this->downloadedSlideText($response);
         $this->assertStringNotContainsString($sentence, $text);
+        $this->assertStringNotContainsString((string) config('admin_comparison_pptx.strength_weakness_detail.note'), $text);
         $this->assertStringNotContainsString((string) config('admin_comparison_pptx.strength_weakness_ai_note'), $text);
         $this->assertStringContainsString('強み：', $text);
     }

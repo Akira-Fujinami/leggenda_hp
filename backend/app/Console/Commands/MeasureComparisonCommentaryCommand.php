@@ -9,6 +9,7 @@ use App\Services\BrandWheel\BrandWheelAnalysisInputFactory;
 use App\Services\BrandWheel\BrandWheelAnalysisProviderFactory;
 use App\Services\ComparisonCommentary\ComparisonCommentaryMaterialBuilder;
 use App\Services\ComparisonCommentary\ComparisonCommentaryService;
+use App\Services\ComparisonCommentary\StrengthWeaknessDetailComposer;
 use App\Services\Report\ComparisonStrengthWeaknessComposer;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
@@ -43,6 +44,7 @@ class MeasureComparisonCommentaryCommand extends Command
         ComparisonCommentaryService $service,
         BrandWheelAnalysisInputFactory $inputFactory,
         ComparisonStrengthWeaknessComposer $composer,
+        StrengthWeaknessDetailComposer $detailComposer,
     ): int {
         if (app()->environment('production')) {
             $this->error('production環境ではこのコマンドを実行できません。');
@@ -159,6 +161,7 @@ class MeasureComparisonCommentaryCommand extends Command
         }
         $this->printMaterial($material);
         $this->printBaseline($composer, $material, $self[0]);
+        $this->printDetail($detailComposer, $material);
 
         if (! $this->option('live')) {
             return self::SUCCESS;
@@ -199,7 +202,7 @@ class MeasureComparisonCommentaryCommand extends Command
         if ($result['skipped'] !== null) {
             $this->warn('書けませんでした: '.$result['skipped']);
         }
-        foreach (['strength' => '強み', 'weakness' => '弱み'] as $key => $name) {
+        foreach (['weakness' => '弱み'] as $key => $name) {
             if ($result[$key] !== null) {
                 $this->line("  {$name}(確認を通った): ".$result[$key]['sentence']);
                 $this->line('    項目: '.implode('、', $result[$key]['items']).' / 引用: '.count($result[$key]['quotes']).'件');
@@ -226,6 +229,22 @@ class MeasureComparisonCommentaryCommand extends Command
         $this->line('自社だけの強み('.count($material['only_strengths']).'件): '.implode('、', array_map(fn (array $r) => "{$r['axis']}／{$r['name']}(競合の○ {$r['competitor_matched_count']}社)", $material['only_strengths'])));
         $this->line('自社の穴('.count($material['holes']).'件): '.implode('、', array_map(fn (array $r) => "{$r['axis']}／{$r['name']}(○の競合: ".implode('・', $r['matched_companies']).')', $material['holes'])));
         $this->line('差がつかない領域('.count($material['tie_axes']).'件): '.implode('、', array_map(fn (array $r) => "{$r['axis']} {$r['score']}/{$r['denominator']}", $material['tie_axes'])));
+    }
+
+    /**
+     * 依頼CUAの一文(項目と根拠の一節で書く。AIを使わない)と、選ばれた項目・一節を選べず飛ばした項目の数。
+     *
+     * @param  array<string, mixed>  $material
+     */
+    private function printDetail(StrengthWeaknessDetailComposer $detailComposer, array $material): void
+    {
+        $detail = $detailComposer->compose($material);
+        $info = $detail['info'];
+        $this->info('=== 依頼CUAの一文(項目と根拠の一節。AIなし) ===');
+        $this->line('  強み：'.($detail['strength'] ?? '(作れなかった → CT-1の文)'));
+        $this->line(sprintf('    種類: %s / 選ばれた項目: %s / 一節を選べず飛ばした項目: %d件', $info['strength_kind'] ?? '-', $info['strength_item'] ?? '-', $info['strength_skipped']));
+        $this->line('  弱み：'.($detail['weakness'] ?? '(作れなかった → CT-1の文)'));
+        $this->line(sprintf('    選ばれた項目: %s / 一節を選べず飛ばした項目: %d件', $info['weakness_item'] ?? '-', $info['weakness_skipped']));
     }
 
     /**

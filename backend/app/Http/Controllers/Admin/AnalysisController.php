@@ -206,7 +206,11 @@ class AnalysisController extends Controller
             $commentary = (bool) config('comparison_commentary.enabled')
                 ? app(\App\Services\ComparisonCommentary\ComparisonCommentaryStore::class)->read((int) $analysis->id)
                 : null;
-            $data = $dataBuilder->build($viewModel, $commentary);
+            // 依頼CUA: 項目と根拠の一節で書いた強み・弱み(AIを使わない。保存済みの判定結果を読むだけ)。
+            $detail = (bool) config('admin_comparison_pptx.strength_weakness_detail.enabled')
+                ? app(\App\Services\ComparisonCommentary\StrengthWeaknessDetailComposer::class)->composeForAnalysis($analysis)
+                : null;
+            $data = $dataBuilder->build($viewModel, $commentary, $detail);
 
             // 依頼CB-3: 階層図は自社(is_primary)のWebsiteAnalysisの
             // analysis_crawled_pagesから組み立てる ―― ViewModel/$dataは

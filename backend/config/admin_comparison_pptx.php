@@ -798,6 +798,34 @@ return [
     'strength_weakness_ai_font_size' => 9,
     'strength_weakness_ai_line_chars' => 86,
     'strength_weakness_ai_min_font_size' => 7.5,
+    /*
+    |--------------------------------------------------------------------------
+    | 依頼CUA: 強み・弱みを「項目」と「根拠の一節」で書く(AIを使わない)
+    |--------------------------------------------------------------------------
+    | StrengthWeaknessDetailComposer / EvidenceSnippetSelector。24項目の判定結果と、判定の根拠としたサイトの記述(原文との
+    | 突き合わせを通ったもの)から、同じ入力から必ず同じ文を作る。一節は、そのまま(言い換えず・つなげず)使う。
+    | 自社が×の項目は「読み取れませんでした」と書く(「無い」「書いていない」と断定しない)。
+    | falseのときは依頼CT-1の一文(6領域の点数から)。AIを使わないので、既定はtrue。
+    |
+    | 強みの書式の引数: 1=項目名 2=競合の社数 3=その項目が○の競合の社数 4=自社の根拠の一節(none は 3 が無い)
+    | 弱みの書式の引数: 1=項目名 2=競合(企業名。記号で見出しを出すときは symbol_label_template を通す) 3=競合の根拠の一節
+    */
+    'strength_weakness_detail' => [
+        'enabled' => (bool) env('STRENGTH_WEAKNESS_DETAIL_ENABLED', true),
+        // 一節の長さ(文字)と、数字・固有の名前(カタカナ語・英字)を含む節を先に使うためのパターン。
+        'snippet_min_chars' => 8,
+        'snippet_max_chars' => 40,
+        'snippet_priority_pattern' => '/[0-9０-９]|[ァ-ヶー]{2,}|[A-Za-zＡ-Ｚａ-ｚ]{2,}/u',
+        // 一文の上限(文字)。超えるときは短い候補に替え、それでも超えるなら次の項目、最後はCT-1の一文。
+        'sentence_limit_chars' => 100,
+        'strength_template' => '%1$sは、競合%2$d社のうち%3$d社からしか読み取れなかった内容で、自社は「%4$s」と記載しています。',
+        'strength_none_template' => '%1$sは、競合%2$d社のいずれからも読み取れなかった内容で、自社は「%3$s」と記載しています。',
+        'strength_tie_template' => '%1$sは全社が%2$d/%3$dで、この比較では差がつきにくい領域です。',
+        'weakness_template' => '%1$sは自社サイトから読み取れませんでしたが、%2$sは「%3$s」と記載しています。',
+        'symbol_label_template' => '競合%s',
+        // スライドの下の注記(AIの弱みを使ったときは strength_weakness_ai_note に切り替える)。
+        'note' => '強み・弱みは、24項目の判定結果と、判定の根拠としたサイトの記述をもとに作成しています。',
+    ],
     // 依頼CHの「件数での比較に適さない」会社(自社・競合)があるとき、強み・弱みの代わりに出す1行。
     'strength_weakness_insufficient' => '読み取れた記述が少ない会社があるため、強み・弱みは表示していません。',
 

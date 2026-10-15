@@ -117,6 +117,7 @@ class ComparisonCommentaryMaterialBuilder
 
         $onlyStrengths = [];
         $holes = [];
+        $allItems = [];
         $selfMatchedByKey = [];
         $matchedLabelsByKey = [];
         $axisScores = [];
@@ -144,6 +145,19 @@ class ComparisonCommentaryMaterialBuilder
                 $count = count($matchedBy);
                 $selfMatchedByKey[$subKey] = $selfHas;
                 $matchedLabelsByKey[$subKey] = array_map(fn (int $i) => $labels[$i], $matchedBy);
+
+                // 依頼CUA: 24項目すべての○×と、根拠の文(切り詰めない原文のまま)。AIを使わない一文の組み立てに使う
+                // (プロンプトには載せない)。
+                $allItems[] = [
+                    'order' => $order,
+                    'key' => $subKey,
+                    'axis' => (string) ($axis['name_ja'] ?? $axisKey),
+                    'name' => (string) $subName,
+                    'self_matched' => $selfHas,
+                    'self_evidence' => $selfHas ? trim((string) ($selfEvidence[$axisKey][$subKey] ?? '')) : '',
+                    'competitor_matched_count' => $count,
+                    'competitors' => array_map(fn (int $i) => ['label' => $labels[$i], 'matched' => isset($competitorMatched[$i][$compKey]), 'evidence' => isset($competitorMatched[$i][$compKey]) ? trim((string) ($competitorEvidence[$i][$axisKey][$subKey] ?? '')) : ''], array_keys($records)),
+                ];
 
                 if ($selfHas && $count < $threshold) {
                     $onlyStrengths[] = [
@@ -213,6 +227,7 @@ class ComparisonCommentaryMaterialBuilder
             'only_strengths' => array_map(fn (array $r) => array_diff_key($r, ['order' => 1]), $onlyStrengths),
             'holes' => array_map(fn (array $r) => array_diff_key($r, ['order' => 1]), $holes),
             'tie_axes' => $tieAxes,
+            'items' => $allItems,
             'self_matched_by_key' => $selfMatchedByKey,
             'matched_labels_by_key' => $matchedLabelsByKey,
         ];
@@ -323,6 +338,6 @@ class ComparisonCommentaryMaterialBuilder
      */
     private function skipped(string $reason, string $selfName): array
     {
-        return ['status' => 'skipped', 'reason' => $reason, 'self_name' => $selfName, 'competitors' => [], 'only_strengths' => [], 'holes' => [], 'tie_axes' => [], 'axis_scores' => [], 'totals' => ['self' => 0, 'competitors' => []], 'self_matched_by_key' => [], 'matched_labels_by_key' => []];
+        return ['status' => 'skipped', 'reason' => $reason, 'self_name' => $selfName, 'competitors' => [], 'only_strengths' => [], 'holes' => [], 'tie_axes' => [], 'items' => [], 'axis_scores' => [], 'totals' => ['self' => 0, 'competitors' => []], 'self_matched_by_key' => [], 'matched_labels_by_key' => []];
     }
 }
