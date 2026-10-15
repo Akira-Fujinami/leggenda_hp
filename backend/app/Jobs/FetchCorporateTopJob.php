@@ -30,8 +30,8 @@ class FetchCorporateTopJob implements ShouldBeUnique, ShouldQueue
 
     public function __construct(public readonly int $websiteAnalysisId)
     {
-        // 候補は最大3つ。1つあたりの締切り+余裕。
-        $this->timeout = ((int) config('admin_comparison_pptx.corporate_top_fetch_timeout_seconds', 15)) * 3 + 30;
+        // 候補は最大3つ。1つあたりの締切り + 依頼CY-1の描画(analyzerのHTTP timeout)1回 + 余裕。
+        $this->timeout = ((int) config('admin_comparison_pptx.corporate_top_fetch_timeout_seconds', 15)) * 3 + \App\Services\Analysis\AnalyzerClient::RENDER_TIMEOUT_SECONDS + 30;
         $this->uniqueFor = $this->timeout * 3;
     }
 

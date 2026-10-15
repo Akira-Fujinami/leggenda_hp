@@ -760,21 +760,99 @@ return [
     'corporate_top_default_recruit_label' => '採用情報',
     'corporate_top_label_max_chars' => 16,
     // 第1階層に名前だけ並べる、採用以外のメニュー(薄く)の上限。超えたら「ほかN」。
-    'corporate_top_other_menu_limit' => 4,
+    // 依頼CY-1: 第1階層に出す、コーポレートの他メニューの件数の上限(超えた分は「ほかN」)。
+    'corporate_top_other_menu_limit' => 6,
+
+    /*
+    | 依頼CY-1: コーポレートTOPのメニューの取り方。次の順で取り、取れた(下の除外を通った項目が1件以上ある)時点で止める。
+    |   1. 静的なHTMLの header / nav(HtmlSeoAnalyzer::extractMenuLinks)
+    |   2. 描画済みのHTML(既存の描画の仕組み analyzer で、コーポレートTOPの取得のときに1回だけ描画して保存したもの)の header / nav
+    |   3. class / id にナビを表す語を含む要素(main・article・footerの外)の中のリンク(描画済みのHTMLがあればそちら、無ければ静的なHTML)
+    */
+    'corporate_top_render_enabled' => (bool) env('CORPORATE_TOP_RENDER_ENABLED', true),
+    'corporate_top_menu_nav_words' => ['gnav', 'global-nav', 'globalnav', 'global_nav', 'main-nav', 'mainnav', 'header', 'menu', 'navigation'],
+    // 除くもの: 採用サイト(起点の配下)へのリンク・採用の箱と同じ名前・サイトのTOP自身へのリンク(ロゴ・HOME)・他のホストへのリンク(wwwの有無は同じホスト)・
+    // 情報の区分ではない項目(言語切り替え・検索・ログイン・お問い合わせ・サイトマップなど。ラベルが完全に一致 / 含む)。
+    'corporate_top_menu_same_host_only' => true,
+    // 3.(class / idの語)で、リストの入れ子がこの深さを超えるリンクは、サブメニュー(メニューの子)として使わない(第1階層は上の階層だけ)。
+    'corporate_top_menu_class_words_max_list_depth' => 1,
+    'corporate_top_menu_exclude_exact' => ['home', 'top', 'トップ', 'トップページ', 'ホーム', 'menu', 'メニュー', '閉じる', 'close', 'search', '検索', 'login', 'log in', 'sign in', 'ログイン', 'english', 'japanese', '日本語', 'en', 'jp', 'language', 'sitemap', 'サイトマップ', 'skip to content', 'お問い合わせ', 'お問合せ', 'contact'],
+    'corporate_top_menu_exclude_contains' => ['お問い合わせ', 'お問合せ', 'ログイン', '言語', 'language', '検索'],
     'corporate_top_other_menu_other_template' => 'ほか%d',
 
     // CR-3: 列の見出し(見出し・説明)。コーポレートTOPが決まったときは4列、決まらなかったときは3列。
+    // 依頼CY-2: 第3階層の説明は「掲載されている情報」(ページ名の代わりに、情報の種類を並べる)。
     'site_hierarchy_columns_corporate' => [
         ['heading' => 'コーポレートTOP', 'description' => 'サイトの入口'],
         ['heading' => '第1階層', 'description' => 'コーポレートのメニュー'],
         ['heading' => '第2階層', 'description' => '採用サイトの区分'],
-        ['heading' => '第3階層', 'description' => '各ページ'],
+        ['heading' => '第3階層', 'description' => '掲載されている情報'],
     ],
     'site_hierarchy_columns_recruit' => [
         ['heading' => '採用サイトTOP', 'description' => 'サイトの入口'],
         ['heading' => '第1階層', 'description' => '採用サイトの区分'],
-        ['heading' => '第2階層', 'description' => '各ページ'],
+        ['heading' => '第2階層', 'description' => '掲載されている情報'],
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 依頼CY-2: 第3階層を「情報の種類」(求職者調査の14項目)で示す(AIなし)
+    |--------------------------------------------------------------------------
+    | PageKindClassifier。ページ名(title / 最初のh1)に種類ごとの言葉を含むか、ブランド・ホイールの判定で自社が○の項目の
+    | 根拠の文がそのページの本文にそのまま含まれるとき、その種類を付ける。どちらにも当てはまらないページは「その他」
+    | (推測で種類を付けない)。言葉は、ページ名から種類がはっきり分かる一般的な言葉だけ(会社ごとの調整はしない)。
+    | 種類が1つも付かない枝は、従来どおりページ名を出す。
+    */
+    'site_hierarchy_page_kinds_enabled' => true,
+    // 行: 種類の短い名前(件数)。調査の割合の高い順に、行数の上限(第2階層の件数と同じ)まで。残りは「ほかNページ」。
+    'page_kind_line_template' => '%s（%d）',
+    // 根拠の文の最小の長さ(文字)。これより短い根拠の文は、ページの本文との照合に使わない(偶然の一致を避ける)。
+    'page_kind_evidence_min_chars' => 12,
+    // 同じ根拠の文が、図に出るページのうちこの件数を超えるページに含まれるときは、サイト共通の文章(どのページにもある案内など)とみなして
+    // 使わない(特定のページの種類を示さないため)。
+    'page_kind_evidence_max_pages' => 2,
+    'page_kind_short_names' => [
+        'job_content' => '仕事内容',
+        'career_path' => 'キャリアパス',
+        'employee_interview' => '社員インタビュー',
+        'business_service' => '事業・サービス',
+        'work_environment' => '働き方・職場環境',
+        'salary_evaluation' => '給与・評価制度',
+        'vision_philosophy' => 'ビジョン・理念',
+        'executive_interview' => '代表・経営層メッセージ',
+        'overtime_leave_data' => '残業・有休データ',
+        'benefits' => '福利厚生',
+        'culture' => 'カルチャー・社風',
+        'company_event' => 'イベント',
+        'training' => '研修制度',
+        'achievements_projects' => '実績・プロジェクト',
+    ],
+    'page_kind_title_words' => [
+        'job_content' => ['募集要項', '募集職種', '職種紹介', '仕事内容', '仕事紹介'],
+        'career_path' => ['キャリアパス', 'キャリアステップ'],
+        'employee_interview' => ['社員紹介', '社員インタビュー', '先輩インタビュー', '社員の声', '先輩社員', '座談会', 'インタビュー'],
+        'business_service' => ['事業紹介', '事業内容', '事業案内', '製品紹介', 'サービス紹介', 'プロダクト紹介'],
+        'work_environment' => ['働き方', '職場環境', 'オフィス紹介', '勤務地', 'リモートワーク', '在宅勤務', 'フレックス'],
+        'salary_evaluation' => ['評価', '給与', '報酬', '人事制度', '待遇', '年収'],
+        'vision_philosophy' => ['理念', 'ビジョン', 'ミッション', 'バリュー', 'パーパス', '行動指針', 'クレド'],
+        'executive_interview' => ['トップメッセージ', '代表メッセージ', '社長メッセージ', '代表挨拶', '社長挨拶', '社長対談', 'トップインタビュー', '代表インタビュー', '社長インタビュー'],
+        'overtime_leave_data' => ['残業', '有給', '離職率', '育休取得'],
+        'benefits' => ['福利厚生', '各種手当', '社宅'],
+        'culture' => ['カルチャー', '社風', '企業文化', '組織風土'],
+        'company_event' => ['社内イベント', '社内行事', '社員旅行', '懇親会', '部活動'],
+        'training' => ['研修', '育成', '教育制度', 'スキルアップ'],
+        'achievements_projects' => ['プロジェクト紹介', 'プロジェクトストーリー', '導入事例', '実績紹介', '制作実績', '支援事例'],
+    ],
+    // ページ名にこの言葉があるときは、その種類を付けない(例: 「インタビュー」でも、代表・経営層のページは社員インタビューではない)。
+    'page_kind_title_exclude_words' => [
+        'employee_interview' => ['社長', '代表', 'トップ', '経営', '役員'],
+    ],
+
+    /*
+    | 依頼CY-3: 求職者向けの情報ではない枝を、階層図から除く。第2階層の枝のパス(またはその名前)にこれらの語を含むもの
+    | (大文字小文字は区別しない)。除いた枝は「ほかN」の数にも、冒頭の巡回件数にも影響しない。除いた件数はログにだけ出す。
+    */
+    'site_hierarchy_excluded_branch_words' => ['privacy', 'プライバシー', '個人情報', 'cookie', 'terms', '規約', 'sitemap', 'サイトマップ'],
     /*
     |--------------------------------------------------------------------------
     | 依頼CT-1: ブランド・ホイール比較の見出しの下の「強み」「弱み」の一文

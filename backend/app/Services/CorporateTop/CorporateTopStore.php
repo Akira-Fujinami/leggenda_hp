@@ -46,13 +46,34 @@ class CorporateTopStore
     }
 
     /**
+     * 依頼CY-1: 描画済みのHTML(無ければnull)。
+     */
+    public function readRenderedHtml(int $analysisId, int $websiteAnalysisId): ?string
+    {
+        $disk = Storage::disk('analysis');
+        $path = $this->paths->corporateTopRenderedHtmlPath($analysisId, $websiteAnalysisId);
+        if (! $disk->exists($path)) {
+            return null;
+        }
+        $html = $disk->get($path);
+
+        return is_string($html) && $html !== '' ? $html : null;
+    }
+
+    /**
      * @param  array<string, mixed>  $meta
      */
-    public function write(int $analysisId, int $websiteAnalysisId, array $meta, ?string $html): void
+    public function write(int $analysisId, int $websiteAnalysisId, array $meta, ?string $html, ?string $renderedHtml = null): void
     {
         $disk = Storage::disk('analysis');
         if ($html !== null) {
             $disk->put($this->paths->corporateTopHtmlPath($analysisId, $websiteAnalysisId), $html);
+        }
+        if ($renderedHtml !== null) {
+            $disk->put($this->paths->corporateTopRenderedHtmlPath($analysisId, $websiteAnalysisId), $renderedHtml);
+        } elseif ($html !== null) {
+            // 取り直したのに描画済みが取れなかったときは、前回の描画済み(いまの静的HTMLと対応しない)を残さない。
+            $disk->delete($this->paths->corporateTopRenderedHtmlPath($analysisId, $websiteAnalysisId));
         }
         $disk->put(
             $this->paths->corporateTopMetaPath($analysisId, $websiteAnalysisId),

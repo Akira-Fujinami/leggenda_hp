@@ -31,6 +31,8 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
         Storage::fake('analysis');
         // 依頼CM-2の「広げて描く」は専用のテストで確かめる(ここでは基準を0にして無効にする)。
         config(['admin_comparison_pptx.site_hierarchy_tree_widen_min_pages' => 0]);
+        // 依頼CY-2の「情報の種類で示す」は専用のテストで確かめる(ここでは、第3階層をページ名のまま確かめる)。
+        config(['admin_comparison_pptx.site_hierarchy_page_kinds_enabled' => false]);
     }
 
     private function builder(): AdminComparisonSiteHierarchyBuilder

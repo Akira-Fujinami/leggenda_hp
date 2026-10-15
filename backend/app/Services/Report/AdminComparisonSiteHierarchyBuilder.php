@@ -13,6 +13,7 @@ use App\Services\BrandWheel\BrandWheelTextTruncator;
 use App\Services\CorporateTop\CorporateTopAnalyzer;
 use App\Services\CorporateTop\CorporateTopStore;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -460,7 +461,8 @@ class AdminComparisonSiteHierarchyBuilder
         $corporateHtml = ($corporateMeta['status'] ?? null) === 'found'
             ? $this->corporateStore()->readHtml((int) $websiteAnalysis->analysis_id, (int) $websiteAnalysis->id)
             : null;
-        $corporate = $corporateHtml !== null ? $this->corporateInfo($corporateMeta, $corporateHtml, $sourceScope) : null;
+        $corporateRendered = $corporateHtml !== null ? $this->corporateStore()->readRenderedHtml((int) $websiteAnalysis->analysis_id, (int) $websiteAnalysis->id) : null;
+        $corporate = $corporateHtml !== null ? $this->corporateInfo($corporateMeta, $corporateHtml, $sourceScope, $corporateRendered) : null;
 
         if (count($menuItems) < $minItems) {
             [$branches, $otherBranchCount, $allNames] = $this->buildUrlModeBranches($within, $scope, $pages, $corporateHtml !== null ? ['html' => $corporateHtml, 'url' => (string) $corporateMeta['url']] : null);
@@ -486,8 +488,72 @@ class AdminComparisonSiteHierarchyBuilder
 
             return $branch;
         }, $result['branches']);
+        // 依頼CY-2: 第3階層のページを、ページ名の代わりに「情報の種類」で示す(種類が付かない枝は、従来どおりページ名)。
+        $result['branches'] = $this->applyPageKinds($result['branches'], $pages, $websiteAnalysis);
 
         return $result;
+    }
+
+    /**
+     * 依頼CY-2: 各枝の第3階層のページに、情報の種類(求職者調査の14項目)を付けて、枝の行(pages / other_page_count)を
+     * 「種類（ページ数）」の行に置き換える(PageKindClassifier。AIなし・通信しない)。種類が1つも付かない枝は、ページ名のまま。
+     * 付けた結果(ページ名・種類・付けた理由)は page_kinds に残す(測定用)。判定の根拠の文は、自社の最新の判定結果から。
+     *
+     * @param  list<array<string, mixed>>  $branches
+     * @param  Collection<int, AnalysisCrawledPage>  $pages  ページ名を整えたあとの巡回済みページ
+     * @return list<array<string, mixed>>
+     */
+    private function applyPageKinds(array $branches, Collection $pages, WebsiteAnalysis $websiteAnalysis): array
+    {
+        if (! (bool) config('admin_comparison_pptx.site_hierarchy_page_kinds_enabled', true) || $branches === []) {
+            return $branches;
+        }
+
+        $classifier = app(PageKindClassifier::class);
+        $record = $this->brandWheelRecordOverride ?? $websiteAnalysis->brandWheelAnalysisResults()->latest('id')->first();
+        $evidence = $classifier->evidenceFor($record);
+        $byId = $pages->keyBy('id');
+        $maxLines = (int) config('admin_comparison_pptx.site_hierarchy_tree_second_level_limit');
+
+        // 1回目: 各ページを読む(ページ名の言葉と、本文に含まれる根拠の文)。同じ根拠の文がconfigの件数を超えるページに含まれるときは、
+        // サイト共通の文章とみなして使わない(2回目)。
+        $analyses = [];
+        $evidenceCounts = [];
+        foreach ($branches as $i => $branch) {
+            foreach ((array) ($branch['child_page_ids'] ?? []) as $id) {
+                $page = $byId->get((int) $id);
+                if ($page === null || isset($analyses[(int) $id])) {
+                    continue;
+                }
+                $html = $this->readStoredHtml($page->rendered_html_path) ?? $this->readStoredHtml($page->raw_html_path);
+                $analyses[(int) $id] = $classifier->analyze($page->title, $html, $evidence);
+                foreach ($analyses[(int) $id]['hits'] as $index) {
+                    $evidenceCounts[$index] = ($evidenceCounts[$index] ?? 0) + 1;
+                }
+            }
+        }
+        $maxPages = (int) config('admin_comparison_pptx.page_kind_evidence_max_pages', 2);
+        $allowed = array_keys(array_filter($evidenceCounts, fn (int $count) => $count <= $maxPages));
+
+        foreach ($branches as $i => $branch) {
+            $details = [];
+            foreach ((array) ($branch['child_page_ids'] ?? []) as $id) {
+                $page = $byId->get((int) $id);
+                if ($page === null || ! isset($analyses[(int) $id])) {
+                    continue;
+                }
+                $details[] = ['name' => $this->pageLabel($page), 'kinds' => $classifier->combine($analyses[(int) $id], $evidence, $allowed)];
+            }
+
+            $lines = $classifier->lines($details, $maxLines);
+            $branches[$i]['page_kinds'] = $details;
+            if ($lines['classified']) {
+                $branches[$i]['pages'] = $lines['lines'];
+                $branches[$i]['other_page_count'] = $lines['rest'];
+            }
+        }
+
+        return $branches;
     }
 
     /**
@@ -593,6 +659,14 @@ class AdminComparisonSiteHierarchyBuilder
         return $first === null ? null : ['label' => (string) ($tree['top']['url'] ?? ''), 'html' => $first['html']];
     }
 
+    /** 測定専用(依頼CY): 保存していない判定結果(測定コマンドのキャッシュ)で、種類の付け方を確かめる。通常は使わない。 */
+    private ?\App\Models\BrandWheelAnalysisResult $brandWheelRecordOverride = null;
+
+    public function useBrandWheelRecord(?\App\Models\BrandWheelAnalysisResult $record): void
+    {
+        $this->brandWheelRecordOverride = $record;
+    }
+
     private function corporateStore(): CorporateTopStore
     {
         return $this->corporateStore ?? app(CorporateTopStore::class);
@@ -608,10 +682,12 @@ class AdminComparisonSiteHierarchyBuilder
      * (空ならconfigの既定)。他のメニューは名前だけ(上限を超えたら「ほかN」の件数)。
      *
      * @param  array<string, mixed>  $meta
+     * 依頼CY-1: 他のメニューは、静的なHTML → 描画済みのHTML → class/idの語、の順に取る(CorporateTopAnalyzer::otherMenu)。
+     *
      * @param  array{origin_url: string, host: string, path: string}  $sourceScope
-     * @return array{host: string, url: string, recruit_label: string, other_menu: list<string>, other_menu_more: int}
+     * @return array{host: string, url: string, recruit_label: string, other_menu: list<string>, other_menu_more: int, other_menu_source: ?string}
      */
-    private function corporateInfo(array $meta, string $html, array $sourceScope): array
+    private function corporateInfo(array $meta, string $html, array $sourceScope, ?string $renderedHtml = null): array
     {
         $url = (string) ($meta['url'] ?? '');
         $label = trim((string) ($meta['recruit_label'] ?? ''));
@@ -623,7 +699,8 @@ class AdminComparisonSiteHierarchyBuilder
             $label = mb_substr($label, 0, $max - 1).'…';
         }
 
-        $others = $this->corporateAnalyzer()->otherMenuLabels($html, $url, $sourceScope, $meta['recruit_label'] ?? null);
+        $menu = $this->corporateAnalyzer()->otherMenu($html, $renderedHtml, $url, $sourceScope, $meta['recruit_label'] ?? null);
+        $others = $menu['labels'];
         $limit = (int) config('admin_comparison_pptx.corporate_top_other_menu_limit');
 
         return [
@@ -632,6 +709,7 @@ class AdminComparisonSiteHierarchyBuilder
             'recruit_label' => $label,
             'other_menu' => array_slice($others, 0, $limit),
             'other_menu_more' => max(0, count($others) - $limit),
+            'other_menu_source' => $menu['source'],
         ];
     }
 
@@ -794,6 +872,8 @@ class AdminComparisonSiteHierarchyBuilder
                 'other_page_count' => max(0, count($labels) - $secondLimit),
                 // 依頼CT: 枝に属する巡回済みページ(枝そのもののページを先頭に)。枝ごとのAI判定の入力になる。
                 'page_ids' => $this->branchPageIds($info['labels']),
+                // 依頼CY-2: 第3階層に出すページ(枝そのもののページを除く)。情報の種類を付ける対象。
+                'child_page_ids' => $this->branchPageIds(array_values(array_filter($info['labels'], fn (array $l) => ! ($l['own'] ?? false)))),
             ];
         }
 
@@ -807,6 +887,7 @@ class AdminComparisonSiteHierarchyBuilder
                 'pages' => array_slice($labels, 0, $secondLimit),
                 'other_page_count' => max(0, count($labels) - $secondLimit),
                 'page_ids' => $this->branchPageIds($flatLabels),
+                'child_page_ids' => $this->branchPageIds($flatLabels),
             ];
         }
 
@@ -1037,6 +1118,7 @@ class AdminComparisonSiteHierarchyBuilder
                 'page_count' => count($children) + ($itemPages[$i] !== null ? 1 : 0),
                 'pages' => array_slice($labels, 0, $secondLimit),
                 'other_page_count' => max(0, count($labels) - $secondLimit),
+                'child_page_ids' => array_values(array_map(fn (AnalysisCrawledPage $page) => $page->id, $children)),
                 'page_ids' => array_values(array_filter([$itemPages[$i]?->id, ...array_map(fn (AnalysisCrawledPage $page) => $page->id, $children)], fn ($id) => $id !== null)),
             ];
         }
@@ -1048,6 +1130,45 @@ class AdminComparisonSiteHierarchyBuilder
     }
 
     /**
+     * 依頼CY-3: 求職者向けの情報ではない枝(パスまたは名前が、configの語に当てはまるもの。例: プライバシーポリシー・規約・サイトマップ)を
+     * 図から除く。第1階層の上限(ほかN)を数える前に除くので、「ほかN」の数には含めない。巡回した件数(冒頭の注記)は変えない。
+     * 除いた件数はログにだけ出す(図には注記を足さない)。
+     *
+     * @param  list<array<string, mixed>>  $branches
+     * @return list<array<string, mixed>>
+     */
+    private function withoutExcludedBranches(array $branches): array
+    {
+        $words = array_filter(array_map(fn ($w) => mb_strtolower((string) $w), (array) config('admin_comparison_pptx.site_hierarchy_excluded_branch_words', [])), fn (string $w) => $w !== '');
+        if ($words === []) {
+            return $branches;
+        }
+
+        $kept = [];
+        foreach ($branches as $branch) {
+            $path = (string) (parse_url((string) ($branch['url'] ?? ($branch['path_url'] ?? '')), PHP_URL_PATH) ?? '');
+            $haystack = mb_strtolower(rawurldecode($path).' '.(string) ($branch['name'] ?? ''));
+            $excluded = false;
+            foreach ($words as $word) {
+                if (str_contains($haystack, $word)) {
+                    $excluded = true;
+
+                    break;
+                }
+            }
+            if (! $excluded) {
+                $kept[] = $branch;
+            }
+        }
+
+        if (count($kept) < count($branches)) {
+            Log::info('Site hierarchy branches excluded as not for job seekers', ['count' => count($branches) - count($kept)]);
+        }
+
+        return $kept;
+    }
+
+    /**
      * 第1階層の上限を適用する。ページ数の多い順(同数はメニューの並び順)に
      * 上限件数を選び、表示順はもとの並び順に戻す。
      *
@@ -1056,6 +1177,7 @@ class AdminComparisonSiteHierarchyBuilder
      */
     private function limitBranches(array $branches): array
     {
+        $branches = $this->withoutExcludedBranches($branches);
         $limit = (int) config('admin_comparison_pptx.site_hierarchy_tree_first_level_limit');
         if (count($branches) <= $limit) {
             return [$branches, 0];

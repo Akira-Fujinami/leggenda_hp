@@ -3,6 +3,7 @@
 namespace App\Services\CorporateTop;
 
 use App\Models\WebsiteAnalysis;
+use App\Services\Analysis\AnalyzerClient;
 use App\Services\Analysis\CrawlOriginScopeResolver;
 use App\Services\Analysis\SafeHttpFetcher;
 use Illuminate\Support\Facades\Log;
@@ -18,6 +19,10 @@ use Illuminate\Support\Facades\Log;
  * 確かめ方(ここが本体): 候補のページを取得し、そのページの中に、採用サイトの起点へのリンクがあるときだけ
  * コーポレートTOPとして採用する。見つからなければ次の候補へ。どれも通らなければ、採用サイトの起点を
  * TOPとして描く(いまの描き方)ままにする。
+ *
+ * 依頼CY-1: コーポレートTOPが決まったときだけ、既存の描画の仕組み(analyzer)で同じページを1回だけ描画して、描画済みの
+ * HTMLも保存する(JavaScriptで描かれるメニューを読むため。階層図の他メニューの取得に使う)。描画に失敗しても、静的なHTMLだけで進める
+ * (メタ情報の rendered に ok / failed を残す)。階層図やPPTXを作るときは通信しない(保存済みのファイルを読むだけ)。
  *
  * 取得は既存の安全な取得処理(SafeHttpFetcher)で、静的なHTMLだけ。巡回の50件には数えず、巡回の順・件数・
  * ブランド・ホイールの入力には影響しない。取得に失敗しても例外は出さない(いまの描き方になるだけ)。
@@ -123,19 +128,41 @@ class CorporateTopService
             }
         }
 
+        $rendered = null;
+        if ($html !== null && (bool) config('admin_comparison_pptx.corporate_top_render_enabled', true)) {
+            $rendered = $this->render((string) $meta['url']);
+            $meta['rendered'] = $rendered !== null ? 'ok' : 'failed';
+        }
+
         $meta += ['skipped' => $skipped, 'attempts' => $attempts, 'checked_at' => now()->toIso8601String()];
-        $this->store->write($analysisId, $websiteAnalysisId, $meta, $html);
+        $this->store->write($analysisId, $websiteAnalysisId, $meta, $html, $rendered);
 
         Log::info('Corporate top resolved', [
             'analysis_id' => $analysisId,
             'website_analysis_id' => $websiteAnalysisId,
             'status' => $meta['status'],
+            'rendered' => $meta['rendered'] ?? null,
             'attempt_count' => count($attempts),
             'outcomes' => array_column($attempts, 'outcome'),
             'skipped' => $skipped,
         ]);
 
         return $meta;
+    }
+
+    /**
+     * 依頼CY-1: 決まったコーポレートTOPを描画してHTMLを返す。失敗したらnull(例外は出さない)。
+     */
+    private function render(string $url): ?string
+    {
+        try {
+            $data = app(AnalyzerClient::class)->render($url);
+            $html = (string) ($data['html'] ?? '');
+
+            return $html !== '' ? $html : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

@@ -142,7 +142,9 @@ class CorporateHierarchyTest extends TestCase
 
     public function test_a_stored_corporate_top_gives_the_corporate_info_the_recruit_label_and_the_other_menu_names_only(): void
     {
+        config(['admin_comparison_pptx.corporate_top_other_menu_limit' => 4]);
         $wa = $this->siteWithLinks();
+        // 「お問い合わせ」は、情報の区分ではないので除く(依頼CY-1)。
         $this->storeCorporateTop($wa, ['会社情報', 'サービス', 'ニュース', 'IR情報', '企業理念', 'お問い合わせ'], '/recruit/', 'RECRUIT');
 
         $tree = $this->builder()->buildTree($wa);
@@ -150,7 +152,7 @@ class CorporateHierarchyTest extends TestCase
         $this->assertSame('www.example.com', $tree['corporate']['host']);
         $this->assertSame('RECRUIT', $tree['corporate']['recruit_label']);
         $this->assertSame(['会社情報', 'サービス', 'ニュース', 'IR情報'], $tree['corporate']['other_menu'], '上限(4件)まで、採用の項目は含まない');
-        $this->assertSame(2, $tree['corporate']['other_menu_more']);
+        $this->assertSame(1, $tree['corporate']['other_menu_more'], '企業理念が上限から溢れる(お問い合わせは除かれている)');
         $this->assertFalse($tree['corporate_missing']);
         $this->assertSame('self.example.com/recruit', $tree['recruit_path'], 'コーポレートTOPのホストと違うので、ホストから書く');
     }
@@ -235,7 +237,7 @@ class CorporateHierarchyTest extends TestCase
 
         $xml = $this->slideFor($wa);
 
-        foreach (['コーポレートTOP', 'サイトの入口', '第1階層', 'コーポレートのメニュー', '第2階層', '採用サイトの区分', '第3階層', '各ページ', 'www.example.com', '採用情報', '会社情報', 'サービス', '新卒採用', '/recruit/fresh'] as $text) {
+        foreach (['コーポレートTOP', 'サイトの入口', '第1階層', 'コーポレートのメニュー', '第2階層', '採用サイトの区分', '第3階層', '掲載されている情報', 'www.example.com', '採用情報', '会社情報', 'サービス', '新卒採用', '/recruit/fresh'] as $text) {
             $this->assertStringContainsString($text, $xml, $text);
         }
         $this->assertStringContainsString('self.example.com/recruit', $xml, 'ホストが違うので、採用の箱のパスはホストから');
@@ -249,7 +251,7 @@ class CorporateHierarchyTest extends TestCase
 
         $xml = $this->slideFor($wa);
 
-        foreach (['採用サイトTOP', '第1階層', '採用サイトの区分', '第2階層', '各ページ', 'コーポレートサイトのTOPから採用サイトへのリンクを確認できなかったため、採用サイトを起点に描いています。', '/recruit/fresh'] as $text) {
+        foreach (['採用サイトTOP', '第1階層', '採用サイトの区分', '第2階層', '掲載されている情報', 'コーポレートサイトのTOPから採用サイトへのリンクを確認できなかったため、採用サイトを起点に描いています。', '/recruit/fresh'] as $text) {
             $this->assertStringContainsString($text, $xml, $text);
         }
         $this->assertStringNotContainsString('第3階層', $xml);
@@ -323,11 +325,13 @@ class CorporateHierarchyTest extends TestCase
     public function test_more_other_menu_names_than_fit_are_folded_into_a_count(): void
     {
         $wa = $this->siteWithLinks();
-        $this->storeCorporateTop($wa, ['A社情報', 'Bサービス', 'Cニュース', 'D IR', 'E理念', 'F窓口'], url: 'https://www.example.com/');
+        // 上限は6件(依頼CY-1)。8件あれば、超えた2件を「ほか2」にまとめる。
+        $this->storeCorporateTop($wa, ['A社情報', 'Bサービス', 'Cニュース', 'D IR', 'E理念', 'F沿革', 'G事業', 'H拠点'], url: 'https://www.example.com/');
 
         $xml = $this->slideFor($wa);
 
         $this->assertStringContainsString('ほか2', $xml);
-        $this->assertStringNotContainsString('E理念', $xml);
+        $this->assertStringNotContainsString('G事業', $xml);
+        $this->assertStringNotContainsString('H拠点', $xml);
     }
 }

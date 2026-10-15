@@ -115,6 +115,15 @@ class AnalysisStoragePaths
     }
 
     /**
+     * 依頼CY-1: コーポレートTOPを描画した結果のHTML(JavaScriptで描かれるメニューを読むため)。取得のときに1回だけ作る。
+     * 静的なHTMLと同じく、analysisDir()ごとの削除で消える。
+     */
+    public function corporateTopRenderedHtmlPath(int $analysisId, int $websiteAnalysisId): string
+    {
+        return $this->rawDir($analysisId, $websiteAnalysisId).'/corporate_top.rendered.html';
+    }
+
+    /**
      * 依頼CR-1: コーポレートTOPを決めた結果(どの候補で、リンクの文字は何か、決まらなかった理由)。
      */
     public function corporateTopMetaPath(int $analysisId, int $websiteAnalysisId): string
