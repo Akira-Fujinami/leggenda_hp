@@ -5,6 +5,7 @@ namespace App\Services\StrengthWeaknessInsight;
 use App\Services\ComparisonCommentary\ComparisonCommentaryException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 /**
  * 依頼DB-1・DB-3: Claude(Anthropic Messages API)に、強み・弱みの下書き(根拠つきの2行)を書かせる(プロンプト strength_weakness_insight、1社1回)。
@@ -141,7 +142,9 @@ class AnthropicStrengthWeaknessInsightProvider implements StrengthWeaknessInsigh
 - 強み: 自社だけ、または自社が特にはっきり伝えていることを、具体的な言葉で書いてください。求職者にどう伝わるかの解釈を添えてかまいません。
 - 弱み: 競合が伝えていて自社からは読み取れないこと、または自社の伝え方の弱さを書いてください。「無い」「書いていない」と断定せず、「読み取れない」「見当たらない」のように書いてください。
 - 解釈(「〜に見える」「〜には判断材料になる」のような書き方)は書いてかまいません。ただし断定しないでください。
-- 強み・弱みそれぞれ、全角{$max}字以内で、2行ほどにおさまる長さにしてください。
+- 強み・弱みそれぞれ、全角{$max}字以内で、比較ページで3行におさまる長さにしてください。
+  - 強み: 何を・どのページ(や配置)で伝えているか、それを競合はどう伝えているか(または伝えていないか)、求職者にどう伝わるか、まで書いてください。
+  - 弱み: 競合が何を具体的に示しているか、自社からは何が読み取れないか、求職者が判断するうえで何が足りないか、まで書いてください。
 - 会社名は、材料にある会社だけを使ってください。数字は、材料にある数字だけを使ってください。
 - 強すぎる評価の言葉(相手を強く非難する言葉)は使わないでください。
 - 根拠に引いた言葉は、会社名と一緒に quotes に入れてください(text の「」の中の言葉は、すべて quotes にあること)。
@@ -260,6 +263,15 @@ PROMPT;
                 $lastException = $e;
 
                 continue;
+            }
+
+            if (! $response->successful()) {
+                // 原因を調べられるよう、状態コードとエラーの種類(error.type)だけ残す。error.message・キー・リクエスト本文は出さない。
+                $errorType = $response->json('error.type');
+                Log::warning('Strength weakness insight API failed', [
+                    'http_status' => $response->status(),
+                    'error_type' => is_string($errorType) ? $errorType : null,
+                ]);
             }
 
             if ($response->status() === 401 || $response->status() === 403) {

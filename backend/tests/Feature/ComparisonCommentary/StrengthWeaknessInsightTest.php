@@ -461,7 +461,7 @@ class StrengthWeaknessInsightTest extends TestCase
             'quotes が短すぎる' => ['strength', ['text' => '自社は「pur」と明記しています。', 'quotes' => [$quote('自社サイト', 'pur')]], 'quote_too_short'],
             '文に出る会社名が比較に入っていない' => ['weakness', ['text' => '株式会社未知企業は「social_contributionについて具体的に書いています」と載せています。', 'quotes' => [$a]], 'unknown_company_name'],
             '材料に無い数字' => ['strength', ['text' => '自社は「purposeについて具体的に書いています」と明記し、他に57件あります。', 'quotes' => [$self]], 'number_not_in_material'],
-            '長さの上限を超える' => ['strength', ['text' => '自社は「purposeについて具体的に書いています」と明記しており、'.str_repeat('求職者に伝わります。', 12), 'quotes' => [$self]], 'text_too_long'],
+            '長さの上限を超える' => ['strength', ['text' => '自社は「purposeについて具体的に書いています」と明記しており、'.str_repeat('求職者に伝わります。', 26), 'quotes' => [$self]], 'text_too_long'],
             '強すぎる評価の言葉' => ['weakness', ['text' => '競合のA社は「social_contributionについて具体的に書いています」と載せており、自社は最悪です。', 'quotes' => [$a]], 'strong_evaluation_word'],
             '形が違う' => ['strength', ['text' => 123], 'malformed'],
         ];
@@ -697,6 +697,7 @@ class StrengthWeaknessInsightTest extends TestCase
         $composer = new ComparisonStrengthWeaknessComposer;
         $generator = app(AdminComparisonPptxGenerator::class);
         $base = ['self_company_name' => '自社', 'self_readable' => true, 'companies' => $companies, 'axes' => $axes, 'source_note' => 'n', 'page_number' => null];
+        config(['strength_weakness_insight.label' => 'テスト用ラベル', 'strength_weakness_insight.note' => 'テスト用の注記です。']);
         $label = (string) config('strength_weakness_insight.label');
         $note = (string) config('strength_weakness_insight.note');
         $insight = ['strength' => ['sentence' => 'Claudeの強みの下書きです。', 'quotes' => []], 'weakness' => ['sentence' => 'Claudeの弱みの下書きです。', 'quotes' => []]];
@@ -720,6 +721,7 @@ class StrengthWeaknessInsightTest extends TestCase
         $composer = new ComparisonStrengthWeaknessComposer;
         $generator = app(AdminComparisonPptxGenerator::class);
         $base = ['self_company_name' => '自社', 'self_readable' => true, 'companies' => $companies, 'axes' => $axes, 'source_note' => 'n', 'page_number' => null];
+        config(['strength_weakness_insight.label' => 'テスト用ラベル', 'strength_weakness_insight.note' => 'テスト用の注記です。']);
         $label = (string) config('strength_weakness_insight.label');
         $ct1 = $composer->compose($companies, $axes, true);
 
@@ -766,8 +768,8 @@ class StrengthWeaknessInsightTest extends TestCase
         };
 
         $this->assertSame((float) config('strength_weakness_insight.font_size'), $size(str_repeat('あ', 100)), '100字は、基準の大きさのまま');
-        $this->assertSame((float) config('strength_weakness_insight.font_size'), $size(str_repeat('あ', 2 * (int) config('strength_weakness_insight.line_chars') - 8)), '2行ぶんに収まる間は、基準の大きさ');
-        $this->assertLessThan((float) config('strength_weakness_insight.font_size'), $size(str_repeat('あ', 300)), '2行を超えるときは小さくする');
+        $this->assertSame((float) config('strength_weakness_insight.font_size'), $size(str_repeat('あ', 3 * (int) config('strength_weakness_insight.line_chars') - 8)), '3行ぶんに収まる間は、基準の大きさ');
+        $this->assertLessThan((float) config('strength_weakness_insight.font_size'), $size(str_repeat('あ', 400)), '3行を超えるときは小さくする');
         $this->assertSame((float) config('strength_weakness_insight.min_font_size'), $size(str_repeat('あ', 900)), '下限より小さくしない');
     }
 
@@ -793,6 +795,113 @@ class StrengthWeaknessInsightTest extends TestCase
         $this->assertGreaterThanOrEqual($shift, $shift4, '行が増えれば、ずらす量も増える');
         $this->assertSame([0.0, 0.0], $layout->invoke($generator, $data('', '', false)), 'CT-1の文のときは、従来の位置');
         $this->assertSame([0.0, 0.0], $layout->invoke($generator, null));
+    }
+
+    // ------------------------------------------------------------------ 依頼DC
+
+    private function padded(int $length): string
+    {
+        $head = '自社は「purposeについて具体的に書いています」と明記し、';
+
+        return $head.str_repeat('あ', $length - mb_strlen($head));
+    }
+
+    public function test_the_text_passes_up_to_250_chars_and_fails_at_251(): void
+    {
+        $self = ['company' => '自社サイト', 'text' => 'purposeについて具体的に書いています'];
+
+        $this->assertSame(250, (int) config('strength_weakness_insight.text_max_chars'));
+        $this->assertTrue($this->verify('strength', ['text' => $this->padded(250), 'quotes' => [$self]])['ok']);
+        $over = $this->verify('strength', ['text' => $this->padded(251), 'quotes' => [$self]]);
+        $this->assertFalse($over['ok']);
+        $this->assertContains('text_too_long', $over['reasons']);
+    }
+
+    public function test_the_prompt_is_v2_asks_for_three_lines_and_is_recorded_in_the_result_file(): void
+    {
+        Http::fake(['api.anthropic.com/*' => Http::response(['content' => [['type' => 'text', 'text' => json_encode($this->goodOutput(), JSON_UNESCAPED_UNICODE)]], 'usage' => ['input_tokens' => 1, 'output_tokens' => 1]])]);
+        $analysis = $this->standard();
+
+        $this->assertSame('v2', config('strength_weakness_insight.prompt_version'));
+        $result = app(StrengthWeaknessInsightService::class)->generate($analysis);
+
+        $this->assertSame('v2', $result['prompt_version']);
+        $this->assertSame('v2', app(StrengthWeaknessInsightStore::class)->read($analysis->id)['prompt_version']);
+        Http::assertSent(function (Request $request): bool {
+            $prompt = (string) json_encode($request->data()['messages'], JSON_UNESCAPED_UNICODE);
+
+            return str_contains($prompt, '全角'.config('strength_weakness_insight.text_max_chars').'字以内') && str_contains($prompt, '3行');
+        });
+    }
+
+    public function test_by_default_neither_the_label_nor_the_note_is_shown_and_values_bring_them_back(): void
+    {
+        [$companies, $axes] = $this->wheelData();
+        $composer = new ComparisonStrengthWeaknessComposer;
+        $generator = app(AdminComparisonPptxGenerator::class);
+        $base = ['self_company_name' => '自社', 'self_readable' => true, 'companies' => $companies, 'axes' => $axes, 'source_note' => 'n', 'page_number' => null];
+        $insight = ['strength' => ['sentence' => 'Claudeの強みの下書きです。', 'quotes' => []], 'weakness' => ['sentence' => 'Claudeの弱みの下書きです。', 'quotes' => []]];
+        $data = $composer->compose($companies, $axes, true, null, null, $insight);
+
+        $this->assertSame('', (string) config('strength_weakness_insight.label'));
+        $this->assertSame('', (string) config('strength_weakness_insight.note'));
+        $xml = $this->slideXml($generator->generate($base + ['strength_weakness' => $data]));
+        $this->assertStringNotContainsString('AI下書き', $xml);
+        $this->assertStringNotContainsString('お客様にお見せする前に', $xml);
+        $this->assertStringContainsString('Claudeの強みの下書きです。', $xml);
+
+        config(['strength_weakness_insight.label' => '別ラベル']);
+        $xml = $this->slideXml($generator->generate($base + ['strength_weakness' => $data]));
+        $this->assertSame(2, substr_count($xml, '別ラベル'));
+        $this->assertStringNotContainsString('テスト用の注記', $xml);
+
+        config(['strength_weakness_insight.note' => 'テスト用の注記です。']);
+        $this->assertStringContainsString('テスト用の注記です。', $this->slideXml($generator->generate($base + ['strength_weakness' => $data])));
+    }
+
+    public function test_three_lines_each_make_room_so_the_lower_columns_do_not_overlap_and_the_numbers_come_from_config(): void
+    {
+        [$companies, $axes] = $this->wheelData();
+        $composer = new ComparisonStrengthWeaknessComposer;
+        $generator = app(AdminComparisonPptxGenerator::class);
+        $layout = new \ReflectionMethod($generator, 'insightLayout');
+        $counts = new \ReflectionMethod($generator, 'insightLineCounts');
+        $compose = fn (string $text) => $composer->compose($companies, $axes, true, null, null, ['strength' => ['sentence' => $text, 'quotes' => []], 'weakness' => ['sentence' => $text, 'quotes' => []]]);
+
+        $this->assertSame(['strength' => 2, 'weakness' => 2], $counts->invoke($generator, $compose(str_repeat('あ', 150))), '150字は、1行102字で2行');
+        $data = $compose(str_repeat('あ', (int) config('strength_weakness_insight.text_max_chars')));
+        $this->assertSame(['strength' => 3, 'weakness' => 3], $counts->invoke($generator, $data));
+
+        $size = (float) config('strength_weakness_insight.font_size');
+        foreach ([[0.12, 0.04], [0.2, 0.1]] as [$raise, $gap]) {
+            config(['strength_weakness_insight.layout_raise_in' => $raise, 'strength_weakness_insight.layout_gap_in' => $gap]);
+            [$shift, $gotRaise] = $layout->invoke($generator, $data);
+            $this->assertSame($raise, $gotRaise);
+            $textBottom = (1.42 - $raise) + 6 * $size * 1.25 / 72;
+            $this->assertLessThanOrEqual(1.8 + $shift - $gap + 0.002, $textBottom, '6行ぶんの文字の下端が、下の列の見出しの上に収まる');
+            $this->assertGreaterThan(0.0, $shift);
+        }
+    }
+
+    public function test_a_failed_api_call_logs_only_the_status_and_error_type_never_the_message_the_key_or_the_request(): void
+    {
+        $analysis = $this->standard();
+        Http::fake(['api.anthropic.com/*' => Http::response(['type' => 'error', 'error' => ['type' => 'invalid_request_error', 'message' => 'SECRET-ERROR-MESSAGE-BODY']], 400)]);
+        $warnings = [];
+        Log::shouldReceive('warning')->andReturnUsing(function ($message, $context = []) use (&$warnings) {
+            $warnings[] = [$message, $context];
+        });
+        Log::shouldReceive('info')->andReturnNull();
+
+        $result = app(StrengthWeaknessInsightService::class)->generate($analysis);
+
+        $this->assertSame('AI_REQUEST_FAILED', $result['skipped']);
+        $this->assertCount(1, $warnings);
+        $this->assertSame(['http_status' => 400, 'error_type' => 'invalid_request_error'], $warnings[0][1]);
+        $text = json_encode($warnings, JSON_UNESCAPED_UNICODE);
+        $this->assertStringNotContainsString('SECRET-ERROR-MESSAGE-BODY', $text);
+        $this->assertStringNotContainsString(self::FAKE_KEY, $text);
+        $this->assertStringNotContainsString('自社', $text, 'リクエスト本文(材料)は出さない');
     }
 
     // ------------------------------------------------------------------ ダウンロード時は呼ばない

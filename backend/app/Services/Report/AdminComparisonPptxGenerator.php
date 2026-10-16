@@ -530,7 +530,7 @@ class AdminComparisonPptxGenerator
             $paragraph = $first ? $box->getActiveParagraph() : $box->createParagraph();
             $first = false;
             // 依頼DB-5: AIの下書きを使った側の行の頭に、小さな赤いラベル。
-            if ($text['insight_'.$key] ?? false) {
+            if (($text['insight_'.$key] ?? false) && $this->insightLabelLength() > 0) {
                 $this->font($paragraph->createTextRun((string) config('strength_weakness_insight.label').' '), (float) config('strength_weakness_insight.label_font_size'), true, (string) config('strength_weakness_insight.label_color'));
             }
             $this->font($paragraph->createTextRun((string) ($labels[$key] ?? '')), $size, true, self::NAVY);
@@ -538,8 +538,22 @@ class AdminComparisonPptxGenerator
         }
     }
 
+    /** 依頼DC: 行の頭のラベルが占める字数(ラベルが空なら0=ラベルを出さない。あれば後ろの空白を含む)。 */
+    private function insightLabelLength(): int
+    {
+        $label = (string) config('strength_weakness_insight.label');
+
+        return $label === '' ? 0 : mb_strlen($label) + 1;
+    }
+
+    /** 依頼DC: 強み・弱みそれぞれの最大行数(config)。 */
+    private function insightMaxLines(): int
+    {
+        return max(1, (int) config('strength_weakness_insight.max_lines'));
+    }
+
     /**
-     * 依頼DB-5: AIの下書きの強み・弱みが、それぞれ何行になるか(行の頭のラベル込みで、1行に入る字数 config line_chars で数える。1〜2行)。
+     * 依頼DB-5: AIの下書きの強み・弱みが、それぞれ何行になるか(行の頭のラベル込みで、1行に入る字数 config line_chars で数える。1〜max_lines行)。
      *
      * @param  array<string, mixed>  $text
      * @return array{strength: int, weakness: int}
@@ -550,9 +564,9 @@ class AdminComparisonPptxGenerator
         $capacity = max(1, (int) config('strength_weakness_insight.line_chars'));
         $counts = [];
         foreach (['strength', 'weakness'] as $key) {
-            $prefix = ($text['insight_'.$key] ?? false) ? mb_strlen((string) config('strength_weakness_insight.label')) + 1 : 0;
+            $prefix = ($text['insight_'.$key] ?? false) ? $this->insightLabelLength() : 0;
             $chars = $prefix + mb_strlen((string) ($labels[$key] ?? '')) + mb_strlen((string) ($text[$key] ?? ''));
-            $counts[$key] = min(2, max(1, (int) ceil($chars / $capacity)));
+            $counts[$key] = min($this->insightMaxLines(), max(1, (int) ceil($chars / $capacity)));
         }
 
         return $counts;
@@ -597,10 +611,10 @@ class AdminComparisonPptxGenerator
         if ($text['insight_used'] ?? false) {
             // 依頼DB-5: 強み・弱みそれぞれ2行まで。1行に入る字数(基準の大きさのとき)の2倍を超える側があるときだけ、文字を小さくする(下限あり)。
             $base = (float) config('strength_weakness_insight.font_size');
-            $capacity = 2 * (int) config('strength_weakness_insight.line_chars');
+            $capacity = $this->insightMaxLines() * (int) config('strength_weakness_insight.line_chars');
             $longest = 0;
             foreach (['strength', 'weakness'] as $key) {
-                $prefix = ($text['insight_'.$key] ?? false) ? mb_strlen((string) config('strength_weakness_insight.label')) + 1 : 0;
+                $prefix = ($text['insight_'.$key] ?? false) ? $this->insightLabelLength() : 0;
                 $longest = max($longest, $prefix + mb_strlen((string) ($labels[$key] ?? '')) + mb_strlen((string) $text[$key]));
             }
 
