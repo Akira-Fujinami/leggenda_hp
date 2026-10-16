@@ -123,9 +123,13 @@ class MeasureTopMessagePanelCommand extends Command
                 $this->line("結果: {$result['status']}".($result['reason'] !== null ? "(理由: {$result['reason']})" : ''));
                 if ($result['panel'] !== null) {
                     $panel = $result['panel'];
+                    $this->line('  右側: '.($panel['mode'] === 'keywords' ? 'キーワードの帯' : '制度の出典ページごとの帯'));
                     $this->line("  核の一文: {$panel['core']['text']}");
                     foreach ($panel['body'] as $row) {
                         $this->line("  本文: {$row['text']}");
+                    }
+                    foreach ($panel['programs'] as $program) {
+                        $this->line("  programs: {$program['name']}｜".($program['summary'] ?? '(説明なし)')."  [{$program['source']}]");
                     }
                     foreach ($panel['keywords'] as $keyword) {
                         $this->line("  キーワード: {$keyword['phrase']}  (出典 {$keyword['source_sentence_id']})");
@@ -145,6 +149,8 @@ class MeasureTopMessagePanelCommand extends Command
                             'source_title' => $result['message_title'],
                             'core' => (string) $result['panel']['core']['text'],
                             'body' => array_map(fn (array $row) => (string) $row['text'], $result['panel']['body']),
+                            'mode' => $result['panel']['mode'],
+                            'programs' => $result['panel']['programs'],
                             'keywords' => $result['panel']['keywords'],
                         ];
                     }

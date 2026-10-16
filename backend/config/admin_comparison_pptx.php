@@ -983,9 +983,16 @@ return [
     'top_message_panel_title' => '%s：トップメッセージと制度',
     'top_message_panel_left_heading' => 'トップメッセージ',
     'top_message_panel_right_heading' => 'トップメッセージのキーワードと、関連していると思われる制度',
+    // 依頼CZ追補: キーワードが使えないとき(制度の出典ページごとの帯)の右の小見出しと注記。注記の引数は通常と同じ(1=会社名 2=メッセージのページ名)。
+    'top_message_panel_right_heading_sources' => '主な制度',
+    'top_message_panel_note_sources' => '出典：%1$s 採用サイト「%2$s」ほか。制度の選択は AI が行ったもので、社内での確認が必要です。',
     'top_message_panel_quote_open' => '「',
     'top_message_panel_quote_close' => '」',
     'top_message_panel_core_max_pt' => 20,
+    // 依頼CZ追補2: 核の一文の最後の行がこの記号だけになるときは、文字を1段階小さくして見積もり直す。
+    // 折り返しの見積もりで、文字の枠の左右の余白の合計(inch。既定の余白は左右とも0.1)。
+    'top_message_panel_wrap_inset_in' => 0.2,
+    'top_message_panel_orphan_chars' => ['。', '、', '」', '』', '）', ')', '．', '.', '！', '？', '!', '?'],
     // 本文の文字の大きさ = 核の一文の大きさ × この比。
     'top_message_panel_body_ratio' => 0.55,
     'top_message_panel_keyword_width_in' => 1.55,

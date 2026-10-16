@@ -80,14 +80,15 @@ class TopMessagePanelTest extends TestCase
         return [
             'core_sentence_id' => 'm-1',
             'body_sentence_ids' => ['m-2', 'm-3'],
+            'programs' => [
+                ['program_id' => 'p-1', 'summary' => '2年目から3年目の先輩が、新人社員のサポーター'],
+                ['program_id' => 'p-2', 'summary' => '全員が合宿形式の新人研修に参加します'],
+                ['program_id' => 'p-3', 'summary' => '家賃の最大80%を住宅補助として支給'],
+                ['program_id' => 'p-4', 'summary' => '資格の取得費用を、会社が全額負担する'],
+            ],
             'keywords' => [
-                ['phrase' => 'ものづくりは人づくり', 'source_sentence_id' => 'm-2', 'programs' => [
-                    ['program_id' => 'p-1', 'summary' => '2年目から3年目の先輩が、新人社員のサポーター'],
-                    ['program_id' => 'p-2', 'summary' => '全員が合宿形式の新人研修に参加します'],
-                ]],
-                ['phrase' => '一社如一家', 'source_sentence_id' => 'm-3', 'programs' => [
-                    ['program_id' => 'p-3', 'summary' => '家賃の最大80%を住宅補助として支給'],
-                ]],
+                ['phrase' => 'ものづくりは人づくり', 'source_sentence_id' => 'm-2', 'program_ids' => ['p-1', 'p-2']],
+                ['phrase' => '一社如一家の精神で、チーム力を高めていきます', 'source_sentence_id' => 'm-3', 'program_ids' => ['p-3', 'p-4']],
             ],
         ];
     }
@@ -105,11 +106,14 @@ class TopMessagePanelTest extends TestCase
 
         $this->assertSame([], $result['rejected']);
         $panel = $result['panel'];
+        $this->assertSame('keywords', $panel['mode']);
         $this->assertSame(self::CORE, $panel['core']['text']);
         $this->assertSame(['m-2', 'm-3'], array_column($panel['body'], 'id'));
-        $this->assertSame(['ものづくりは人づくり', '一社如一家'], array_column($panel['keywords'], 'phrase'));
+        $this->assertSame(['ものづくりは人づくり', '一社如一家の精神で、チーム力を高めていきます'], array_column($panel['keywords'], 'phrase'));
         $this->assertSame('サポーター制度', $panel['keywords'][0]['programs'][0]['name'], '制度名は材料のもの');
         $this->assertSame('家賃の最大80%を住宅補助として支給', $panel['keywords'][1]['programs'][0]['summary']);
+        $this->assertSame(['p-1', 'p-2', 'p-3', 'p-4'], array_column($panel['programs'], 'id'));
+        $this->assertSame('研修制度', $panel['programs'][0]['source']);
     }
 
     public function test_a_core_sentence_that_does_not_exist_or_is_out_of_range_drops_the_panel(): void
@@ -135,70 +139,109 @@ class TopMessagePanelTest extends TestCase
         $this->assertSame([], $none['panel']['body']);
     }
 
-    public function test_a_keyword_must_be_in_its_source_sentence_within_the_length_and_without_forbidden_words(): void
+    /**
+     * @return array<string, mixed> 1つのキーワードだけを差し替えた出力(もう1つは通るキーワードのまま)
+     */
+    private function withKeyword(array $keyword): array
     {
-        $forbidden = (string) (config('comparison_commentary.forbidden_words')[0] ?? '');
-        $this->assertNotSame('', $forbidden);
-        $program = [['program_id' => 'p-1', 'summary' => '']];
         $decoded = $this->goodDecoded();
-        $decoded['keywords'] = [
-            ['phrase' => '人づくり', 'source_sentence_id' => 'm-3', 'programs' => $program],            // その文に無い
-            ['phrase' => '人', 'source_sentence_id' => 'm-2', 'programs' => $program],                  // 短すぎる
-            ['phrase' => str_repeat('あ', 21), 'source_sentence_id' => 'm-2', 'programs' => $program],   // 長すぎる
-            ['phrase' => '社員', 'source_sentence_id' => 'm-99', 'programs' => $program],                // 文が無い
-            ['phrase' => '社員の成長', 'source_sentence_id' => 'm-2', 'programs' => [['program_id' => 'p-1', 'summary' => '']]],
-            ['phrase' => '社員の成長', 'source_sentence_id' => 'm-2', 'programs' => [['program_id' => 'p-2', 'summary' => '']]],   // 同じ語句
-            ['phrase' => 'チーム力'.$forbidden, 'source_sentence_id' => 'm-3', 'programs' => [['program_id' => 'p-3', 'summary' => '']]],   // 本文に無い(かつ禁止語)
+        $decoded['keywords'][0] = $keyword + ['source_sentence_id' => 'm-2', 'program_ids' => ['p-1', 'p-2']];
+
+        return $decoded;
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string, 2: string}>
+     */
+    public static function badKeywords(): array
+    {
+        return [
+            '6字未満' => ['人づくり', 'm-2', 'keyword_length'],
+            '30字超' => ['ものづくりは人づくりだと考え、社員の成長を支えています。この文は長すぎる', 'm-2', 'keyword_length'],
+            'ひらがなを含まない(漢字)' => ['社員成長支援体制', 'm-2', 'keyword_no_hiragana'],
+            'ひらがなを含まない(カタカナ)' => ['スモールビジネス', 'm-2', 'keyword_no_hiragana'],
+            '原文に無い' => ['ものづくりを人づくり', 'm-2', 'keyword_not_in_sentence'],
+            '別の文の句' => ['ものづくりは人づくり', 'm-3', 'keyword_not_in_sentence'],
+            '文が無い' => ['ものづくりは人づくり', 'm-99', 'keyword_source_unknown'],
+            '末尾が助詞' => ['ものづくりは人づくりだと考え、社員の', 'm-2', 'keyword_bad_ending'],
         ];
+    }
 
-        $result = $this->verify($decoded);
+    #[\PHPUnit\Framework\Attributes\DataProvider('badKeywords')]
+    public function test_a_bad_keyword_is_dropped_and_with_fewer_than_two_keywords_the_right_side_is_by_source(string $phrase, string $sourceId, string $code): void
+    {
+        $result = $this->verify($this->withKeyword(['phrase' => $phrase, 'source_sentence_id' => $sourceId]));
 
-        $this->assertNull($result['panel'], '残るキーワードが2個未満');
-        $this->assertSame(1, $result['rejected']['keyword_not_in_sentence'] + 0 >= 1 ? 1 : 0);
-        foreach (['keyword_length' => 2, 'keyword_source_unknown' => 1, 'keyword_duplicate' => 1, 'keywords_below_min' => 1] as $code => $count) {
-            $this->assertSame($count, $result['rejected'][$code], $code);
-        }
+        $this->assertSame(1, $result['rejected'][$code] ?? 0, $code);
+        $this->assertSame('sources', $result['panel']['mode'], '残るキーワードが2個未満');
+        $this->assertSame([], $result['panel']['keywords']);
+        $this->assertCount(4, $result['panel']['programs']);
     }
 
     public function test_a_keyword_with_a_forbidden_word_is_dropped(): void
     {
         $forbidden = (string) (config('comparison_commentary.forbidden_words')[0] ?? '');
+        $this->assertNotSame('', $forbidden);
         $material = $this->material();
-        $material['sentences'][2]['text'] = '一社如一家の精神で、'.$forbidden.'を高めていきます。';
-        $decoded = $this->goodDecoded();
-        $decoded['keywords'][1]['phrase'] = $forbidden;
+        $material['sentences'][1]['text'] = '人づくりを大切にし、'.$forbidden.'ことを大事にしている考え方です。';
 
-        $result = $this->verify($decoded, $material);
+        $result = $this->verify($this->withKeyword(['phrase' => '人づくりを大切にし、'.$forbidden.'ことを大事にしている']), $material);
 
         $this->assertSame(1, $result['rejected']['keyword_forbidden_word'] ?? 0);
     }
 
-    public function test_a_keyword_matches_ignoring_spaces_and_width_only(): void
+    public function test_a_keyword_matches_ignoring_spaces_width_and_the_brackets_on_both_sides(): void
     {
         $material = $this->material();
-        $material['sentences'][1]['text'] = 'ＩＴ を 活用し、ものづくり は 人づくり だと考えて、社員の成長を支えています。';
-        $decoded = $this->goodDecoded();
-        $decoded['keywords'][0]['phrase'] = 'ものづくりは人づくり';
+        $material['sentences'][1]['text'] = '「ものづくり」は「人づくり」だと私たちは強く信じています。';
 
-        $this->assertCount(2, $this->verify($decoded, $material)['panel']['keywords']);
+        // 句に「」が無くても、原文の「」を取り除けば一致する。
+        $this->assertSame(['ものづくりは人づくりだと私たちは強く信じています', '一社如一家の精神で、チーム力を高めていきます'], array_column(
+            $this->verify($this->withKeyword(['phrase' => 'ものづくりは人づくりだと私たちは強く信じています']), $material)['panel']['keywords'], 'phrase'));
+        // 句に「」が付いていても、取り除いて比べる。
+        $this->assertCount(2, $this->verify($this->withKeyword(['phrase' => '「ものづくり」は「人づくり」だと私たちは強く信じています']), $material)['panel']['keywords']);
 
-        $decoded['keywords'][0]['phrase'] = 'ものづくりを人づくり';
-        $this->assertNull($this->verify($decoded, $material)['panel'], '字が違えば通らない(残り1個)');
+        // 空白・全角半角の違いだけ無視する。
+        $material['sentences'][1]['text'] = 'ものづくり は 人づくり だと考え、ＩＴ で社員の成長を支えています。';
+        $this->assertCount(2, $this->verify($this->withKeyword(['phrase' => 'ものづくりは人づくりだと考え']), $material)['panel']['keywords']);
+
+        // 字が違えば通らない。
+        $this->assertSame('sources', $this->verify($this->withKeyword(['phrase' => 'ものづくりを人づくりだと考え']), $material)['panel']['mode']);
     }
 
-    public function test_a_program_that_does_not_exist_or_is_used_by_another_keyword_is_dropped_and_a_keyword_without_programs_is_dropped(): void
+    public function test_a_keyword_with_fewer_than_two_programs_is_dropped_and_a_program_not_selected_cannot_be_attached(): void
+    {
+        $one = $this->verify($this->withKeyword(['phrase' => 'ものづくりは人づくり', 'program_ids' => ['p-1']]));
+        $this->assertSame(1, $one['rejected']['keyword_programs_below_min']);
+        $this->assertSame('sources', $one['panel']['mode']);
+
+        $decoded = $this->goodDecoded();
+        $decoded['programs'] = array_slice($decoded['programs'], 0, 3);   // p-4 は選ばれていない
+        $notSelected = $this->verify($decoded);
+        $this->assertSame(1, $notSelected['rejected']['keyword_program_not_selected']);
+        $this->assertSame(1, $notSelected['rejected']['keyword_programs_below_min'], '付けられるのがp-3だけになり、2件未満');
+
+        $dup = $this->goodDecoded();
+        $dup['keywords'][1]['program_ids'] = ['p-1', 'p-3'];   // p-1は最初のキーワードが使った
+        $result = $this->verify($dup);
+        $this->assertSame(1, $result['rejected']['program_duplicate']);
+        $this->assertSame(1, $result['rejected']['keyword_programs_below_min']);
+    }
+
+    public function test_programs_that_do_not_exist_or_repeat_or_exceed_the_limit_are_dropped(): void
     {
         $decoded = $this->goodDecoded();
-        $decoded['keywords'][0]['programs'] = [['program_id' => 'p-99', 'summary' => 'x'], ['program_id' => 'p-1', 'summary' => '']];
-        $decoded['keywords'][1]['programs'] = [['program_id' => 'p-1', 'summary' => ''], ['program_id' => 'p-3', 'summary' => '']];
-        $decoded['keywords'][] = ['phrase' => 'チーム力', 'source_sentence_id' => 'm-3', 'programs' => [['program_id' => 'p-3', 'summary' => '']]];
+        array_unshift($decoded['programs'], ['program_id' => 'p-99', 'summary' => '']);
+        $decoded['programs'][] = ['program_id' => 'p-1', 'summary' => ''];
+        config(['top_message_panel.programs_max' => 4]);
+        $decoded['programs'][] = ['program_id' => 'p-5', 'summary' => ''];
 
         $result = $this->verify($decoded);
 
         $this->assertSame(1, $result['rejected']['program_unknown_id']);
-        $this->assertSame(2, $result['rejected']['program_duplicate'], 'p-1は最初のキーワードだけ、p-3は2番目だけ');
-        $this->assertSame(1, $result['rejected']['keyword_no_program'], '制度が1件も付かないキーワードは捨てる');
-        $this->assertSame(['ものづくりは人づくり', '一社如一家'], array_column($result['panel']['keywords'], 'phrase'));
+        $this->assertSame(1, $result['rejected']['program_duplicate']);
+        $this->assertSame(1, $result['rejected']['program_over_limit']);
+        $this->assertCount(4, $result['panel']['programs']);
     }
 
     public function test_a_failed_summary_leaves_a_card_with_the_program_name_only(): void
@@ -211,7 +254,7 @@ class TopMessagePanelTest extends TestCase
         ];
         foreach ($cases as $code => $summary) {
             $decoded = $this->goodDecoded();
-            $decoded['keywords'][0]['programs'] = [['program_id' => 'p-1', 'summary' => $summary]];
+            $decoded['programs'][0]['summary'] = $summary;
 
             $result = $this->verify($decoded);
 
@@ -219,28 +262,80 @@ class TopMessagePanelTest extends TestCase
             $this->assertSame('サポーター制度', $card['name'], $code.': 落とさず、制度名だけのカード');
             $this->assertNull($card['summary'], $code);
             $this->assertSame(1, $result['rejected'][$code], $code);
+            $this->assertSame('keywords', $result['panel']['mode']);
         }
         $long = str_repeat('あ', 31);
         $material = $this->material();
         $material['programs'][0]['excerpt'] = $long;
         $decoded = $this->goodDecoded();
-        $decoded['keywords'][0]['programs'] = [['program_id' => 'p-1', 'summary' => $long]];
+        $decoded['programs'][0]['summary'] = $long;
         $this->assertSame(1, $this->verify($decoded, $material)['rejected']['summary_length'], '31字は長すぎる');
     }
 
-    public function test_fewer_than_two_keywords_or_more_than_the_limit(): void
+    public function test_a_summary_with_unclosed_brackets_leaves_a_name_only_card_and_a_balanced_one_passes(): void
+    {
+        $excerpt = '1週目 ：各配属先(会社の概要、会社規則)について学びます';
+        $material = $this->material();
+        $material['programs'][0]['excerpt'] = $excerpt;
+
+        $decoded = $this->goodDecoded();
+        $decoded['programs'][0]['summary'] = '1週目 ：各配属先(会社の概要、会社規則';
+        $result = $this->verify($decoded, $material);
+        $this->assertNull($result['panel']['keywords'][0]['programs'][0]['summary'], '閉じていない括弧は名前だけのカード');
+        $this->assertSame('サポーター制度', $result['panel']['keywords'][0]['programs'][0]['name']);
+        $this->assertSame(1, $result['rejected']['summary_unbalanced_brackets']);
+
+        $decoded['programs'][0]['summary'] = '1週目 ：各配属先(会社の概要、会社規則)について学びます';
+        $result = $this->verify($decoded, $material);
+        $this->assertSame('1週目 ：各配属先(会社の概要、会社規則)について学びます',$result['panel']['keywords'][0]['programs'][0]['summary']);
+        $this->assertArrayNotHasKey('summary_unbalanced_brackets', $result['rejected']);
+    }
+
+    public function test_a_keyword_with_unclosed_brackets_is_dropped(): void
+    {
+        $material = $this->material();
+        $material['sentences'][0]['text'] = '私たちは「社員の成長を支援する体制を整えています。';
+        $decoded = $this->goodDecoded();
+        $decoded['keywords'][0]['phrase'] = '「社員の成長を支援する体制';
+        $decoded['keywords'][0]['source_sentence_id'] = $material['sentences'][0]['id'];
+
+        $result = $this->verify($decoded, $material);
+
+        $this->assertSame(1, $result['rejected']['keyword_unbalanced_brackets']);
+        foreach ($result['panel']['keywords'] ?? [] as $keyword) {
+            $this->assertNotSame('「社員の成長を支援する体制', $keyword['phrase']);
+        }
+    }
+
+    public function test_fewer_than_two_keywords_with_programs_is_the_source_mode_and_without_programs_there_is_no_panel(): void
     {
         $one = $this->goodDecoded();
         array_pop($one['keywords']);
-        $this->assertNull($this->verify($one)['panel']);
-        $this->assertSame(1, $this->verify($one)['rejected']['keywords_below_min']);
+        $result = $this->verify($one);
+        $this->assertSame('sources', $result['panel']['mode']);
+        $this->assertSame(1, $result['rejected']['keywords_below_min']);
+        $this->assertSame(self::CORE, $result['panel']['core']['text'], '核の一文は使える');
 
+        $none = $this->goodDecoded();
+        $none['programs'] = [];
+        $none['keywords'] = [];
+        $this->assertNull($this->verify($none)['panel'], 'programsも無ければ素材ページ');
+    }
+
+    public function test_more_keywords_than_the_limit_are_dropped(): void
+    {
         $many = $this->goodDecoded();
         $material = $this->material();
-        foreach ([['p-4', '資格取得'], ['p-5', '復職率は100'], ['p-6', '成果を上げた']] as $i => [$program, $phrase]) {
-            $material['sentences'][] = ['id' => 'm-'.(10 + $i), 'text' => "この文には、{$phrase}という語句が入っている、パネルのための文です。"];
-            $many['keywords'][] = ['phrase' => $phrase, 'source_sentence_id' => 'm-'.(10 + $i), 'programs' => [['program_id' => $program, 'summary' => '']]];
+        for ($i = 0; $i < 3; $i++) {
+            $material['sentences'][] = ['id' => 'm-'.(10 + $i), 'text' => "社員一人ひとりの成長を大切にして、{$i}番目の挑戦を応援する考えです。"];
+            $material['programs'][] = ['id' => 'p-'.(10 + 2 * $i), 'name' => "制度{$i}a", 'excerpt' => "制度{$i}aの説明を、十分な長さで書いた抜粋の文章です。", 'source' => '評価制度'];
+            $material['programs'][] = ['id' => 'p-'.(11 + 2 * $i), 'name' => "制度{$i}b", 'excerpt' => "制度{$i}bの説明を、十分な長さで書いた抜粋の文章です。", 'source' => '評価制度'];
+            $many['programs'][] = ['program_id' => 'p-'.(10 + 2 * $i), 'summary' => ''];
+            $many['programs'][] = ['program_id' => 'p-'.(11 + 2 * $i), 'summary' => ''];
+            $many['keywords'][] = ['phrase' => "社員一人ひとりの成長を大切にして、{$i}番目の挑戦を応援する", 'source_sentence_id' => 'm-'.(10 + $i), 'program_ids' => ['p-'.(10 + 2 * $i), 'p-'.(11 + 2 * $i)]];
         }
+        config(['top_message_panel.programs_max' => 20]);
+
         $result = $this->verify($many, $material);
 
         $this->assertCount(4, $result['panel']['keywords']);
@@ -305,6 +400,14 @@ class TopMessagePanelTest extends TestCase
             .'<h2>成長支援</h2>'
             .'<h2>評価制度</h2><p>関連記事</p>'
             .'<h2>新人研修</h2><p>入社後1カ月は、全員が合宿形式の新人研修に参加します。</p>'
+            .'<h2>資格取得支援</h2><p>業務に関係する資格の取得費用を、会社が全額負担する制度です。</p>'
+            .'<h2>新卒｜営業</h2><p>営業職の新卒向けの募集のページへのリンクとして並ぶ行の説明です。</p>'
+            .'<h2>新卒</h2><p>営業職や企画職など、新卒向けの職種を紹介するページです。</p>'
+            .'<h2>キャリア採用</h2><p>経験者向けの職種を紹介するページへのリンクです。</p>'
+            .'<h2>新卒研修</h2><p>入社前の1カ月に、基礎を学ぶ研修を受けます。</p>'
+            .'<h2>利用しているツール</h2><p>Slack</p>'
+            .'<h2>十四字の制度</h2><p>十四文字ぴったりの抜粋です。</p>'
+            .'<h2>十五字の制度</h2><p>十五文字ぴったりのの抜粋です。</p>'
             .'</main></body></html>');
         $this->addCrawledPage($wa, "{$base}/welfare/requirements/", '福利厚生 募集要項 | 例社',
             '<html><head><title>福利厚生 募集要項 | 例社</title></head><body><main>'
@@ -333,9 +436,18 @@ class TopMessagePanelTest extends TestCase
         $this->assertNotContains('評価制度', $names, '抜粋が「関連記事」だけ');
         $this->assertNotContains('初任給', $names, '募集要項のページの候補');
         $this->assertNotContains('家賃補助', $names, '募集要項のページの候補');
-        $this->assertSame(['p-1', 'p-2', 'p-3'], array_column($material['programs'], 'id'));
+        $this->assertContains('資格取得支援', $names);
+        $this->assertNotContains('新卒｜営業', $names, '名前に「｜」を含む候補');
+        // 依頼CZ追補2: 抜粋が15字未満は除く(14字は除く・15字は残す)/名前が採用区分の言葉と一致は除く(含むだけの「新卒研修」は残す)
+        $this->assertNotContains('利用しているツール', $names, '抜粋が短い');
+        $this->assertNotContains('十四字の制度', $names, '抜粋が14字');
+        $this->assertContains('十五字の制度', $names, '抜粋が15字');
+        $this->assertNotContains('新卒', $names, '名前が採用区分の言葉と一致');
+        $this->assertNotContains('キャリア採用', $names, '名前が採用区分の言葉と一致');
+        $this->assertContains('新卒研修', $names, '採用区分の言葉を含むだけ');
+        $this->assertSame(['p-1', 'p-2', 'p-3', 'p-4', 'p-5', 'p-6'], array_column($material['programs'], 'id'));
         $this->assertSame('入社2年目から3年目の先輩が、新人社員のサポーターとなって悩みを聞きます。', $material['programs'][0]['excerpt'], '50字で切らず、全文(上限200字)');
-        $this->assertSame(['no_excerpt' => 1, 'generic_excerpt' => 1, 'job_page' => 2], $material['dropped']['programs']);
+        $this->assertSame(['no_excerpt' => 1, 'generic_excerpt' => 1, 'job_page' => 2, 'name_separator' => 1, 'recruit_category_name' => 2, 'short_excerpt' => 2], $material['dropped']['programs']);
         $this->assertSame('代表取締役社長 山田太郎', $material['speaker']);
         $this->assertSame('m-1', $material['sentences'][0]['id']);
     }
@@ -382,7 +494,7 @@ class TopMessagePanelTest extends TestCase
 
             public function promptVersion(): string
             {
-                return 'v1';
+                return 'v2';
             }
 
             public function select(array $material): array
@@ -416,13 +528,20 @@ class TopMessagePanelTest extends TestCase
             $core = array_search(self::CORE, $sentences, true);
             $second = array_search('ものづくりは人づくりだと考え、社員の成長を支えています。', $sentences, true);
             $programs = array_column($material['programs'], 'name', 'id');
+            $id = fn (string $name) => array_search($name, $programs, true);
 
             return [
                 'core_sentence_id' => $core,
                 'body_sentence_ids' => [$second],
+                'programs' => [
+                    ['program_id' => $id('サポーター制度'), 'summary' => '先輩が、新人社員のサポーターとなって悩みを聞きます'],
+                    ['program_id' => $id('新人研修'), 'summary' => ''],
+                    ['program_id' => $id('育児休業'), 'summary' => '育児休業後の復職率は100%'],
+                    ['program_id' => $id('資格取得支援'), 'summary' => ''],
+                ],
                 'keywords' => [
-                    ['phrase' => 'ものづくりは人づくり', 'source_sentence_id' => $second, 'programs' => [['program_id' => array_search('サポーター制度', $programs, true), 'summary' => '先輩が、新人社員のサポーターとなって悩みを聞きます']]],
-                    ['phrase' => '社員の成長を支えて', 'source_sentence_id' => $second, 'programs' => [['program_id' => array_search('新人研修', $programs, true), 'summary' => '']]],
+                    ['phrase' => 'ものづくりは人づくり', 'source_sentence_id' => $second, 'program_ids' => [$id('サポーター制度'), $id('新人研修')]],
+                    ['phrase' => '社員の成長を支えています', 'source_sentence_id' => $second, 'program_ids' => [$id('育児休業'), $id('資格取得支援')]],
                 ],
             ];
         };
@@ -433,7 +552,7 @@ class TopMessagePanelTest extends TestCase
         $provider = new OpenAiTopMessagePanelProvider;
         $prompt = $provider->buildPrompt(['company_name' => '例社'] + $this->material() + ['programs' => $this->material()['programs']]);
 
-        foreach (['core_sentence_id', 'body_sentence_ids', 'keywords', 'phrase', 'source_sentence_id', 'program_id', 'summary', '選ぶだけ', '一字一句そのまま'] as $needle) {
+        foreach (['core_sentence_id', 'body_sentence_ids', 'programs', 'keywords', 'phrase', 'source_sentence_id', 'program_ids', 'program_id', 'summary', '選ぶだけ', '一字一句そのまま', '考えを表す句', '事業の対象・製品・市場', '社員にとっての仕組み', '1つの考えを2つに分けない'] as $needle) {
             $this->assertStringContainsString($needle, $prompt, $needle);
         }
         $this->assertStringContainsString('m-1: '.self::CORE, $prompt);
@@ -441,10 +560,12 @@ class TopMessagePanelTest extends TestCase
         $this->assertStringContainsString('1〜3', $prompt);
         $this->assertStringNotContainsString('例:', $prompt);
         $this->assertStringNotContainsString('良い例', $prompt);
-        $this->assertSame('v1', config('top_message_panel.prompt_version'));
+        $this->assertStringContainsString('6〜30字', $prompt);
+        $this->assertSame('v2', config('top_message_panel.prompt_version'));
         $schema = $provider->buildResponseSchema();
         $this->assertFalse($schema['additionalProperties']);
-        $this->assertSame(['core_sentence_id', 'body_sentence_ids', 'keywords'], $schema['required']);
+        $this->assertSame(['core_sentence_id', 'body_sentence_ids', 'programs', 'keywords'], $schema['required']);
+        $this->assertSame(['phrase', 'source_sentence_id', 'program_ids'], $schema['properties']['keywords']['items']['required']);
     }
 
     public function test_the_ai_is_called_once_per_company_with_the_material_and_the_result_keeps_the_verified_panel_only(): void
@@ -464,12 +585,13 @@ class TopMessagePanelTest extends TestCase
         $this->assertSame(10, $result['usage_input_tokens']);
         $this->assertSame('サポーター制度', $result['panel']['keywords'][0]['programs'][0]['name']);
         $this->assertSame('先輩が、新人社員のサポーターとなって悩みを聞きます', $result['panel']['keywords'][0]['programs'][0]['summary']);
-        $this->assertNull($result['panel']['keywords'][1]['programs'][0]['summary'], '説明が空なら名前だけ');
+        $this->assertNull($result['panel']['keywords'][0]['programs'][1]['summary'], '説明が空なら名前だけ');
+        $this->assertCount(4, $result['panel']['programs']);
     }
 
     public function test_a_selection_that_fails_the_check_is_a_fallback_with_the_reason_and_the_ai_is_not_called_beyond_the_limit_callback(): void
     {
-        $fake = $this->fakeProvider(['core_sentence_id' => 'm-999', 'body_sentence_ids' => [], 'keywords' => []]);
+        $fake = $this->fakeProvider(['core_sentence_id' => 'm-999', 'body_sentence_ids' => [], 'programs' => [], 'keywords' => []]);
         $wa = $this->makeComparisonWebsiteAnalysis();
         $this->seedCompany($wa);
 
@@ -534,7 +656,7 @@ class TopMessagePanelTest extends TestCase
         Storage::disk('analysis')->assertExists($path);
         $stored = json_decode((string) Storage::disk('analysis')->get($path), true);
         $this->assertArrayNotHasKey('candidates', array_values($stored['companies'])[0], 'AIの出力そのまま(確認前)は置かない');
-        $this->assertSame('v1', $stored['prompt_version']);
+        $this->assertSame('v2', $stored['prompt_version']);
 
         app(TopMessagePanelService::class)->generate($analysis);
         $this->assertSame(2, $fake->calls, '結果のファイルがあれば、AIを呼び直さない');
@@ -763,6 +885,110 @@ class TopMessagePanelTest extends TestCase
 
         $this->assertStringContainsString('キーワード1', $xml);
         $this->assertStringNotContainsString('キーワード4', $xml, '後ろの帯から減らす');
+    }
+
+    public function test_when_the_keywords_are_not_usable_the_left_panel_stays_and_the_right_side_is_bands_by_source_page_with_other_heading_and_note(): void
+    {
+        $panel = [
+            'mode' => 'sources',
+            'speaker' => '代表取締役社長 山田太郎',
+            'source_title' => '代表メッセージ',
+            'core' => self::CORE,
+            'body' => ['ものづくりは人づくりだと考え、社員の成長を支えています。'],
+            'keywords' => [],
+            'programs' => [
+                ['name' => '制度A', 'summary' => '説明Aの一節です', 'source' => '働き方'],
+                ['name' => '制度B', 'summary' => null, 'source' => '働き方'],
+                ['name' => '制度C', 'summary' => '説明Cの一節です', 'source' => '評価制度'],
+            ],
+        ];
+
+        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($this->page([], $panel)));
+
+        foreach (['「'.self::CORE.'」', '代表取締役社長 山田太郎', '主な制度', '働き方', '評価制度', '制度A', '説明Aの一節です', '制度B', '制度C',
+            '出典：例社 採用サイト「代表メッセージ」ほか。制度の選択は AI が行ったもので、社内での確認が必要です。'] as $text) {
+            $this->assertStringContainsString($text, $xml, $text);
+        }
+        $this->assertStringNotContainsString('トップメッセージのキーワードと、関連していると思われる制度', $xml);
+        $this->assertStringNotContainsString('キーワードと制度の対応づけ', $xml, '注記から対応づけの文言を外す');
+        $this->assertStringNotContainsString('素材ページの文です。', $xml);
+    }
+
+    public function test_a_core_sentence_with_brackets_gets_no_outer_brackets_and_one_without_gets_them(): void
+    {
+        $with = '「ものづくり」は「人づくり」だと私は強く信じています。';
+        $panel = ['speaker' => null, 'source_title' => 'M', 'core' => $with, 'body' => [], 'keywords' => $this->keywords(2)];
+
+        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($this->page([], $panel)));
+
+        $this->assertStringContainsString($with, $xml, '外側に「」を付けない');
+        $this->assertStringNotContainsString('「'.$with, $xml);
+
+        $this->assertStringContainsString('「'.self::CORE.'」', $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($this->page($this->keywords(2)))));
+    }
+
+    /** 核の一文の1行に入る全角の文字数(20ptのとき)と、見積もりの関数。 */
+    private function coreLine(int $pt): array
+    {
+        $generator = app(AdminComparisonPptxGenerator::class);
+        $class = new \ReflectionClass($generator);
+        $width = $class->getReflectionConstant('TM_DRAFT_LEFT_WIDTH_IN')->getValue() - 0.6;
+        $units = $class->getMethod('topMessageWrapUnits');
+        $orphan = $class->getMethod('topMessageLastLineIsOrphan');
+
+        return [(int) floor($units->invoke($generator, $width, $pt) / 2),fn (string $text, int $size) => $orphan->invoke($generator, $text, $width, $size, true)];
+    }
+
+    public function test_the_last_line_of_the_core_sentence_is_judged_as_symbols_only_only_when_it_wraps(): void
+    {
+        [$perLine, $isOrphan] = $this->coreLine(20);
+
+        $this->assertTrue($isOrphan(str_repeat('あ', $perLine).'。', 20), '最後の行が「。」だけ');
+        $this->assertTrue($isOrphan(str_repeat('あ', $perLine).'」。', 20), '閉じ括弧と句点だけでも同じ');
+        $this->assertFalse($isOrphan(str_repeat('あ', $perLine - 1).'。', 20), '1行に収まる');
+        $this->assertFalse($isOrphan(str_repeat('あ', $perLine).'あ。', 20), '最後の行に文字がある');
+
+        // 1行の文字数は、枠の幅から左右の余白(config)を引いた幅に、全角の文字が何文字入るか
+        $this->assertSame((int) floor((3.9 - 0.2) * 72 / 20), $perLine);
+    }
+
+    public function test_a_core_sentence_whose_last_line_would_be_a_mark_only_is_set_one_step_smaller_and_otherwise_kept(): void
+    {
+        [$perLine] = $this->coreLine(20);
+        $max = (int) config('admin_comparison_pptx.top_message_panel_core_max_pt');
+        $core = '「'.str_repeat('あ', $perLine - 1).'」。';
+        $panel = fn (string $text) => ['speaker' => null, 'source_title' => 'M', 'core' => $text, 'body' => [], 'keywords' => $this->keywords(2)];
+
+        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($this->page([], $panel($core))));
+        $this->assertStringNotContainsString('sz="'.($max * 100).'"', $xml, '最大の大きさのままだと「。」が落ちるので小さくする');
+        [, $isOrphan] = $this->coreLine($max);
+        $expected = $max - 1;
+        while ($isOrphan($core, $expected)) {
+            $expected--;
+        }
+        preg_match_all('/sz="(\d+)"/', $xml, $sizes);
+        $this->assertContains((string) ($expected * 100), $sizes[1], '1段階ずつ下げて、最後の行が記号だけでなくなる最初の大きさ');
+
+        $plain = '「'.str_repeat('あ', $perLine - 3).'」。';
+        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($this->page([], $panel($plain))));
+        $this->assertStringContainsString('sz="'.($max * 100).'"', $xml, '落ちないときは最大のまま');
+
+        // 下限まで下げても直らない(下限を最大と同じにする)ときは、そのまま
+        config(['admin_comparison_pptx.top_message_min_font_ratio' => 1.0]);
+        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($this->page([], $panel($core))));
+        $this->assertStringContainsString('sz="'.($max * 100).'"', $xml);
+    }
+
+    public function test_the_speaker_is_taken_from_the_company_and_title_form_and_the_title_and_name_form(): void
+    {
+        $extractor = new TopMessageDraftExtractor;
+        $body = '<p>'.self::CORE.'</p>';
+
+        foreach (['freee株式会社CEOの佐々木大輔', 'CEOの佐々木大輔', '代表取締役社長の山田太郎', '例社 代表取締役社長 山田太郎'] as $line) {
+            $found = $extractor->panelMessage('<html><body><main>'.$body.'<p>'.$line.'</p></main></body></html>');
+
+            $this->assertSame($line, $found['speaker'], $line);
+        }
     }
 
     public function test_without_a_panel_the_slide_is_the_draft_page_as_before(): void

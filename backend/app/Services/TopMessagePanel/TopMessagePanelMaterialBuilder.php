@@ -16,6 +16,9 @@ use App\Services\TopMessageInsight\TopMessagePageFinder;
  *   - no_excerpt: 抜粋が無い(名前だけの行)
  *   - generic_excerpt: 抜粋が「関連記事」などの汎用の見出しの言葉だけ
  *   - job_page: 募集要項・求人一覧のページ(ページ名・パスの語はconfig)から取った候補(制度ではなく求人のため)
+ *   - name_separator: 名前に区切り記号(「｜」「|」。config)を含む候補(一覧・職種のリンクの形で、制度の名前ではないため。依頼CZ追補)
+ *   - recruit_category_name: 名前が採用区分の言葉(「新卒」「中途」など。config)と一致する候補(依頼CZ追補2)
+ *   - short_excerpt: 抜粋がconfigの文字数に満たない候補(職種名・ツール名だけの抜粋。依頼CZ追補2)
  * 語・割合・上限はすべて config('top_message_draft.panel_*') と config('top_message_panel')。
  */
 class TopMessagePanelMaterialBuilder
@@ -51,7 +54,7 @@ class TopMessagePanelMaterialBuilder
             'programs' => [],
             'dropped' => [
                 'message' => ['related_section' => 0, 'link_text' => 0, 'title' => 0, 'short_or_long' => 0],
-                'programs' => ['no_excerpt' => 0, 'generic_excerpt' => 0, 'job_page' => 0],
+                'programs' => ['no_excerpt' => 0, 'generic_excerpt' => 0, 'job_page' => 0, 'name_separator' => 0, 'recruit_category_name' => 0, 'short_excerpt' => 0],
             ],
         ];
 
@@ -91,6 +94,10 @@ class TopMessagePanelMaterialBuilder
         $jobWords = array_values(array_filter(array_map(fn ($w) => mb_strtolower((string) $w), (array) config('top_message_draft.panel_job_page_words')), fn (string $w) => $w !== ''));
         $generic = array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.generic_headings'));
         $related = array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.panel_related_headings'));
+        $separators = array_values(array_filter(array_map('strval', (array) config('top_message_draft.panel_program_name_excluded_chars')), fn (string $c) => $c !== ''));
+
+        $excerptMin = (int) config('top_message_draft.panel_program_excerpt_min_chars');
+        $recruitNames = array_values(array_filter(array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.panel_program_name_excluded_words')), fn (string $w) => $w !== ''));
 
         $queues = [];
         foreach ($perPage as $p => $page) {
@@ -105,15 +112,32 @@ class TopMessagePanelMaterialBuilder
 
                     continue;
                 }
+                foreach ($separators as $separator) {
+                    if (str_contains($item['name'], $separator)) {
+                        $dropped['name_separator']++;
+
+                        continue 2;
+                    }
+                }
                 $excerpt = trim($item['excerpt']);
                 if ($excerpt === '') {
                     $dropped['no_excerpt']++;
 
                     continue;
                 }
+                if (in_array($this->normalize($item['name']), $recruitNames, true)) {
+                    $dropped['recruit_category_name']++;
+
+                    continue;
+                }
                 $key = $this->normalize($excerpt);
                 if (in_array($key, $generic, true) || in_array($key, $related, true)) {
                     $dropped['generic_excerpt']++;
+
+                    continue;
+                }
+                if (mb_strlen($excerpt) < $excerptMin) {
+                    $dropped['short_excerpt']++;
 
                     continue;
                 }

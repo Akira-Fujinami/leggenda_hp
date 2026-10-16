@@ -199,6 +199,8 @@ class AdminComparisonPptxDataBuilder
                         'source_title' => $stored['message_title'] ?? null,
                         'core' => (string) $stored['panel']['core']['text'],
                         'body' => array_map(fn (array $row) => (string) $row['text'], (array) ($stored['panel']['body'] ?? [])),
+                        'mode' => (string) ($stored['panel']['mode'] ?? 'keywords'),
+                        'programs' => (array) ($stored['panel']['programs'] ?? []),
                         'keywords' => (array) ($stored['panel']['keywords'] ?? []),
                     ];
                 }

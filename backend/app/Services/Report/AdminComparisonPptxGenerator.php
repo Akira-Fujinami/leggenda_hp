@@ -2920,6 +2920,46 @@ class AdminComparisonPptxGenerator
     }
 
     /**
+     * 折り返しを見積もったとき、複数行の最後の行が config('admin_comparison_pptx.top_message_panel_orphan_chars') の記号だけになるか。
+     * 1行に収まるときは false。折り返しは maxUnitsPerLine の幅で1文字ずつ詰める見積もり。
+     */
+    private function topMessageLastLineIsOrphan(string $text, float $widthIn, int $sizePt, bool $bold): bool
+    {
+        return $this->lastLineIsOrphanAt($text, $this->topMessageWrapUnits($widthIn, $sizePt));
+    }
+
+    /**
+     * 核の一文の実際の折り返しに近い1行の幅(半角=1・全角=2の単位)。maxUnitsPerLine は高さの見積もり用に余裕を持たせた幅のため、
+     * ここでは、文字の枠から左右の余白(config)を引いた幅に全角の文字が何文字入るかで数える(全角1文字の幅 = 文字の大きさ)。
+     */
+    private function topMessageWrapUnits(float $widthIn, int $sizePt): float
+    {
+        $inner = max(0.0, $widthIn - (float) config('admin_comparison_pptx.top_message_panel_wrap_inset_in'));
+
+        return floor($inner * 72 / max(1, $sizePt)) * 2;
+    }
+
+    private function lastLineIsOrphanAt(string $text, float $units): bool
+    {
+        $orphans = array_map('strval', (array) config('admin_comparison_pptx.top_message_panel_orphan_chars'));
+        $line = '';
+        $lineWidth = 0;
+        $lines = 1;
+        foreach (mb_str_split($text) as $char) {
+            $w = mb_strwidth($char, 'UTF-8');
+            if ($lineWidth + $w > $units && $line !== '') {
+                $lines++;
+                $line = '';
+                $lineWidth = 0;
+            }
+            $line .= $char;
+            $lineWidth += $w;
+        }
+
+        return $lines > 1 && $line !== '' && array_diff(mb_str_split($line), $orphans) === [];
+    }
+
+    /**
      * 下の出典: 「出典：」+ 使ったページのタイトル(長ければ切る)+ 固定の一文。
      *
      * @param  list<string>  $sources
@@ -3006,8 +3046,9 @@ class AdminComparisonPptxGenerator
             $this->addKicker($slide);
             $this->addTopMessageTitle($slide, $page['company_name'], (string) config('admin_comparison_pptx.top_message_panel_title'));
             $this->addPanelLeft($slide, $panel);
-            $this->addPanelRight($slide, $panel['keywords']);
-            $this->addNoteFooter($slide, sprintf((string) config('admin_comparison_pptx.top_message_panel_note'), $page['company_name'], (string) ($panel['source_title'] ?? '')));
+            $bySources = ($panel['mode'] ?? 'keywords') === 'sources';
+            $this->addPanelRight($slide, $bySources ? $this->panelSourceBands($panel['programs'] ?? []) : $panel['keywords'], $bySources);
+            $this->addNoteFooter($slide, sprintf((string) config($bySources ? 'admin_comparison_pptx.top_message_panel_note_sources' : 'admin_comparison_pptx.top_message_panel_note'), $page['company_name'], (string) ($panel['source_title'] ?? '')));
         });
     }
 
@@ -3045,7 +3086,9 @@ class AdminComparisonPptxGenerator
         $innerWidth = $width - 0.6;
         $innerHeight = $boxHeight - 0.4;
 
-        $core = (string) config('admin_comparison_pptx.top_message_panel_quote_open').$panel['core'].(string) config('admin_comparison_pptx.top_message_panel_quote_close');
+        // 依頼CZ追補: 核の一文が「」『』を含むときは、外側に「」を付けない(二重になるため)。
+        $hasBrackets = preg_match('/[「」『』]/u', $panel['core']) === 1;
+        $core = $hasBrackets ? $panel['core'] : (string) config('admin_comparison_pptx.top_message_panel_quote_open').$panel['core'].(string) config('admin_comparison_pptx.top_message_panel_quote_close');
         $maxPt = (int) config('admin_comparison_pptx.top_message_panel_core_max_pt');
         $floor = max(8, (int) round($maxPt * (float) config('admin_comparison_pptx.top_message_min_font_ratio')));
         $ratio = (float) config('admin_comparison_pptx.top_message_panel_body_ratio');
@@ -3065,6 +3108,13 @@ class AdminComparisonPptxGenerator
         $size = $floor;
         for ($pt = $maxPt; $pt >= $floor; $pt--) {
             if ($needs($body, $pt) <= $innerHeight) {
+                $size = $pt;
+                break;
+            }
+        }
+        // 依頼CZ追補2: 核の一文の最後の行が「。」「」」などの記号だけになるときは、1段階ずつ小さくして見積もり直す。下限まで下げても直らなければそのまま。
+        for ($pt = $size - 1; $pt >= $floor && $this->topMessageLastLineIsOrphan($core, $innerWidth, $size, true); $pt--) {
+            if (! $this->topMessageLastLineIsOrphan($core, $innerWidth, $pt, true)) {
                 $size = $pt;
                 break;
             }
@@ -3091,7 +3141,7 @@ class AdminComparisonPptxGenerator
     /**
      * @param  list<array{phrase: string, programs: list<array{name: string, summary: ?string}>}>  $keywords
      */
-    private function addPanelRight(Slide $slide, array $keywords): void
+    private function addPanelRight(Slide $slide, array $keywords, bool $bySources = false): void
     {
         $left = self::TM_DRAFT_RIGHT_LEFT_IN;
         $width = self::LEFT_IN + self::CONTENT_WIDTH_IN - $left;
@@ -3099,9 +3149,9 @@ class AdminComparisonPptxGenerator
 
         $heading = $slide->createRichTextShape();
         $this->position($heading, $left, $top, $width, 0.3);
-        $this->font($heading->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_panel_right_heading')), 12, true, self::COPPER);
+        $this->font($heading->getActiveParagraph()->createTextRun((string) config($bySources ? 'admin_comparison_pptx.top_message_panel_right_heading_sources' : 'admin_comparison_pptx.top_message_panel_right_heading')), 12, true, self::COPPER);
 
-        $keywords = array_slice($keywords, 0, (int) config('top_message_panel.keywords_max'));
+        $keywords = array_slice($keywords, 0, (int) config($bySources ? 'top_message_panel.source_bands_max' : 'top_message_panel.keywords_max'));
         $bandsTop = $top + 0.42;
         $available = self::TM_BODY_BOTTOM_IN - $bandsTop;
         $labelWidth = (float) config('admin_comparison_pptx.top_message_panel_keyword_width_in');
@@ -3152,6 +3202,24 @@ class AdminComparisonPptxGenerator
             $this->addTopMessageProgramCells($slide, $this->panelCards($keyword['programs']), $cardsLeft, $cardsWidth, $y + 0.08, $rowHeight - 0.16, self::WHITE);
             $y += $rowHeight + $gap;
         }
+    }
+
+    /**
+     * 依頼CZ追補: キーワードが使えないときの右側。制度を、出典のページ名ごとの帯にまとめる(出現順)。
+     *
+     * @param  list<array{name: string, summary: ?string, source: string}>  $programs
+     * @return list<array{phrase: string, programs: list<array{name: string, summary: ?string}>}>
+     */
+    private function panelSourceBands(array $programs): array
+    {
+        $bands = [];
+        foreach ($programs as $program) {
+            $label = (string) ($program['source'] ?? '');
+            $bands[$label]['phrase'] = $label;
+            $bands[$label]['programs'][] = ['name' => $program['name'], 'summary' => $program['summary'] ?? null];
+        }
+
+        return array_values($bands);
     }
 
     /**

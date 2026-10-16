@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Http;
 
 /**
  * 依頼CZ-2: メッセージの文(IDつき)と制度の候補(ID・名前・抜粋)から、核の一文・本文の文・キーワード・キーワードごとの制度を
- * 「選ぶ」AI呼び出し(プロンプト top_message_panel v1、1社1回)。文章は書かせない。プロンプトに文の例は書かない(選び方の観点だけ)。
+ * 「選ぶ」AI呼び出し(プロンプト top_message_panel v2、1社1回)。文章は書かせない。プロンプトに文の例は書かない(選び方の観点だけ)。
  *
  * 呼び出し先(プロバイダ・モデル・温度)は既存のconfig('services.brand_wheel_ai')を使う(温度は0)。
  * 判定プロンプト(v9)・改善提案プロンプト(v14)・他の依頼のプロンプトとは別の、独立したプロンプト。版は
@@ -73,6 +73,8 @@ class OpenAiTopMessagePanelProvider implements TopMessagePanelProvider
         $keywordsMin = (int) config('top_message_panel.keywords_min');
         $keywordsMax = (int) config('top_message_panel.keywords_max');
         $perKeyword = (int) config('top_message_panel.programs_per_keyword_max');
+        $programsMin = (int) config('top_message_panel.keyword_programs_min');
+        $programsMax = (int) config('top_message_panel.programs_max');
         $sumMin = (int) config('top_message_panel.summary_min_chars');
         $sumMax = (int) config('top_message_panel.summary_max_chars');
         $forbidden = implode('」「', (array) config('comparison_commentary.forbidden_words', []));
@@ -95,14 +97,15 @@ class OpenAiTopMessagePanelProvider implements TopMessagePanelProvider
 選ぶもの:
 - core_sentence_id: 会社が何を信じ、何を目指しているかを最もよく表す1文のID。
 - body_sentence_ids: 核の一文を補う文のID。1〜{$bodyMax}文。核の一文は含めない。
-- keywords: {$keywordsMin}〜{$keywordsMax}個。メッセージの中で繰り返し出てくる考え・大事にしていることを表す語句を選ぶ。
-  - phrase: その考えを表す語句を、メッセージの文から一字一句そのまま抜き出す({$kwMin}〜{$kwMax}字。言い換えない)。
-  - source_sentence_id: その語句を抜き出した文のID。
-  - programs: そのキーワードを具体化している制度を0〜{$perKeyword}件。関係が弱いものは入れない。1つの制度は1つのキーワードにだけ入れる。
-    - program_id: 制度のID。
-    - summary: その制度の抜粋から一字一句そのまま抜き出した一節({$sumMin}〜{$sumMax}字)。何をする制度か、数字など、中身が分かる部分を選ぶ。文の途中で切れる部分は選ばない。
-- 次の言葉を含む語句は選ばない: 「{$forbidden}」。
-- 材料に無い文・語句・制度は選ばない。
+- programs: 制度の候補から、中身(何をする制度か、数字など)が具体的に分かる制度を、最大{$programsMax}件。
+  - program_id: 制度のID。
+  - summary: その制度の抜粋から一字一句そのまま抜き出した一節({$sumMin}〜{$sumMax}字)。何をする制度か、数字など、中身が分かる部分を選ぶ。文の途中で切れる部分は選ばない。
+- keywords: {$keywordsMin}〜{$keywordsMax}個。メッセージの中で、人・組織・働き方・成長について会社が大事にしている考えを表す句を選ぶ。
+  - phrase: その考えを表す句を、メッセージの文の一部から一字一句そのまま抜き出す({$kwMin}〜{$kwMax}字)。言い換えない。1つの考えを2つに分けない。事業の対象・製品・市場を表す語句は選ばない。
+  - source_sentence_id: その句を抜き出した文のID。
+  - program_ids: 上の programs の中から、その考えを具体化している制度のID。{$programsMin}〜{$perKeyword}件。その制度が、その考えを社員にとっての仕組みとして実現していると言えるときだけ付ける。関係が弱いものは付けない。1つの制度は1つのキーワードにだけ付ける。
+- 次の言葉を含む句は選ばない: 「{$forbidden}」。
+- 材料に無い文・句・制度は選ばない。
 
 出力は、次のJSON Schemaに従うJSONオブジェクトだけにしてください(説明文や前後のテキストは不要):
 {$schema}
@@ -125,6 +128,18 @@ PROMPT;
             'properties' => [
                 'core_sentence_id' => ['type' => ['string', 'null']],
                 'body_sentence_ids' => ['type' => 'array', 'items' => ['type' => 'string']],
+                'programs' => [
+                    'type' => 'array',
+                    'items' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'program_id' => ['type' => 'string'],
+                            'summary' => ['type' => 'string'],
+                        ],
+                        'required' => ['program_id', 'summary'],
+                        'additionalProperties' => false,
+                    ],
+                ],
                 'keywords' => [
                     'type' => 'array',
                     'items' => [
@@ -132,25 +147,14 @@ PROMPT;
                         'properties' => [
                             'phrase' => ['type' => 'string'],
                             'source_sentence_id' => ['type' => 'string'],
-                            'programs' => [
-                                'type' => 'array',
-                                'items' => [
-                                    'type' => 'object',
-                                    'properties' => [
-                                        'program_id' => ['type' => 'string'],
-                                        'summary' => ['type' => 'string'],
-                                    ],
-                                    'required' => ['program_id', 'summary'],
-                                    'additionalProperties' => false,
-                                ],
-                            ],
+                            'program_ids' => ['type' => 'array', 'items' => ['type' => 'string']],
                         ],
-                        'required' => ['phrase', 'source_sentence_id', 'programs'],
+                        'required' => ['phrase', 'source_sentence_id', 'program_ids'],
                         'additionalProperties' => false,
                     ],
                 ],
             ],
-            'required' => ['core_sentence_id', 'body_sentence_ids', 'keywords'],
+            'required' => ['core_sentence_id', 'body_sentence_ids', 'programs', 'keywords'],
             'additionalProperties' => false,
         ];
     }
