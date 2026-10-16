@@ -75,9 +75,12 @@ class CorporateTopAnalyzer
 
     /**
      * 依頼CY-1: コーポレートの他メニューを、次の順で取る(取れた = 下の除外を通った項目が1件以上ある、時点で止める。通信しない)。
-     *  1. 静的なHTMLの header / nav(HtmlSeoAnalyzer::extractMenuLinks、これまでと同じ)
+     *  1. 静的なHTMLの header / nav
      *  2. 描画済みのHTML(取得のときに保存したもの)の header / nav
      *  3. class / id にナビを表す語(config)を含む要素(main・article・footerの外)の中のリンク。描画済みのHTMLがあればそちら、無ければ静的なHTML
+     * 依頼DA-2: どの取り方も、メニューの「1段目の項目」だけを取る(firstLevelLinks)。サブメニュー(ドロップダウン・メガメニュー)の中は取らない。
+     * 除いたあとの1段目の項目がconfig('admin_comparison_pptx.corporate_top_menu_first_level_max')を超えたら、メニューの取り出しに
+     * 失敗したとみなしてその取り方は使わず(excludedに too_many で件数を残す)、次の取り方へ進む。
      *
      * 除くもの(config、理由ごとに件数を数える): 取れなかったURL(unresolved)・採用サイトの配下(recruit_scope)・採用の箱と同じ名前
      * (recruit_label)・サイトのTOP自身へのリンク(site_top。ロゴ・HOME)・他のホスト(other_host。wwwの有無は同じホスト)・
@@ -90,9 +93,9 @@ class CorporateTopAnalyzer
     public function otherMenu(string $staticHtml, ?string $renderedHtml, string $baseUrl, array $scope, ?string $recruitLabel): array
     {
         $steps = [
-            'static_nav' => fn () => $this->htmlAnalyzer->extractMenuLinks($staticHtml),
-            'rendered_nav' => fn () => $renderedHtml !== null ? $this->htmlAnalyzer->extractMenuLinks($renderedHtml) : [],
-            'class_words' => fn () => $this->classWordLinks($renderedHtml ?? $staticHtml),
+            'static_nav' => fn () => $this->firstLevelLinks($staticHtml, false),
+            'rendered_nav' => fn () => $renderedHtml !== null ? $this->firstLevelLinks($renderedHtml, false) : [],
+            'class_words' => fn () => $this->firstLevelLinks($renderedHtml ?? $staticHtml, true),
         ];
 
         $rawCounts = [];
@@ -125,18 +128,20 @@ class CorporateTopAnalyzer
         $labels = [];
         foreach ($links as $link) {
             $label = trim((string) preg_replace('/\s+/u', ' ', (string) $link['label']));
-            $url = $this->linkExtractor->resolveHref($baseUrl, (string) $link['href']);
+            // リンクの無い項目(ドロップダウンを開くボタン・「#」のリンク)は、名前だけを使う(リンク先による除外は見ない)。
+            $hasUrl = trim((string) $link['href']) !== '';
+            $url = $hasUrl ? $this->linkExtractor->resolveHref($baseUrl, (string) $link['href']) : null;
 
             $reason = null;
-            if ($url === null || $label === '') {
+            if ($label === '' || ($hasUrl && $url === null)) {
                 $reason = 'unresolved';
-            } elseif ($this->isWithin($url, $scope)) {
+            } elseif ($url !== null && $this->isWithin($url, $scope)) {
                 $reason = 'recruit_scope';
             } elseif ($label === $recruitLabel) {
                 $reason = 'recruit_label';
-            } elseif ($this->isSiteTop($url, $baseHost)) {
+            } elseif ($url !== null && $this->isSiteTop($url, $baseHost)) {
                 $reason = 'site_top';
-            } elseif ($sameHostOnly && $this->bareHost($url) !== $baseHost) {
+            } elseif ($url !== null && $sameHostOnly && $this->bareHost($url) !== $baseHost) {
                 $reason = 'other_host';
             } elseif ($this->isNotASection($label)) {
                 $reason = 'not_a_section';
@@ -152,82 +157,175 @@ class CorporateTopAnalyzer
             $labels[] = $label;
         }
 
+        // 1段目の項目が多すぎるときは、サブメニューまで拾ったか、メニューではない場所を読んだ可能性が高い。この取り方は使わない。
+        $max = (int) config('admin_comparison_pptx.corporate_top_menu_first_level_max');
+        if ($max > 0 && count($labels) > $max) {
+            $reasons['too_many'] = count($labels);
+
+            return [];
+        }
+
         return $labels;
     }
 
     /**
-     * class / id にナビを表す語を含む要素(main・article・footerの外)の中のリンク(文書順)。
+     * 依頼DA-2: メニューの「1段目の項目」だけを、文書順に取る。
+     *  - 入れ物: nav取り(classWords=false)は header(main・article・footerの外)と nav(footerの外)のうち一番外側のもの。
+     *    class取り(classWords=true)は、class / id にナビを表す語(config)を含む要素(main・article・footerの外)のうち一番外側のもの。
+     *  - 入れ物の中の li のうち一番外側のもの(1段目の項目)からは、最初の「リンク(a[href])またはボタン(button)」だけを取る。
+     *    その li の中の入れ子のリスト・パネル(サブメニュー)の中は取らない。ボタンの文字・リンクの無い「#」「javascript:」のリンクの文字は、
+     *    リンク先なし(href='')の項目名として使う。
+     *  - li の外にあるリンクは、そのまま1段目の項目として取る(リストでない作りのメニュー)。li の外のボタンは取らない。
      *
      * @return list<array{label: string, href: string}>
      */
-    private function classWordLinks(string $html): array
+    private function firstLevelLinks(string $html, bool $classWords): array
     {
+        $xpath = $this->loadXpath($html);
+        if ($xpath === null) {
+            return [];
+        }
+
+        $containers = [];
+        if ($classWords) {
+            $words = array_values(array_filter(array_map('strtolower', (array) config('admin_comparison_pptx.corporate_top_menu_nav_words', [])), fn (string $w) => $w !== ''));
+            foreach ($xpath->query('//*[@class or @id]') ?: [] as $element) {
+                if ($element instanceof \DOMElement && $this->hasNavWord($element, $words) && ! $this->insideTag($element, ['main', 'article', 'footer'])) {
+                    $containers[] = $element;
+                }
+            }
+        } else {
+            foreach ($xpath->query('//header[not(ancestor::footer) and not(ancestor::main) and not(ancestor::article)] | //nav[not(ancestor::footer)]') ?: [] as $element) {
+                if ($element instanceof \DOMElement) {
+                    $containers[] = $element;
+                }
+            }
+        }
+        $containers = $this->outermost($containers);
+
+        $links = [];
+        foreach ($containers as $container) {
+            $seenLi = [];
+            foreach ($xpath->query('.//a[@href] | .//button', $container) ?: [] as $node) {
+                if (! $node instanceof \DOMElement) {
+                    continue;
+                }
+                $topLi = $this->outermostListItem($node, $container);
+                $isButton = strtolower($node->tagName) === 'button';
+                if ($topLi === null && $isButton) {
+                    continue;
+                }
+                if ($topLi !== null && isset($seenLi[$topLi->getNodePath()])) {
+                    continue;
+                }
+
+                $label = $isButton ? $this->buttonLabel($node) : $this->labelOf($node);
+                if ($label === null || preg_match('/[\p{L}\p{N}]/u', $label) !== 1) {
+                    continue;
+                }
+                if ($topLi !== null) {
+                    $seenLi[$topLi->getNodePath()] = true;
+                }
+                $href = $isButton ? '' : trim($node->getAttribute('href'));
+                if ($href === '' || str_starts_with($href, '#') || stripos($href, 'javascript:') === 0) {
+                    $href = '';
+                }
+                $links[] = ['label' => mb_substr($label, 0, 64), 'href' => $href];
+            }
+        }
+
+        return $links;
+    }
+
+    /**
+     * 要素のうち、ほかの要素の内側にないもの(入れ子の入れ物は一番外側だけ)。
+     *
+     * @param  list<\DOMElement>  $elements
+     * @return list<\DOMElement>
+     */
+    private function outermost(array $elements): array
+    {
+        $ids = [];
+        foreach ($elements as $element) {
+            $ids[$element->getNodePath()] = true;
+        }
+
+        return array_values(array_filter($elements, function (\DOMElement $element) use ($ids): bool {
+            for ($node = $element->parentNode; $node instanceof \DOMElement; $node = $node->parentNode) {
+                if (isset($ids[$node->getNodePath()])) {
+                    return false;
+                }
+            }
+
+            return true;
+        }));
+    }
+
+    /** 入れ物($container)の内側で、$node を含む一番外側の li。無ければnull。 */
+    private function outermostListItem(\DOMElement $node, \DOMElement $container): ?\DOMElement
+    {
+        $found = null;
+        for ($parent = $node->parentNode; $parent instanceof \DOMElement && ! $parent->isSameNode($container); $parent = $parent->parentNode) {
+            if (strtolower($parent->tagName) === 'li') {
+                $found = $parent;
+            }
+        }
+
+        return $found;
+    }
+
+    private function buttonLabel(\DOMElement $button): ?string
+    {
+        foreach ([$this->collapse($button->textContent), $this->collapse($button->getAttribute('aria-label')), $this->collapse($button->getAttribute('title'))] as $text) {
+            if ($text !== '') {
+                return $text;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  list<string>  $words
+     */
+    private function hasNavWord(\DOMElement $element, array $words): bool
+    {
+        $names = strtolower($element->getAttribute('class').' '.$element->getAttribute('id'));
+        foreach ($words as $word) {
+            if (str_contains($names, $word)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  list<string>  $tags
+     */
+    private function insideTag(\DOMElement $element, array $tags): bool
+    {
+        for ($node = $element; $node instanceof \DOMElement; $node = $node->parentNode) {
+            if (in_array(strtolower($node->tagName), $tags, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function loadXpath(string $html): ?\DOMXPath
+    {
+        if (trim($html) === '') {
+            return null;
+        }
         $dom = new \DOMDocument;
         $previous = libxml_use_internal_errors(true);
         $dom->loadHTML('<?xml encoding="utf-8"?>'.$html, LIBXML_NOENT | LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
         libxml_clear_errors();
         libxml_use_internal_errors($previous);
 
-        $xpath = new \DOMXPath($dom);
-        $words = array_map('strtolower', (array) config('admin_comparison_pptx.corporate_top_menu_nav_words', []));
-        $maxDepth = (int) config('admin_comparison_pptx.corporate_top_menu_class_words_max_list_depth', 1);
-
-        $links = [];
-        $seen = [];
-        foreach ($xpath->query('//a[@href]') ?: [] as $anchor) {
-            if (! $anchor instanceof \DOMElement || ! $this->insideNavWordElement($anchor, $words) || $this->listDepth($anchor) > $maxDepth) {
-                continue;
-            }
-            $label = $this->labelOf($anchor);
-            $key = $label.'|'.$anchor->getAttribute('href');
-            if ($label === null || isset($seen[$key])) {
-                continue;
-            }
-            $seen[$key] = true;
-            $links[] = ['label' => mb_substr($label, 0, 64), 'href' => trim($anchor->getAttribute('href'))];
-        }
-
-        return $links;
-    }
-
-    /** リンクの祖先の li の数(リストの入れ子の深さ)。サブメニュー(メニューの子)は、親の li の中の li になる。 */
-    private function listDepth(\DOMElement $anchor): int
-    {
-        $depth = 0;
-        for ($node = $anchor->parentNode; $node instanceof \DOMElement; $node = $node->parentNode) {
-            if (strtolower($node->tagName) === 'li') {
-                $depth++;
-            }
-        }
-
-        return $depth;
-    }
-
-    /**
-     * リンクの祖先に、class / id がナビの語を含む要素があり、かつ main・article・footer の中でない。
-     *
-     * @param  list<string>  $words
-     */
-    private function insideNavWordElement(\DOMElement $anchor, array $words): bool
-    {
-        $matched = false;
-        for ($node = $anchor->parentNode; $node instanceof \DOMElement; $node = $node->parentNode) {
-            if (in_array(strtolower($node->tagName), ['main', 'article', 'footer'], true)) {
-                return false;
-            }
-            if (! $matched) {
-                $names = strtolower($node->getAttribute('class').' '.$node->getAttribute('id'));
-                foreach ($words as $word) {
-                    if ($word !== '' && str_contains($names, $word)) {
-                        $matched = true;
-
-                        break;
-                    }
-                }
-            }
-        }
-
-        return $matched;
+        return new \DOMXPath($dom);
     }
 
     /** 情報の区分ではない項目(言語切り替え・検索・ログイン・お問い合わせ・サイトマップなど)。 */

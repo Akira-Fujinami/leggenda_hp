@@ -64,6 +64,12 @@ class AdminComparisonPptxGenerator
 {
     private const PX_PER_INCH = 96;
 
+    /** 依頼DB-5: ブランド・ホイール比較で、AIの下書き(2行ずつ)を出すとき、見出し以下の列を下へずらす量(in)。generate()が毎回決める。 */
+    private float $wheelShift = 0.0;
+
+    /** 依頼DB-5: 同じとき、強み・弱みの箱の上端を上へ上げる量(in)。 */
+    private float $wheelRaise = 0.0;
+
     // 依頼CQ-4: 「トップメッセージと人事制度」のページの配置(in)。
     private const TM_SUBTITLE_TOP_IN = 1.4;
 
@@ -466,6 +472,8 @@ class AdminComparisonPptxGenerator
         // ('admin_comparison_pptx.self_data_unavailable_notice')docblock参照)。
         $selfReadable = $data['self_readable'] ?? true;
         $layout = $this->wheelLayout(count($data['companies']) - 1);
+        // 依頼DB-5: AIの下書きを使うときは、強み・弱みが2行ずつになるので、見出し以下の列を下へずらす(使わないときは従来の位置)。
+        [$this->wheelShift, $this->wheelRaise] = $this->insightLayout($data['strength_weakness'] ?? null);
 
         return $this->renderSingleSlide(function (Slide $slide) use ($data, $selfReadable, $layout): void {
             $this->addKicker($slide);
@@ -482,6 +490,8 @@ class AdminComparisonPptxGenerator
                 ($data['strength_weakness']['ai_used'] ?? false)
                     ? (string) config('strength_weakness_sentence.note')
                     : (($data['strength_weakness']['detail_used'] ?? false) ? (string) config('admin_comparison_pptx.strength_weakness_detail.note') : null),
+                // 依頼DB-5: Claudeの下書きを使ったときだけ、下書きである旨の注記。
+                ($data['strength_weakness']['insight_used'] ?? false) ? (string) config('strength_weakness_insight.note') : null,
             ], fn ($note) => $note !== null && $note !== ''));
             if ($notes !== []) {
                 $this->addWheelNotes($slide, $notes);
@@ -503,7 +513,7 @@ class AdminComparisonPptxGenerator
         }
 
         $box = $slide->createRichTextShape();
-        $this->position($box, self::LEFT_IN, self::WHEEL_STRENGTH_TOP_IN, self::CONTENT_WIDTH_IN, self::WHEEL_STRENGTH_HEIGHT_IN);
+        $this->position($box, self::LEFT_IN, self::WHEEL_STRENGTH_TOP_IN - $this->wheelRaise, self::CONTENT_WIDTH_IN, self::WHEEL_STRENGTH_HEIGHT_IN + $this->wheelShift + $this->wheelRaise);
         $box->setInsetLeft(0)->setInsetRight(0)->setInsetTop(0)->setInsetBottom(0);
         $box->setWrap(RichText::WRAP_SQUARE);
 
@@ -519,9 +529,60 @@ class AdminComparisonPptxGenerator
         foreach (['strength', 'weakness'] as $key) {
             $paragraph = $first ? $box->getActiveParagraph() : $box->createParagraph();
             $first = false;
+            // 依頼DB-5: AIの下書きを使った側の行の頭に、小さな赤いラベル。
+            if ($text['insight_'.$key] ?? false) {
+                $this->font($paragraph->createTextRun((string) config('strength_weakness_insight.label').' '), (float) config('strength_weakness_insight.label_font_size'), true, (string) config('strength_weakness_insight.label_color'));
+            }
             $this->font($paragraph->createTextRun((string) ($labels[$key] ?? '')), $size, true, self::NAVY);
             $this->font($paragraph->createTextRun((string) $text[$key]), $size, false, self::BODY_TEXT);
         }
+    }
+
+    /**
+     * 依頼DB-5: AIの下書きの強み・弱みが、それぞれ何行になるか(行の頭のラベル込みで、1行に入る字数 config line_chars で数える。1〜2行)。
+     *
+     * @param  array<string, mixed>  $text
+     * @return array{strength: int, weakness: int}
+     */
+    private function insightLineCounts(array $text): array
+    {
+        $labels = (array) config('admin_comparison_pptx.strength_weakness_labels');
+        $capacity = max(1, (int) config('strength_weakness_insight.line_chars'));
+        $counts = [];
+        foreach (['strength', 'weakness'] as $key) {
+            $prefix = ($text['insight_'.$key] ?? false) ? mb_strlen((string) config('strength_weakness_insight.label')) + 1 : 0;
+            $chars = $prefix + mb_strlen((string) ($labels[$key] ?? '')) + mb_strlen((string) ($text[$key] ?? ''));
+            $counts[$key] = min(2, max(1, (int) ceil($chars / $capacity)));
+        }
+
+        return $counts;
+    }
+
+    /**
+     * 依頼DB-5: AIの下書きを使うとき、強み・弱みが合わせて2行(各1行)を超える場合の配置。
+     * 箱の上端を上へ上げ(layout_raise_in。タイトルの下の余白を使う)、それでも必要な高さに足りない分だけ、見出し以下の列を下へずらす。
+     * 必要な高さ = 行数 × 文字の大きさ × 1.25。使えるのは、箱の上端から見出しの上端の少し手前まで。
+     * 使わないとき・各1行に収まるときは、従来の位置([0, 0])。
+     *
+     * @param  ?array<string, mixed>  $text
+     * @return array{0: float, 1: float} [列を下へずらす量, 箱の上端を上げる量]
+     */
+    private function insightLayout(?array $text): array
+    {
+        if ($text === null || ! ($text['insight_used'] ?? false) || $text['notice'] !== null) {
+            return [0.0, 0.0];
+        }
+        $lines = array_sum($this->insightLineCounts($text));
+        if ($lines <= 2) {
+            return [0.0, 0.0];
+        }
+
+        $raise = (float) config('strength_weakness_insight.layout_raise_in');
+        $size = $this->strengthWeaknessFontSize($text, (array) config('admin_comparison_pptx.strength_weakness_labels'));
+        $needed = $lines * $size * 1.25 / 72;
+        $available = self::WHEEL_HEADING_TOP_IN - (float) config('strength_weakness_insight.layout_gap_in') - (self::WHEEL_STRENGTH_TOP_IN - $raise);
+
+        return [max(0.0, round($needed - $available, 3)), $raise];
     }
 
     /**
@@ -533,6 +594,19 @@ class AdminComparisonPptxGenerator
      */
     private function strengthWeaknessFontSize(array $text, array $labels): float
     {
+        if ($text['insight_used'] ?? false) {
+            // 依頼DB-5: 強み・弱みそれぞれ2行まで。1行に入る字数(基準の大きさのとき)の2倍を超える側があるときだけ、文字を小さくする(下限あり)。
+            $base = (float) config('strength_weakness_insight.font_size');
+            $capacity = 2 * (int) config('strength_weakness_insight.line_chars');
+            $longest = 0;
+            foreach (['strength', 'weakness'] as $key) {
+                $prefix = ($text['insight_'.$key] ?? false) ? mb_strlen((string) config('strength_weakness_insight.label')) + 1 : 0;
+                $longest = max($longest, $prefix + mb_strlen((string) ($labels[$key] ?? '')) + mb_strlen((string) $text[$key]));
+            }
+
+            return $longest <= $capacity ? $base : max((float) config('strength_weakness_insight.min_font_size'), round($base * $capacity / $longest, 1));
+        }
+
         if (! ($text['ai_used'] ?? false) && ! ($text['detail_used'] ?? false)) {
             return 10.5;
         }
@@ -575,7 +649,7 @@ class AdminComparisonPptxGenerator
 
         foreach ($columns as [$left, $width, $heading, $note]) {
             $box = $slide->createRichTextShape();
-            $this->position($box, $left, self::WHEEL_HEADING_TOP_IN, $width, self::WHEEL_HEADING_HEIGHT_IN);
+            $this->position($box, $left, $this->wheelShift + self::WHEEL_HEADING_TOP_IN, $width, self::WHEEL_HEADING_HEIGHT_IN);
             $box->setInsetLeft(0)->setInsetRight(0);
             $box->setWrap(RichText::WRAP_SQUARE);
             $para = $box->getActiveParagraph();
@@ -585,7 +659,7 @@ class AdminComparisonPptxGenerator
             }
 
             $rule = $slide->createAutoShape()->setType(AutoShape::TYPE_RECTANGLE);
-            $this->position($rule, $left, self::WHEEL_HEADING_TOP_IN + self::WHEEL_HEADING_HEIGHT_IN, $width, 0.012);
+            $this->position($rule, $left, $this->wheelShift + self::WHEEL_HEADING_TOP_IN + self::WHEEL_HEADING_HEIGHT_IN, $width, 0.012);
             $rule->getFill()->setFillType(Fill::FILL_SOLID)->setStartColor(new Color('FF'.self::RULE));
             $rule->getBorder()->setLineStyle(Border::LINE_NONE);
         }
@@ -608,14 +682,14 @@ class AdminComparisonPptxGenerator
         $radius = self::WHEEL_SELF_RADIUS_IN;
 
         $nameBox = $slide->createRichTextShape();
-        $this->position($nameBox, $left, self::WHEEL_BODY_TOP_IN, $width, self::WHEEL_SELF_NAME_HEIGHT_IN);
+        $this->position($nameBox, $left, $this->wheelShift + self::WHEEL_BODY_TOP_IN, $width, self::WHEEL_SELF_NAME_HEIGHT_IN);
         $nameBox->setWrap(RichText::WRAP_SQUARE);
         $nameBox->setInsetLeft(0)->setInsetRight(0);
         $nameBox->setVerticalAlignCenter(RichText::VALIGN_CENTER);
         $nameBox->getActiveParagraph()->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $this->renderCompanyName($nameBox->getActiveParagraph(), $company['name'], $width, 13.0, true, self::NAVY);
 
-        $scoreTop = self::WHEEL_BODY_TOP_IN + self::WHEEL_SELF_NAME_HEIGHT_IN;
+        $scoreTop = $this->wheelShift + self::WHEEL_BODY_TOP_IN + self::WHEEL_SELF_NAME_HEIGHT_IN;
         $scoreBottom = $scoreTop + self::WHEEL_SELF_SCORE_HEIGHT_IN;
         $hexCenterY = $scoreBottom + self::WHEEL_LABEL_RESERVE_IN + $radius;
         $bottom = $hexCenterY + $radius + self::WHEEL_LABEL_RESERVE_IN;
@@ -659,11 +733,11 @@ class AdminComparisonPptxGenerator
 
         $twoColumns = ! $layout['names'];
         $rows = $twoColumns ? (int) ceil($count / 2) : $count;
-        $rowHeight = min(self::WHEEL_COMPETITOR_ROW_MAX_HEIGHT_IN, (self::WHEEL_BODY_BOTTOM_IN - self::WHEEL_BODY_TOP_IN) / $rows);
+        $rowHeight = min(self::WHEEL_COMPETITOR_ROW_MAX_HEIGHT_IN, (self::WHEEL_BODY_BOTTOM_IN - $this->wheelShift - self::WHEEL_BODY_TOP_IN) / $rows);
 
         foreach ($competitors as $i => $company) {
             $row = $twoColumns ? intdiv($i, 2) : $i;
-            $top = self::WHEEL_BODY_TOP_IN + $row * $rowHeight;
+            $top = $this->wheelShift + self::WHEEL_BODY_TOP_IN + $row * $rowHeight;
             $left = $layout['competitor_left'] + ($twoColumns ? ($i % 2) * self::WHEEL_COMPETITOR_DOUBLE_TILE_WIDTH_IN : 0.0);
 
             if ($twoColumns) {
@@ -1028,7 +1102,7 @@ class AdminComparisonPptxGenerator
      */
     private function addMatrixSection(Slide $slide, array $companies, array $axes, bool $selfReadable, array $layout): void
     {
-        $tableTop = self::WHEEL_BODY_TOP_IN + 0.2;
+        $tableTop = $this->wheelShift + self::WHEEL_BODY_TOP_IN + 0.2;
         $companyCount = count($companies);
         $colWidth = ($companyCount > 0) ? ($layout['table_width'] - $layout['area_width']) / $companyCount : 0;
 

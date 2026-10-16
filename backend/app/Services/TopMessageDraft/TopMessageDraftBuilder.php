@@ -20,13 +20,14 @@ class TopMessageDraftBuilder
     public function __construct(
         private readonly TopMessagePageFinder $finder,
         private readonly TopMessageDraftExtractor $extractor,
+        private readonly TopMessageProgramFilter $filter,
     ) {}
 
     /**
      * @return ?array{
      *     company_name: string,
-     *     message: array{title: ?string, url: string, lines: list<string>, hidden: int}|null,
-     *     programs: array{rows: list<array{kind: string, name: string, excerpt: string, source: string, order?: int, level?: int}>, hidden: int, page_urls: list<string>, candidate_total: int, dropped: array{colon: int, title: int, category: int}},
+     *     message: array{title: ?string, url: string, lines: list<string>, hidden: int, dropped: array{related_section: int, link_text: int}}|null,
+     *     programs: array{rows: list<array{kind: string, name: string, excerpt: string, source: string, order?: int, level?: int}>, hidden: int, page_urls: list<string>, candidate_total: int, dropped: array{colon: int, title: int, category: int}, removed: array<string, int>},
      * }
      */
     public function build(WebsiteAnalysis $websiteAnalysis, string $companyName): ?array
@@ -43,11 +44,15 @@ class TopMessageDraftBuilder
                 'url' => $selection->message->url,
                 'lines' => $found['lines'],
                 'hidden' => max(0, $found['total'] - count($found['lines'])),
+                'dropped' => $found['dropped_related'],
             ];
         }
 
         $programPages = array_slice($selection->programPages, 0, (int) config('top_message_draft.program_pages_max'));
         $perPage = $this->extractor->programItemsByPage($programPages);
+        // 依頼DA: 制度でない行の除外は、パネルの材料と共通の1か所(TopMessageProgramFilter)。
+        $removed = [];
+        $perPage = $this->filter->filter($perPage, $programPages, $removed);
         [$rows, $candidateTotal, $shownCount] = $this->arrange($perPage, (int) config('top_message_draft.program_total_max'));
 
         $dropped = ['colon' => 0, 'title' => 0, 'category' => 0];
@@ -71,6 +76,7 @@ class TopMessageDraftBuilder
                 'page_urls' => array_map(fn ($p) => $p->url, $programPages),
                 'candidate_total' => $candidateTotal,
                 'dropped' => $dropped,
+                'removed' => $removed,
             ],
         ];
     }

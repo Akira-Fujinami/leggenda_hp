@@ -386,7 +386,7 @@ class TopMessagePanelTest extends TestCase
 
         $this->assertCount(1, (new TopMessageDraftExtractor)->panelMessage($html)['sentences']);
 
-        config(['top_message_draft.panel_link_text_ratio' => 0.1]);
+        config(['top_message_draft.link_text_ratio' => 0.1]);
         $this->assertCount(0, (new TopMessageDraftExtractor)->panelMessage($html)['sentences']);
     }
 

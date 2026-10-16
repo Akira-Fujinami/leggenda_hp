@@ -402,6 +402,9 @@ class AdminComparisonSiteHierarchyBuilder
         $totalFetched = $pages->count();
         // 依頼CN-A1: ページ名を整える(メモリ上のみ、DBには書き戻さない)。
         $this->hydrateTitles($pages);
+        // 依頼DA-3: 404・410のページ、ページ名・最初の見出しが「見つかりません」系のページは、図に出さない(件数 $totalFetched は変えない。判定の入力も変えない)。
+        $allPages = $pages;
+        $pages = $this->withoutNotFoundPages($pages);
 
         $sourceScope = $this->scopeResolver->resolveScope($websiteAnalysis);
         if ($sourceScope === null) {
@@ -424,7 +427,8 @@ class AdminComparisonSiteHierarchyBuilder
         }
 
         $within = $pages->filter(fn (AnalysisCrawledPage $page) => $this->scopeResolver->isWithinScope($page->url, $page->final_url, $scope))->values();
-        $pagesWithinOrigin = $within->count();
+        // 冒頭の「巡回したN件のうち…」に使う件数は、図から除いたページも含めた数(変えない)。
+        $pagesWithinOrigin = $allPages->filter(fn (AnalysisCrawledPage $page) => $this->scopeResolver->isWithinScope($page->url, $page->final_url, $scope))->count();
 
         $topPage = $this->readTopPage($websiteAnalysis, $sourceScope, $pages);
         $minItems = (int) config('admin_comparison_pptx.site_hierarchy_tree_menu_min_items');
@@ -1578,6 +1582,69 @@ class AdminComparisonSiteHierarchyBuilder
     }
 
     /**
+     * 依頼DA-3: 階層図に出さないページ(存在しないページ)を除く。HTTPの状態が config 'site_hierarchy_tree_not_found_statuses'(404・410)、
+     * または、ページ名・最初の見出し(h1)が config 'site_hierarchy_tree_not_found_words' のどれかを含む(大文字小文字は区別しない)。
+     * 除いたページは $pages から外れるので、枝が空になれば枝ごと描かれない。除いた件数だけをログに出す(ページ名・本文は出さない)。
+     *
+     * @param  Collection<int, AnalysisCrawledPage>  $pages
+     * @return Collection<int, AnalysisCrawledPage>
+     */
+    private function withoutNotFoundPages(Collection $pages): Collection
+    {
+        $statuses = array_map('intval', (array) config('admin_comparison_pptx.site_hierarchy_tree_not_found_statuses'));
+        $words = array_values(array_filter(array_map(fn ($w) => mb_strtolower((string) $w), (array) config('admin_comparison_pptx.site_hierarchy_tree_not_found_words')), fn (string $w) => $w !== ''));
+
+        $removed = 0;
+        $kept = $pages->filter(function (AnalysisCrawledPage $page) use ($statuses, $words, &$removed): bool {
+            $isNotFound = $page->http_status !== null && in_array((int) $page->http_status, $statuses, true);
+            if (! $isNotFound && $words !== []) {
+                $isNotFound = $this->containsAnyWord((string) $page->title, $words);
+                if (! $isNotFound) {
+                    $html = $this->readStoredHtml($page->rendered_html_path) ?? $this->readStoredHtml($page->raw_html_path);
+                    if ($html !== null) {
+                        try {
+                            foreach ($this->htmlAnalyzer->extractHeadingTexts($html) as $heading) {
+                                if ($heading['level'] === 1) {
+                                    $isNotFound = $this->containsAnyWord((string) $heading['text'], $words);
+
+                                    break; // 最初のh1だけを見る
+                                }
+                            }
+                        } catch (\Throwable) {
+                            // 読めないページは、除かない
+                        }
+                    }
+                }
+            }
+            if ($isNotFound) {
+                $removed++;
+            }
+
+            return ! $isNotFound;
+        })->values();
+
+        if ($removed > 0) {
+            Log::info('site hierarchy: pages without content (not found) left out of the tree', ['count' => $removed]);
+        }
+
+        return $kept;
+    }
+
+    /**
+     * @param  list<string>  $lowerWords
+     */
+    private function containsAnyWord(string $text, array $lowerWords): bool
+    {
+        $lower = mb_strtolower($text);
+        foreach ($lowerWords as $word) {
+            if (str_contains($lower, $word)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+    /**
      * @return Collection<int, AnalysisCrawledPage>
      */
     private function fetchedPages(WebsiteAnalysis $websiteAnalysis): Collection
@@ -1586,7 +1653,7 @@ class AdminComparisonSiteHierarchyBuilder
             ->where('website_analysis_id', $websiteAnalysis->id)
             ->where('status', AnalysisCrawledPage::STATUS_FETCHED)
             ->orderBy('id')
-            ->get(['id', 'url', 'final_url', 'title', 'raw_html_path', 'rendered_html_path']);
+            ->get(['id', 'url', 'final_url', 'http_status', 'title', 'raw_html_path', 'rendered_html_path']);
     }
 
     /**

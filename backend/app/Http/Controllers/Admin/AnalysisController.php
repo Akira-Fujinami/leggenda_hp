@@ -207,7 +207,12 @@ class AnalysisController extends Controller
             $commentary = (bool) config('strength_weakness_sentence.enabled')
                 ? app(\App\Services\StrengthWeaknessSentence\StrengthWeaknessSentenceStore::class)->read((int) $analysis->id)
                 : null;
-            $data = $dataBuilder->build($viewModel, $commentary);
+            // 依頼DB: 保存済みの「強み・弱みの下書き」(Claudeが根拠つきで書き、サーバー側の確認を通ったもの)も、読むだけ。
+            // ここでAIを呼ばない・通信しない。依頼CWの文と両方有効のときは、この下書きが優先される(ComparisonStrengthWeaknessComposer)。
+            $insight = (bool) config('strength_weakness_insight.enabled')
+                ? app(\App\Services\StrengthWeaknessInsight\StrengthWeaknessInsightStore::class)->read((int) $analysis->id)
+                : null;
+            $data = $dataBuilder->build($viewModel, $commentary, null, $insight);
 
             // 依頼CB-3: 階層図は自社(is_primary)のWebsiteAnalysisの
             // analysis_crawled_pagesから組み立てる ―― ViewModel/$dataは

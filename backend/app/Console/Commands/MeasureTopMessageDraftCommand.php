@@ -137,6 +137,9 @@ class MeasureTopMessageDraftCommand extends Command
                 $dropped['title_in_message'] ?? 0,
                 $dropped['category'] ?? 0,
             ));
+            // 依頼DA-1: 制度でない行の整理(パネルの材料と共通)と、メッセージの整理で除いた数(理由別)。
+            $this->line('  除いた制度の候補(整理・理由別): '.json_encode($page['programs']['removed'] ?? [], JSON_UNESCAPED_UNICODE));
+            $this->line('  除いたメッセージの文(整理・理由別): '.json_encode($page['message']['dropped'] ?? [], JSON_UNESCAPED_UNICODE));
             $this->line('  使った制度のページ: '.implode(' ', array_map(fn ($u) => "[{$u}]", $page['programs']['page_urls'] ?? [])));
 
             if (isset($expected[$key])) {

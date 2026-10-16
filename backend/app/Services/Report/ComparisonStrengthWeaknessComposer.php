@@ -30,9 +30,10 @@ class ComparisonStrengthWeaknessComposer
      * @param  list<array{name: string, caption: ?string, denominator: int, self_count: int, competitor_counts: list<int>, self_gap: bool}>  $axes
      * @param  ?array<string, mixed>  $commentary  ComparisonCommentaryStoreが読んだ結果(strength/weaknessは確認を通った文かnull)
      * @param  ?array{strength: ?string, weakness: ?string}  $detail  StrengthWeaknessDetailComposerの文(AIを使わない)
-     * @return ?array{notice: ?string, strength: ?string, weakness: ?string, ai_used: bool, detail_used: bool}
+     * @param  ?array<string, mixed>  $insight  依頼DB: StrengthWeaknessInsightStoreが読んだ結果(Claudeの下書き。strength/weaknessは確認を通った{sentence, quotes}かnull)
+     * @return ?array{notice: ?string, strength: ?string, weakness: ?string, ai_used: bool, detail_used: bool, insight_strength: bool, insight_weakness: bool, insight_used: bool}
      */
-    public function compose(array $companies, array $axes, bool $selfReadable, ?array $commentary = null, ?array $detail = null): ?array
+    public function compose(array $companies, array $axes, bool $selfReadable, ?array $commentary = null, ?array $detail = null, ?array $insight = null): ?array
     {
         $competitors = array_values(array_filter($companies, fn (array $c) => ! $c['is_self']));
         if (! $selfReadable || $competitors === [] || $axes === []) {
@@ -41,7 +42,7 @@ class ComparisonStrengthWeaknessComposer
 
         foreach ($companies as $company) {
             if (! ($company['material_sufficient'] ?? true)) {
-                return ['notice' => (string) config('admin_comparison_pptx.strength_weakness_insufficient'), 'strength' => null, 'weakness' => null, 'ai_used' => false, 'detail_used' => false];
+                return ['notice' => (string) config('admin_comparison_pptx.strength_weakness_insufficient'), 'strength' => null, 'weakness' => null, 'ai_used' => false, 'detail_used' => false, 'insight_strength' => false, 'insight_weakness' => false, 'insight_used' => false];
             }
         }
 
@@ -56,12 +57,21 @@ class ComparisonStrengthWeaknessComposer
         $aiStrength = $this->aiSentence($commentary, 'strength');
         $aiWeakness = $this->aiSentence($commentary, 'weakness');
 
+        // 依頼DB: Claudeの下書き(確認を通った側)が最優先。無い側は、依頼CWの文 → CT-1の文の順に戻る。
+        $insightStrength = $this->aiSentence($insight, 'strength');
+        $insightWeakness = $this->aiSentence($insight, 'weakness');
+        $cwStrength = $insightStrength === null ? $aiStrength : null;
+        $cwWeakness = $insightWeakness === null ? $aiWeakness : null;
+
         return [
             'notice' => null,
-            'strength' => $aiStrength ?? $detailStrength ?? $this->strength($rows, count($competitors)),
-            'weakness' => $aiWeakness ?? $detailWeakness ?? $this->weakness($rows, $competitors),
-            'ai_used' => $aiStrength !== null || $aiWeakness !== null,
-            'detail_used' => ($aiStrength === null && $detailStrength !== null) || ($aiWeakness === null && $detailWeakness !== null),
+            'strength' => $insightStrength ?? $cwStrength ?? $detailStrength ?? $this->strength($rows, count($competitors)),
+            'weakness' => $insightWeakness ?? $cwWeakness ?? $detailWeakness ?? $this->weakness($rows, $competitors),
+            'ai_used' => $cwStrength !== null || $cwWeakness !== null,
+            'detail_used' => ($insightStrength === null && $cwStrength === null && $detailStrength !== null) || ($insightWeakness === null && $cwWeakness === null && $detailWeakness !== null),
+            'insight_strength' => $insightStrength !== null,
+            'insight_weakness' => $insightWeakness !== null,
+            'insight_used' => $insightStrength !== null || $insightWeakness !== null,
         ];
     }
 

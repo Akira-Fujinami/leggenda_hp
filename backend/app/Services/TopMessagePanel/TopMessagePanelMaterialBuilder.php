@@ -4,6 +4,7 @@ namespace App\Services\TopMessagePanel;
 
 use App\Models\WebsiteAnalysis;
 use App\Services\TopMessageDraft\TopMessageDraftExtractor;
+use App\Services\TopMessageDraft\TopMessageProgramFilter;
 use App\Services\TopMessageInsight\TopMessagePageFinder;
 
 /**
@@ -19,13 +20,14 @@ use App\Services\TopMessageInsight\TopMessagePageFinder;
  *   - name_separator: 名前に区切り記号(「｜」「|」。config)を含む候補(一覧・職種のリンクの形で、制度の名前ではないため。依頼CZ追補)
  *   - recruit_category_name: 名前が採用区分の言葉(「新卒」「中途」など。config)と一致する候補(依頼CZ追補2)
  *   - short_excerpt: 抜粋がconfigの文字数に満たない候補(職種名・ツール名だけの抜粋。依頼CZ追補2)
- * 語・割合・上限はすべて config('top_message_draft.panel_*') と config('top_message_panel')。
+ * 語・割合・上限はすべて config('top_message_draft')(制度の整理は素材ページと共通のTopMessageProgramFilter、依頼DA)と config('top_message_panel')。
  */
 class TopMessagePanelMaterialBuilder
 {
     public function __construct(
         private readonly TopMessagePageFinder $finder,
         private readonly TopMessageDraftExtractor $extractor,
+        private readonly TopMessageProgramFilter $filter,
     ) {}
 
     /**
@@ -91,60 +93,18 @@ class TopMessagePanelMaterialBuilder
         $pages = array_slice($selection->programPages, 0, (int) config('top_message_draft.program_pages_max'));
         $perPage = $this->extractor->programItemsByPage($pages, (int) config('top_message_draft.panel_program_excerpt_max_chars'));
 
-        $jobWords = array_values(array_filter(array_map(fn ($w) => mb_strtolower((string) $w), (array) config('top_message_draft.panel_job_page_words')), fn (string $w) => $w !== ''));
-        $generic = array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.generic_headings'));
-        $related = array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.panel_related_headings'));
-        $separators = array_values(array_filter(array_map('strval', (array) config('top_message_draft.panel_program_name_excluded_chars')), fn (string $c) => $c !== ''));
-
-        $excerptMin = (int) config('top_message_draft.panel_program_excerpt_min_chars');
-        $recruitNames = array_values(array_filter(array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.panel_program_name_excluded_words')), fn (string $w) => $w !== ''));
+        // 制度でない行の除外は、素材ページ(既定)と共通の1か所(TopMessageProgramFilter)。
+        $perPage = $this->filter->filter($perPage, $pages, $dropped);
 
         $queues = [];
         foreach ($perPage as $p => $page) {
-            $isJobPage = $this->isJobPage($pages[$p]->url, $pages[$p]->title, $jobWords);
             $queues[$p] = [];
             foreach ($page['items'] as $item) {
-                if ($item['kind'] !== 'program') {
-                    continue;
+                if ($item['kind'] === 'program') {
+                    $queues[$p][] = ['name' => $item['name'], 'excerpt' => trim($item['excerpt']), 'source' => $page['source_title']];
                 }
-                if ($isJobPage) {
-                    $dropped['job_page']++;
-
-                    continue;
-                }
-                foreach ($separators as $separator) {
-                    if (str_contains($item['name'], $separator)) {
-                        $dropped['name_separator']++;
-
-                        continue 2;
-                    }
-                }
-                $excerpt = trim($item['excerpt']);
-                if ($excerpt === '') {
-                    $dropped['no_excerpt']++;
-
-                    continue;
-                }
-                if (in_array($this->normalize($item['name']), $recruitNames, true)) {
-                    $dropped['recruit_category_name']++;
-
-                    continue;
-                }
-                $key = $this->normalize($excerpt);
-                if (in_array($key, $generic, true) || in_array($key, $related, true)) {
-                    $dropped['generic_excerpt']++;
-
-                    continue;
-                }
-                if (mb_strlen($excerpt) < $excerptMin) {
-                    $dropped['short_excerpt']++;
-
-                    continue;
-                }
-                $queues[$p][] = ['name' => $item['name'], 'excerpt' => $excerpt, 'source' => $page['source_title']];
             }
         }
-
         // 上限があるときは、各ページから1件ずつ順番に取る(1ページで枠が埋まらない)。取ったものは、ページの順・ページの中の出現順に並べ直してIDを振る。
         $max = (int) config('top_message_panel.prompt_programs_max');
         $chosen = [];
@@ -175,25 +135,5 @@ class TopMessagePanelMaterialBuilder
         }
 
         return $programs;
-    }
-
-    /**
-     * @param  list<string>  $words
-     */
-    private function isJobPage(string $url, ?string $title, array $words): bool
-    {
-        $haystack = mb_strtolower((string) $title.' '.(string) parse_url($url, PHP_URL_PATH));
-        foreach ($words as $word) {
-            if (str_contains($haystack, $word)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function normalize(string $text): string
-    {
-        return mb_strtolower((string) preg_replace('/[\s\p{P}\p{S}]+/u', '', $text));
     }
 }

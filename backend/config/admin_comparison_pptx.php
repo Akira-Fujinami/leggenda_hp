@@ -668,6 +668,10 @@ return [
     'site_hierarchy_tree_title_separators' => ['|', '｜', ' - ', ' – ', ' — ', '：', ' : '],
 
     'site_hierarchy_tree_title_common_ratio' => 0.5,
+    // 依頼DA-3: 階層図に出さないページ(存在しないページ)。HTTPの状態、または、ページ名・最初の見出しがこの語のどれかを含む(大文字小文字は区別しない)。
+    'site_hierarchy_tree_not_found_statuses' => [404, 410],
+    'site_hierarchy_tree_not_found_words' => ['見つかりません', 'ページが存在しません', 'ページは存在しません', 'Page Not Found', 'Not Found', '404'],
+
 
     'site_hierarchy_tree_page_label_max_chars' => 40,
 
@@ -765,7 +769,7 @@ return [
 
     /*
     | 依頼CY-1: コーポレートTOPのメニューの取り方。次の順で取り、取れた(下の除外を通った項目が1件以上ある)時点で止める。
-    |   1. 静的なHTMLの header / nav(HtmlSeoAnalyzer::extractMenuLinks)
+    |   1. 静的なHTMLの header / nav
     |   2. 描画済みのHTML(既存の描画の仕組み analyzer で、コーポレートTOPの取得のときに1回だけ描画して保存したもの)の header / nav
     |   3. class / id にナビを表す語を含む要素(main・article・footerの外)の中のリンク(描画済みのHTMLがあればそちら、無ければ静的なHTML)
     */
@@ -774,10 +778,12 @@ return [
     // 除くもの: 採用サイト(起点の配下)へのリンク・採用の箱と同じ名前・サイトのTOP自身へのリンク(ロゴ・HOME)・他のホストへのリンク(wwwの有無は同じホスト)・
     // 情報の区分ではない項目(言語切り替え・検索・ログイン・お問い合わせ・サイトマップなど。ラベルが完全に一致 / 含む)。
     'corporate_top_menu_same_host_only' => true,
-    // 3.(class / idの語)で、リストの入れ子がこの深さを超えるリンクは、サブメニュー(メニューの子)として使わない(第1階層は上の階層だけ)。
-    'corporate_top_menu_class_words_max_list_depth' => 1,
+    // 依頼DA-2: どの取り方も、メニューの1段目の項目だけを取る(サブメニューの中は取らない)。除いたあとの1段目の項目がこの数を超えたら、
+    // メニューの取り出しに失敗したとみなして、その取り方は使わず次の取り方へ進む(0以下=上限なし)。
+    'corporate_top_menu_first_level_max' => 12,
     'corporate_top_menu_exclude_exact' => ['home', 'top', 'トップ', 'トップページ', 'ホーム', 'menu', 'メニュー', '閉じる', 'close', 'search', '検索', 'login', 'log in', 'sign in', 'ログイン', 'english', 'japanese', '日本語', 'en', 'jp', 'language', 'sitemap', 'サイトマップ', 'skip to content', 'お問い合わせ', 'お問合せ', 'contact'],
-    'corporate_top_menu_exclude_contains' => ['お問い合わせ', 'お問合せ', 'ログイン', '言語', 'language', '検索'],
+    // 依頼DA-2: 「トップページへ」「一覧へ」「詳しくはこちら」「もっと見る」のような、区分ではないリンクの文字も除く。
+    'corporate_top_menu_exclude_contains' => ['お問い合わせ', 'お問合せ', 'ログイン', '言語', 'language', '検索', 'トップページへ', '一覧へ', '一覧を見る', '詳しくはこちら', '詳しく見る', 'もっと見る', '本文へ', 'コンテンツへ', 'skip to'],
     'corporate_top_other_menu_other_template' => 'ほか%d',
 
     // CR-3: 列の見出し(見出し・説明)。コーポレートTOPが決まったときは4列、決まらなかったときは3列。

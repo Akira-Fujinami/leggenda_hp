@@ -65,6 +65,14 @@ return [
         'max_output_tokens' => (int) env('AI_MAX_OUTPUT_TOKENS', 2000),
     ],
 
+    // 依頼DB: Claude(Anthropic Messages API)。強み・弱みの下書き(config/strength_weakness_insight.php)が使う。
+    // APIキーは env だけで渡す(ログ・報告・コマンドの出力に出さない)。
+    'anthropic' => [
+        'api_key' => env('ANTHROPIC_API_KEY'),
+        'base_url' => env('ANTHROPIC_BASE_URL', 'https://api.anthropic.com'),
+        'version' => env('ANTHROPIC_VERSION', '2023-06-01'),
+    ],
+
     'openai' => [
         'api_key' => env('OPENAI_API_KEY'),
         'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),

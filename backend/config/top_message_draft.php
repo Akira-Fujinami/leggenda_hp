@@ -95,22 +95,22 @@ return [
     'panel_sentence_max_chars' => 200,
 
     // この見出し(空白・記号を除き大文字小文字を区別せず、全体が一致)の下は、次の「同じか上の」見出しまで、メッセージの文から除く。
-    'panel_related_headings' => ['関連記事', '関連リンク', '関連コンテンツ', 'あわせて読みたい', 'おすすめ記事', 'RELATED', 'RELATED ARTICLES', 'RELATED LINKS', 'Related Posts'],
+    'related_headings' => ['関連記事', '関連リンク', '関連コンテンツ', 'あわせて読みたい', 'おすすめ記事', 'RELATED', 'RELATED ARTICLES', 'RELATED LINKS', 'Related Posts'],
 
     // その要素の文字のうち、リンク(a)の中の文字がこの割合以上の文は、リンクの文字だけの文として除く(記事タイトルのリンクなど)。
-    'panel_link_text_ratio' => 0.6,
+    'link_text_ratio' => 0.6,
 
     // 制度の抜粋の上限(文字)。素材ページの50字とは別に、パネルでは全文(この長さまで)を材料にする。
     'panel_program_excerpt_max_chars' => 200,
 
     // 制度の候補の名前にこの文字を含むものは、一覧・職種のリンクの形で制度の名前ではないため除く(依頼CZ追補)。
-    'panel_program_name_excluded_chars' => ['｜', '|'],
+    'program_name_excluded_chars' => ['｜', '|'],
 
     // 依頼CZ追補2: 制度でない行を除く。抜粋がこの文字数に満たない候補(職種名・ツール名だけの抜粋)と、
     // 名前がこの採用区分の言葉と一致する候補(一致で判定。含むだけでは除かない。記号・空白・大文字小文字は無視)。
-    'panel_program_excerpt_min_chars' => 15,
-    'panel_program_name_excluded_words' => ['新卒', '中途', 'キャリア', 'キャリア採用', '新卒採用', '中途採用', 'インターン', 'インターンシップ', 'アルバイト', 'パート', 'アルバイト・パート'],
+    'program_excerpt_min_chars' => 15,
+    'program_name_excluded_words' => ['新卒', '中途', 'キャリア', 'キャリア採用', '新卒採用', '中途採用', 'インターン', 'インターンシップ', 'アルバイト', 'パート', 'アルバイト・パート'],
 
     // 制度の候補を取るページのうち、ページ名またはURLのパスにこの語を含むページ(募集要項・求人一覧)の候補は、制度ではなく求人のため除く。
-    'panel_job_page_words' => ['募集要項', '求人', '募集職種', '職種一覧', '募集一覧', 'job-list', 'joblist', 'jobs', 'requirements', 'entry', 'job_list', 'positions'],
+    'job_page_words' => ['募集要項', '求人', '募集職種', '職種一覧', '募集一覧', 'job-list', 'joblist', 'jobs', 'requirements', 'entry', 'job_list', 'positions'],
 ];

@@ -22,16 +22,23 @@ class TopMessageDraftExtractor
     /**
      * 依頼CSA-2: ページの<title>と同じ文字(<title>を区切りで分けた各部分と同じ文字を含む)は、候補にしない。
      *
-     * @return array{lines: list<string>, total: int, dropped_title: int} lines=選んだ候補(ページの中の出現順)、total=見つかった候補の総数(speakerを含む)、dropped_title=ページの題名と同じで外した数
+     * 依頼DA: パネルの材料(panelMessage)と同じ整理を効かせる。「関連記事」などの見出し(config related_headings)の下(次の同じか上の見出しまで)と、
+     * リンクの文字だけの文(リンクの中の文字がconfig link_text_ratio以上)は、候補にしない。外した数は dropped_related に理由別に持つ。
+     *
+     * @return array{lines: list<string>, total: int, dropped_title: int, dropped_related: array{related_section: int, link_text: int}} lines=選んだ候補(ページの中の出現順)、total=見つかった候補の総数(speakerを含む)、dropped_title=ページの題名と同じで外した数
      */
     public function messageCandidates(string $html, ?string $pageTitle = null): array
     {
         $xpath = $this->load($html);
         if ($xpath === null) {
-            return ['lines' => [], 'total' => 0, 'dropped_title' => 0];
+            return ['lines' => [], 'total' => 0, 'dropped_title' => 0, 'dropped_related' => ['related_section' => 0, 'link_text' => 0]];
         }
         $titleKeys = $this->titleKeys($xpath, $pageTitle);
         $droppedTitle = 0;
+        $droppedRelated = ['related_section' => 0, 'link_text' => 0];
+        $related = array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.related_headings'));
+        $linkRatio = (float) config('top_message_draft.link_text_ratio');
+        $skipLevel = null;
 
         $minLen = (int) config('top_message_draft.message_sentence_min_chars');
         $maxLen = (int) config('top_message_draft.message_sentence_max_chars');
@@ -50,14 +57,38 @@ class TopMessageDraftExtractor
             }
             $tag = strtolower($element->tagName);
 
+            // 依頼DA: 「関連記事」などの見出しの下は、次の同じか上の見出しまで、候補にしない。
+            if ($this->startsRelatedSection($skipLevel, $element, $related)) {
+                continue;
+            }
+
             // 話し手の行(1行だけ): 見出し・段落・括りの葉(子に別の括りが無い要素)の行のうち、語を含む短いもの。
-            if ($speaker === null && $this->isLeafBlock($element)) {
+            if ($speaker === null && $skipLevel === null && $this->isLeafBlock($element)) {
                 foreach ($this->lines($element->textContent) as $line) {
                     if ($this->isSpeakerLine($line)) {
                         $speaker = ['text' => $line, 'order' => $order];
                         $seen[$line] = true;
                         break;
                     }
+                }
+            }
+
+            $isCandidateBlock = in_array($tag, ['h1', 'h2', 'h3'], true) || (in_array($tag, self::SENTENCE_TAGS, true) && $this->isLeafBlock($element));
+            if ($isCandidateBlock) {
+                $blockLines = $this->lines($element->textContent);
+                $count = in_array($tag, ['h1', 'h2', 'h3'], true) ? count($blockLines) : $this->countSentences($blockLines);
+                if ($skipLevel !== null) {
+                    $droppedRelated['related_section'] += $count;
+                    $order++;
+
+                    continue;
+                }
+                $ratioOfLinks = $this->linkTextRatio($element);
+                if ($ratioOfLinks > 0 && $ratioOfLinks >= $linkRatio) {
+                    $droppedRelated['link_text'] += $count;
+                    $order++;
+
+                    continue;
                 }
             }
 
@@ -114,6 +145,7 @@ class TopMessageDraftExtractor
             'lines' => array_map(fn (array $row) => $row['text'], $picked),
             'total' => ($speaker !== null ? 1 : 0) + count($headings) + count($sentences),
             'dropped_title' => $droppedTitle,
+            'dropped_related' => $droppedRelated,
         ];
     }
 
@@ -122,8 +154,8 @@ class TopMessageDraftExtractor
      * 文は、HTMLの中の文字そのまま(空白の畳み込みだけ)。言い換え・要約・つなぎ合わせ・「…」での切り詰めをしない。
      *
      * 除くもの(理由別に件数を数える):
-     *  - related_section: 「関連記事」などの見出し(config panel_related_headings)の下、次の同じか上の見出しまで
-     *  - link_text: 要素の文字のうち、リンク(a)の中の文字がconfig panel_link_text_ratio以上(記事タイトルのリンクなど)
+     *  - related_section: 「関連記事」などの見出し(config related_headings)の下、次の同じか上の見出しまで
+     *  - link_text: 要素の文字のうち、リンク(a)の中の文字がconfig link_text_ratio以上(記事タイトルのリンクなど)
      *  - title: ページの<title>と同じ(依頼CSA-2と同じ)
      *  - short_or_long: 短すぎる文・長すぎる文・除外の型(sentence_exclude_patterns)
      * 話し手(役職・氏名)は、素材ページ(CS)と同じ取り方で1行。
@@ -140,9 +172,9 @@ class TopMessageDraftExtractor
         $titleKeys = $this->titleKeys($xpath, $pageTitle);
         $minLen = (int) config('top_message_draft.panel_sentence_min_chars');
         $maxLen = (int) config('top_message_draft.panel_sentence_max_chars');
-        $ratio = (float) config('top_message_draft.panel_link_text_ratio');
+        $ratio = (float) config('top_message_draft.link_text_ratio');
         $excludePatterns = array_values(array_filter((array) config('top_message_draft.sentence_exclude_patterns'), 'is_string'));
-        $related = array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.panel_related_headings'));
+        $related = array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.related_headings'));
 
         $speaker = null;
         $skipLevel = null;
@@ -159,14 +191,8 @@ class TopMessageDraftExtractor
             $leaf = $this->isLeafBlock($element);
             $text = $leaf || $isHeading ? $this->collapse($element->textContent) : '';
 
-            // 「関連記事」などの見出しは、見出しでない短い行(葉の要素で文字が全体一致)も区切りとして扱う(次の見出しまで)。
-            if (($isHeading || $leaf) && $text !== '' && in_array($this->normalize($text), $related, true)) {
-                $skipLevel = $isHeading ? $level : 6;
-
+            if ($this->startsRelatedSection($skipLevel, $element, $related)) {
                 continue;
-            }
-            if ($isHeading && $skipLevel !== null && $level <= $skipLevel) {
-                $skipLevel = null;
             }
 
             if ($speaker === null && $leaf && $skipLevel === null) {
@@ -224,6 +250,32 @@ class TopMessageDraftExtractor
         return ['speaker' => $speaker, 'sentences' => $sentences, 'dropped' => $dropped];
     }
 
+    /**
+     * 「関連記事」などの見出し(config related_headings。見出しでない短い行=葉の要素で文字が全体一致も含む)に当たる要素か。
+     * 当たるときは、次の「同じか上の」見出しまで候補にしない状態($skipLevel)にして true を返す(呼び出し側はその要素を飛ばす)。
+     * 当たらないときは、見出しが同じか上なら状態を解く。素材ページ(既定)とパネルの材料が共通に使う(依頼DA)。
+     *
+     * @param  list<string>  $related  比較用に整えた語
+     */
+    private function startsRelatedSection(?int &$skipLevel, \DOMElement $element, array $related): bool
+    {
+        $tag = strtolower($element->tagName);
+        $isHeading = preg_match('/^h([1-6])$/', $tag, $m) === 1;
+        $level = $isHeading ? (int) $m[1] : 0;
+        $leaf = $this->isLeafBlock($element);
+        $text = $leaf || $isHeading ? $this->collapse($element->textContent) : '';
+
+        if (($isHeading || $leaf) && $text !== '' && in_array($this->normalize($text), $related, true)) {
+            $skipLevel = $isHeading ? $level : 6;
+
+            return true;
+        }
+        if ($isHeading && $skipLevel !== null && $level <= $skipLevel) {
+            $skipLevel = null;
+        }
+
+        return false;
+    }
     /**
      * @param  list<string>  $lines
      */

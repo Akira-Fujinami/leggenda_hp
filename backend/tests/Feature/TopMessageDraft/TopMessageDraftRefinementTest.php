@@ -27,6 +27,8 @@ class TopMessageDraftRefinementTest extends TestCase
     {
         parent::setUp();
         Storage::fake('analysis');
+        // 依頼DA: このファイルの既存のテストは、短い説明文(15字未満)の制度で並べ方・件数を確かめている。ここでは制度の整理(15字未満の除外)を切り、整理の確認は TopMessageDraftCleanupTest で行う。
+        config(['top_message_draft.program_excerpt_min_chars' => 0]);
     }
 
     private function page(string $html, string $title = 'ページ', string $url = 'https://e.example.com/a'): TopMessagePage
