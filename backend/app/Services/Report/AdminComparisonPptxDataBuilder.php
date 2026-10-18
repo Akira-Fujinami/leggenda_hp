@@ -7,6 +7,8 @@ use App\Models\WebsiteAnalysis;
 use App\Services\BrandWheel\BrandWheelMultiSiteComparisonComposer;
 use App\Services\TopMessageDraft\TopMessageDraftBuilder;
 use App\Services\TopMessageInsight\TopMessageInsightStore;
+use App\Services\TopMessagePanel\TopMessagePanelMachineSelector;
+use App\Services\TopMessagePanel\TopMessagePanelMaterialBuilder;
 use App\Services\TopMessagePanel\TopMessagePanelStore;
 use App\Support\Report\MultiSiteReportViewModel;
 
@@ -54,6 +56,8 @@ class AdminComparisonPptxDataBuilder
         private readonly CandidateSurveyCatalog $surveyCatalog = new CandidateSurveyCatalog,
         private readonly ?TopMessageInsightStore $topMessageStore = null,
         private readonly ?TopMessageDraftBuilder $topMessageDraftBuilder = null,
+        private readonly ?TopMessagePanelMaterialBuilder $topMessagePanelMaterialBuilder = null,
+        private readonly ?TopMessagePanelMachineSelector $topMessagePanelMachineSelector = null,
     ) {}
 
     /**
@@ -184,28 +188,38 @@ class AdminComparisonPptxDataBuilder
             $entries[] = [(string) ($viewModel->competitors[$index]['name'] ?? $wa->website?->name ?? ''), $wa];
         }
 
-        // 依頼CZ: AIが選び、サーバー側の確認を通ったパネル(保存済みのファイルを読むだけ。ここでAIを呼ばない・通信しない)。
-        // 無効のとき・ファイルが無いとき・会社のパネルが作られなかったときは、パネルを付けない(素材ページのまま)。
+        // 依頼DD: ページの型はいつもパネル。中身は、AIが選び確認を通ったもの(保存済みのファイルを読むだけ。ここでAIを呼ばない・通信しない)があればそれ、
+        // 無ければ(無効・ファイルが無い・会社のパネルが作られなかった)機械の選択(AIなし)。
         $panelStore = (bool) config('top_message_panel.enabled') ? app(TopMessagePanelStore::class) : null;
+        $materials = $this->topMessagePanelMaterialBuilder ?? app(TopMessagePanelMaterialBuilder::class);
+        $machine = $this->topMessagePanelMachineSelector ?? app(TopMessagePanelMachineSelector::class);
 
         $pages = [];
         foreach ($entries as [$name, $wa]) {
             $page = $builder->build($wa, $name);
-            if ($page !== null) {
-                $stored = $panelStore?->panelFor((int) $analysis->id, (int) $wa->id);
-                if ($stored !== null) {
-                    $page['panel'] = [
-                        'speaker' => $stored['speaker'] ?? null,
-                        'source_title' => $stored['message_title'] ?? null,
-                        'core' => (string) $stored['panel']['core']['text'],
-                        'body' => array_map(fn (array $row) => (string) $row['text'], (array) ($stored['panel']['body'] ?? [])),
-                        'mode' => (string) ($stored['panel']['mode'] ?? 'keywords'),
-                        'programs' => (array) ($stored['panel']['programs'] ?? []),
-                        'keywords' => (array) ($stored['panel']['keywords'] ?? []),
-                    ];
-                }
-                $pages[] = $page;
+            $stored = $panelStore?->panelFor((int) $analysis->id, (int) $wa->id);
+            if ($stored !== null) {
+                $panel = [
+                    'selection' => 'ai',
+                    'speaker' => $stored['speaker'] ?? null,
+                    'source_title' => $stored['message_title'] ?? null,
+                    'core' => (string) $stored['panel']['core']['text'],
+                    'body' => array_map(fn (array $row) => (string) $row['text'], (array) ($stored['panel']['body'] ?? [])),
+                    'mode' => (string) ($stored['panel']['mode'] ?? 'keywords'),
+                    'programs' => (array) ($stored['panel']['programs'] ?? []),
+                    'keywords' => (array) ($stored['panel']['keywords'] ?? []),
+                ];
+            } else {
+                $panel = $machine->select($materials->build($wa));
             }
+
+            // メッセージも制度も1件も無い会社は、ページを作らない(素材の抜き出しにも、機械の選択にも、何も無いとき)。
+            if ($page === null && $panel['core'] === null && $panel['programs'] === [] && $panel['keywords'] === []) {
+                continue;
+            }
+            $page ??= ['company_name' => $name];
+            $page['panel'] = $panel;
+            $pages[] = $page;
         }
 
         return $pages;

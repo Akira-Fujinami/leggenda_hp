@@ -3088,30 +3088,15 @@ class AdminComparisonPptxGenerator
     }
 
     /**
-     * 依頼CS-4(2026-10-10): 「{企業名}：トップメッセージと制度の素材」(社内用・下書き)。1社1ページ・文字だけ。
-     * 見出しの上に赤い帯。左: メッセージのページのタイトル・URLと、候補の文(箇条書き)。
-     * 右: 制度の候補の表(制度の候補/抜粋/出典)。下: 機械的に抜き出したものである旨。
+     * 依頼DD: 「{企業名}：トップメッセージと制度」(社内用・下書き)。ページの型はいつもパネル(依頼CZ-4)で、表の形(依頼CS-4の素材ページ)は使わない。
+     * 中身(panel)は、AIの選択(確認を通ったもの)か機械の選択(AIなし。TopMessagePanelMachineSelector)で、データを作る側(AdminComparisonPptxDataBuilder)が決める。
+     * panelが無いデータが来たときも型は同じで、左右とも「確認できませんでした」の文言になる。
      *
-     * 文字が箱に収まらないときは、まず文字を小さくし(下限はtop_message_min_font_ratio)、
-     * 下限でも収まらなければ候補を後ろから減らして「ほか N件」と出す。
-     *
-     * @param  array{company_name: string, message: array{title: ?string, url: string, lines: list<string>, hidden: int}|null, programs: array{rows: list<array{name: string, excerpt: string, source: string}>, hidden: int, page_urls: list<string>}}  $page
+     * @param  array<string, mixed>  $page
      */
     public function generateTopMessageDraftSlide(array $page): string
     {
-        // 依頼CZ: AIが選び、サーバー側の確認を通ったパネルがあるときは、パネルのページにする(無いときは、これまでの素材ページ)。
-        if (is_array($page['panel'] ?? null)) {
-            return $this->generateTopMessagePanelSlide($page);
-        }
-
-        return $this->renderSingleSlide(function (Slide $slide) use ($page): void {
-            $this->addTopMessageDraftBand($slide);
-            $this->addKicker($slide);
-            $this->addTopMessageTitle($slide, $page['company_name'], (string) config('admin_comparison_pptx.top_message_draft_title'));
-            $this->addTopMessageDraftMessage($slide, $page['message']);
-            $this->addTopMessageDraftPrograms($slide, $page['programs']['rows'], $page['programs']['hidden']);
-            $this->addNoteFooter($slide, (string) config('admin_comparison_pptx.top_message_draft_disclaimer'));
-        });
+        return $this->generateTopMessagePanelSlide($page);
     }
 
     /**
@@ -3127,7 +3112,7 @@ class AdminComparisonPptxGenerator
      */
     private function generateTopMessagePanelSlide(array $page): string
     {
-        $panel = $page['panel'];
+        $panel = (array) ($page['panel'] ?? ['selection' => 'machine', 'mode' => 'sources']) + ['speaker' => null, 'source_title' => null, 'core' => null, 'body' => [], 'programs' => [], 'keywords' => []];
 
         return $this->renderSingleSlide(function (Slide $slide) use ($page, $panel): void {
             $this->addTopMessageDraftBand($slide);
@@ -3136,7 +3121,10 @@ class AdminComparisonPptxGenerator
             $this->addPanelLeft($slide, $panel);
             $bySources = ($panel['mode'] ?? 'keywords') === 'sources';
             $this->addPanelRight($slide, $bySources ? $this->panelSourceBands($panel['programs'] ?? []) : $panel['keywords'], $bySources);
-            $this->addNoteFooter($slide, sprintf((string) config($bySources ? 'admin_comparison_pptx.top_message_panel_note_sources' : 'admin_comparison_pptx.top_message_panel_note'), $page['company_name'], (string) ($panel['source_title'] ?? '')));
+            $noteKey = ($panel['selection'] ?? 'ai') === 'machine'
+                ? 'top_message_panel_note_machine'
+                : ($bySources ? 'top_message_panel_note_sources' : 'top_message_panel_note');
+            $this->addNoteFooter($slide, sprintf((string) config('admin_comparison_pptx.'.$noteKey), $page['company_name'], (string) ($panel['source_title'] ?? '')));
         });
     }
 
@@ -3173,6 +3161,17 @@ class AdminComparisonPptxGenerator
         $innerLeft = self::LEFT_IN + 0.3;
         $innerWidth = $width - 0.6;
         $innerHeight = $boxHeight - 0.4;
+
+        // 依頼DD: メッセージのページが無い(核の一文が無い)ときは、パネルの中に文言だけ(ページは作る)。
+        if (trim((string) ($panel['core'] ?? '')) === '') {
+            $empty = $slide->createRichTextShape();
+            $this->position($empty, $innerLeft, $boxTop + 0.2, $innerWidth, $innerHeight);
+            $empty->setWrap(RichText::WRAP_SQUARE);
+            $empty->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+            $this->font($empty->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_panel_no_message')), 12, false, self::WHITE);
+
+            return;
+        }
 
         // 依頼CZ追補: 核の一文が「」『』を含むときは、外側に「」を付けない(二重になるため)。
         $hasBrackets = preg_match('/[「」『』]/u', $panel['core']) === 1;
@@ -3238,6 +3237,16 @@ class AdminComparisonPptxGenerator
         $heading = $slide->createRichTextShape();
         $this->position($heading, $left, $top, $width, 0.3);
         $this->font($heading->getActiveParagraph()->createTextRun((string) config($bySources ? 'admin_comparison_pptx.top_message_panel_right_heading_sources' : 'admin_comparison_pptx.top_message_panel_right_heading')), 12, true, self::COPPER);
+
+        // 依頼DD: 制度が1件も無いときは、右に文言だけ(ページは作る)。
+        if ($keywords === []) {
+            $empty = $slide->createRichTextShape();
+            $this->position($empty, $left, $top + 0.42, $width, 0.4);
+            $empty->setWrap(RichText::WRAP_SQUARE);
+            $this->font($empty->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_panel_no_programs')), 11, false, self::MUTED);
+
+            return;
+        }
 
         $keywords = array_slice($keywords, 0, (int) config($bySources ? 'top_message_panel.source_bands_max' : 'top_message_panel.keywords_max'));
         $bandsTop = $top + 0.42;
@@ -3412,6 +3421,11 @@ class AdminComparisonPptxGenerator
      */
     private function addTopMessageDraftBand(Slide $slide, ?string $text = null): void
     {
+        // 依頼DD: 帯の文言が空のときは、帯を出さない(config)。
+        if (trim($text ?? (string) config('admin_comparison_pptx.top_message_draft_band_text')) === '') {
+            return;
+        }
+
         $this->addFilledRect($slide, 0, 0, self::SLIDE_WIDTH_IN, self::TM_DRAFT_BAND_HEIGHT_IN, (string) config('admin_comparison_pptx.top_message_draft_band_fill'));
 
         $box = $slide->createRichTextShape();
@@ -3424,229 +3438,6 @@ class AdminComparisonPptxGenerator
             true,
             (string) config('admin_comparison_pptx.top_message_draft_band_text_color'),
         );
-    }
-
-    /**
-     * @param  ?array{title: ?string, url: string, lines: list<string>, hidden: int}  $message
-     */
-    private function addTopMessageDraftMessage(Slide $slide, ?array $message): void
-    {
-        $top = self::TM_DRAFT_BODY_TOP_IN;
-        $height = self::TM_BODY_BOTTOM_IN - $top;
-        $this->addFilledRect($slide, self::LEFT_IN, $top, self::TM_DRAFT_LEFT_WIDTH_IN, $height, self::SELF_TINT);
-        $this->addFilledRect($slide, self::LEFT_IN, $top, 0.06, $height, self::COPPER);
-
-        $innerLeft = self::LEFT_IN + 0.25;
-        $innerWidth = self::TM_DRAFT_LEFT_WIDTH_IN - 0.4;
-
-        $heading = $slide->createRichTextShape();
-        $this->position($heading, $innerLeft, $top + 0.08, $innerWidth, 0.3);
-        $this->font($heading->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_draft_left_heading')), 12, true, self::COPPER);
-
-        $lines = $message['lines'] ?? [];
-        $y = $top + 0.42;
-
-        if ($message !== null && $lines !== []) {
-            $label = $slide->createRichTextShape();
-            $this->position($label, $innerLeft, $y, $innerWidth, 0.5);
-            $label->setWrap(RichText::WRAP_SQUARE);
-            $this->font($label->getActiveParagraph()->createTextRun($this->truncateToDisplayWidth((string) $message['title'], 50)), 10, true, self::NAVY);
-            $this->font($label->createParagraph()->createTextRun($this->truncateToDisplayWidth($message['url'], (int) config('admin_comparison_pptx.top_message_draft_url_max_units'))), 8, false, self::MUTED);
-            $y += 0.6;
-        }
-
-        $boxHeight = self::TM_BODY_BOTTOM_IN - 0.1 - $y;
-        $box = $slide->createRichTextShape();
-        $this->position($box, $innerLeft, $y, $innerWidth, $boxHeight);
-        $box->setWrap(RichText::WRAP_SQUARE);
-
-        if ($lines === []) {
-            $this->font($box->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_draft_no_message')), 11, false, self::MUTED);
-
-            return;
-        }
-
-        $bullet = (string) config('admin_comparison_pptx.top_message_draft_bullet');
-        $maxPt = (int) config('admin_comparison_pptx.top_message_draft_message_max_pt');
-        $floor = max(7, (int) round($maxPt * (float) config('admin_comparison_pptx.top_message_min_font_ratio')));
-        $hidden = (int) ($message['hidden'] ?? 0);
-        $gap = 0.06;
-
-        $needs = function (array $shown, int $pt, int $hiddenCount) use ($bullet, $innerWidth, $gap): float {
-            $used = 0.0;
-            foreach ($shown as $line) {
-                $used += $this->topMessageTextHeight($bullet.$line, $innerWidth, $pt, false) + $gap;
-            }
-
-            return $used + ($hiddenCount > 0 ? $pt * 1.25 / 72 + $gap : 0);
-        };
-
-        $shown = $lines;
-        $size = $floor;
-        for ($pt = $maxPt; $pt >= $floor; $pt--) {
-            if ($needs($shown, $pt, $hidden) <= $boxHeight) {
-                $size = $pt;
-                break;
-            }
-        }
-        while (count($shown) > 1 && $needs($shown, $size, $hidden) > $boxHeight) {
-            array_pop($shown);
-            $hidden++;
-        }
-
-        foreach ($shown as $i => $line) {
-            $paragraph = $i === 0 ? $box->getActiveParagraph() : $box->createParagraph();
-            $paragraph->setSpacingAfter((int) round($gap * 72));
-            $this->font($paragraph->createTextRun($bullet.$line), $size, false, self::BODY_TEXT);
-        }
-        if ($hidden > 0) {
-            $more = $box->createParagraph();
-            $this->font($more->createTextRun(sprintf((string) config('admin_comparison_pptx.top_message_draft_more'), $hidden)), $size, false, self::MUTED);
-        }
-    }
-
-    /**
-     * @param  list<array{kind?: string, name: string, excerpt: string, source: string}>  $rows  kind='category'は分類の見出し(区切りの行)
-     */
-    private function addTopMessageDraftPrograms(Slide $slide, array $rows, int $hidden): void
-    {
-        $left = self::TM_DRAFT_RIGHT_LEFT_IN;
-        $width = self::LEFT_IN + self::CONTENT_WIDTH_IN - $left;
-        $top = self::TM_DRAFT_BODY_TOP_IN;
-
-        $heading = $slide->createRichTextShape();
-        $this->position($heading, $left, $top + 0.08, $width, 0.3);
-        $this->font($heading->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_draft_right_heading')), 12, true, self::COPPER);
-
-        if ($rows === []) {
-            $empty = $slide->createRichTextShape();
-            $this->position($empty, $left, $top + 0.5, $width, 0.4);
-            $empty->setWrap(RichText::WRAP_SQUARE);
-            $this->font($empty->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.top_message_draft_no_programs')), 11, false, self::MUTED);
-
-            return;
-        }
-
-        $widths = array_map('floatval', (array) config('admin_comparison_pptx.top_message_draft_column_widths_in'));
-        $scale = $width / max(0.1, array_sum($widths));
-        $widths = array_map(fn (float $w) => $w * $scale, $widths);
-        $lefts = [$left, $left + $widths[0], $left + $widths[0] + $widths[1]];
-
-        $headerTop = $top + 0.42;
-        $headerHeight = 0.3;
-        $this->addFilledRect($slide, $left, $headerTop, $width, $headerHeight, self::NAVY);
-        foreach ((array) config('admin_comparison_pptx.top_message_draft_columns') as $i => $label) {
-            $cell = $slide->createRichTextShape();
-            $this->position($cell, $lefts[$i], $headerTop, $widths[$i], $headerHeight);
-            $cell->setWrap(RichText::WRAP_SQUARE);
-            $cell->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-            $this->font($cell->getActiveParagraph()->createTextRun((string) $label), 10, true, self::WHITE);
-        }
-
-        $rowsTop = $headerTop + $headerHeight + 0.04;
-        $available = self::TM_BODY_BOTTOM_IN - $rowsTop;
-        $maxPt = (int) config('admin_comparison_pptx.top_message_draft_row_max_pt');
-        $floor = max(7, (int) round($maxPt * (float) config('admin_comparison_pptx.top_message_min_font_ratio')));
-        $padding = 0.1;
-
-        $heightOf = function (array $row, int $pt) use ($widths, $padding): float {
-            if (($row['kind'] ?? 'program') === 'category') {
-                return $this->topMessageTextHeight($row['name'], $widths[0] + $widths[1] + $widths[2], $pt, true) + $padding;
-            }
-
-            return max(
-                $this->topMessageTextHeight($row['name'], $widths[0], $pt, true),
-                $row['excerpt'] !== '' ? $this->topMessageTextHeight($row['excerpt'], $widths[1], $pt, false) : 0.0,
-                $this->topMessageTextHeight($row['source'], $widths[2], max(7, $pt - 1), false),
-            ) + $padding;
-        };
-        $total = function (array $shown, int $pt, int $hiddenCount) use ($heightOf): float {
-            $sum = 0.0;
-            foreach ($shown as $row) {
-                $sum += $heightOf($row, $pt);
-            }
-
-            return $sum + ($hiddenCount > 0 ? $pt * 1.25 / 72 + 0.1 : 0);
-        };
-
-        $shown = $rows;
-        $size = $floor;
-        for ($pt = $maxPt; $pt >= $floor; $pt--) {
-            if ($total($shown, $pt, $hidden) <= $available) {
-                $size = $pt;
-                break;
-            }
-        }
-        while (count($shown) > 1 && $total($shown, $size, $hidden) > $available) {
-            // 依頼CSA-3: 後ろから外すのは、表の末尾ではなく「選んだ順(order)の最後」の候補
-            // (表の末尾から外すと、最後のページの候補から先に消えて1ページだけが残る)。orderが無い行は表の並び順。
-            $drop = null;
-            foreach ($shown as $k => $row) {
-                if (($row['kind'] ?? 'program') === 'category') {
-                    continue;
-                }
-                if ($drop === null || ($row['order'] ?? $k) >= ($shown[$drop]['order'] ?? $drop)) {
-                    $drop = $k;
-                }
-            }
-            if ($drop === null) {
-                break;
-            }
-            array_splice($shown, $drop, 1);
-            $hidden++;
-            // 下に候補が残らなくなった区切りの行(次が無い・別の出典・同じかより浅い区切り)は出さない。
-            do {
-                $changed = false;
-                foreach ($shown as $k => $row) {
-                    if (($row['kind'] ?? 'program') !== 'category') {
-                        continue;
-                    }
-                    $next = $shown[$k + 1] ?? null;
-                    if ($next === null
-                        || $next['source'] !== $row['source']
-                        || (($next['kind'] ?? 'program') === 'category' && ($next['level'] ?? 0) <= ($row['level'] ?? 0))) {
-                        array_splice($shown, $k, 1);
-                        $changed = true;
-                        break;
-                    }
-                }
-            } while ($changed && $shown !== []);
-        }
-
-        $y = $rowsTop;
-        foreach ($shown as $row) {
-            $rowHeight = $heightOf($row, $size);
-            if (($row['kind'] ?? 'program') === 'category') {
-                $this->addFilledRect($slide, $left, $y, $width, $rowHeight - 0.01, (string) config('admin_comparison_pptx.top_message_draft_category_fill'));
-                $cell = $slide->createRichTextShape();
-                $this->position($cell, $left, $y, $width, $rowHeight);
-                $cell->setWrap(RichText::WRAP_SQUARE);
-                $cell->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-                $this->font($cell->getActiveParagraph()->createTextRun($row['name']), $size, true, self::NAVY);
-                $y += $rowHeight;
-
-                continue;
-            }
-            $cells = [[$row['name'], true, self::NAVY, $size], [$row['excerpt'], false, self::BODY_TEXT, $size], [$row['source'], false, self::MUTED, max(7, $size - 1)]];
-            foreach ($cells as $i => [$text, $bold, $color, $pt]) {
-                if ($text === '') {
-                    continue;
-                }
-                $cell = $slide->createRichTextShape();
-                $this->position($cell, $lefts[$i], $y, $widths[$i], $rowHeight);
-                $cell->setWrap(RichText::WRAP_SQUARE);
-                $this->font($cell->getActiveParagraph()->createTextRun($text), $pt, $bold, $color);
-            }
-            $this->addFilledRect($slide, $left, $y + $rowHeight - 0.01, $width, 0.01, self::RULE);
-            $y += $rowHeight;
-        }
-
-        if ($hidden > 0) {
-            $more = $slide->createRichTextShape();
-            $this->position($more, $left, $y + 0.03, $width, 0.3);
-            $more->setWrap(RichText::WRAP_SQUARE);
-            $this->font($more->getActiveParagraph()->createTextRun(sprintf((string) config('admin_comparison_pptx.top_message_draft_more'), $hidden)), $size, false, self::MUTED);
-        }
     }
 
     /**

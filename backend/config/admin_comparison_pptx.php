@@ -1005,6 +1005,10 @@ return [
     // キーワードの帯の色(上から交互に使う)。
     'top_message_panel_band_colors' => ['DCE6F2', 'F1E6D6'],
     // 引数: 1=会社名 2=メッセージのページ名
+    // 依頼DD: 機械の選択(AIを使わない)のときの注記と、中身が無いときの文言。
+    'top_message_panel_note_machine' => 'サイトの文章を機械的に抜き出し、ページごとにまとめたものです。メッセージと制度の対応づけは行っていません。',
+    'top_message_panel_no_message' => 'トップメッセージのページを確認できませんでした。',
+    'top_message_panel_no_programs' => '制度のページを確認できませんでした。',
     'top_message_panel_note' => '出典：%1$s 採用サイト「%2$s」ほか。キーワードと制度の対応づけは AI が選んだもので、社内での確認が必要です。',
     'top_message_draft_message_max_pt' => 12,
     'top_message_draft_row_max_pt' => 10,

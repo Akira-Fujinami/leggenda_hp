@@ -257,7 +257,7 @@ class TopMessageDraftTest extends TestCase
      */
     private function draftIndexes(array $slides): array
     {
-        return array_keys(array_filter($slides, fn (string $t) => str_contains($t, 'トップメッセージと制度の素材')));
+        return array_keys(array_filter($slides, fn (string $t) => str_contains($t, '：トップメッセージと制度')));
     }
 
     public function test_draft_pages_follow_missing_items_in_the_order_self_then_competitors_and_skip_companies_without_candidates(): void
@@ -294,8 +294,8 @@ class TopMessageDraftTest extends TestCase
 
         $this->assertStringContainsString('社内用・下書き', $text);
         $this->assertStringContainsString('お客様にお見せする前に、仕上げたページと差し替えてください。', $text);
-        $this->assertStringContainsString('サイトの文章を機械的に抜き出したものです。キーワードの整理と、メッセージと制度の対応づけは行っていません。', $text);
-        foreach (['メッセージの候補', '制度の候補', '抜粋', '出典'] as $label) {
+        $this->assertStringContainsString('サイトの文章を機械的に抜き出し、ページごとにまとめたものです。メッセージと制度の対応づけは行っていません。', $text);
+        foreach (['トップメッセージ', '主な制度'] as $label) {
             $this->assertStringContainsString($label, $text);
         }
 
@@ -327,12 +327,11 @@ class TopMessageDraftTest extends TestCase
         $slides = $this->download($c['analysis']);
 
         $this->assertCount(1, $this->draftIndexes($slides));
-        $this->assertStringContainsString('制度の候補を確認できませんでした。', $slides[$this->draftIndexes($slides)[0]]);
+        $this->assertStringContainsString('制度のページを確認できませんでした。', $slides[$this->draftIndexes($slides)[0]]);
     }
 
-    public function test_programs_over_the_limit_are_reported_as_the_rest(): void
+    public function test_programs_over_the_limit_are_cut_to_the_configured_cards_per_band(): void
     {
-        config(['top_message_draft.program_total_max' => 3]);
         $c = $this->makeComparison(['競合A']);
         $this->attachDeck($c['analysis']);
         $this->seedDraftCompany($c['self'], 'selfsha', true, array_map(fn (int $i) => sprintf('制度の名前X%02d', $i), range(1, 30)));
@@ -341,8 +340,9 @@ class TopMessageDraftTest extends TestCase
         $text = $slides[$this->draftIndexes($slides)[0]];
 
         $this->assertStringContainsString('制度の名前X01', $text);
-        $this->assertStringContainsString('ほか27件', $text);
-        $this->assertStringNotContainsString('制度の名前X04', $text);
+        $this->assertStringContainsString('制度の名前X03', $text);
+        $this->assertStringNotContainsString('制度の名前X04', $text, '1つの帯のカードは、configの数まで');
+        $this->assertStringNotContainsString('ほか27件', $text, '「ほかN件」は出さない(表の形は使わない)');
     }
 
     public function test_the_draft_pages_are_not_made_when_disabled(): void
@@ -384,23 +384,6 @@ class TopMessageDraftTest extends TestCase
         $this->download($c['analysis']);
 
         Http::assertNothingSent();
-    }
-
-    public function test_text_that_does_not_fit_is_shrunk_and_then_candidates_are_dropped_from_the_end_with_the_rest_count(): void
-    {
-        $rows = [];
-        for ($i = 1; $i <= 12; $i++) {
-            $rows[] = ['name' => str_repeat('長い名前', 5).$i, 'excerpt' => str_repeat('抜粋です', 12), 'source' => '研修制度'];
-        }
-        $page = $this->pageData(rows: $rows, hidden: 0);
-        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($page));
-
-        $this->assertMatchesRegularExpression('/ほか(\d+)件/', $xml, '収まらない分は「ほか N件」');
-        preg_match('/ほか(\d+)件/', $xml, $m);
-        $shown = substr_count($xml, '研修制度');
-        $this->assertSame(12, $shown + (int) $m[1], '見えている件数 + ほかの件数 = 全候補');
-        $this->assertStringContainsString(str_repeat('長い名前', 5).'1]]>', $xml, '先頭は残る');
-        $this->assertStringNotContainsString(str_repeat('長い名前', 5).'12]]>', $xml, '減らすのは後ろから');
     }
 
     public function test_the_slide_xml_has_no_pictures_or_external_parts(): void

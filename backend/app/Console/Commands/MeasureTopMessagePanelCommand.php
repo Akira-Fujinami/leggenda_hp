@@ -145,6 +145,7 @@ class MeasureTopMessagePanelCommand extends Command
                 if ($page !== null) {
                     if (($result['panel'] ?? null) !== null) {
                         $page['panel'] = [
+                            'selection' => 'ai',
                             'speaker' => $result['speaker'],
                             'source_title' => $result['message_title'],
                             'core' => (string) $result['panel']['core']['text'],
@@ -154,8 +155,10 @@ class MeasureTopMessagePanelCommand extends Command
                             'keywords' => $result['panel']['keywords'],
                         ];
                     }
+                    // 依頼DD: AIの選択が通らなかった会社は、機械の選択の中身(型は同じパネル)。
+                    $page['panel'] ??= app(\App\Services\TopMessagePanel\TopMessagePanelMachineSelector::class)->select($built[$i]);
                     file_put_contents("{$outDir}/{$label}.pptx", $generator->generateTopMessageDraftSlide($page));
-                    $this->line("スライド: {$label}.pptx(".(isset($page['panel']) ? 'パネル' : '素材ページ').')');
+                    $this->line("スライド: {$label}.pptx(".(($page['panel']['selection'] ?? '') === 'ai' ? 'パネル(AIの選択)' : 'パネル(機械の選択)').')');
                 }
             }
         }

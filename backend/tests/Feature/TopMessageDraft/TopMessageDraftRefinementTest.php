@@ -3,7 +3,6 @@
 namespace Tests\Feature\TopMessageDraft;
 
 use App\Models\WebsiteAnalysis;
-use App\Services\Report\AdminComparisonPptxGenerator;
 use App\Services\TopMessageDraft\TopMessageDraftBuilder;
 use App\Services\TopMessageDraft\TopMessageDraftExtractor;
 use App\Services\TopMessageInsight\TopMessagePage;
@@ -12,7 +11,6 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use Tests\Concerns\MakesTopMessageFixtures;
 use Tests\TestCase;
-use ZipArchive;
 
 /**
  * 依頼CS追補(CSA-1〜CSA-5): 素材ページの「使えない行」を、言葉の一覧ではなくページの構造で減らす。
@@ -337,87 +335,5 @@ class TopMessageDraftRefinementTest extends TestCase
         $this->assertSame(["{$base}/requirements/"], $urls);
         $this->assertNotContains('career', (array) config('top_message_insight.program_page_keywords_secondary'));
         $this->assertSame(['募集要項', '待遇'], config('top_message_insight.program_page_keywords_secondary'), '他の言葉は変えない');
-    }
-
-    // ---- スライド(区切りの行・外す順) ----
-
-    private function slideXml(string $bytes): string
-    {
-        $tmp = tempnam(sys_get_temp_dir(), 'sx');
-        file_put_contents($tmp, $bytes);
-        $zip = new ZipArchive;
-        $zip->open($tmp);
-        $xml = html_entity_decode((string) $zip->getFromName('ppt/slides/slide1.xml'), ENT_QUOTES | ENT_XML1, 'UTF-8');
-        $zip->close();
-        @unlink($tmp);
-
-        return $xml;
-    }
-
-    /**
-     * @param  list<array<string, mixed>>  $rows
-     * @return array<string, mixed>
-     */
-    private function pageData(array $rows, int $hidden = 0): array
-    {
-        return [
-            'company_name' => 'テスト株式会社',
-            'message' => null,
-            'programs' => ['rows' => $rows, 'hidden' => $hidden, 'page_urls' => []],
-        ];
-    }
-
-    public function test_a_category_row_is_drawn_bold_on_a_pale_band_without_an_excerpt(): void
-    {
-        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($this->pageData([
-            ['kind' => 'category', 'name' => '分類の見出し', 'excerpt' => '', 'source' => '研修制度', 'level' => 2],
-            ['kind' => 'program', 'name' => '新人研修', 'excerpt' => '入社後1カ月', 'source' => '研修制度', 'order' => 0],
-        ])));
-
-        $this->assertStringContainsString(strtoupper((string) config('admin_comparison_pptx.top_message_draft_category_fill')), strtoupper($xml), '薄い背景(config)');
-        $this->assertMatchesRegularExpression('/<a:rPr[^>]*\bb="1"[^>]*>(?:(?!<\/a:r>).)*分類の見出し/s', $xml, '太字');
-        $this->assertSame(1, substr_count($xml, '研修制度'), '区切りの行に出典は出さない(各候補の出典だけ)');
-    }
-
-    private function overflowRows(): array
-    {
-        // 3ページ×各4件。表示順はページごと、選んだ順(order)は1巡目 → 2巡目 …。収まらない大きさにする。
-        $rows = [];
-        foreach (['ア' => 0, 'イ' => 1, 'ウ' => 2] as $prefix => $page) {
-            for ($i = 0; $i < 4; $i++) {
-                $rows[] = ['kind' => 'program', 'name' => str_repeat('長い名前', 4)."{$prefix}{$i}", 'excerpt' => str_repeat('抜粋です', 12), 'source' => "出典{$prefix}", 'order' => $i * 3 + $page];
-            }
-        }
-
-        return $rows;
-    }
-
-    public function test_when_the_rows_do_not_fit_the_last_chosen_candidates_are_dropped_not_the_last_page(): void
-    {
-        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($this->pageData($this->overflowRows(), 5)));
-
-        preg_match('/ほか(\d+)件/', $xml, $m);
-        $this->assertArrayHasKey(1, $m, '収まらない分は「ほか N件」');
-        $shownFirstRound = 0;
-        foreach (['ア', 'イ', 'ウ'] as $prefix) {
-            $shownFirstRound += substr_count($xml, str_repeat('長い名前', 4).$prefix.'0') > 0 ? 1 : 0;
-        }
-        $this->assertSame(3, $shownFirstRound, '1巡目の候補は、どのページも残る');
-        $this->assertStringNotContainsString(str_repeat('長い名前', 4).'ウ3', $xml, '選んだ順の最後(3巡目のウ)から外れる');
-        $visible = preg_match_all('/長い名前長い名前長い名前長い名前[アイウ]\d/u', $xml);
-        $this->assertSame(17, $visible + (int) $m[1], '見えている件数 + ほかの件数(元の5件を含む) = 12 + 5');
-    }
-
-    public function test_a_category_row_without_a_candidate_below_it_is_not_drawn_after_the_drop(): void
-    {
-        $rows = $this->overflowRows();
-        // 最後に選んだ候補(order 99)だけを持つ分類。収まらずに外れると、分類の行も出さない。
-        $rows[] = ['kind' => 'category', 'name' => '空になる分類', 'excerpt' => '', 'source' => '出典エ', 'level' => 2];
-        $rows[] = ['kind' => 'program', 'name' => '最後の候補', 'excerpt' => '説明', 'source' => '出典エ', 'order' => 99];
-
-        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($this->pageData($rows)));
-
-        $this->assertStringNotContainsString('最後の候補', $xml);
-        $this->assertStringNotContainsString('空になる分類', $xml);
     }
 }

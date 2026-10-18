@@ -169,6 +169,8 @@ class MeasureTopMessageDraftCommand extends Command
                 continue;
             }
             if ($outDir !== null) {
+                // 依頼DD: ページの型はパネル。AIを使わない機械の選択の中身を流し込む。
+                $page['panel'] = app(\App\Services\TopMessagePanel\TopMessagePanelMachineSelector::class)->select(app(\App\Services\TopMessagePanel\TopMessagePanelMaterialBuilder::class)->build($wa));
                 file_put_contents("{$outDir}/{$key}.pptx", $generator->generateTopMessageDraftSlide($page));
             }
         }

@@ -60,6 +60,9 @@ class TopMessagePanelMaterialBuilder
             ],
         ];
 
+        // 依頼DD: メッセージのページが無くても、制度の候補は取る(機械の選択で右側を出すため)。AIを呼ぶかどうかは、下のstatusで決まる(変わらない)。
+        $material['programs'] = $this->programs($selection, $material['dropped']['programs']);
+
         if ($selection->message === null) {
             return ['status' => 'skipped', 'reason' => 'no_message_page'] + $material;
         }
@@ -70,8 +73,6 @@ class TopMessagePanelMaterialBuilder
         $material['message_url'] = $selection->message->url;
         $material['dropped']['message'] = $message['dropped'];
         $material['sentences'] = array_slice($message['sentences'], 0, (int) config('top_message_panel.prompt_sentences_max'));
-
-        $material['programs'] = $this->programs($selection, $material['dropped']['programs']);
 
         if ($material['sentences'] === []) {
             $material['status'] = 'skipped';

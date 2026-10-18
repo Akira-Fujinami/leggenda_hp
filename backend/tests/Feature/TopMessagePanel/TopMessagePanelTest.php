@@ -18,6 +18,7 @@ use App\Services\Report\AdminComparisonPptxGenerator;
 use App\Services\TopMessageDraft\TopMessageDraftExtractor;
 use App\Services\TopMessagePanel\OpenAiTopMessagePanelProvider;
 use App\Services\TopMessagePanel\TopMessagePanelDispatcher;
+use App\Services\TopMessagePanel\TopMessagePanelMachineSelector;
 use App\Services\TopMessagePanel\TopMessagePanelMaterialBuilder;
 use App\Services\TopMessagePanel\TopMessagePanelProvider;
 use App\Services\TopMessagePanel\TopMessagePanelProviderFactory;
@@ -991,16 +992,18 @@ class TopMessagePanelTest extends TestCase
         }
     }
 
-    public function test_without_a_panel_the_slide_is_the_draft_page_as_before(): void
+    public function test_without_a_panel_the_slide_is_still_the_panel_type_with_the_missing_texts(): void
     {
         $page = $this->page($this->keywords(2));
         unset($page['panel']);
 
         $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($page));
 
-        $this->assertStringContainsString('例社：トップメッセージと制度の素材', $xml);
-        $this->assertStringContainsString('素材ページの文です。', $xml);
-        $this->assertStringNotContainsString('AI が選んだ', $xml);
+        $this->assertStringContainsString('例社：トップメッセージと制度', $xml);
+        $this->assertStringNotContainsString('トップメッセージと制度の素材', $xml, '表の形(素材ページ)は使わない');
+        $this->assertStringContainsString((string) config('admin_comparison_pptx.top_message_panel_no_message'), $xml);
+        $this->assertStringContainsString((string) config('admin_comparison_pptx.top_message_panel_no_programs'), $xml);
+        $this->assertStringContainsString((string) config('admin_comparison_pptx.top_message_panel_note_machine'), $xml);
     }
 
     public function test_the_data_builder_attaches_the_stored_panel_only_when_enabled_and_never_calls_the_ai_or_the_network(): void
@@ -1021,10 +1024,283 @@ class TopMessagePanelTest extends TestCase
         $this->assertCount(2, $pages[0]['panel']['keywords']);
 
         config(['top_message_panel.enabled' => false]);
-        $this->assertArrayNotHasKey('panel', $builder->buildTopMessageDraftData($analysis->fresh(), $viewModel)[0]);
+        $machine = $builder->buildTopMessageDraftData($analysis->fresh(), $viewModel)[0];
+        $this->assertSame('machine', $machine['panel']['selection'], '無効のときも、ページの型はパネル(中身は機械の選択)');
+        $this->assertSame('ai', $pages[0]['panel']['selection']);
 
         $this->assertSame($callsAfterGenerate, $fake->calls, 'データを作るときにAIを呼ばない');
         Http::assertNothingSent();
+    }
+
+    // ------------------------------------------------------------------ 依頼DD: ページの型の固定(機械の選択・AIの選択・provider)
+
+    /**
+     * @param  list<string>  $texts
+     * @param  list<array{name: string, excerpt: string, source: string}>  $programs
+     * @return array<string, mixed>
+     */
+    private function machineMaterial(array $texts, array $programs = []): array
+    {
+        $sentences = [];
+        foreach ($texts as $i => $text) {
+            $sentences[] = ['id' => 'm-'.($i + 1), 'text' => $text];
+        }
+
+        return ['status' => 'ok', 'reason' => null, 'speaker' => '代表 太郎', 'message_title' => '代表メッセージ', 'message_url' => 'https://e.example.com/m', 'sentences' => $sentences, 'programs' => $programs, 'dropped' => []];
+    }
+
+    public function test_the_core_is_the_first_sentence_with_a_word_for_thought_or_will_else_the_first_sentence(): void
+    {
+        $selector = app(TopMessagePanelMachineSelector::class);
+
+        $with = $selector->select($this->machineMaterial(['最初の文です、特別な言葉はありません。', '二つ目の文は、私たちが大切にしていることを書きます。', '三つ目の文は、未来を信じています。']));
+        $this->assertSame('二つ目の文は、私たちが大切にしていることを書きます。', $with['core'], '考え・意志を表す言葉(config)を含む最初の文');
+
+        $without = $selector->select($this->machineMaterial(['最初の文です、特別な言葉はありません。', '二つ目の文も、事実を述べるだけです。']));
+        $this->assertSame('最初の文です、特別な言葉はありません。', $without['core'], '無ければ最初の文');
+
+        config(['top_message_panel.machine_core_words' => ['特別']]);
+        $this->assertSame('最初の文です、特別な言葉はありません。', $selector->select($this->machineMaterial(['最初の文です、特別な言葉はありません。', '二つ目の文は、信じています。']))['core'], '語はconfigから');
+    }
+
+    public function test_the_body_is_two_sentences_around_the_core_in_page_order(): void
+    {
+        $selector = app(TopMessagePanelMachineSelector::class);
+        $texts = ['文1は事実を述べます、長さはあります。', '文2は事実を述べます、長さはあります。', '文3は私たちが信じていることを書きます。', '文4は事実を述べます、長さはあります。', '文5は事実を述べます、長さはあります。'];
+
+        $middle = $selector->select($this->machineMaterial($texts));
+        $this->assertSame([$texts[3], $texts[1]], array_reverse($middle['body']), '核の前後から1文ずつ、ページ上の順番のまま');
+        $this->assertSame([$texts[1], $texts[3]], $middle['body']);
+
+        $first = $selector->select($this->machineMaterial([$texts[2], $texts[3], $texts[4]]));
+        $this->assertSame([$texts[3], $texts[4]], $first['body'], '核が先頭なら後ろの2文');
+
+        $last = $selector->select($this->machineMaterial([$texts[0], $texts[1], $texts[2]]));
+        $this->assertSame([$texts[0], $texts[1]], $last['body'], '核が末尾なら前の2文');
+
+        config(['top_message_panel.machine_body_count' => 1]);
+        $this->assertCount(1, $selector->select($this->machineMaterial($texts))['body'], '文の数はconfigから');
+    }
+
+    public function test_the_card_summary_is_the_first_sentence_up_to_the_limit_else_the_name_only(): void
+    {
+        $selector = app(TopMessagePanelMachineSelector::class);
+        $long = str_repeat('あ', 40).'。';   // 41字
+        $programs = [
+            ['name' => '短い', 'excerpt' => '最初の文はここまでです。二つ目の文は使いません。', 'source' => 'ページA'],
+            ['name' => 'ちょうど', 'excerpt' => str_repeat('い', 39).'。続きの文。', 'source' => 'ページA'],
+            ['name' => '長い', 'excerpt' => $long.'続き。', 'source' => 'ページA'],
+            ['name' => '切れた', 'excerpt' => '句点がなく途中で切れた説明…', 'source' => 'ページB'],
+            ['name' => '括弧', 'excerpt' => '制度の説明(詳細は次の。', 'source' => 'ページB'],
+            ['name' => '句点なし', 'excerpt' => '句点が無いが最後まで書かれた説明', 'source' => 'ページB'],
+        ];
+
+        $rows = $selector->select($this->machineMaterial(['文です、信じています。'], $programs))['programs'];
+        $byName = array_column($rows, 'summary', 'name');
+
+        $this->assertSame('最初の文はここまでです。', $byName['短い']);
+        $this->assertSame(str_repeat('い', 39).'。', $byName['ちょうど'], '40字ちょうどは通る');
+        $this->assertNull($byName['長い'], '上限を超える最初の文は、名前だけ(途中で切らない)');
+        $this->assertNull($byName['切れた'], '途中で切れた抜粋は、名前だけ');
+        $this->assertNull($byName['括弧'], '括弧が閉じていない説明は、名前だけ');
+        $this->assertSame('句点が無いが最後まで書かれた説明', $byName['句点なし'], '句点が無くても、最後まで書かれた短い抜粋はそのまま');
+
+        config(['top_message_panel.machine_summary_max_chars' => 60]);
+        $this->assertSame($long, array_column($selector->select($this->machineMaterial(['文です。'], $programs))['programs'], 'summary', 'name')['長い'], '上限はconfigから');
+    }
+
+    public function test_the_bands_are_by_source_page_in_order_of_program_count_with_the_configured_limits(): void
+    {
+        $programs = [];
+        foreach (['少' => 1, '中' => 2, '多' => 5, 'ほか1' => 1, 'ほか2' => 1, 'ほか3' => 1] as $source => $count) {
+            for ($i = 1; $i <= $count; $i++) {
+                $programs[] = ['name' => "{$source}の制度{$i}", 'excerpt' => '説明です。', 'source' => $source];
+            }
+        }
+
+        $rows = app(TopMessagePanelMachineSelector::class)->select($this->machineMaterial(['文です。'], $programs))['programs'];
+
+        $this->assertSame(['多', '中', '少', 'ほか1'], array_values(array_unique(array_column($rows, 'source'))), '制度の数が多い順(同数はページの順)・最大4本');
+        $this->assertCount(3, array_filter($rows, fn (array $r) => $r['source'] === '多'), '1つの帯は最大3カード');
+        $this->assertSame(['多の制度1', '多の制度2', '多の制度3'], array_column(array_filter($rows, fn (array $r) => $r['source'] === '多'), 'name'));
+    }
+
+    public function test_the_machine_selection_is_empty_when_there_is_nothing_to_choose(): void
+    {
+        $empty = app(TopMessagePanelMachineSelector::class)->select($this->machineMaterial([], []));
+
+        $this->assertNull($empty['core']);
+        $this->assertSame([], $empty['body']);
+        $this->assertSame([], $empty['programs']);
+        $this->assertSame('machine', $empty['selection']);
+    }
+
+    public function test_with_the_ai_switch_off_the_page_is_the_panel_type_filled_by_the_machine_selection(): void
+    {
+        config(['top_message_panel.enabled' => false]);
+        Http::fake();
+        $analysis = $this->runningComparison();
+        $viewModel = app(\App\Services\Report\MultiSiteReportViewModelBuilder::class)->build($analysis->fresh());
+
+        $pages = app(AdminComparisonPptxDataBuilder::class)->buildTopMessageDraftData($analysis->fresh(), $viewModel);
+
+        $this->assertNotEmpty($pages);
+        $this->assertSame('machine', $pages[0]['panel']['selection']);
+        $this->assertNotNull($pages[0]['panel']['core']);
+        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($pages[0]));
+        $this->assertStringContainsString('：トップメッセージと制度', $xml);
+        $this->assertStringNotContainsString('トップメッセージと制度の素材', $xml, '表の形は出ない');
+        $this->assertStringContainsString((string) config('admin_comparison_pptx.top_message_panel_note_machine'), $xml, '機械の選択の注記');
+        $this->assertStringNotContainsString('AI が選んだ', $xml);
+        Http::assertNothingSent();
+    }
+
+    public function test_when_the_ai_passes_the_ai_panel_and_when_it_fails_the_machine_selection_with_the_same_type(): void
+    {
+        $analysis = $this->runningComparison();
+        $viewModel = app(\App\Services\Report\MultiSiteReportViewModelBuilder::class)->build($analysis->fresh());
+        $builder = app(AdminComparisonPptxDataBuilder::class);
+        $generator = app(AdminComparisonPptxGenerator::class);
+
+        $this->fakeProvider($this->decodedFromMaterial());
+        app(TopMessagePanelService::class)->generate($analysis);
+        $ai = $builder->buildTopMessageDraftData($analysis->fresh(), $viewModel)[0];
+        $aiXml = $this->slideXml($generator->generateTopMessageDraftSlide($ai));
+        $this->assertSame('ai', $ai['panel']['selection']);
+        $this->assertStringContainsString('AI が選んだ', $aiXml);
+
+        $this->fakeProvider(fn (array $material) => ['core_sentence_id' => 'm-999', 'body_sentence_ids' => [], 'programs' => [], 'keywords' => []]);
+        app(TopMessagePanelService::class)->generate($analysis, true);
+        $machine = $builder->buildTopMessageDraftData($analysis->fresh(), $viewModel)[0];
+        $machineXml = $this->slideXml($generator->generateTopMessageDraftSlide($machine));
+        $this->assertSame('machine', $machine['panel']['selection'], 'AIが落ちたら機械の選択に戻る');
+        $this->assertStringContainsString((string) config('admin_comparison_pptx.top_message_panel_note_machine'), $machineXml);
+        foreach (['：トップメッセージと制度', (string) config('admin_comparison_pptx.top_message_draft_band_text'), 'トップメッセージ'] as $common) {
+            $this->assertStringContainsString($common, $aiXml);
+            $this->assertStringContainsString($common, $machineXml, '型は同じ');
+        }
+    }
+
+    public function test_a_company_without_a_message_page_or_without_programs_still_gets_the_page_with_the_fixed_text(): void
+    {
+        $generator = app(AdminComparisonPptxGenerator::class);
+        $selector = app(TopMessagePanelMachineSelector::class);
+
+        $noMessage = $this->slideXml($generator->generateTopMessageDraftSlide(['company_name' => '例社', 'panel' => $selector->select($this->machineMaterial([], [['name' => '制度A', 'excerpt' => '説明です。', 'source' => 'ページ']]))]));
+        $this->assertStringContainsString('トップメッセージのページを確認できませんでした。', $noMessage);
+        $this->assertStringContainsString('制度A', $noMessage, '右側は出す');
+
+        $noPrograms = $this->slideXml($generator->generateTopMessageDraftSlide(['company_name' => '例社', 'panel' => $selector->select($this->machineMaterial(['私たちは信じています、という文です。']))]));
+        $this->assertStringContainsString('制度のページを確認できませんでした。', $noPrograms);
+        $this->assertStringContainsString('私たちは信じています', $noPrograms, '左側は出す');
+    }
+
+    public function test_the_material_keeps_the_programs_even_without_a_message_page_but_the_ai_is_still_not_called(): void
+    {
+        Http::fake();
+        $fake = $this->fakeProvider($this->decodedFromMaterial());
+        $self = $this->makeComparisonWebsiteAnalysis(true, 0, 'self');
+        $this->addHomepage($self, 'https://nomsg.example.com/recruit/', $this->htmlPage('採用トップ', '採用情報です。'));
+        $this->addCrawledPage($self, 'https://nomsg.example.com/recruit/training/', '研修制度 | 例社', '<html><head><title>研修制度 | 例社</title></head><body><main><h2>研修制度の名前</h2><p>入社後に受けられる研修の内容を、丁寧に説明するための文章です。</p></main></body></html>');
+
+        $material = app(TopMessagePanelMaterialBuilder::class)->build($self);
+
+        $this->assertSame('skipped', $material['status']);
+        $this->assertSame('no_message_page', $material['reason']);
+        $this->assertNotEmpty($material['programs'], 'メッセージのページが無くても、制度の候補は取る');
+        app(TopMessagePanelService::class)->composeCompany($self, 'self');
+        $this->assertSame(0, $fake->calls, 'AIは呼ばない');
+        Http::assertNothingSent();
+    }
+
+    public function test_the_red_band_is_not_drawn_when_its_text_is_empty(): void
+    {
+        $page = ['company_name' => '例社', 'panel' => app(TopMessagePanelMachineSelector::class)->select($this->machineMaterial(['私たちは信じています、という文です。']))];
+        $band = strtoupper((string) config('admin_comparison_pptx.top_message_draft_band_fill'));
+        $this->assertStringContainsString($band, strtoupper($this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($page))));
+
+        config(['admin_comparison_pptx.top_message_draft_band_text' => '']);
+        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($page));
+
+        $this->assertStringNotContainsString($band, strtoupper($xml), '文言が空なら帯を出さない');
+        $this->assertStringContainsString('：トップメッセージと制度', $xml);
+    }
+
+    public function test_provider_anthropic_uses_the_anthropic_caller_and_without_a_model_or_key_the_ai_is_not_called(): void
+    {
+        config(['top_message_panel.provider' => 'anthropic', 'services.anthropic.api_key' => 'sk-ant-test-key-not-real', 'top_message_panel.model' => 'test-model']);
+        $this->assertInstanceOf(\App\Services\TopMessagePanel\AnthropicTopMessagePanelProvider::class, app(TopMessagePanelProviderFactory::class)->make());
+
+        config(['top_message_panel.provider' => 'openai']);
+        $this->assertNotInstanceOf(\App\Services\TopMessagePanel\AnthropicTopMessagePanelProvider::class, (function () {
+            config(['services.brand_wheel_ai.provider' => 'openai', 'services.openai.api_key' => 'sk-test']);
+
+            return app(TopMessagePanelProviderFactory::class)->make();
+        })(), 'openai(既定)のときは従来の呼び出し口');
+
+        config(['top_message_panel.provider' => 'anthropic', 'top_message_panel.model' => null]);
+        try {
+            app(TopMessagePanelProviderFactory::class)->make();
+            $this->fail('モデル未設定は例外');
+        } catch (ComparisonCommentaryException $e) {
+            $this->assertSame('MODEL_NOT_CONFIGURED', $e->errorCode);
+        }
+
+        Http::fake();
+        $analysis = $this->runningComparison();
+        $result = app(TopMessagePanelService::class)->generate($analysis);
+        $this->assertSame('MODEL_NOT_CONFIGURED', array_values($result['companies'])[0]['reason']);
+        $this->assertSame(0, array_sum(array_column($result['companies'], 'ai_calls')), 'AIを呼ばない');
+        Http::assertNothingSent();
+
+        $viewModel = app(\App\Services\Report\MultiSiteReportViewModelBuilder::class)->build($analysis->fresh());
+        $this->assertSame('machine', app(AdminComparisonPptxDataBuilder::class)->buildTopMessageDraftData($analysis->fresh(), $viewModel)[0]['panel']['selection'], '機械の選択になる');
+    }
+
+    public function test_the_anthropic_request_has_the_key_header_the_model_no_temperature_and_the_same_prompt_and_reads_only_text_blocks(): void
+    {
+        config(['top_message_panel.provider' => 'anthropic', 'services.anthropic.api_key' => 'sk-ant-test-key-not-real', 'top_message_panel.model' => 'test-model', 'top_message_panel.anthropic_max_output_tokens' => 1234]);
+        $material = ['company_name' => '例社', 'sentences' => $this->material()['sentences'], 'programs' => array_map(fn (array $p) => ['id' => $p['id'], 'name' => $p['name'], 'excerpt' => $p['excerpt']], $this->material()['programs'])];
+        $decoded = ['core_sentence_id' => 'm-1', 'body_sentence_ids' => [], 'programs' => [], 'keywords' => []];
+        Http::fake(['api.anthropic.com/*' => Http::response([
+            'content' => [['type' => 'thinking', 'thinking' => '…'], ['type' => 'text', 'text' => json_encode($decoded)]],
+            'usage' => ['input_tokens' => 11, 'output_tokens' => 7],
+        ])]);
+
+        $outcome = app(TopMessagePanelProviderFactory::class)->make()->select($material);
+
+        $this->assertSame($decoded, $outcome['decoded']);
+        $this->assertSame([11, 7], [$outcome['usage_input_tokens'], $outcome['usage_output_tokens']]);
+        $expectedPrompt = (new OpenAiTopMessagePanelProvider)->buildPrompt($material);
+        Http::assertSent(function (\Illuminate\Http\Client\Request $request) use ($expectedPrompt): bool {
+            $body = $request->data();
+
+            return $request->url() === 'https://api.anthropic.com/v1/messages'
+                && $request->header('x-api-key') === ['sk-ant-test-key-not-real']
+                && $body['model'] === 'test-model'
+                && $body['max_tokens'] === 1234
+                && ! array_key_exists('temperature', $body)
+                && $body['messages'][0]['content'] === $expectedPrompt;
+        });
+    }
+
+    public function test_a_failed_anthropic_call_is_a_fallback_and_logs_only_the_status_and_error_type(): void
+    {
+        config(['top_message_panel.provider' => 'anthropic', 'services.anthropic.api_key' => 'sk-ant-test-key-not-real', 'top_message_panel.model' => 'test-model']);
+        Http::fake(['api.anthropic.com/*' => Http::response(['type' => 'error', 'error' => ['type' => 'invalid_request_error', 'message' => 'SECRET-ERROR-MESSAGE-BODY']], 400)]);
+        $warnings = [];
+        \Illuminate\Support\Facades\Log::shouldReceive('warning')->andReturnUsing(function ($message, $context = []) use (&$warnings) {
+            $warnings[] = [$message, $context];
+        });
+        \Illuminate\Support\Facades\Log::shouldReceive('info')->andReturnNull();
+
+        $result = app(TopMessagePanelService::class)->generate($this->runningComparison());
+
+        $this->assertSame('AI_REQUEST_FAILED', array_values($result['companies'])[0]['reason']);
+        $this->assertSame(['http_status' => 400, 'error_type' => 'invalid_request_error'], $warnings[0][1]);
+        $text = json_encode($warnings, JSON_UNESCAPED_UNICODE);
+        $this->assertStringNotContainsString('SECRET-ERROR-MESSAGE-BODY', $text);
+        $this->assertStringNotContainsString('sk-ant-test-key-not-real', $text);
     }
 
     // ------------------------------------------------------------------ 測定コマンド
