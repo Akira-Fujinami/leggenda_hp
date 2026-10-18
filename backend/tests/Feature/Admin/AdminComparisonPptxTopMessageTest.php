@@ -31,6 +31,8 @@ class AdminComparisonPptxTopMessageTest extends TestCase
         Storage::fake('analysis');
         // 依頼CS: 素材ページが有効なあいだはCQのAIのページを出さない。これはCQ(AI)側の動きを見るテスト。
         config(['top_message_draft.enabled' => false]);
+        // 依頼DE: このファイルの既存のテストは、求職者が知りたい情報のスライドが入る前提で枚数・順番を確かめている。既定は入れないので、ここではtrueにする。
+        config(['admin_comparison_pptx.survey_comparison_enabled' => true]);
     }
 
     /**
@@ -187,6 +189,32 @@ class AdminComparisonPptxTopMessageTest extends TestCase
 
         $this->assertCount(7, $slides, '元の2枚 + 従来の差し込み5枚(説明・比較・足りないもの・求職者が知りたい情報・階層図)のまま');
         $this->assertStringNotContainsString('作成していません', implode(' ', $slides));
+    }
+
+    // 依頼DE: 「求職者が知りたい情報と、自社サイト」は既定で入れない。入れないときも、前後のスライドの順番は詰めるだけ。
+    public function test_by_default_the_survey_slide_is_not_inserted_and_the_others_keep_their_order(): void
+    {
+        $c = $this->makeComparison(['競合A']);
+        $this->attachDeck($c['analysis']);
+        $store = app(TopMessageInsightStore::class);
+        $store->write($c['competitors'][0]->analysis_id, $c['competitors'][0]->id, $this->createdResult('競合Aのメッセージです。'));
+        $store->write($c['self']->analysis_id, $c['self']->id, $this->createdResult('自社のメッセージです。'));
+
+        $withSurvey = $this->download($c['analysis']);
+
+        config(['admin_comparison_pptx.survey_comparison_enabled' => false]);
+        $without = $this->download($c['analysis']);
+
+        $isSurvey = fn (string $t) => str_contains($t, (string) config('admin_comparison_pptx.survey_comparison_title'));
+        $this->assertCount(1, array_filter($withSurvey, $isSurvey), 'trueなら今までどおり1枚入る');
+        $this->assertCount(0, array_filter($without, $isSurvey));
+        $this->assertCount(count($withSurvey) - 1, $without, '枚数が1枚減るだけ');
+        $this->assertSame(array_values(array_filter($withSurvey, fn (string $t) => ! $isSurvey($t))), $without, '他のスライドは中身も順番も同じで、詰められる');
+    }
+
+    public function test_the_survey_slide_switch_is_off_by_default_in_the_config_file(): void
+    {
+        $this->assertFalse((bool) (require base_path('config/admin_comparison_pptx.php'))['survey_comparison_enabled']);
     }
 
     public function test_downloading_the_pptx_twice_never_calls_the_ai_again(): void

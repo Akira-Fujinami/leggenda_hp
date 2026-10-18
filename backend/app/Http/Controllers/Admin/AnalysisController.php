@@ -268,7 +268,8 @@ class AnalysisController extends Controller
                 $slideGenerator->generate($data),
                 $slideGenerator->generateMissingItemsSlide($data),
                 ...$topMessageSlides,
-                $slideGenerator->generateSurveyComparisonSlide($data),
+                // 依頼DE: 「求職者が知りたい情報と、自社サイト」は既定で入れない(admin_comparison_pptx.survey_comparison_enabled)。
+                ...((bool) config('admin_comparison_pptx.survey_comparison_enabled') ? [$slideGenerator->generateSurveyComparisonSlide($data)] : []),
                 $slideGenerator->generateSiteHierarchySlide($data, $tree),
             ];
 

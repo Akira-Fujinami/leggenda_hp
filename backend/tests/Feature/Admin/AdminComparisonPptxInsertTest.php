@@ -30,6 +30,8 @@ class AdminComparisonPptxInsertTest extends TestCase
     {
         parent::setUp();
         Storage::fake('analysis');
+        // 依頼DE: このファイルの既存のテストは、求職者が知りたい情報のスライドが入る前提で枚数・順番を確かめている。既定は入れないので、ここではtrueにする。
+        config(['admin_comparison_pptx.survey_comparison_enabled' => true]);
     }
 
     private function asAdmin(): static

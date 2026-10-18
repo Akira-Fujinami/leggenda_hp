@@ -386,6 +386,8 @@ return [
     | アンケートを軸にする。「ありません」「載せていない」とは書かない
     | (巡回は最大ページ数までのため、確認できなかったことしか言えない)。
     */
+    // 依頼DE: 差し込みスライドにこのスライドを入れるか。既定は入れない(コードは残してあり、trueにすれば今までどおり出る)。
+    'survey_comparison_enabled' => (bool) env('SURVEY_COMPARISON_SLIDE_ENABLED', false),
     'survey_comparison_title' => '求職者が知りたい情報と、自社サイト',
 
     'survey_comparison_intro' => '求職者調査で「企業の採用サイトで確認したい」と選ばれた情報を、割合の高い順に並べ、'
