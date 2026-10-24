@@ -72,7 +72,17 @@ class TopMessagePageFinder
                 $messageCandidates[] = $page;
             }
         }
-        $message = $messageCandidates[0] ?? null;
+        // 依頼DI: 同じサイトに英語などのページもあるときは、日本語のページを先に選ぶ
+        // (URLに言語の区切り(/en/ など)が無く、本文の日本語の比率がしきい値以上)。無ければ今までどおり先頭。
+        $message = null;
+        foreach ($messageCandidates as $candidate) {
+            if (! $this->hasNonJapaneseUrlSegment($candidate->url)
+                && $this->japaneseRatio($candidate->text) >= (float) config('top_message_insight.japanese_ratio_threshold', 0.2)) {
+                $message = $candidate;
+                break;
+            }
+        }
+        $message ??= $messageCandidates[0] ?? null;
         $messageUrlKey = $message !== null ? $this->urlKey($message->url) : null;
         // 依頼CS: メッセージのページが無いときも、日本語の制度のページだけを見る(英語のページを混ぜない)。
         $messageIsJapanese = $message === null || $this->japaneseRatio($message->text) >= (float) config('top_message_insight.japanese_ratio_threshold', 0.2);

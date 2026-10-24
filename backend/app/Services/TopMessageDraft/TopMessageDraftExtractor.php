@@ -97,7 +97,7 @@ class TopMessageDraftExtractor
                 if ($text !== '' && mb_strlen($text) >= $headingMin && ! $this->isGeneric($text) && ! isset($seen[$text])) {
                     if (isset($titleKeys[$this->looseKey($text)])) {
                         $droppedTitle++;
-                    } else {
+                    } elseif (! $this->isLabelOnly($text)) {
                         $seen[$text] = true;
                         $headings[] = ['text' => $this->clip($text, $maxLen), 'order' => $order];
                     }
@@ -111,6 +111,10 @@ class TopMessageDraftExtractor
                         if (isset($titleKeys[$this->looseKey($sentence)])) {
                             $droppedTitle++;
 
+                            continue;
+                        }
+                        // 依頼DI: 見出しの語だけの文(「Top Message トップメッセージ」など)は使わない。
+                        if ($this->isLabelOnly($sentence)) {
                             continue;
                         }
                         $seen[$sentence] = true;
@@ -239,6 +243,10 @@ class TopMessageDraftExtractor
                     if (isset($titleKeys[$this->looseKey($sentence)])) {
                         $dropped['title']++;
 
+                        continue;
+                    }
+                    // 依頼DI: 見出しの語だけの文(「Top Message トップメッセージ」など)は使わない。
+                    if ($this->isLabelOnly($sentence)) {
                         continue;
                     }
                     $seen[$sentence] = true;
@@ -627,6 +635,25 @@ class TopMessageDraftExtractor
         }
 
         return false;
+    }
+
+    /**
+     * 依頼DI: 「Top Message トップメッセージ」のように、見出しの語(config message_label_words)だけでできている文。
+     * 空白・記号を除き、長い語から順に取り除いて、何も残らなければ true。
+     */
+    private function isLabelOnly(string $text): bool
+    {
+        $rest = $this->normalize($text);
+        if ($rest === '') {
+            return false;
+        }
+        $words = array_values(array_filter(array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.message_label_words', [])), fn (string $w) => $w !== ''));
+        usort($words, fn (string $a, string $b) => mb_strlen($b) <=> mb_strlen($a));
+        foreach ($words as $word) {
+            $rest = str_replace($word, '', $rest);
+        }
+
+        return $rest === '';
     }
 
     private function isGeneric(string $text): bool

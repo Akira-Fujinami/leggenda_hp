@@ -69,6 +69,8 @@ return [
     'program_page_keywords_primary' => [
         '研修', '教育', '育成', '福利厚生', '制度', '働き方',
         'benefit', 'welfare', 'training', 'workstyle',
+        // 依頼DI: 巡回で先に回る語(brand_wheel.crawl_priority_words)と揃える。「働く環境」のページに制度が並ぶサイトがある。
+        '働く環境', '職場環境', 'work-style', 'work-environment',
     ],
     'program_page_keywords_secondary' => ['募集要項', '待遇'],
 

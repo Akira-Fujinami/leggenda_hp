@@ -874,6 +874,8 @@ return [
     // リンク先のパスに含まれていれば募集要項へのリンク(文字で判定できなかったとき)。
     'site_hierarchy_job_listing_path_words' => ['requirements', 'job-list', 'joblist', 'job_list', 'positions', 'openings', 'entry', 'apply', '募集要項'],
     // 外部の応募受付サービス(ホストの末尾 => 表示名)。ここへのリンクは文字に関わらず募集要項へのリンクとみなす。
+    // 依頼DI: リンク先のパスにこの区切りがあるもの(ニュース・ブログの記事など)は、ほかに候補があればそちらを先に選ぶ。
+    'site_hierarchy_job_listing_deprioritized_path_segments' => ['news', 'topics', 'press', 'blog', 'article', 'articles', 'column'],
     'site_hierarchy_job_listing_hosts' => [
         'hrmos.co' => 'HRMOS',
         'herp.careers' => 'HERP',

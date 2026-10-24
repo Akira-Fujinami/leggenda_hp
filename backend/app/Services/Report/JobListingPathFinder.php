@@ -42,7 +42,8 @@ class JobListingPathFinder
 
                 // コーポレートTOPのリンクは、採用サイト側で見つからなかったときだけ使う(source の順)。
                 $sourceRank = $document['source'] === 'corporate_top' ? 1 : 0;
-                $key = [$sourceRank, $document['clicks'], self::PLACEMENT_RANK[$link['placement']], $wordRank, $order++];
+                // 依頼DI: ニュース・ブログの記事へのリンクは、ほかに候補があればその後(コーポレートTOPのものよりは先)。
+                $key = [$sourceRank, $this->isDeprioritized($link['url']) ? 1 : 0, $document['clicks'], self::PLACEMENT_RANK[$link['placement']], $wordRank, $order++];
                 if ($bestKey === null || $key < $bestKey) {
                     $bestKey = $key;
                     $host = strtolower((string) parse_url($link['url'], PHP_URL_HOST));
@@ -95,6 +96,17 @@ class JobListingPathFinder
         }
 
         return null;
+    }
+
+    /**
+     * 依頼DI: リンク先のパスの区切りに、後回しにする語(ニュース・ブログなど、config)があるか。
+     */
+    public function isDeprioritized(string $url): bool
+    {
+        $segments = array_map(fn (string $s) => mb_strtolower(rawurldecode($s)), explode('/', trim((string) (parse_url($url, PHP_URL_PATH) ?? ''), '/')));
+        $words = array_map(fn ($w) => mb_strtolower(trim((string) $w)), (array) config('admin_comparison_pptx.site_hierarchy_job_listing_deprioritized_path_segments', []));
+
+        return array_intersect($segments, array_filter($words)) !== [];
     }
 
     /**
