@@ -92,6 +92,7 @@ class TopMessagePageFinder
             array_keys($programTiers),
             fn (int $key) => $this->urlKey($pool[$key]['url']) !== $messageUrlKey
                 && ! $this->matchesExcludedUrl($pool[$key]['url'])
+                && ! $this->isPeoplePage($pool[$key]['url'], $pool[$key]['title'] ?? null)
                 && ! ($messageIsJapanese && $this->hasNonJapaneseUrlSegment($pool[$key]['url'])),
         ));
 
@@ -159,6 +160,27 @@ class TopMessagePageFinder
         foreach ((array) config('top_message_insight.program_page_excluded_url_patterns', []) as $pattern) {
             if (@preg_match((string) $pattern, $url) === 1) {
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 依頼DJ: 社員・職員の紹介やインタビューのページ(URLのパスかタイトルに config program_page_excluded_words の語)。
+     */
+    private function isPeoplePage(string $url, ?string $title): bool
+    {
+        $haystacks = [mb_strtolower(rawurldecode((string) (parse_url($url, PHP_URL_PATH) ?? ''))), mb_strtolower((string) $title)];
+        foreach ((array) config('top_message_insight.program_page_excluded_words', []) as $word) {
+            $word = mb_strtolower(trim((string) $word));
+            if ($word === '') {
+                continue;
+            }
+            foreach ($haystacks as $haystack) {
+                if ($haystack !== '' && mb_strpos($haystack, $word) !== false) {
+                    return true;
+                }
             }
         }
 

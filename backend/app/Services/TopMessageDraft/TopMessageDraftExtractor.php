@@ -387,7 +387,8 @@ class TopMessageDraftExtractor
             }
             $name = $this->collapse($element->textContent);
             $length = mb_strlen($name);
-            if ($length < $minLen || $length > $maxLen || $this->isGeneric($name) || preg_match('/^[\d\s\p{P}\p{S}]+$/u', $name) === 1) {
+            if ($length < $minLen || $length > $maxLen || $this->isGeneric($name) || preg_match('/^[\d\s\p{P}\p{S}]+$/u', $name) === 1
+                || $this->matchesAny($name, array_values(array_filter((array) config('top_message_draft.program_name_excluded_patterns', []), 'is_string')))) {
                 continue;
             }
             foreach ($suffixes as $suffix) {

@@ -125,4 +125,64 @@ class TopMessagePageSelectionFixesTest extends TestCase
         $this->assertFalse($finder->isDeprioritized('https://self.example.com/career/information/requirements_newgradu2028.html'));
         $this->assertFalse($finder->isDeprioritized('https://self.example.com/newsroom-entry/'), 'パスの区切りとして一致するものだけ');
     }
+
+    // ------------------------------------------------------------------ 依頼DJ
+
+    public function test_people_and_interview_pages_are_not_program_pages_even_with_a_program_word_in_the_title(): void
+    {
+        $wa = $this->makeComparisonWebsiteAnalysis();
+        $this->addHomepage($wa, self::BASE.'/', $this->htmlPage('採用トップ', '採用情報です。'));
+        $this->addCrawledPage($wa, self::BASE.'/workspeople/kaneko/', 'パラサポ 金子知史の仕事・働き方 | 例財団',
+            '<html><head><title>パラサポ 金子知史の仕事・働き方 | 例財団</title></head><body><main>'
+            .str_repeat('<h3>2008年</h3><p>入会、総務グループ総務チームに配属され、事務方の仕事に従事しました。</p>', 3)
+            .'</main></body></html>');
+        $this->addCrawledPage($wa, self::BASE.'/benefits/', '働き方・福利厚生・オフィス | 例財団',
+            '<html><head><title>働き方・福利厚生・オフィス | 例財団</title></head><body><main>'
+            .'<h3>テレワーク制度</h3><p>週に2日まで、自宅で勤務することができます。</p>'
+            .'</main></body></html>');
+
+        $selection = app(TopMessagePageFinder::class)->find($wa->fresh());
+
+        $this->assertSame([self::BASE.'/benefits/'], array_map(fn ($p) => $p->url, $selection->programPages));
+    }
+
+    public function test_a_program_name_that_is_only_a_year_or_a_date_is_dropped(): void
+    {
+        $wa = $this->makeComparisonWebsiteAnalysis();
+        $this->addHomepage($wa, self::BASE.'/', $this->htmlPage('採用トップ', '採用情報です。'));
+        $this->addCrawledPage($wa, self::BASE.'/training/', '研修制度 | 例社',
+            '<html><head><title>研修制度 | 例社</title></head><body><main>'
+            .'<h3>2008年</h3><p>入会、総務グループ総務チームに配属され、事務方の仕事に従事しました。</p>'
+            .'<h3>2011年3月</h3><p>東北地方太平洋沖地震の災害支援センターに異動し、復興支援に従事しました。</p>'
+            .'<h3>2015/04</h3><p>海洋事業部に配属され、途上国の支援事業などを担当しました。</p>'
+            .'<h3>入社3年目研修</h3><p>入社3年目の全員が、外部講師のもとで1泊2日の研修を受けます。</p>'
+            .'</main></body></html>');
+
+        $names = array_map(fn (array $p) => $p['name'], app(TopMessagePanelMaterialBuilder::class)->build($wa->fresh())['programs']);
+
+        $this->assertSame(['入社3年目研修'], $names);
+    }
+
+    public function test_a_chairperson_interview_page_is_used_as_the_message(): void
+    {
+        $wa = $this->makeComparisonWebsiteAnalysis();
+        $this->addHomepage($wa, self::BASE.'/', $this->htmlPage('採用トップ', '採用情報です。'));
+        $this->addCrawledPage($wa, self::BASE.'/basic/message.html', 'Interview 理事長 田中太郎 | 例機構 採用サイト',
+            '<html><head><title>Interview 理事長 田中太郎 | 例機構 採用サイト</title></head><body><main><h1>Interview 理事長 田中太郎</h1>'
+            .'<p>理事長 田中太郎</p><p>国際協力の現場で、一人ひとりが自分の力を試せる組織でありたいと考えています。</p>'
+            .'</main></body></html>');
+
+        $selection = app(TopMessagePageFinder::class)->find($wa->fresh());
+        $material = app(TopMessagePanelMaterialBuilder::class)->build($wa->fresh());
+
+        $this->assertSame(self::BASE.'/basic/message.html', $selection->message?->url);
+        $this->assertSame('理事長 田中太郎', $material['speaker']);
+    }
+
+    public function test_the_strength_and_weakness_box_does_not_go_up_into_the_title(): void
+    {
+        $titleBottom = 0.86 + 0.55;
+
+        $this->assertGreaterThanOrEqual($titleBottom, 1.42 - (float) config('strength_weakness_insight.layout_raise_in'));
+    }
 }

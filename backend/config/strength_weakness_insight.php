@@ -98,7 +98,9 @@ return [
     'max_lines' => 3,
     'font_size' => 8,
     'min_font_size' => 7.5,
-    'line_chars' => 102,
-    'layout_raise_in' => 0.12,
+    // 依頼DJ: 本番で、102字の見積もりより早く折り返して行が増えた(英数字・かっこの幅)。少なめに見積もる。
+    'line_chars' => 95,
+    // 依頼DJ: 箱の上端を上げると、タイトルの箱(0.86〜1.41in)に重なる。上げずに、見出し以下の列を下へずらす。
+    'layout_raise_in' => 0.0,
     'layout_gap_in' => 0.04,
 ];

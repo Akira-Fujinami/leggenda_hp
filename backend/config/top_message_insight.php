@@ -55,9 +55,10 @@ return [
     | (1) 上の語(URL・タイトル・リンクの文字) (2) 本文に代表者を示す語がある
     | (3) URL・タイトルにインタビュー系の語が無い ―― ただしタイトルに「残す語」を含むものは除外しない。
     */
-    'representative_words' => ['代表取締役社長', '代表取締役', '社長', 'CEO', 'President', '代表', '会長'],
+    // 依頼DJ: 財団・機関の代表者(理事長・総裁)も足す。
+    'representative_words' => ['代表取締役社長', '代表取締役', '社長', 'CEO', 'President', '代表', '会長', '理事長', '総裁'],
     'interview_words' => ['interview', 'インタビュー', '社員', 'story', 'stories', 'voice', '対談'],
-    'interview_exception_title_words' => ['代表', '社長', 'CEO'],
+    'interview_exception_title_words' => ['代表', '社長', 'CEO', '会長', '理事長', '総裁'],
 
     /*
     |--------------------------------------------------------------------------
@@ -82,6 +83,12 @@ return [
     */
     'program_page_excluded_url_patterns' => [
         '~[?&]page=~i', '~/page/~i', '~[?&]p=~i', '~/jobs?/?(?:[?#].*)?$~i',
+    ],
+    // 依頼DJ: 社員・職員の紹介やインタビューのページは、タイトルに「働き方」などがあっても制度のページにしない。
+    // URL(パス)・タイトルのどちらかに含むもの(大文字小文字を区別しない部分一致)。
+    'program_page_excluded_words' => [
+        'people', 'member', 'staff', 'interview', 'voice', 'story', 'stories', 'crosstalk',
+        'インタビュー', '社員紹介', '職員紹介', '社員を知る', '人を知る', '対談', '座談会',
     ],
     'non_japanese_url_segments' => ['en', 'zh', 'zh-cn', 'zh-tw', 'ko', 'fr', 'de', 'es', 'pt', 'th', 'vi', 'id'],
     'japanese_ratio_threshold' => 0.2,
