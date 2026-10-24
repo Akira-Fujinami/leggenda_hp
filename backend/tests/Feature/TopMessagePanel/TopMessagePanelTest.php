@@ -448,7 +448,7 @@ class TopMessagePanelTest extends TestCase
         $this->assertContains('新卒研修', $names, '採用区分の言葉を含むだけ');
         $this->assertSame(['p-1', 'p-2', 'p-3', 'p-4', 'p-5', 'p-6'], array_column($material['programs'], 'id'));
         $this->assertSame('入社2年目から3年目の先輩が、新人社員のサポーターとなって悩みを聞きます。', $material['programs'][0]['excerpt'], '50字で切らず、全文(上限200字)');
-        $this->assertSame(['no_excerpt' => 1, 'generic_excerpt' => 1, 'job_page' => 2, 'name_separator' => 1, 'recruit_category_name' => 2, 'short_excerpt' => 2], $material['dropped']['programs']);
+        $this->assertSame(['no_excerpt' => 1, 'generic_excerpt' => 1, 'job_page' => 2, 'name_separator' => 1, 'recruit_category_name' => 2, 'short_excerpt' => 2, 'article_page' => 0, 'symbol_start' => 0], $material['dropped']['programs']);
         $this->assertSame('代表取締役社長 山田太郎', $material['speaker']);
         $this->assertSame('m-1', $material['sentences'][0]['id']);
     }
@@ -1004,6 +1004,37 @@ class TopMessagePanelTest extends TestCase
         $this->assertStringContainsString((string) config('admin_comparison_pptx.top_message_panel_no_message'), $xml);
         $this->assertStringContainsString((string) config('admin_comparison_pptx.top_message_panel_no_programs'), $xml);
         $this->assertStringContainsString((string) config('admin_comparison_pptx.top_message_panel_note_machine'), $xml);
+    }
+
+    public function test_without_a_message_but_with_programs_the_slide_shows_one_line_and_uses_the_full_width_for_the_programs(): void
+    {
+        // 依頼DH: メッセージのページが無いとき、空の紺の箱を出さず、1行の文言と、ページの幅いっぱいの制度の帯にする。
+        $page = $this->page([], ['speaker' => null, 'source_title' => null, 'core' => '', 'body' => [], 'keywords' => $this->keywords(2)]);
+        $withMessage = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($this->page($this->keywords(2))));
+
+        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateTopMessageDraftSlide($page));
+
+        $this->assertStringContainsString((string) config('admin_comparison_pptx.top_message_panel_no_message'), $xml);
+        for ($i = 1; $i <= 2; $i++) {
+            $this->assertStringContainsString("キーワード{$i}", $xml);
+            $this->assertStringContainsString("制度{$i}-1", $xml);
+        }
+        $this->assertSame(1, substr_count($xml, (string) config('admin_comparison_pptx.top_message_panel_no_message')), '文言は1回だけ');
+        $this->assertLessThan($this->minShapeX($withMessage, 'キーワード1'), $this->minShapeX($xml, 'キーワード1'), '制度の帯は左の端から始まる');
+    }
+
+    /** 指定の文字を含む図形の x(EMU)。 */
+    private function minShapeX(string $xml, string $text): int
+    {
+        $best = PHP_INT_MAX;
+        foreach (preg_split('/<p:sp>/', $xml) as $shape) {
+            if (str_contains($shape, $text) && preg_match('/<a:off x="(\d+)"/', $shape, $m)) {
+                $best = min($best, (int) $m[1]);
+            }
+        }
+        $this->assertNotSame(PHP_INT_MAX, $best, $text);
+
+        return $best;
     }
 
     public function test_the_data_builder_attaches_the_stored_panel_only_when_enabled_and_never_calls_the_ai_or_the_network(): void

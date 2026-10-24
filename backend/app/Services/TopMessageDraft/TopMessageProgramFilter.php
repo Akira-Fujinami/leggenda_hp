@@ -13,11 +13,13 @@ namespace App\Services\TopMessageDraft;
  *  - recruit_category_name: 名前が採用区分の言葉と一致する候補(一致で判定)
  *  - generic_excerpt: 抜粋が「関連記事」などの汎用の見出しの言葉だけ
  *  - short_excerpt: 抜粋がconfigの文字数に満たない候補
+ *  - article_page: 記事・インタビュー・ブログのページ(URLのパスの語)から取った候補(依頼DH。記事の見出しや発言が制度に見えるため)
+ *  - symbol_start: 名前が「▶」などの記号で始まる候補、抜粋が「—」などの記号で始まる候補(記事の小見出し・インタビューの問い。依頼DH)
  * 分類の見出し(kind=category)は触らない(その下の候補が残らなければ、並べる側が区切りの行にしない)。
  */
 class TopMessageProgramFilter
 {
-    public const REASONS = ['job_page', 'name_separator', 'no_excerpt', 'recruit_category_name', 'generic_excerpt', 'short_excerpt'];
+    public const REASONS = ['job_page', 'name_separator', 'no_excerpt', 'recruit_category_name', 'generic_excerpt', 'short_excerpt', 'article_page', 'symbol_start'];
 
     /**
      * @param  list<array{url: string, source_title: string, items: list<array<string, mixed>>, dropped: array<string, int>}>  $perPage  TopMessageDraftExtractor::programItemsByPage の結果
@@ -32,6 +34,9 @@ class TopMessageProgramFilter
         $related = array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.related_headings'));
         $separators = array_values(array_filter(array_map('strval', (array) config('top_message_draft.program_name_excluded_chars')), fn (string $c) => $c !== ''));
         $excerptMin = (int) config('top_message_draft.program_excerpt_min_chars');
+        $articleWords = array_values(array_filter(array_map(fn ($w) => mb_strtolower((string) $w), (array) config('top_message_draft.article_page_path_words')), fn (string $w) => $w !== ''));
+        $nameSymbols = array_values(array_filter(array_map('strval', (array) config('top_message_draft.program_name_excluded_leading_symbols')), fn (string $c) => $c !== ''));
+        $excerptSymbols = array_values(array_filter(array_map('strval', (array) config('top_message_draft.program_excerpt_excluded_leading_symbols')), fn (string $c) => $c !== ''));
         $recruitNames = array_values(array_filter(array_map(fn ($w) => $this->normalize((string) $w), (array) config('top_message_draft.program_name_excluded_words')), fn (string $w) => $w !== ''));
 
         foreach (self::REASONS as $reason) {
@@ -40,6 +45,7 @@ class TopMessageProgramFilter
 
         foreach ($perPage as $p => $page) {
             $isJobPage = isset($pages[$p]) && $this->isJobPage((string) $pages[$p]->url, $pages[$p]->title, $jobWords);
+            $isArticlePage = isset($pages[$p]) && $this->pathContainsAny((string) $pages[$p]->url, $articleWords);
             $kept = [];
             foreach ($page['items'] as $item) {
                 if ($item['kind'] !== 'program') {
@@ -49,6 +55,16 @@ class TopMessageProgramFilter
                 }
                 if ($isJobPage) {
                     $dropped['job_page']++;
+
+                    continue;
+                }
+                if ($isArticlePage) {
+                    $dropped['article_page']++;
+
+                    continue;
+                }
+                if ($this->startsWithAny(trim((string) $item['name']), $nameSymbols) || $this->startsWithAny(trim((string) $item['excerpt']), $excerptSymbols)) {
+                    $dropped['symbol_start']++;
 
                     continue;
                 }
@@ -97,6 +113,39 @@ class TopMessageProgramFilter
         $haystack = mb_strtolower((string) $title.' '.(string) parse_url($url, PHP_URL_PATH));
         foreach ($words as $word) {
             if (str_contains($haystack, $word)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * URLのパス(デコード後、小文字)を「/」で区切った各部分に、語のどれかを含むか。
+     *
+     * @param  list<string>  $words
+     */
+    private function pathContainsAny(string $url, array $words): bool
+    {
+        $path = mb_strtolower(rawurldecode((string) (parse_url($url, PHP_URL_PATH) ?? '')));
+        foreach (array_filter(explode('/', $path), fn (string $s) => $s !== '') as $segment) {
+            foreach ($words as $word) {
+                if (str_contains($segment, $word)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  list<string>  $symbols
+     */
+    private function startsWithAny(string $text, array $symbols): bool
+    {
+        foreach ($symbols as $symbol) {
+            if ($text !== '' && str_starts_with($text, $symbol)) {
                 return true;
             }
         }

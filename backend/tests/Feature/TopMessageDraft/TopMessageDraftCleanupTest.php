@@ -82,10 +82,39 @@ class TopMessageDraftCleanupTest extends TestCase
         sort($expected);
         $this->assertSame($expected, $names, '制度でない行は除かれ、本物の制度(含むだけの名前・15字ちょうど)は残る');
         $this->assertSame(
-            ['job_page' => 1, 'name_separator' => 1, 'no_excerpt' => 1, 'recruit_category_name' => 1, 'generic_excerpt' => 1, 'short_excerpt' => 2],
+            ['job_page' => 1, 'name_separator' => 1, 'no_excerpt' => 1, 'recruit_category_name' => 1, 'generic_excerpt' => 1, 'short_excerpt' => 2, 'article_page' => 0, 'symbol_start' => 0],
             $page['programs']['removed'],
         );
         $this->assertSame(4, $page['programs']['candidate_total'], '除いた行は候補の総数にも数えない');
+    }
+
+    public function test_programs_from_article_pages_and_names_or_excerpts_starting_with_symbols_are_dropped(): void
+    {
+        $wa = $this->makeComparisonWebsiteAnalysis();
+        $this->addHomepage($wa, self::BASE.'/', $this->htmlPage('採用トップ', '採用情報です。'));
+        $this->addCrawledPage($wa, self::BASE.'/times/article/day0009', '「育成」と本気で向き合った1年 | 例社',   // 記事のページ
+            '<html><head><title>「育成」と本気で向き合った1年 | 例社</title></head><body><main>'
+            .'<h2>オンボーディングの見直し</h2><p>山田：まずはじめに取り組んだのは、オンボーディングの見直しです。</p>'
+            .'</main></body></html>');
+        $this->addCrawledPage($wa, self::BASE.'/benefit/', '社内制度 | 例社',
+            '<html><head><title>社内制度 | 例社</title></head><body><main>'
+            .'<h2>▶ 1on1のアップデート</h2><p>1on1の時間を、毎週30分ずつ全員に確保しています。</p>'   // 名前が記号で始まる
+            .'<h2>1on1制度</h2><p>— 個人的に、1on1制度はこの1年ですごく変化があったなと思います。</p>' // 抜粋が記号で始まる
+            .'<h2>育児休業</h2><p>育児休業後の復職率は100%で、時短勤務も利用できます。</p>'
+            .'<h2>リモートワーク</h2><p>- 週3日まで、自宅から働くことができる制度です。</p>'          // 箇条書きの「-」は残す
+            .'</main></body></html>');
+
+        $page = app(TopMessageDraftBuilder::class)->build($wa, '例社');
+        $material = app(TopMessagePanelMaterialBuilder::class)->build($wa);
+
+        $names = array_column(array_filter($page['programs']['rows'], fn (array $r) => $r['kind'] === 'program'), 'name');
+        sort($names);
+        $this->assertSame(['リモートワーク', '育児休業'], $names);
+        $this->assertSame(1, $page['programs']['removed']['article_page'] ?? 0, '記事のページの候補');
+        $this->assertSame(2, $page['programs']['removed']['symbol_start'] ?? 0, '記号で始まる名前・抜粋');
+        $panelNames = array_column($material['programs'], 'name');
+        sort($panelNames);
+        $this->assertSame($names, $panelNames, 'パネルの材料も同じ整理');
     }
 
     public function test_the_default_draft_page_has_the_same_programs_as_the_panel_material(): void

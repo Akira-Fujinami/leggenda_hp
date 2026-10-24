@@ -3205,9 +3205,16 @@ class AdminComparisonPptxGenerator
             $this->addTopMessageDraftBand($slide);
             $this->addKicker($slide);
             $this->addTopMessageTitle($slide, $page['company_name'], (string) config('admin_comparison_pptx.top_message_panel_title'));
-            $this->addPanelLeft($slide, $panel);
             $bySources = ($panel['mode'] ?? 'keywords') === 'sources';
-            $this->addPanelRight($slide, $bySources ? $this->panelSourceBands($panel['programs'] ?? []) : $panel['keywords'], $bySources);
+            $bands = $bySources ? $this->panelSourceBands($panel['programs'] ?? []) : $panel['keywords'];
+            if (trim((string) ($panel['core'] ?? '')) === '' && $bands !== []) {
+                // 依頼DH: メッセージのページが無いときは、空の紺の箱を出さず、上に1行の文言だけを出して、右側(制度)をページの幅いっぱいに使う。
+                $this->addPanelNoMessageLine($slide);
+                $this->addPanelRight($slide, $bands, $bySources, self::LEFT_IN, self::TM_DRAFT_BODY_TOP_IN + 0.5);
+            } else {
+                $this->addPanelLeft($slide, $panel);
+                $this->addPanelRight($slide, $bands, $bySources);
+            }
             $noteKey = ($panel['selection'] ?? 'ai') === 'machine'
                 ? 'top_message_panel_note_machine'
                 : ($bySources ? 'top_message_panel_note_sources' : 'top_message_panel_note');
@@ -3315,11 +3322,11 @@ class AdminComparisonPptxGenerator
     /**
      * @param  list<array{phrase: string, programs: list<array{name: string, summary: ?string}>}>  $keywords
      */
-    private function addPanelRight(Slide $slide, array $keywords, bool $bySources = false): void
+    private function addPanelRight(Slide $slide, array $keywords, bool $bySources = false, ?float $leftIn = null, ?float $topIn = null): void
     {
-        $left = self::TM_DRAFT_RIGHT_LEFT_IN;
+        $left = $leftIn ?? self::TM_DRAFT_RIGHT_LEFT_IN;
         $width = self::LEFT_IN + self::CONTENT_WIDTH_IN - $left;
-        $top = self::TM_DRAFT_BODY_TOP_IN;
+        $top = $topIn ?? self::TM_DRAFT_BODY_TOP_IN;
 
         $heading = $slide->createRichTextShape();
         $this->position($heading, $left, $top, $width, 0.3);
@@ -3386,6 +3393,19 @@ class AdminComparisonPptxGenerator
             $this->addTopMessageProgramCells($slide, $this->panelCards($keyword['programs']), $cardsLeft, $cardsWidth, $y + 0.08, $rowHeight - 0.16, self::WHITE);
             $y += $rowHeight + $gap;
         }
+    }
+
+    /**
+     * 依頼DH: メッセージのページが無いときの、上の1行(見出し「トップメッセージ」＋文言)。
+     */
+    private function addPanelNoMessageLine(Slide $slide): void
+    {
+        $box = $slide->createRichTextShape();
+        $this->position($box, self::LEFT_IN, self::TM_DRAFT_BODY_TOP_IN, self::CONTENT_WIDTH_IN, 0.36);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $paragraph = $box->getActiveParagraph();
+        $this->font($paragraph->createTextRun((string) config('admin_comparison_pptx.top_message_panel_left_heading').'　'), 12, true, self::COPPER);
+        $this->font($paragraph->createTextRun((string) config('admin_comparison_pptx.top_message_panel_no_message')), 11, false, self::MUTED);
     }
 
     /**

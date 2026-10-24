@@ -113,4 +113,12 @@ return [
 
     // 制度の候補を取るページのうち、ページ名またはURLのパスにこの語を含むページ(募集要項・求人一覧)の候補は、制度ではなく求人のため除く。
     'job_page_words' => ['募集要項', '求人', '募集職種', '職種一覧', '募集一覧', 'job-list', 'joblist', 'jobs', 'requirements', 'entry', 'job_list', 'positions'],
+
+    // 依頼DH(2026-10-24): 記事・インタビュー・ブログのページ(URLのパスの各部分にこの語を含む)から取った候補は、制度ではなく
+    // 記事の見出しや発言のため除く(本番のマネーフォワードで /times_mf/article/ の記事の小見出しが制度のカードになった)。
+    'article_page_path_words' => ['article', 'blog', 'interview', 'column', 'story', 'stories', 'magazine', 'journal'],
+
+    // 依頼DH: 名前がこの記号で始まる候補(記事の小見出し「▶ …」など)と、抜粋がこの記号で始まる候補(インタビューの問い「— …」など)は除く。
+    'program_name_excluded_leading_symbols' => ['▶', '►', '▷', '▸', '■', '□', '●', '◆', '◇', '★', '☆', '※', '→', '＞', '>', '【'],
+    'program_excerpt_excluded_leading_symbols' => ['—', '―', '─', 'Q.', 'Q：', 'Q:', 'A.', 'A：', 'A:'],
 ];
