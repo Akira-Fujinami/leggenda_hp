@@ -1117,6 +1117,40 @@ return [
 
     /*
     |----------------------------------------------------------------
+    | 依頼DF(2026-10-22): 巡回の順番と、回らないページ
+    |----------------------------------------------------------------
+    | 本番のサイボウズで、50ページの枠を社員紹介(同じディレクトリの17ページ)や採用の個人情報の
+    | 通知が使い、制度のページが枠に入らなかった(App\Services\Analysis\CrawlFrontierPolicy参照)。
+    | ページ数・深さの上限(crawl_max_pages・crawl_max_depth)は変えない。一覧は一般的な語だけにし、
+    | 特定の会社のパスを足さないこと。語は大文字小文字を区別しない部分一致で、URLのパス(デコード後)と
+    | リンクの文字の両方に当てる(リンクの文字は、リンクを見つけた時点でだけ使える)。
+    */
+
+    // DF-1: 制度・働き方を表す言葉を含むリンクを先に回る(起点の配下を先に回る順番の内側で)。
+    'crawl_priority_enabled' => filter_var(env('BRAND_WHEEL_CRAWL_PRIORITY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+    'crawl_priority_words' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env(
+            'BRAND_WHEEL_CRAWL_PRIORITY_WORDS',
+            'メッセージ,message,制度,福利厚生,働き方,働く環境,評価,給与,報酬,研修,育成,休暇,benefit,welfare,work-style,workstyle,environment,system',
+        )),
+    ))),
+
+    // DF-2: 同じ親ディレクトリの下のページは、取得済みがこの件数に達したら後回し(捨てない)。0で無効。
+    'crawl_same_parent_soft_cap' => (int) env('BRAND_WHEEL_CRAWL_SAME_PARENT_SOFT_CAP', 5),
+
+    // DF-3: 個人情報・規約などのページは回らない(ページ数の枠を使わない)。
+    'crawl_skip_enabled' => filter_var(env('BRAND_WHEEL_CRAWL_SKIP_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+    'crawl_skip_words' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env(
+            'BRAND_WHEEL_CRAWL_SKIP_WORDS',
+            'privacy,cookie,terms,policy,legal,sitemap,個人情報,プライバシー,規約,免責,クッキー,サイトマップ',
+        )),
+    ))),
+
+    /*
+    |----------------------------------------------------------------
     | 依頼CH-2(2026-10-01): 段落プールからの定型文ページ除外
     |----------------------------------------------------------------
     | 実測(analysis_id=148)で、プライバシーポリシー・クッキーポリシー等の

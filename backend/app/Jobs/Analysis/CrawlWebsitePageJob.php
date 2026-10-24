@@ -8,6 +8,7 @@ use App\Models\AnalysisCrawledPage;
 use App\Models\WebsiteAnalysis;
 use App\Services\Analysis\AnalysisPipeline;
 use App\Services\Analysis\AnalysisStoragePaths;
+use App\Services\Analysis\CrawlFrontierPolicy;
 use App\Services\Analysis\CrawlLinkExtractor;
 use App\Services\Analysis\CrawlOriginScopeResolver;
 use App\Services\Analysis\CrawlPolicyResolver;
@@ -107,7 +108,10 @@ class CrawlWebsitePageJob implements ShouldQueue
 
         $path = (string) (parse_url($next->url, PHP_URL_PATH) ?? '/');
         $excludedPatterns = (array) config('brand_wheel.crawl_excluded_path_patterns', []);
-        if ($this->matchesAnyPattern($path, $excludedPatterns) || $this->matchesAnyPattern($next->url, $excludedPatterns)) {
+        // 依頼DF-3: 個人情報・規約などのページ(パスが crawl_skip_words に当たる)も、取得せずに除外する
+        // (ページ数の枠は fetched だけを数えるため、枠を使わない)。リンクの文字での除外は enqueue 時に行う。
+        if ($this->matchesAnyPattern($path, $excludedPatterns) || $this->matchesAnyPattern($next->url, $excludedPatterns)
+            || app(CrawlFrontierPolicy::class)->shouldSkip($next->url)) {
             $next->update(['status' => AnalysisCrawledPage::STATUS_EXCLUDED_BY_PATTERN]);
             $this->dispatchNext(false);
 
@@ -209,8 +213,21 @@ class CrawlWebsitePageJob implements ShouldQueue
         ]);
 
         if ($next->depth < $maxDepth) {
-            foreach ($linkExtractor->extractAbsoluteLinks($result->body, $result->finalUrl) as $link) {
+            // 依頼DF-1/DF-3: リンクの文字も使って、回らないリンク(個人情報・規約など)を除き、
+            // 制度のページへのリンクを前に並べてから enqueue する(同じ深さの中で id が小さくなり、先に回る)。
+            $ordered = app(CrawlFrontierPolicy::class)->orderLinks(
+                $linkExtractor->extractAbsoluteLinksWithText($result->body, $result->finalUrl)
+            );
+            foreach ($ordered['links'] as $link) {
                 $this->enqueue($link, $next->depth + 1, $allowedHosts);
+            }
+            if ($ordered['skipped'] > 0 || $ordered['prioritized'] > 0) {
+                // 件数だけ(URL・本文は出さない)。
+                Log::info('brand_wheel_crawl_links_ordered', [
+                    'website_analysis_id' => $this->websiteAnalysisId,
+                    'skipped' => $ordered['skipped'],
+                    'prioritized' => $ordered['prioritized'],
+                ]);
             }
         }
 
@@ -284,6 +301,11 @@ class CrawlWebsitePageJob implements ShouldQueue
      * ジョブの実行中に他のプロセスがこの1サイトのanalysis_crawled_pagesを
      * 同時に書き換えることは無い(依頼D-1由来、1ジョブ=1ページの直列連鎖
      * という設計そのものが前提)。
+     *
+     * 依頼DF(2026-10-22): 起点の配下／外の段の内側に、さらに「制度の言葉をURLに含む(DF-1) →
+     * 通常 → 同じ親ディレクトリの取得済みが上限に達した(DF-2、後回し)」の段を足した。段が同じなら
+     * 従来どおり depth→id の順。リンクの文字による優先は enqueue の順番(id)で効かせている
+     * (リンクの文字は保存していないため)。範囲・上限は変えない。
      */
     private function selectNextPendingPage(CrawlOriginScopeResolver $originScopeResolver): ?AnalysisCrawledPage
     {
@@ -292,38 +314,99 @@ class CrawlWebsitePageJob implements ShouldQueue
             ->orderBy('depth')
             ->orderBy('id');
 
-        if (! (bool) config('brand_wheel.crawl_prioritize_origin_scope', true)) {
+        $policy = app(CrawlFrontierPolicy::class);
+        $cap = $policy->sameParentSoftCap();
+        $priorityEnabled = (bool) config('brand_wheel.crawl_priority_enabled', true);
+        $originEnabled = (bool) config('brand_wheel.crawl_prioritize_origin_scope', true);
+
+        // すべて無効なら、この依頼より前と完全に同じ順序(depth→idの先頭)。
+        if (! $originEnabled && $cap <= 0 && ! $priorityEnabled) {
             return $defaultOrder()->first();
         }
 
-        $websiteAnalysis = $this->websiteAnalysisForTrackFilter();
-        $scope = $websiteAnalysis !== null ? $originScopeResolver->resolveScope($websiteAnalysis) : null;
-
-        if ($scope === null) {
-            return $defaultOrder()->first();
+        $scope = null;
+        if ($originEnabled) {
+            $websiteAnalysis = $this->websiteAnalysisForTrackFilter();
+            $scope = $websiteAnalysis !== null ? $originScopeResolver->resolveScope($websiteAnalysis) : null;
         }
+
+        // 依頼DF-2: 親ディレクトリごとの取得済みの件数(1サイト最大 crawl_max_pages 件なので、毎回数え直す)。
+        $fetchedPerParent = [];
+        if ($cap > 0) {
+            $fetched = $this->pages()->where('status', AnalysisCrawledPage::STATUS_FETCHED)->get(['url', 'final_url']);
+            foreach ($fetched as $page) {
+                $key = $policy->parentKey((string) ($page->final_url ?: $page->url));
+                $fetchedPerParent[$key] = ($fetchedPerParent[$key] ?? 0) + 1;
+            }
+        }
+
+        // 段(小さいほど先): 起点の配下 → 配下の外(依頼CF-1)。それぞれの中で、
+        // 制度の言葉を含む(依頼DF-1) → 通常 → 同じ親が上限に達した(依頼DF-2、後回し)。
+        // 起点URLが解決できない/起点優先が無効なときは、すべて「配下」として扱う(従来どおり)。
+        $tierOf = function (AnalysisCrawledPage $page) use ($originScopeResolver, $scope, $policy, $cap, $fetchedPerParent): int {
+            $outside = $scope !== null && ! $originScopeResolver->isWithinScope($page->url, $page->final_url, $scope);
+            $capped = $cap > 0 && ($fetchedPerParent[$policy->parentKey($page->url)] ?? 0) >= $cap;
+            $within = $capped ? 2 : ($policy->isPriority($page->url) ? 0 : 1);
+
+            return ($outside ? 3 : 0) + $within;
+        };
 
         $chunkSize = (int) config('brand_wheel.crawl_origin_priority_chunk_size', 200);
-        $firstPage = null;
-        $withinOrigin = null;
+        $best = null;
+        $bestTier = PHP_INT_MAX;
 
-        $defaultOrder()->chunk($chunkSize, function ($chunk) use (&$firstPage, &$withinOrigin, $originScopeResolver, $scope) {
-            $firstPage ??= $chunk->first();
-
-            $match = $chunk->first(
-                fn (AnalysisCrawledPage $page) => $originScopeResolver->isWithinScope($page->url, $page->final_url, $scope)
-            );
-
-            if ($match !== null) {
-                $withinOrigin = $match;
-
-                return false; // 見つかり次第、以降のchunkは読まない。
+        $defaultOrder()->chunk($chunkSize, function ($chunk) use (&$best, &$bestTier, $tierOf) {
+            foreach ($chunk as $page) {
+                $tier = $tierOf($page);
+                if ($tier < $bestTier) {
+                    $best = $page;
+                    $bestTier = $tier;
+                }
+                if ($bestTier === 0) {
+                    return false; // 一番先の段が見つかれば、以降のchunkは読まない。
+                }
             }
         });
 
-        // pending全件を走査しても配下のページが1件も無ければ、先頭行
-        // (=優先を無効化した場合と同じ、depth→id順の最初の行)を返す。
-        return $withinOrigin ?? $firstPage;
+        return $best;
+    }
+
+    /**
+     * 依頼DF: 巡回の終わりに出すログ用の件数(本文・URLは出さない)。
+     *
+     * @return array{priority_fetched: int, same_parent_capped_parents: int, same_parent_deferred_pending: int}
+     */
+    private function frontierPolicyStats(): array
+    {
+        $policy = app(CrawlFrontierPolicy::class);
+        $cap = $policy->sameParentSoftCap();
+        $priorityFetched = 0;
+        $perParent = [];
+
+        foreach ($this->pages()->where('status', AnalysisCrawledPage::STATUS_FETCHED)->get(['url', 'final_url']) as $page) {
+            $url = (string) ($page->final_url ?: $page->url);
+            if ($policy->isPriority($url)) {
+                $priorityFetched++;
+            }
+            $key = $policy->parentKey($url);
+            $perParent[$key] = ($perParent[$key] ?? 0) + 1;
+        }
+
+        $cappedParents = $cap > 0 ? array_keys(array_filter($perParent, fn (int $n) => $n >= $cap)) : [];
+        $deferred = 0;
+        if ($cappedParents !== []) {
+            foreach ($this->pages()->where('status', AnalysisCrawledPage::STATUS_PENDING)->get(['url']) as $page) {
+                if (in_array($policy->parentKey((string) $page->url), $cappedParents, true)) {
+                    $deferred++;
+                }
+            }
+        }
+
+        return [
+            'priority_fetched' => $priorityFetched,
+            'same_parent_capped_parents' => count($cappedParents),
+            'same_parent_deferred_pending' => $deferred,
+        ];
     }
 
     /**
@@ -449,6 +532,8 @@ class CrawlWebsitePageJob implements ShouldQueue
             // site_hierarchy_scope_note(このログとは別に既に出している)
             // で分かる。
             'crawl_prioritize_origin_scope' => (bool) config('brand_wheel.crawl_prioritize_origin_scope', true),
+            // 依頼DF: 制度の言葉をURLに含む取得済みページの数と、上限(DF-2)に達した親ディレクトリの数・後回しの件数。
+            ...$this->frontierPolicyStats(),
         ]);
 
         // 依頼BB-2の安全弁: フロンティアが自然に枯渇した('exhausted')ときに

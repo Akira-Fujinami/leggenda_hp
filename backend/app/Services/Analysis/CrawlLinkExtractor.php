@@ -57,6 +57,62 @@ class CrawlLinkExtractor
     }
 
     /**
+     * 依頼DF(2026-10-22): extractAbsoluteLinks()と同じ規則でリンクを集め、リンクの文字も
+     * 返す(url => 文字)。文字が空のときは、中の画像のalt・aria-label・titleの順に使う。
+     * 同じURLへのリンクが複数あるときは、文字をつないで返す(巡回の優先・除外の判定に使う)。
+     * 返す順番はextractAbsoluteLinks()と同じ(ページ上で最初に現れた順)。
+     *
+     * @return array<string, string>
+     */
+    public function extractAbsoluteLinksWithText(string $html, string $pageUrl): array
+    {
+        $dom = new \DOMDocument;
+        $previous = libxml_use_internal_errors(true);
+        $dom->loadHTML(
+            '<?xml encoding="utf-8"?>'.$html,
+            LIBXML_NOENT | LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING,
+        );
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+
+        $xpath = new \DOMXPath($dom);
+        $links = [];
+        foreach ($xpath->query('//a[@href]') ?: [] as $node) {
+            if (! $node instanceof \DOMElement) {
+                continue;
+            }
+
+            $resolved = $this->resolveHref($pageUrl, $node->getAttribute('href'));
+            if ($resolved === null) {
+                continue;
+            }
+
+            $text = trim((string) preg_replace('/\s+/u', ' ', $node->textContent));
+            if ($text === '') {
+                foreach ($node->getElementsByTagName('img') as $img) {
+                    $alt = trim($img->getAttribute('alt'));
+                    if ($alt !== '') {
+                        $text = $alt;
+
+                        break;
+                    }
+                }
+            }
+            if ($text === '') {
+                $text = trim($node->getAttribute('aria-label') ?: $node->getAttribute('title'));
+            }
+
+            if (! array_key_exists($resolved, $links)) {
+                $links[$resolved] = $text;
+            } elseif ($text !== '' && ! str_contains($links[$resolved], $text)) {
+                $links[$resolved] = trim($links[$resolved].' '.$text);
+            }
+        }
+
+        return $links;
+    }
+
+    /**
      * hrefの生の値を、ページURLを基準に絶対URLへ解決する(依頼CL-3で
      * extractAbsoluteLinks()のループ本体をそのまま切り出して公開した ――
      * 除外規則・解決規則は従来と同一)。fragmentのみ・mailto:・tel:・
