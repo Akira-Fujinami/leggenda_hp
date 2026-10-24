@@ -334,4 +334,94 @@ class CorporateHierarchyTest extends TestCase
         $this->assertStringNotContainsString('G事業', $xml);
         $this->assertStringNotContainsString('H拠点', $xml);
     }
+    // ---------------------------------------------------------------- DG 募集要項・エントリー
+
+    public function test_job_listing_link_on_the_recruit_top_menu_is_shown_as_one_click_inside_the_site(): void
+    {
+        $wa = $this->makeComparisonWebsiteAnalysis();
+        $top = '<html><head><title>採用</title></head><body><header><nav><a href="/recruit/requirements/">募集要項</a></nav></header><main><p>採用です。</p></main></body></html>';
+        $this->addHomepage($wa, self::ORIGIN, $top, PageType::Recruit);
+        $this->addCrawledPage($wa, self::ORIGIN.'fresh/', '新卒', $this->htmlPage('x', '新卒です。'));
+
+        $job = $this->builder()->buildTree($wa)['job_listing'];
+
+        $this->assertTrue($job['found']);
+        $this->assertSame('募集要項', $job['label']);
+        $this->assertFalse($job['external']);
+        $this->assertSame(1, $job['clicks']);
+        $this->assertSame('menu', $job['placement']);
+        $this->assertSame('recruit_top', $job['source']);
+        $this->assertStringContainsString('/recruit/requirements', (string) $job['path']);
+    }
+
+    public function test_an_external_application_service_found_on_a_deeper_page_shows_the_service_name_and_click_count(): void
+    {
+        $wa = $this->makeComparisonWebsiteAnalysis();
+        $this->addHomepage($wa, self::ORIGIN, $this->htmlPage('採用', '採用です。'), PageType::Recruit);
+        $this->addCrawledPage($wa, self::ORIGIN.'career/', '中途', $this->htmlPage('x', '中途です。'), depth: 1);
+        $this->addCrawledPage($wa, self::ORIGIN.'career/sales', '営業', $this->htmlPage('x', '営業です。', '<a href="https://example.herp.careers/v1/x">この職種に応募する</a>'), depth: 2);
+
+        $job = $this->builder()->buildTree($wa)['job_listing'];
+
+        $this->assertTrue($job['found']);
+        $this->assertTrue($job['external']);
+        $this->assertSame('HERP', $job['service']);
+        $this->assertSame(3, $job['clicks'], '深さ2のページのリンク = 採用TOPから3クリック');
+        $this->assertSame('body', $job['placement']);
+    }
+
+    public function test_fewer_clicks_win_over_the_link_placement_and_the_corporate_top_is_used_only_as_a_fallback(): void
+    {
+        $wa = $this->makeComparisonWebsiteAnalysis();
+        $top = '<html><body><main><p>採用です。</p></main><footer><a href="/recruit/entry/">エントリー</a></footer></body></html>';
+        $this->addHomepage($wa, self::ORIGIN, $top, PageType::Recruit);
+        $this->addCrawledPage($wa, self::ORIGIN.'about/', '会社', $this->htmlPage('x', '会社です。', '<a href="/recruit/jobs/">募集要項</a>'), depth: 1);
+        $this->storeCorporateTop($wa, ['会社情報'], url: 'https://www.example.com/');
+
+        $job = $this->builder()->buildTree($wa)['job_listing'];
+
+        $this->assertSame(1, $job['clicks']);
+        $this->assertSame('footer', $job['placement'], '採用TOPのフッターのリンク(1クリック)が、深いページの本文のリンク(2クリック)より先');
+        $this->assertSame('recruit_top', $job['source']);
+    }
+
+    public function test_when_no_job_listing_link_is_found_the_box_says_it_could_not_be_confirmed_and_one_branch_is_folded_at_the_limit(): void
+    {
+        config(['admin_comparison_pptx.site_hierarchy_tree_first_level_limit' => 2]);
+        $wa = $this->siteWithLinks();
+        app(CorporateTopStore::class)->write($wa->analysis_id, $wa->id, ['status' => 'not_found'], null);
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertFalse($tree['job_listing']['found']);
+        $this->assertCount(1, $tree['branches'], '箱のぶん、上限まである枝を1本畳む');
+        $this->assertSame(1, $tree['other_branch_count']);
+
+        $xml = $this->slideXml(app(AdminComparisonPptxGenerator::class)->generateSiteHierarchySlide(['recommended_site_flow_names' => []], $tree));
+        $this->assertStringContainsString('募集要項・エントリー', $xml);
+        $this->assertStringContainsString('募集要項・エントリーへのリンクを確認', $xml);
+    }
+
+    public function test_the_job_listing_box_is_drawn_with_destination_clicks_and_placement_in_the_four_column_tree(): void
+    {
+        $wa = $this->siteWithLinks('<a href="https://x.hrmos.co/pages/self/jobs">募集職種一覧</a>');
+        $this->storeCorporateTop($wa, ['会社情報'], url: 'https://www.example.com/');
+
+        $xml = $this->slideFor($wa);
+
+        foreach (['募集要項・エントリー', '募集職種一覧', '行き先：外部の応募サイト（HRMOS）', '採用TOPから1クリック', 'リンクの場所：ページ本文'] as $text) {
+            $this->assertStringContainsString($text, $xml, $text);
+        }
+    }
+
+    public function test_the_job_listing_box_can_be_disabled(): void
+    {
+        config(['admin_comparison_pptx.site_hierarchy_job_listing_enabled' => false]);
+        $wa = $this->siteWithLinks('<a href="/recruit/requirements/">募集要項</a>');
+
+        $tree = $this->builder()->buildTree($wa);
+
+        $this->assertNull($tree['job_listing']);
+        $this->assertStringNotContainsString('募集要項・エントリー', $this->slideFor($wa));
+    }
 }

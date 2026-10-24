@@ -492,6 +492,22 @@ class AdminComparisonSiteHierarchyBuilder
 
             return $branch;
         }, $result['branches']);
+        // 依頼DG: 募集要項・エントリーへの導線(専用の箱)。箱のぶん、枝が上限まであるときは、ページ数のいちばん少ない枝を「ほかN」に畳む。
+        $result['job_listing'] = null;
+        if ((bool) config('admin_comparison_pptx.site_hierarchy_job_listing_enabled', true)) {
+            $result['job_listing'] = $this->findJobListing($topPage, $pages, $corporateHtml !== null ? ['html' => $corporateHtml, 'url' => (string) $corporateMeta['url'], 'host' => (string) ($corporate['host'] ?? '')] : null, $sourceScope['host']);
+            $limit = (int) config('admin_comparison_pptx.site_hierarchy_tree_first_level_limit');
+            if ($result['branches'] !== [] && count($result['branches']) >= $limit) {
+                $smallest = 0;
+                foreach ($result['branches'] as $k => $branch) {
+                    if ((int) $branch['page_count'] < (int) $result['branches'][$smallest]['page_count']) {
+                        $smallest = $k;
+                    }
+                }
+                array_splice($result['branches'], $smallest, 1);
+                $result['other_branch_count']++;
+            }
+        }
         // 依頼CY-2: 第3階層のページを、ページ名の代わりに「情報の種類」で示す(種類が付かない枝は、従来どおりページ名)。
         $result['branches'] = $this->applyPageKinds($result['branches'], $pages, $websiteAnalysis);
 
@@ -793,6 +809,46 @@ class AdminComparisonSiteHierarchyBuilder
      *
      * @return array<string, mixed>
      */
+    /**
+     * 依頼DG: 保存済みのHTMLから、募集要項・エントリーへのリンクを探す(JobListingPathFinder)。
+     * 採用TOP=1クリック、巡回した深さdのページのリンク=d+1クリック、コーポレートTOP=1クリック(採用サイト側で見つからないときだけ使う)。
+     *
+     * @param  array{base_url: string, htmls: list<array{source: string, html: string}>}  $topPage
+     * @param  Collection<int, AnalysisCrawledPage>  $pages
+     * @param  array{html: string, url: string, host: string}|null  $corporate
+     * @return array<string, mixed>
+     */
+    private function findJobListing(array $topPage, Collection $pages, ?array $corporate, string $originHost): array
+    {
+        $documents = [];
+        foreach ($topPage['htmls'] as $candidate) {
+            $documents[] = ['html' => $candidate['html'], 'base_url' => $topPage['base_url'], 'clicks' => 1, 'source' => 'recruit_top'];
+        }
+
+        $hosts = [$originHost];
+        foreach ($pages->sortBy(fn (AnalysisCrawledPage $page) => [(int) $page->depth, (int) $page->id]) as $page) {
+            $pageUrl = (string) ($page->final_url ?: $page->url);
+            $hosts[] = (string) parse_url($pageUrl, PHP_URL_HOST);
+            $html = $this->readStoredHtml($page->rendered_html_path) ?? $this->readStoredHtml($page->raw_html_path);
+            if ($html !== null) {
+                $documents[] = ['html' => $html, 'base_url' => $pageUrl, 'clicks' => max(1, (int) $page->depth) + 1, 'source' => 'crawled'];
+            }
+        }
+
+        if ($corporate !== null) {
+            $hosts[] = $corporate['host'];
+            $hosts[] = (string) parse_url($corporate['url'], PHP_URL_HOST);
+            $documents[] = ['html' => $corporate['html'], 'base_url' => $corporate['url'], 'clicks' => 1, 'source' => 'corporate_top'];
+        }
+
+        $found = app(JobListingPathFinder::class)->find($documents, $hosts);
+        if (($found['found'] ?? false) === true) {
+            $found['path'] = $found['external'] ? null : $this->displayPath((string) $found['url'], $originHost);
+        }
+
+        return $found;
+    }
+
     public function emptyTree(): array
     {
         return $this->treeResult('url', '', ['url' => '', 'title' => null, 'headings' => [], 'menu_item_count' => 0], [], 0, 0, 0, ['links' => 0, 'url' => 0], null);
@@ -823,6 +879,7 @@ class AdminComparisonSiteHierarchyBuilder
             'corporate' => null,
             'corporate_missing' => false,
             'recruit_path' => '',
+            'job_listing' => null,
         ];
     }
 
@@ -1653,7 +1710,7 @@ class AdminComparisonSiteHierarchyBuilder
             ->where('website_analysis_id', $websiteAnalysis->id)
             ->where('status', AnalysisCrawledPage::STATUS_FETCHED)
             ->orderBy('id')
-            ->get(['id', 'url', 'final_url', 'http_status', 'title', 'raw_html_path', 'rendered_html_path']);
+            ->get(['id', 'url', 'final_url', 'http_status', 'title', 'raw_html_path', 'rendered_html_path', 'depth']);
     }
 
     /**

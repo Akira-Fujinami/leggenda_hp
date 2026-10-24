@@ -33,6 +33,8 @@ class AdminComparisonSiteHierarchyTreeTest extends TestCase
         config(['admin_comparison_pptx.site_hierarchy_tree_widen_min_pages' => 0]);
         // 依頼CY-2の「情報の種類で示す」は専用のテストで確かめる(ここでは、第3階層をページ名のまま確かめる)。
         config(['admin_comparison_pptx.site_hierarchy_page_kinds_enabled' => false]);
+        // 依頼DG の「募集要項・エントリー」の箱(枝を1本畳む)は専用のテストで確かめる(ここでは無効にする)。
+        config(['admin_comparison_pptx.site_hierarchy_job_listing_enabled' => false]);
     }
 
     private function builder(): AdminComparisonSiteHierarchyBuilder

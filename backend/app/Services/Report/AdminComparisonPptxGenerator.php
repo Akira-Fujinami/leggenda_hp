@@ -1943,6 +1943,15 @@ class AdminComparisonPptxGenerator
         $pitch = self::TREE_LINE_PITCH_IN;
         $y = self::TREE_TOP_IN;
         $centers = [];
+        // 依頼DG: 第1階層の先頭に「募集要項・エントリー」の箱。
+        if (($tree['job_listing'] ?? null) !== null) {
+            [$jobCenter, $jobHeight] = $this->addJobListingRow(
+                $slide, $tree['job_listing'], $y,
+                [self::TREE_BRANCH_LEFT_IN, self::TREE_BRANCH_WIDTH_IN], [self::TREE_PAGE_LEFT_IN, self::TREE_PAGE_WIDTH_IN],
+            );
+            $centers[] = $jobCenter;
+            $y += $jobHeight + self::TREE_ROW_GAP_IN + 0.04;
+        }
 
         $survey = $tree['survey'] ?? null;
         foreach ($branches as $i => $branch) {
@@ -2175,6 +2184,14 @@ class AdminComparisonPptxGenerator
         $pitch = self::TREE_LINE_PITCH_IN;
         $y = self::TREE_TOP_IN;
         $centers = [];
+        $jobOffset = 0.0;
+        // 依頼DG: 第2階層の先頭に「募集要項・エントリー」の箱。
+        if (($tree['job_listing'] ?? null) !== null) {
+            [$jobCenter, $jobHeight] = $this->addJobListingRow($slide, $tree['job_listing'], $y, $c3, $c4);
+            $centers[] = $jobCenter;
+            $jobOffset = $jobHeight + self::TREE_ROW_GAP_IN + 0.04;
+            $y += $jobOffset;
+        }
         foreach ($branches as $i => $branch) {
             $cell = $survey['branches'][$i] ?? null;
             $lineCount = $survey !== null
@@ -2221,7 +2238,10 @@ class AdminComparisonPptxGenerator
         }
 
         // 列2: 採用の箱(強調)。列3の枝の真ん中に高さをそろえる。
-        $mid = $centers === [] ? self::TREE_TOP_IN + 0.4 : ($centers[0] + $centers[count($centers) - 1]) / 2;
+        // 依頼DG: 採用の箱の高さは、採用サイトの区分(枝)の真ん中に合わせる(募集要項の箱は含めない ―― 他のメニューの箱の場所を変えないため)。
+        // 募集要項の箱のぶん枝が下がっても、採用の箱は従来の高さに置く(列2の他のメニューの箱が収まる件数を減らさないため)。
+        $branchCenters = ($tree['job_listing'] ?? null) !== null ? array_slice($centers, 1) : $centers;
+        $mid = $branchCenters === [] ? self::TREE_TOP_IN + 0.4 : ($branchCenters[0] + $branchCenters[count($branchCenters) - 1]) / 2 - $jobOffset;
         $redirected = (bool) ($tree['top']['input_redirected'] ?? false);
         $recruitHeight = 0.62 + ($redirected ? 0.2 : 0.0);
         $recruitTop = max(self::TREE_TOP_IN, $mid - $recruitHeight / 2);
@@ -2477,6 +2497,73 @@ class AdminComparisonPptxGenerator
     /**
      * 階層の色で塗った箱。$outlineを渡すと、その色の太い枠(強調)。
      */
+    /**
+     * 依頼DG: 「募集要項・エントリー」の箱(枝の列)と、その右に行き先・クリック数・リンクの場所(ページの列)。
+     * 見つからなかったときは点線の箱と「確認できませんでした」の一文(「無い」とは書かない)。
+     *
+     * @param  array<string, mixed>  $job
+     * @param  array{0: float, 1: float}  $branchColumn
+     * @param  array{0: float, 1: float}  $pageColumn
+     * @return array{0: float, 1: float} [中心のy, 行の高さ]
+     */
+    private function addJobListingRow(Slide $slide, array $job, float $top, array $branchColumn, array $pageColumn): array
+    {
+        $height = self::TREE_BRANCH_BOX_HEIGHT_IN;
+        $center = $top + $height / 2;
+        $fill = (string) config('admin_comparison_pptx.site_hierarchy_job_listing_fill');
+        $border = (string) config('admin_comparison_pptx.site_hierarchy_job_listing_border');
+        $found = ($job['found'] ?? false) === true;
+
+        if ($found) {
+            $this->addFilledRect($slide, $branchColumn[0], $top, $branchColumn[1], $height, $fill);
+            $this->drawRectOutline($slide, $branchColumn[0], $top, $branchColumn[1], $height, $border, 1.5);
+        } else {
+            $this->addFilledRect($slide, $branchColumn[0], $top, $branchColumn[1], $height, self::WHITE);
+            $this->drawRectOutline($slide, $branchColumn[0], $top, $branchColumn[1], $height, $border, 1.0, Border::DASH_DASH);
+        }
+
+        $box = $slide->createRichTextShape();
+        $this->position($box, $branchColumn[0], $top, $branchColumn[1], $height);
+        $box->setWrap(RichText::WRAP_SQUARE);
+        $box->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        $this->font($box->getActiveParagraph()->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_job_listing_box_title')), 10, true, $found ? self::BODY_TEXT : self::GAP_TEXT);
+        if ($found && trim((string) ($job['label'] ?? '')) !== '') {
+            $this->font($box->createParagraph()->createTextRun('「'.$this->wrapOrEllipsizeForLines((string) $job['label'], $branchColumn[1] - 0.3, 8.0, false, 1).'」'), 8, false, self::BODY_TEXT);
+        }
+
+        $lines = $found ? $this->jobListingLines($job) : [(string) config('admin_comparison_pptx.site_hierarchy_job_listing_not_found')];
+        $text = $slide->createRichTextShape();
+        $this->position($text, $pageColumn[0], $top, $pageColumn[1], $height);
+        $text->setInsetLeft(5)->setInsetTop(0)->setInsetBottom(0);
+        $text->setWrap(RichText::WRAP_SQUARE);
+        $text->setVerticalAlignCenter(RichText::VALIGN_CENTER);
+        foreach ($lines as $k => $line) {
+            $paragraph = $k === 0 ? $text->getActiveParagraph() : $text->createParagraph();
+            $this->font($paragraph->createTextRun($this->wrapOrEllipsizeForLines($line, $pageColumn[1] - 0.1, 8.0, false, $found ? 1 : 2)), 8, $found && $k === 0, $found ? self::BODY_TEXT : self::GAP_TEXT);
+        }
+        $this->drawLine($slide, [$branchColumn[0] + $branchColumn[1], $center], [$pageColumn[0], $center], $border, 0.75, $found ? null : Border::DASH_DASH);
+
+        return [$center, $height];
+    }
+
+    /**
+     * @param  array<string, mixed>  $job
+     * @return list<string>
+     */
+    private function jobListingLines(array $job): array
+    {
+        $destination = ($job['external'] ?? false)
+            ? sprintf((string) config('admin_comparison_pptx.site_hierarchy_job_listing_dest_external'), (string) ($job['service'] ?? $job['host'] ?? ''))
+            : sprintf((string) config('admin_comparison_pptx.site_hierarchy_job_listing_dest_internal'), (string) ($job['path'] ?? $job['host'] ?? ''));
+        $from = (string) config(($job['source'] ?? '') === 'corporate_top'
+            ? 'admin_comparison_pptx.site_hierarchy_job_listing_from_corporate'
+            : 'admin_comparison_pptx.site_hierarchy_job_listing_from_recruit');
+        $clicks = sprintf((string) config('admin_comparison_pptx.site_hierarchy_job_listing_clicks'), $from, (int) ($job['clicks'] ?? 1));
+        $placement = (string) (((array) config('admin_comparison_pptx.site_hierarchy_job_listing_placement'))[(string) ($job['placement'] ?? 'body')] ?? '');
+
+        return [$destination, $placement !== '' ? $clicks.'　／　'.$placement : $clicks];
+    }
+
     private function addLevelBox(Slide $slide, float $left, float $top, float $width, float $height, string $fill, ?string $outline): void
     {
         $this->addFilledRect($slide, $left, $top, $width, $height, $fill);

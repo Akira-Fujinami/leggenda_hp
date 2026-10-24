@@ -861,6 +861,42 @@ return [
     | (大文字小文字は区別しない)。除いた枝は「ほかN」の数にも、冒頭の巡回件数にも影響しない。除いた件数はログにだけ出す。
     */
     'site_hierarchy_excluded_branch_words' => ['privacy', 'プライバシー', '個人情報', 'cookie', 'terms', '規約', 'sitemap', 'サイトマップ'],
+
+    /*
+    | 依頼DG(2026-10-23): 階層図に「募集要項・エントリー」への導線を、専用の箱で出す(App\Services\Report\JobListingPathFinder)。
+    | 保存済みのHTML(採用TOP・巡回した各ページ・コーポレートTOP)のリンクから、いちばん近いもの(採用TOPからのクリック数 →
+    | リンクの場所(メニュー → 本文 → フッター) → 言葉の一覧の順)を1つ選ぶ。AIなし・通信しない。一覧は一般的な語だけにする。
+    | 見つからなくても「無い」とは書かない(巡回した範囲で確認できなかった、と書く)。
+    */
+    'site_hierarchy_job_listing_enabled' => (bool) env('SITE_HIERARCHY_JOB_LISTING_ENABLED', true),
+    // リンクの文字に含まれていれば募集要項へのリンク(前ほど強い)。
+    'site_hierarchy_job_listing_words' => ['募集要項', '募集職種', '職種一覧', '求人一覧', '求人情報', '募集中の', 'オープンポジション', 'open positions', 'job openings', 'エントリー', '応募', 'apply', 'entry'],
+    // リンク先のパスに含まれていれば募集要項へのリンク(文字で判定できなかったとき)。
+    'site_hierarchy_job_listing_path_words' => ['requirements', 'job-list', 'joblist', 'job_list', 'positions', 'openings', 'entry', 'apply', '募集要項'],
+    // 外部の応募受付サービス(ホストの末尾 => 表示名)。ここへのリンクは文字に関わらず募集要項へのリンクとみなす。
+    'site_hierarchy_job_listing_hosts' => [
+        'hrmos.co' => 'HRMOS',
+        'herp.careers' => 'HERP',
+        'talentio.com' => 'Talentio',
+        'en-gage.net' => 'engage',
+        'jobs.lever.co' => 'Lever',
+        'greenhouse.io' => 'Greenhouse',
+        'workable.com' => 'Workable',
+        'smartrecruiters.com' => 'SmartRecruiters',
+        'wantedly.com' => 'Wantedly',
+        'job.mynavi.jp' => 'マイナビ',
+        'job.rikunabi.com' => 'リクナビ',
+    ],
+    'site_hierarchy_job_listing_box_title' => '募集要項・エントリー',
+    'site_hierarchy_job_listing_fill' => 'FBE9DD',
+    'site_hierarchy_job_listing_border' => 'C8682C',
+    'site_hierarchy_job_listing_dest_internal' => '行き先：サイト内（%s）',
+    'site_hierarchy_job_listing_dest_external' => '行き先：外部の応募サイト（%s）',
+    'site_hierarchy_job_listing_clicks' => '%sから%dクリック',
+    'site_hierarchy_job_listing_from_recruit' => '採用TOP',
+    'site_hierarchy_job_listing_from_corporate' => 'コーポレートTOP',
+    'site_hierarchy_job_listing_placement' => ['menu' => 'リンクの場所：メニュー', 'body' => 'リンクの場所：ページ本文', 'footer' => 'リンクの場所：フッターのみ'],
+    'site_hierarchy_job_listing_not_found' => '巡回した範囲では、募集要項・エントリーへのリンクを確認できませんでした。',
     /*
     |--------------------------------------------------------------------------
     | 依頼CT-1: ブランド・ホイール比較の見出しの下の「強み」「弱み」の一文
