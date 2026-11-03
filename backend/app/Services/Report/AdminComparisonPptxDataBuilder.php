@@ -219,6 +219,8 @@ class AdminComparisonPptxDataBuilder
             }
             $page ??= ['company_name' => $name];
             $page['panel'] = $panel;
+            // 依頼DK: 会社の理解のページと同じ会社の順に並べるため、どの会社のページかを持たせる。
+            $page['website_analysis_id'] = (int) $wa->id;
             $pages[] = $page;
         }
 

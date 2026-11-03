@@ -653,6 +653,12 @@ class AnalysisPipeline
             return;
         }
 
+        // 依頼DK: 各社の「私たちが理解している、{社名}という会社」を作るジョブ(Claude・Web検索つき)が終わるまで待つ
+        // (config('company_profile.enabled')がtrueの比較のみ。既定のfalseでは常に待たない)。
+        if (app(\App\Services\CompanyProfile\CompanyProfileDispatcher::class)->holdFinalization($analysis)) {
+            return;
+        }
+
         FinalizeAnalysisJob::dispatch($analysisId)->onQueue(JobType::FinalizeAnalysis->queueName());
     }
 }

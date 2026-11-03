@@ -252,7 +252,23 @@ class AnalysisController extends Controller
             $topMessageSlides = [];
             if ((bool) config('top_message_draft.enabled')) {
                 $data['top_message_missing_note'] = null;
+                // 依頼DK: 各社の「私たちが理解している、{社名}という会社」(保存済みの結果を読むだけ)を、その会社の
+                // 「トップメッセージと制度」の直前に入れる。無効・結果が無い会社は入れない。
+                $draftPages = [];
                 foreach ($dataBuilder->buildTopMessageDraftData($analysis, $viewModel) as $draftPage) {
+                    $draftPages[(int) ($draftPage['website_analysis_id'] ?? 0)] = $draftPage;
+                }
+                $profileGenerator = app(\App\Services\Report\CompanyProfileSlideGenerator::class);
+                foreach (app(\App\Services\CompanyProfile\CompanyProfilePageBuilder::class)->build($analysis, $viewModel) as $row) {
+                    if ($row['page'] !== null) {
+                        $topMessageSlides[] = $profileGenerator->generate($row['page']);
+                    }
+                    if (isset($draftPages[$row['website_analysis_id']])) {
+                        $topMessageSlides[] = $slideGenerator->generateTopMessageDraftSlide($draftPages[$row['website_analysis_id']]);
+                        unset($draftPages[$row['website_analysis_id']]);
+                    }
+                }
+                foreach ($draftPages as $draftPage) {
                     $topMessageSlides[] = $slideGenerator->generateTopMessageDraftSlide($draftPage);
                 }
             } else {
