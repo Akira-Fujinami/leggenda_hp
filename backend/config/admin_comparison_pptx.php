@@ -787,6 +787,8 @@ return [
     'corporate_top_menu_first_level_max' => 12,
     // 依頼DL: header・nav・class/idの語のどれでも他のメニューが取れないとき、ページの中の「1段目のディレクトリの入口」へのリンクを使う。
     'corporate_top_menu_section_roots_enabled' => true,
+    // 依頼DM: 「1段目のディレクトリの入口」とみなさない、言語の切り替えのディレクトリ。
+    'corporate_top_menu_language_segments' => ['en', 'ja', 'jp', 'zh', 'zh-cn', 'zh-tw', 'cn', 'tw', 'ko', 'kr', 'english', 'global'],
     'corporate_top_menu_exclude_exact' => ['home', 'top', 'トップ', 'トップページ', 'ホーム', 'menu', 'メニュー', '閉じる', 'close', 'search', '検索', 'login', 'log in', 'sign in', 'ログイン', 'english', 'japanese', '日本語', 'en', 'jp', 'language', 'sitemap', 'サイトマップ', 'skip to content', 'お問い合わせ', 'お問合せ', 'contact'],
     // 依頼DA-2: 「トップページへ」「一覧へ」「詳しくはこちら」「もっと見る」のような、区分ではないリンクの文字も除く。
     'corporate_top_menu_exclude_contains' => ['お問い合わせ', 'お問合せ', 'ログイン', '言語', 'language', '検索', 'トップページへ', '一覧へ', '一覧を見る', '詳しくはこちら', '詳しく見る', 'もっと見る', '本文へ', 'コンテンツへ', 'skip to'],

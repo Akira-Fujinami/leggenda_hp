@@ -69,4 +69,31 @@ class ComparisonNamesAndMenuTest extends TestCase
         $this->assertSame('section_roots', $menu['source']);
         $this->assertSame(['事業内容', '実績紹介', '会社情報', 'IR情報'], $menu['labels']);
     }
+
+    public function test_when_the_menu_has_too_many_items_only_the_links_to_first_level_directories_are_kept(): void
+    {
+        $items = '';
+        foreach (['solutions' => '事業内容', 'achievements' => '実績紹介', 'corporate' => '会社情報', 'ir' => 'IR情報', 'sustainability' => 'サステナビリティ'] as $dir => $label) {
+            $items .= '<a href="/'.$dir.'/">'.$label.'</a>';
+            foreach ([1, 2, 3] as $n) {
+                $items .= '<a href="/'.$dir.'/page'.$n.'/">'.$label.'の項目'.$n.'</a>';
+            }
+        }
+        $html = '<html><body><header>'.$items.'<a href="/recruit/">採用情報</a><a href="/en/">English</a></header><main><p>本文</p></main></body></html>';
+
+        $menu = app(CorporateTopAnalyzer::class)->otherMenu($html, null, 'https://www.example.com/', ['origin_url' => 'https://www.example.com/recruit/', 'host' => 'www.example.com', 'path' => '/recruit/'], '採用情報');
+
+        $this->assertSame('static_nav_roots', $menu['source']);
+        $this->assertSame(['事業内容', '実績紹介', '会社情報', 'IR情報', 'サステナビリティ'], $menu['labels']);
+        $this->assertArrayHasKey('too_many', $menu['excluded']['static_nav']);
+    }
+
+    public function test_links_to_language_directories_are_not_taken_as_sections(): void
+    {
+        $html = '<html><body><div class="hd"><a href="/en/">NOMURA Co.,Ltd.</a><a href="/zh-cn/">中文</a><a href="/solutions/">事業内容</a></div></body></html>';
+
+        $menu = app(CorporateTopAnalyzer::class)->otherMenu($html, null, 'https://www.example.com/', ['origin_url' => 'https://www.example.com/recruit/', 'host' => 'www.example.com', 'path' => '/recruit/'], '採用情報');
+
+        $this->assertSame(['事業内容'], $menu['labels']);
+    }
 }

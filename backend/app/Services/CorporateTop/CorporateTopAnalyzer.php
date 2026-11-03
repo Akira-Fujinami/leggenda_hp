@@ -111,6 +111,16 @@ class CorporateTopAnalyzer
             if ($labels !== []) {
                 return ['labels' => $labels, 'source' => $source, 'raw_counts' => $rawCounts, 'excluded' => $excluded];
             }
+            // 依頼DM: 項目が多すぎた(サブメニューまで拾った)ときは捨てずに、その中の「1段目のディレクトリの入口」へのリンクだけで取り直す。
+            if (isset($reasons['too_many'])) {
+                $roots = array_values(array_filter($links, fn (array $link) => $this->isSectionRoot((string) $link['href'], $baseUrl)));
+                $rootReasons = [];
+                $labels = $this->filterMenu($roots, $baseUrl, $scope, $recruitLabel, $rootReasons);
+                $excluded[$source.'_roots'] = $rootReasons;
+                if ($labels !== []) {
+                    return ['labels' => $labels, 'source' => $source.'_roots', 'raw_counts' => $rawCounts, 'excluded' => $excluded];
+                }
+            }
         }
 
         return ['labels' => [], 'source' => null, 'raw_counts' => $rawCounts, 'excluded' => $excluded];
@@ -171,6 +181,27 @@ class CorporateTopAnalyzer
     }
 
     /**
+     * 依頼DM: 同じホストの「1段目のディレクトリの入口」(パスが /xxx/ か /xxx だけ。拡張子・クエリなし)へのURLか。
+     * 言語の切り替え(/en/ など。config corporate_top_menu_language_segments)は入口とみなさない。
+     */
+    private function isSectionRoot(string $href, string $baseUrl): bool
+    {
+        if (trim($href) === '') {
+            return false;
+        }
+        $url = $this->linkExtractor->resolveHref($baseUrl, trim($href));
+        if ($url === null || $this->bareHost($url) !== $this->bareHost($baseUrl) || parse_url($url, PHP_URL_QUERY) !== null) {
+            return false;
+        }
+        $segments = array_values(array_filter(explode('/', (string) parse_url($url, PHP_URL_PATH)), fn (string $s) => $s !== ''));
+        if (count($segments) !== 1 || str_contains($segments[0], '.')) {
+            return false;
+        }
+
+        return ! in_array(strtolower($segments[0]), array_map('strtolower', (array) config('admin_comparison_pptx.corporate_top_menu_language_segments', [])), true);
+    }
+
+    /**
      * 依頼DL: ページの中(footerの外)のリンクのうち、同じホストの「1段目のディレクトリの入口」(パスが /xxx/ か /xxx だけ)へのものを、
      * 文書順に取る(同じURLは最初の1つ)。メニューを header・nav・class/id の語で見つけられないサイトの代わりの取り方。
      *
@@ -190,14 +221,10 @@ class CorporateTopAnalyzer
                 continue;
             }
             $url = $this->linkExtractor->resolveHref($baseUrl, trim($node->getAttribute('href')));
-            if ($url === null || $this->bareHost($url) !== $baseHost || parse_url($url, PHP_URL_QUERY) !== null) {
+            if ($url === null || ! $this->isSectionRoot($url, $baseUrl)) {
                 continue;
             }
-            $segments = array_values(array_filter(explode('/', (string) parse_url($url, PHP_URL_PATH)), fn (string $s) => $s !== ''));
-            if (count($segments) !== 1 || str_contains($segments[0], '.')) {
-                continue;
-            }
-            $key = strtolower($segments[0]);
+            $key = strtolower((string) parse_url($url, PHP_URL_PATH));
             $label = $this->labelOf($node);
             if (isset($seen[$key]) || $label === null || preg_match('/[\p{L}\p{N}]/u', $label) !== 1) {
                 continue;
