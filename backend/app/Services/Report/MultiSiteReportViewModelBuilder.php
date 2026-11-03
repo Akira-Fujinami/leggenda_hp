@@ -178,7 +178,8 @@ class MultiSiteReportViewModelBuilder
         );
 
         return new MultiSiteReportViewModel(
-            selfCompanyDisplayName: (string) ($analysis->project?->leadCompany?->company_name ?? 'お客様'),
+            // 依頼DL: 比較では、入力した自社名を優先する(ComparisonCompanyName)。
+            selfCompanyDisplayName: \App\Support\Report\ComparisonCompanyName::self($analysis),
             generatedAtLabel: sprintf('%d年%d月%d日', now()->year, now()->month, now()->day),
             selfWebsiteUrl: (string) ($selfWebsiteAnalysis?->website?->url ?? ''),
             competitors: $competitors,

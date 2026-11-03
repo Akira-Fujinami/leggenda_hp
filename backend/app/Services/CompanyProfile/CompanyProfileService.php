@@ -36,7 +36,7 @@ class CompanyProfileService
         $analysis->loadMissing('websiteAnalyses.website');
         $companies = [];
         foreach ($analysis->websiteAnalyses as $websiteAnalysis) {
-            $companies[(string) $websiteAnalysis->id] = $this->composeCompany($websiteAnalysis, (string) ($websiteAnalysis->website?->name ?? ''));
+            $companies[(string) $websiteAnalysis->id] = $this->composeCompany($websiteAnalysis, \App\Support\Report\ComparisonCompanyName::forWebsite($analysis, $websiteAnalysis->website));
         }
 
         $result = [

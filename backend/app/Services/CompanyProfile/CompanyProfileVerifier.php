@@ -90,9 +90,10 @@ class CompanyProfileVerifier
             return ['profile' => null, 'rejected' => $this->rejected];
         }
 
+        // 依頼DL: 出典の行を「自社サイト」と「外部」に分けて短くまとめるため、会社自身のドメインかを持たせる。
         $sources = [];
         foreach ($this->sources as $url => $title) {
-            $sources[] = ['url' => $url, 'title' => $title];
+            $sources[] = ['url' => $url, 'title' => $title, 'own' => $this->domains->isOwn($url, (array) $material['own_domains'])];
         }
 
         return [

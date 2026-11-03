@@ -64,7 +64,7 @@ class CompanyProfileSlideGenerator
             if ((bool) $page['is_self']) {
                 $this->addQuestion($slide);
             }
-            $this->addFooter($slide, $this->sourceNote((array) ($profile['sources'] ?? [])));
+            $this->addFooter($slide, $this->sourceNote((array) ($profile['sources'] ?? []), (string) $page['company_name']));
         });
     }
 
@@ -200,31 +200,64 @@ class CompanyProfileSlideGenerator
     }
 
     /**
-     * @param  list<array{url: string, title: string}>  $sources
+     * 依頼DL: 出典の行。ページの<title>をそのまま並べず、短くまとめる。
+     *   出典：{社名}のサイト（ページ名／ページ名…）、{外部のサイト名}（ページ名）、…
+     * ページ名は<title>の区切り(｜ | ／ ‐ など)の最初の部分、外部のサイト名は最後の部分(区切りが無ければホスト名)。
+     *
+     * @param  list<array{url: string, title: string, own?: bool}>  $sources
      */
-    private function sourceNote(array $sources): string
+    private function sourceNote(array $sources, string $companyName): string
     {
-        $names = [];
+        $groups = [];
         foreach ($sources as $source) {
-            $name = trim((string) ($source['title'] ?? ''));
-            if ($name === '') {
-                $name = (string) parse_url((string) $source['url'], PHP_URL_HOST);
+            $parts = $this->titleParts((string) ($source['title'] ?? ''));
+            $host = (string) parse_url((string) $source['url'], PHP_URL_HOST);
+            $page = $parts[0] ?? $host;
+            if ((bool) ($source['own'] ?? false)) {
+                $key = 'own';
+                $label = sprintf((string) config('company_profile.source_own_label'), $companyName);
+            } else {
+                $key = (new \App\Services\CompanyProfile\CompanyDomain)->registrable($host);
+                $label = count($parts) > 1 ? (string) end($parts) : $host;
             }
-            if (mb_strlen($name) > 40) {
-                $name = mb_substr($name, 0, 39).'…';
-            }
-            if ($name !== '' && ! in_array($name, $names, true)) {
-                $names[] = $name;
+            $groups[$key] ??= ['label' => $this->shorten($label, 20), 'pages' => []];
+            $page = $this->shorten($page, 24);
+            if ($page !== '' && $page !== $groups[$key]['label'] && ! in_array($page, $groups[$key]['pages'], true)) {
+                $groups[$key]['pages'][] = $page;
             }
         }
+        if (isset($groups['own'])) {
+            $groups = ['own' => $groups['own']] + $groups;
+        }
+
         $max = (int) config('company_profile.source_max');
-        $shown = array_slice($names, 0, $max);
-        $note = (string) config('company_profile.source_prefix').implode((string) config('company_profile.source_separator'), $shown);
-        if (count($names) > $max) {
-            $note .= sprintf('　ほか%d件', count($names) - $max);
+        $items = [];
+        foreach (array_slice(array_values($groups), 0, $max) as $group) {
+            $pages = array_slice($group['pages'], 0, 3);
+            $more = count($group['pages']) - count($pages);
+            $items[] = $group['label'].($pages === [] ? '' : '（'.implode((string) config('company_profile.source_separator'), $pages).($more > 0 ? sprintf('ほか%d', $more) : '').'）');
+        }
+        $note = (string) config('company_profile.source_prefix').implode('、', $items);
+        if (count($groups) > $max) {
+            $note .= sprintf('、ほか%d件', count($groups) - $max);
         }
 
         return $note;
+    }
+
+    /** @return list<string> */
+    private function titleParts(string $title): array
+    {
+        $parts = preg_split('/\s*[|｜]\s*|\s+[-‐–—―]\s+|\s*／\s*/u', trim($title)) ?: [];
+
+        return array_values(array_filter(array_map('trim', $parts), fn (string $p) => $p !== ''));
+    }
+
+    private function shorten(string $text, int $max): string
+    {
+        $text = trim($text);
+
+        return mb_strlen($text) > $max ? mb_substr($text, 0, $max - 1).'…' : $text;
     }
 
     private function addFooter(Slide $slide, string $note): void

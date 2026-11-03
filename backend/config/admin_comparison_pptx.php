@@ -768,6 +768,8 @@ return [
     // 第1階層に名前だけ並べる、採用以外のメニュー(薄く)の上限。超えたら「ほかN」。
     // 依頼CY-1: 第1階層に出す、コーポレートの他メニューの件数の上限(超えた分は「ほかN」)。
     'corporate_top_other_menu_limit' => 6,
+    // 依頼DL: 第1階層の他のメニューの箱の高さ(in)。採用の箱と同じ塗り・文字で描く。
+    'corporate_top_other_menu_box_height' => 0.34,
 
     /*
     | 依頼CY-1: コーポレートTOPのメニューの取り方。次の順で取り、取れた(下の除外を通った項目が1件以上ある)時点で止める。
@@ -783,6 +785,8 @@ return [
     // 依頼DA-2: どの取り方も、メニューの1段目の項目だけを取る(サブメニューの中は取らない)。除いたあとの1段目の項目がこの数を超えたら、
     // メニューの取り出しに失敗したとみなして、その取り方は使わず次の取り方へ進む(0以下=上限なし)。
     'corporate_top_menu_first_level_max' => 12,
+    // 依頼DL: header・nav・class/idの語のどれでも他のメニューが取れないとき、ページの中の「1段目のディレクトリの入口」へのリンクを使う。
+    'corporate_top_menu_section_roots_enabled' => true,
     'corporate_top_menu_exclude_exact' => ['home', 'top', 'トップ', 'トップページ', 'ホーム', 'menu', 'メニュー', '閉じる', 'close', 'search', '検索', 'login', 'log in', 'sign in', 'ログイン', 'english', 'japanese', '日本語', 'en', 'jp', 'language', 'sitemap', 'サイトマップ', 'skip to content', 'お問い合わせ', 'お問合せ', 'contact'],
     // 依頼DA-2: 「トップページへ」「一覧へ」「詳しくはこちら」「もっと見る」のような、区分ではないリンクの文字も除く。
     'corporate_top_menu_exclude_contains' => ['お問い合わせ', 'お問合せ', 'ログイン', '言語', 'language', '検索', 'トップページへ', '一覧へ', '一覧を見る', '詳しくはこちら', '詳しく見る', 'もっと見る', '本文へ', 'コンテンツへ', 'skip to'],

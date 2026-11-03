@@ -2259,29 +2259,37 @@ class AdminComparisonPptxGenerator
             $this->font($box->createParagraph()->createTextRun((string) config('admin_comparison_pptx.site_hierarchy_tree_top_redirected_note')), 8, false, (string) $texts[1]);
         }
 
-        // 列2: 採用以外のメニュー(名前だけ、薄く)。採用の箱の下に並べる。
+        // 列2: 採用以外のメニュー。依頼DL: 採用の箱と同じ塗り・文字の箱にする(採用の箱だけ枠で強調)。
+        // 採用の箱の上と下の空きに、メニューの順で上から並べる(上に半分まで、残りは下)。収まらない分は「ほかN」にまとめる。
         $otherColor = (string) config('admin_comparison_pptx.site_hierarchy_other_menu_text');
-        $otherBorder = (string) config('admin_comparison_pptx.site_hierarchy_other_menu_border');
-        $otherTop = $recruitTop + $recruitHeight + 0.12;
+        $boxHeight = (float) config('admin_comparison_pptx.corporate_top_other_menu_box_height');
+        $boxPitch = $boxHeight + 0.08;
+        $bottomLimit = self::HIERARCHY_AXIS_CAVEAT_RULE_TOP_IN - 0.08 - 0.22;
+        $aboveFit = max(0, (int) floor(($recruitTop - self::TREE_TOP_IN) / $boxPitch));
+        $belowTop = $recruitTop + $recruitHeight + 0.08;
+        $belowFit = max(0, (int) floor(($bottomLimit - $belowTop + 0.08) / $boxPitch));
+        $menu = array_values($corporate['other_menu']);
+        $shown = array_slice($menu, 0, $aboveFit + $belowFit);
+        $corporate['other_menu_more'] += count($menu) - count($shown);
+        $aboveCount = min($aboveFit, intdiv(count($shown), 2));
+        if (count($shown) - $aboveCount > $belowFit) {
+            $aboveCount = count($shown) - $belowFit;
+        }
         $otherCenters = [];
-        // 免責文の固定位置(罫線)より上に収まる件数まで。収まらない分は「ほかN」にまとめる。
-        $fit = max(0, (int) floor((self::HIERARCHY_AXIS_CAVEAT_RULE_TOP_IN - 0.08 - $otherTop - 0.2) / 0.3));
-        $hidden = max(0, count($corporate['other_menu']) - $fit);
-        $corporate['other_menu'] = array_slice($corporate['other_menu'], 0, $fit);
-        $corporate['other_menu_more'] += $hidden;
-        foreach ($corporate['other_menu'] as $k => $name) {
-            $top = $otherTop + $k * 0.3;
-            $this->addLevelBox($slide, $c2[0], $top, $c2[1], 0.24, self::WHITE, null);
-            $this->drawRectOutline($slide, $c2[0], $top, $c2[1], 0.24, $otherBorder, 0.75);
+        foreach ($shown as $k => $name) {
+            $top = $k < $aboveCount
+                ? $recruitTop - ($aboveCount - $k) * $boxPitch
+                : $belowTop + ($k - $aboveCount) * $boxPitch;
+            $this->addLevelBox($slide, $c2[0], $top, $c2[1], $boxHeight, (string) $fills[1], null);
             $text = $slide->createRichTextShape();
-            $this->position($text, $c2[0], $top, $c2[1], 0.24);
+            $this->position($text, $c2[0], $top, $c2[1], $boxHeight);
             $text->setInsetTop(0)->setInsetBottom(0);
             $text->setVerticalAlignCenter(RichText::VALIGN_CENTER);
-            $this->font($text->getActiveParagraph()->createTextRun($this->wrapOrEllipsizeForLines($name, $c2[1] - 0.1, 8.0, false, 1)), 8, false, $otherColor);
-            $otherCenters[] = $top + 0.12;
+            $this->font($text->getActiveParagraph()->createTextRun($this->wrapOrEllipsizeForLines($name, $c2[1] - 0.1, 10.0, true, 1)), 10, true, (string) $texts[1]);
+            $otherCenters[] = $top + $boxHeight / 2;
         }
         if ($corporate['other_menu_more'] > 0) {
-            $top = $otherTop + count($corporate['other_menu']) * 0.3;
+            $top = $belowTop + max(0, count($shown) - $aboveCount) * $boxPitch;
             $text = $slide->createRichTextShape();
             $this->position($text, $c2[0], $top, $c2[1], 0.2);
             $text->setInsetLeft(0)->setInsetTop(0)->setInsetBottom(0);
@@ -2306,9 +2314,10 @@ class AdminComparisonPptxGenerator
         $trunk1 = ($c1[0] + $c1[1] + $c2[0]) / 2;
         $this->drawLine($slide, [$c1[0] + $c1[1], $recruitCenter], [$c2[0], $recruitCenter], self::NAVY, 1.25);
         if ($otherCenters !== []) {
-            $this->drawLine($slide, [$trunk1, $recruitCenter], [$trunk1, $otherCenters[count($otherCenters) - 1]], $otherBorder, 0.75);
+            // 依頼DL: 他のメニューへの線も、採用と同じ濃さ。
+            $this->drawLine($slide, [$trunk1, min($recruitCenter, ...$otherCenters)], [$trunk1, max($recruitCenter, ...$otherCenters)], self::NAVY, 1.25);
             foreach ($otherCenters as $center) {
-                $this->drawLine($slide, [$trunk1, $center], [$c2[0], $center], $otherBorder, 0.75);
+                $this->drawLine($slide, [$trunk1, $center], [$c2[0], $center], self::NAVY, 1.25);
             }
         }
         if ($centers !== []) {

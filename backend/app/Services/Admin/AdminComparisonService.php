@@ -263,7 +263,8 @@ class AdminComparisonService
 
         Website::query()->create([
             'project_id' => $project->id,
-            'name' => '自社サイト',
+            // 依頼DL: 入力した自社名を残す(資料の自社名に使う。ComparisonCompanyName)。無ければ従来のプレースホルダ。
+            'name' => trim((string) $companyLabel) !== '' ? trim((string) $companyLabel) : '自社サイト',
             'url' => trim($rawSelfUrl),
             'normalized_url' => $normalizedSelfUrl,
             'is_primary' => true,

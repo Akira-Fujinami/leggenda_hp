@@ -92,6 +92,8 @@ return [
     'question_text' => 'ズレている点や、外からは見えにくい御社の強みがあれば、ぜひ教えてください。',
     'source_prefix' => '出典：',
     'source_separator' => '／',
+    // 依頼DL: 会社自身のサイトの出典をまとめる名前(%s=社名)。
+    'source_own_label' => '%sのサイト',
     'source_max' => 6,
     'band_fill' => '252B35',
     'band_highlight' => 'E7B8C3',

@@ -392,7 +392,7 @@ class CompanyProfileTest extends TestCase
 
         $self = $this->slideXml($generator->generate(['company_name' => '例社', 'is_self' => true, 'profile' => $profile]));
         foreach (['私たちが理解している、例社という会社', '御社のトップメッセージ', '歓び', '130年つくり続けてきた会社', '大切にしていること', '実績', '外からの評価',
-            '1892年創業。年間1万件以上のプロジェクト', (string) config('company_profile.fact_missing'), (string) config('company_profile.question_lead'), '出典：代表メッセージ／会社概要 | 例社'] as $text) {
+            '1892年創業。年間1万件以上のプロジェクト', (string) config('company_profile.fact_missing'), (string) config('company_profile.question_lead'), '出典：例社のサイト（代表メッセージ／会社概要）'] as $text) {
             $this->assertStringContainsString($text, $self, $text);
         }
 

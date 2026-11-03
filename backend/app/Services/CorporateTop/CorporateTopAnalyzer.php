@@ -96,6 +96,8 @@ class CorporateTopAnalyzer
             'static_nav' => fn () => $this->firstLevelLinks($staticHtml, false),
             'rendered_nav' => fn () => $renderedHtml !== null ? $this->firstLevelLinks($renderedHtml, false) : [],
             'class_words' => fn () => $this->firstLevelLinks($renderedHtml ?? $staticHtml, true),
+            // 依頼DL: どれでも取れないとき、ページ(footerの外)の中の「1段目のディレクトリの入口」(/ir/、/company/ など)へのリンク。
+            'section_roots' => fn () => (bool) config('admin_comparison_pptx.corporate_top_menu_section_roots_enabled', true) ? $this->sectionRootLinks($renderedHtml ?? $staticHtml, $baseUrl) : [],
         ];
 
         $rawCounts = [];
@@ -166,6 +168,45 @@ class CorporateTopAnalyzer
         }
 
         return $labels;
+    }
+
+    /**
+     * 依頼DL: ページの中(footerの外)のリンクのうち、同じホストの「1段目のディレクトリの入口」(パスが /xxx/ か /xxx だけ)へのものを、
+     * 文書順に取る(同じURLは最初の1つ)。メニューを header・nav・class/id の語で見つけられないサイトの代わりの取り方。
+     *
+     * @return list<array{label: string, href: string}>
+     */
+    private function sectionRootLinks(string $html, string $baseUrl): array
+    {
+        $xpath = $this->loadXpath($html);
+        if ($xpath === null) {
+            return [];
+        }
+        $baseHost = $this->bareHost($baseUrl);
+        $links = [];
+        $seen = [];
+        foreach ($xpath->query('//a[@href][not(ancestor::footer)]') ?: [] as $node) {
+            if (! $node instanceof \DOMElement) {
+                continue;
+            }
+            $url = $this->linkExtractor->resolveHref($baseUrl, trim($node->getAttribute('href')));
+            if ($url === null || $this->bareHost($url) !== $baseHost || parse_url($url, PHP_URL_QUERY) !== null) {
+                continue;
+            }
+            $segments = array_values(array_filter(explode('/', (string) parse_url($url, PHP_URL_PATH)), fn (string $s) => $s !== ''));
+            if (count($segments) !== 1 || str_contains($segments[0], '.')) {
+                continue;
+            }
+            $key = strtolower($segments[0]);
+            $label = $this->labelOf($node);
+            if (isset($seen[$key]) || $label === null || preg_match('/[\p{L}\p{N}]/u', $label) !== 1) {
+                continue;
+            }
+            $seen[$key] = true;
+            $links[] = ['label' => mb_substr($label, 0, 64), 'href' => $url];
+        }
+
+        return $links;
     }
 
     /**

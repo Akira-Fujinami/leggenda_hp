@@ -330,9 +330,15 @@ class CorporateHierarchyTest extends TestCase
 
         $xml = $this->slideFor($wa);
 
-        $this->assertStringContainsString('ほか2', $xml);
+        // 依頼DL: 他のメニューは採用の箱と同じ形の箱になり、収まる件数(採用の箱の上下の空き)まで出す。残りは「ほかN」。
+        $names = ['A社情報', 'Bサービス', 'Cニュース', 'D IR', 'E理念', 'F沿革'];
+        $shown = count(array_filter($names, fn (string $name) => str_contains($xml, $name)));
+        $this->assertGreaterThanOrEqual(3, $shown);
+        $this->assertStringContainsString('ほか'.(8 - $shown), $xml);
+        $this->assertStringContainsString('A社情報', $xml, 'メニューの順で先頭から');
         $this->assertStringNotContainsString('G事業', $xml);
         $this->assertStringNotContainsString('H拠点', $xml);
+        $this->assertGreaterThanOrEqual($shown + 1, substr_count($xml, (string) config('admin_comparison_pptx.site_hierarchy_level_fill')[1]), '他のメニューの箱は、採用の箱と同じ塗り');
     }
     // ---------------------------------------------------------------- DG 募集要項・エントリー
 

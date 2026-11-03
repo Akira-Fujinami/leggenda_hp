@@ -108,6 +108,10 @@ class AdminComparisonStandaloneTest extends TestCase
 
         $analysis = Analysis::query()->where('kind', AnalysisKind::AdminComparison)->firstOrFail();
         $this->assertSame($existing->id, $analysis->project?->lead_company_id);
+
+        // 依頼DL: 企業の紐づけは変えないが、資料に出す自社名は入力した名前(自社のWebsite.nameに残す)。
+        $this->assertSame('違う表記の社名', $analysis->project->websites()->where('is_primary', true)->value('name'));
+        $this->assertSame('違う表記の社名', \App\Support\Report\ComparisonCompanyName::self($analysis));
     }
 
     public function test_it_matches_an_existing_company_by_name_when_the_domain_is_new(): void
