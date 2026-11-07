@@ -129,9 +129,10 @@ class LeadNotificationService
         string $contactName,
         string $targetUrl,
     ): bool {
-        $recipient = config('lead.notification_to');
+        // 依頼DO: 宛先は複数可(カンマ区切り)。
+        $recipients = \App\Support\LeadNotificationRecipients::all();
 
-        if (! is_string($recipient) || $recipient === '') {
+        if ($recipients === []) {
             Log::warning('Lead notification skipped: LEAD_NOTIFICATION_TO is not configured', [
                 'event' => 'brand_wheel_analysis_completed',
                 'brand_wheel_analysis_result_id' => $result->id,
@@ -149,7 +150,7 @@ class LeadNotificationService
                 $png = app(BrandWheelHexagonRenderer::class)->renderPng($svg);
             }
 
-            Mail::to($recipient)->send(new BrandWheelAnalysisCompletedMail($data, $png));
+            Mail::to($recipients)->send(new BrandWheelAnalysisCompletedMail($data, $png));
 
             return true;
         } catch (Throwable $e) {
@@ -341,9 +342,10 @@ class LeadNotificationService
 
     private function dispatch(LeadSession $leadSession, string $event, \Closure $send): void
     {
-        $recipient = config('lead.notification_to');
+        // 依頼DO: 宛先は複数可(カンマ区切り)。1件ずつ送る(1件の失敗が他の宛先を止めない)。
+        $recipients = \App\Support\LeadNotificationRecipients::all();
 
-        if (! is_string($recipient) || $recipient === '') {
+        if ($recipients === []) {
             Log::warning('Lead notification skipped: LEAD_NOTIFICATION_TO is not configured', [
                 'event' => $event,
                 'lead_session_id' => $leadSession->id,
@@ -352,15 +354,17 @@ class LeadNotificationService
             return;
         }
 
-        try {
-            $send($recipient);
-        } catch (Throwable $e) {
-            report($e);
+        foreach ($recipients as $recipient) {
+            try {
+                $send($recipient);
+            } catch (Throwable $e) {
+                report($e);
 
-            Log::warning('Lead notification dispatch failed', [
-                'event' => $event,
-                'lead_session_id' => $leadSession->id,
-            ]);
+                Log::warning('Lead notification dispatch failed', [
+                    'event' => $event,
+                    'lead_session_id' => $leadSession->id,
+                ]);
+            }
         }
     }
 }

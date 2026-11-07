@@ -54,8 +54,9 @@ class BrandWheelLeadDiagnosisCompletedMail extends Mailable
             ->view('emails.brand-wheel.lead-diagnosis-completed')
             ->with($this->data + ['hasPdfAttachment' => $this->pdfAttachment !== null]);
 
-        $replyTo = config('lead.notification_to');
-        if (is_string($replyTo) && $replyTo !== '') {
+        // 依頼DO: 宛先が複数のときも、返信先は先頭の1件(共有の受信箱)だけ。
+        $replyTo = \App\Support\LeadNotificationRecipients::replyTo();
+        if ($replyTo !== null) {
             $mail = $mail->replyTo($replyTo);
         }
 
