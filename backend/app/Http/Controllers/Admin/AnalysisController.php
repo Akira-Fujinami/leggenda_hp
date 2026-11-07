@@ -282,7 +282,10 @@ class AnalysisController extends Controller
             $slideBytesList = [
                 $slideGenerator->generateExplanationSlide(),
                 $slideGenerator->generate($data),
-                $slideGenerator->generateMissingItemsSlide($data),
+                // 依頼DN: 「足りないもの」は、既定では差し替え用の枠(担当者の資料のスライドをあとで貼り込む目印)にする。
+                (bool) config('admin_comparison_pptx.missing_items_placeholder.enabled')
+                    ? app(\App\Services\Report\PlaceholderSlideGenerator::class)->generate((array) config('admin_comparison_pptx.missing_items_placeholder'))
+                    : $slideGenerator->generateMissingItemsSlide($data),
                 ...$topMessageSlides,
                 // 依頼DE: 「求職者が知りたい情報と、自社サイト」は既定で入れない(admin_comparison_pptx.survey_comparison_enabled)。
                 ...((bool) config('admin_comparison_pptx.survey_comparison_enabled') ? [$slideGenerator->generateSurveyComparisonSlide($data)] : []),
