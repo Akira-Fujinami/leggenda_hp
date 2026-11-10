@@ -46,7 +46,8 @@ class FetchRobotsJob extends BaseWebsiteAnalysisJob
     protected function process(AnalysisJobRecord $record, WebsiteAnalysis $websiteAnalysis, AnalysisPipeline $pipeline): void
     {
         $website = $websiteAnalysis->website;
-        $robotsUrl = rtrim($website->normalized_url, '/').'/robots.txt';
+        // 依頼DP: robots.txt は、入力URLのパスに関係なく、ホストの一番上に置かれる(RFC 9309)。
+        $robotsUrl = self::robotsUrlFor((string) $website->normalized_url);
 
         /** @var SafeHttpFetcher $fetcher */
         $fetcher = app(SafeHttpFetcher::class);
@@ -104,5 +105,22 @@ class FetchRobotsJob extends BaseWebsiteAnalysisJob
             errorMessage: $unknown ? "robots.txtの取得でHTTP {$result->httpStatus} が返されました。" : null,
             analysisPageId: $page->id,
         );
+    }
+
+    /**
+     * 依頼DP: URLから robots.txt のURL(スキーム://ホスト[:ポート]/robots.txt)を作る。
+     * 以前は入力URLの後ろに /robots.txt を付けていたため、採用ページのURL(/recruit/ など)を入力すると、
+     * 存在しない場所を読みに行き、本物の robots.txt を読んでいなかった。
+     */
+    public static function robotsUrlFor(string $url): string
+    {
+        $parts = parse_url($url);
+        if (! is_array($parts) || ! isset($parts['host'])) {
+            return rtrim($url, '/').'/robots.txt';
+        }
+        $scheme = strtolower((string) ($parts['scheme'] ?? 'https'));
+        $port = isset($parts['port']) ? ':'.$parts['port'] : '';
+
+        return $scheme.'://'.strtolower((string) $parts['host']).$port.'/robots.txt';
     }
 }

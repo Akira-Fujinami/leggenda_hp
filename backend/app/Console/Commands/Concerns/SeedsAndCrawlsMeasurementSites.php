@@ -92,10 +92,8 @@ trait SeedsAndCrawlsMeasurementSites
             $this->fetchAndSavePage($fetcher, $site['recruit_url'], $recruitPath, $websiteAnalysis->id, PageType::Recruit);
         }
 
-        // FetchRobotsJobと同じURL構成(Website.normalized_urlに'/robots.txt'を
-        // 追加するだけ)を用いる ―― サイト固有のドメインルート推定等の
-        // 別ロジックを新設しない。
-        $robotsUrl = rtrim($site['homepage_url'], '/').'/robots.txt';
+        // FetchRobotsJobと同じURL構成を用いる(依頼DP: ホストの一番上の /robots.txt)。
+        $robotsUrl = \App\Jobs\Analysis\FetchRobotsJob::robotsUrlFor((string) $site['homepage_url']);
         $robotsPath = $paths->rawHtmlPath($analysis->id, $websiteAnalysis->id, 'robots.txt');
 
         try {
