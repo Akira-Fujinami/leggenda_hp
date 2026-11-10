@@ -3,6 +3,7 @@
 namespace Tests\Unit\Jobs\Analysis;
 
 use App\Jobs\Analysis\FetchRobotsJob;
+use App\Jobs\Analysis\FetchSitemapJob;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -16,5 +17,12 @@ class RobotsUrlTest extends TestCase
         $this->assertSame('https://example.com/robots.txt', FetchRobotsJob::robotsUrlFor('https://example.com'));
         $this->assertSame('https://example.com/robots.txt', FetchRobotsJob::robotsUrlFor('https://Example.com/recruit/index.html?x=1#top'));
         $this->assertSame('http://example.com:8080/robots.txt', FetchRobotsJob::robotsUrlFor('http://example.com:8080/a/b/'));
+    }
+
+    public function test_the_sitemap_url_is_also_at_the_root_of_the_host(): void
+    {
+        $this->assertSame('https://www.omron.com/sitemap.xml', FetchSitemapJob::sitemapUrlFor('https://www.omron.com/jp/ja/recruit/newgrad/'));
+        $this->assertSame('https://example.com/sitemap.xml', FetchSitemapJob::sitemapUrlFor('https://example.com'));
+        $this->assertSame('http://example.com:8080/sitemap.xml', FetchSitemapJob::sitemapUrlFor('http://example.com:8080/a/?q=1'));
     }
 }

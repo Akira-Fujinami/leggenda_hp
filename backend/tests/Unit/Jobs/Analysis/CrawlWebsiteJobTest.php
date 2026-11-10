@@ -284,6 +284,40 @@ class CrawlWebsiteJobTest extends TestCase
     }
 
     /**
+     * 依頼DQ: sitemap由来のseedは、起点URLの配下を先に、config('brand_wheel.crawl_sitemap_seed_max')件まで。
+     */
+    public function test_sitemap_seeds_are_capped_with_the_origin_scope_first(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        config(['brand_wheel.crawl_sitemap_seed_max' => 3]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis(websiteUrl: 'https://example.co.jp/recruit/');
+        $this->putRobotsPage($analysis, $websiteAnalysis, 404);
+        $originPath = '/recruit';
+
+        $locs = ['https://example.co.jp/products/a', 'https://example.co.jp/products/b', 'https://example.co.jp'.$originPath.'/inside-1', 'https://example.co.jp/products/c', 'https://example.co.jp'.$originPath.'/inside-2'];
+        $sitemapXml = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            .implode('', array_map(fn (string $u) => '<url><loc>'.$u.'</loc></url>', $locs)).'</urlset>';
+        $sitemapPath = app(AnalysisStoragePaths::class)->rawHtmlPath($analysis->id, $websiteAnalysis->id, 'sitemap.xml');
+        Storage::disk('analysis')->put($sitemapPath, $sitemapXml);
+        AnalysisPage::factory()->create([
+            'website_analysis_id' => $websiteAnalysis->id,
+            'page_type' => PageType::Sitemap,
+            'url' => 'https://example.co.jp/sitemap.xml',
+            'http_status' => 200,
+            'raw_html_path' => $sitemapPath,
+        ]);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $fromSitemap = AnalysisCrawledPage::query()->where('website_analysis_id', $websiteAnalysis->id)->where('discovered_via', 'sitemap')->pluck('url')->all();
+        $this->assertCount(3, $fromSitemap, '上限まで');
+        $this->assertContains('https://example.co.jp/recruit/inside-1', $fromSitemap, '起点の配下を先に');
+        $this->assertContains('https://example.co.jp/recruit/inside-2', $fromSitemap);
+        $this->assertContains('https://example.co.jp/products/a', $fromSitemap, '残りは元の順');
+        $this->assertNotContains('https://example.co.jp/products/c', $fromSitemap);
+    }
+
+    /**
      * urlが長い(varchar(2048)近い)場合でもseed行のINSERTが通ること
      * (url_hashに対するunique制約、依頼C-4)。
      */

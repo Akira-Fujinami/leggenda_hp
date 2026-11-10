@@ -152,7 +152,9 @@ class CrawlWebsiteJob implements ShouldQueue
             $xml = $policyResolver->readStoredFile($sitemapPage->raw_html_path);
             if ($xml !== null) {
                 $parsedSitemap = $sitemapParser->parse($xml);
-                foreach ($parsedSitemap['urls'] as $url) {
+                // 依頼DQ: sitemap.xml をホストの一番上から読むようになり、コーポレートサイト全体(数千件)のURLが入りうる。
+                // 起点URL(入力されたURL)の配下を先に、全体で config('brand_wheel.crawl_sitemap_seed_max') 件までだけ seed する。
+                foreach ($this->sitemapSeedUrls((array) $parsedSitemap['urls'], $websiteAnalysisForTrack?->website?->url ?? $homepage?->url) as $url) {
                     if ($this->enqueueSeed($url, 1, 'sitemap', $allowedHosts)) {
                         $seededCount++;
                     }
@@ -231,6 +233,35 @@ class CrawlWebsiteJob implements ShouldQueue
     /**
      * @param  list<string>  $allowedHosts
      */
+    /**
+     * 依頼DQ: sitemap 由来の seed の並びと上限。起点URLのパスの配下のURLを先に(元の順のまま)、残りをその後に並べ、
+     * config('brand_wheel.crawl_sitemap_seed_max') 件まで(0以下=上限なし)。
+     *
+     * @param  list<mixed>  $urls
+     * @return list<string>
+     */
+    private function sitemapSeedUrls(array $urls, ?string $originUrl): array
+    {
+        $originPath = rtrim((string) (parse_url((string) $originUrl, PHP_URL_PATH) ?? ''), '/').'/';
+        $inside = [];
+        $outside = [];
+        foreach ($urls as $url) {
+            if (! is_string($url) || $url === '') {
+                continue;
+            }
+            $path = (string) (parse_url($url, PHP_URL_PATH) ?? '/');
+            if ($originPath !== '/' && str_starts_with(rtrim($path, '/').'/', $originPath)) {
+                $inside[] = $url;
+            } else {
+                $outside[] = $url;
+            }
+        }
+        $ordered = [...$inside, ...$outside];
+        $max = (int) config('brand_wheel.crawl_sitemap_seed_max', 300);
+
+        return $max > 0 ? array_slice($ordered, 0, $max) : $ordered;
+    }
+
     private function enqueueSeed(string $url, int $depth, string $discoveredVia, array $allowedHosts): bool
     {
         $host = strtolower((string) parse_url($url, PHP_URL_HOST));

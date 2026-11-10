@@ -44,7 +44,8 @@ class FetchSitemapJob extends BaseWebsiteAnalysisJob
     protected function process(AnalysisJobRecord $record, WebsiteAnalysis $websiteAnalysis, AnalysisPipeline $pipeline): void
     {
         $website = $websiteAnalysis->website;
-        $sitemapUrl = rtrim($website->normalized_url, '/').'/sitemap.xml';
+        // 依頼DQ: sitemap.xml も、入力URLのパスに関係なく、ホストの一番上から読む(robots.txt と同じ。依頼DP)。
+        $sitemapUrl = self::sitemapUrlFor((string) $website->normalized_url);
 
         /** @var SafeHttpFetcher $fetcher */
         $fetcher = app(SafeHttpFetcher::class);
@@ -111,5 +112,21 @@ class FetchSitemapJob extends BaseWebsiteAnalysisJob
             errorMessage: $unknown ? "sitemap.xmlの取得でHTTP {$result->httpStatus} が返されました。" : null,
             analysisPageId: $page->id,
         );
+    }
+
+    /**
+     * 依頼DQ: URLから sitemap.xml のURL(スキーム://ホスト[:ポート]/sitemap.xml)を作る。
+     * 以前は入力URLの後ろに /sitemap.xml を付けていたため、採用ページのURLを入力すると、サイトマップがあっても「無い」と判定していた。
+     */
+    public static function sitemapUrlFor(string $url): string
+    {
+        $parts = parse_url($url);
+        if (! is_array($parts) || ! isset($parts['host'])) {
+            return rtrim($url, '/').'/sitemap.xml';
+        }
+        $scheme = strtolower((string) ($parts['scheme'] ?? 'https'));
+        $port = isset($parts['port']) ? ':'.$parts['port'] : '';
+
+        return $scheme.'://'.strtolower((string) $parts['host']).$port.'/sitemap.xml';
     }
 }

@@ -1498,4 +1498,10 @@ return [
     // レンダリング予算(Chromiumの起動コスト、過去のOOMの経緯を踏まえ)を
     // 優先的に一次情報の救済に充てる、という考え方による。
     'crawl_render_candidate_max_count' => (int) env('BRAND_WHEEL_CRAWL_RENDER_CANDIDATE_MAX_COUNT', 10),
+
+    /*
+    | 依頼DQ: sitemap.xml 由来の巡回の seed の上限(件)。sitemap.xml をホストの一番上から読むようになり、コーポレートサイト全体の
+    | URL(数千件)が入りうるため。起点URL(採用ページ)の配下を先に並べ、この件数まで(0以下=上限なし)。
+    */
+    'crawl_sitemap_seed_max' => (int) env('BRAND_WHEEL_CRAWL_SITEMAP_SEED_MAX', 300),
 ];
