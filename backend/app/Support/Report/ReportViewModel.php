@@ -88,5 +88,7 @@ readonly class ReportViewModel
         public bool $crawlSiteEnabled,
         public ?string $improvementFallbackNote = null,
         public ?string $recruitmentTrackCoverNotice = null,
+        // 依頼DR: 表紙の「競合サイトを比較できなかった」一文。null のときは従来の cover_competitor_unreadable_notice。
+        public ?string $competitorCoverNotice = null,
     ) {}
 }

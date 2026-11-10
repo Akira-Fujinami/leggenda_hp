@@ -292,7 +292,31 @@ class LeadAnalysisController extends Controller
             'reports' => $this->reportStatusPayload($analysis),
             'websites' => $websites,
             'brand_wheel_comparison' => $this->composeBrandWheelComparison($analysis, $brandWheelByWebsiteAnalysisId),
+            // 依頼DR: 競合サイトがこのシステムからのアクセスを拒否していたときの案内(無ければ null)。
+            'competitor_notice' => $this->competitorNotice($analysis, $request->attributes->get('leadSession')),
         ]);
+    }
+
+    /**
+     * 依頼DR: 競合サイトがこのシステムからのアクセスを拒否していたときの案内。診断の回数は戻している(CompetitorAccessService)ので、
+     * まだ回数が残っていれば、別の競合サイトでもう一度診断できる(can_retry)。
+     *
+     * @return ?array{code: string, message: string, can_retry: bool}
+     */
+    private function competitorNotice(Analysis $analysis, mixed $leadSession): ?array
+    {
+        if (! app(\App\Services\Lead\CompetitorAccessService::class)->competitorBlocked($analysis)) {
+            return null;
+        }
+        $canRetry = $leadSession instanceof \App\Models\LeadSession
+            && $this->leadSessions->canStartAnalysis($leadSession)
+            && ! $this->leadSessions->hasExceededMaxAttempts($leadSession);
+
+        return [
+            'code' => 'competitor_access_blocked',
+            'message' => (string) config('lead.competitor_blocked_notice'),
+            'can_retry' => $canRetry,
+        ];
     }
 
     /**

@@ -13,7 +13,7 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { leadApi } from "@/features/lead/api";
 import { useRequestConsultation } from "@/features/lead/hooks";
-import type { LeadReportStatus, LeadResults as LeadResultsType } from "@/types/lead";
+import type { CompetitorNotice, LeadReportStatus, LeadResults as LeadResultsType } from "@/types/lead";
 
 const REPORT_LABELS: Record<"docx" | "pdf", string> = { docx: "Wordでダウンロード", pdf: "PDFでダウンロード" };
 
@@ -165,6 +165,23 @@ function SkippedNotice({ onRetry }: { onRetry: () => void }) {
   );
 }
 
+/**
+ * 依頼DR: 競合サイトがこのシステムからのアクセスを拒否していて比較できなかったときの案内。自社サイトの結果(PDF)はそのまま出し、
+ * 回数が残っていれば「別の競合サイトで、もう一度診断する」ボタン(onRetry、STEP2のURL入力フォームへ戻す)を出す。文言はバックエンドのconfig。
+ */
+function CompetitorNoticeBox({ notice, onRetry }: { notice: CompetitorNotice; onRetry: () => void }) {
+  return (
+    <div className="space-y-3 rounded-md border p-4 text-center" data-testid="competitor-notice">
+      <p className="text-sm">{notice.message}</p>
+      {notice.can_retry && (
+        <Button variant="outline" onClick={onRetry}>
+          別の競合サイトで、もう一度診断する
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function LeadResults({
   results,
   token,
@@ -208,6 +225,8 @@ export function LeadResults({
           <ReportDownloadButton token={token} analysisId={analysisId} format="pdf" status={pdfStatus} />
         )}
       </div>
+
+      {results.competitor_notice && <CompetitorNoticeBox notice={results.competitor_notice} onRetry={onRetry} />}
 
       <ConsultationCta token={token} analysisId={analysisId} />
     </div>

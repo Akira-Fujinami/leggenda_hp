@@ -548,7 +548,7 @@
             自体は変更しない(既存のまま)。
         --}}
         @if (! $competitorReadable)
-            <p style="font-size: 9pt; color: #7a7a7a;">{{ config('brand_wheel.cover_competitor_unreadable_notice') }}</p>
+            <p style="font-size: 9pt; color: #7a7a7a;">{{ $viewModel->competitorCoverNotice ?? config('brand_wheel.cover_competitor_unreadable_notice') }}</p>
         @endif
     @endif
     <p>{{ $viewModel->generatedAtLabel }}</p>

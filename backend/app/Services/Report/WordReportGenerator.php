@@ -161,7 +161,7 @@ class WordReportGenerator
             // 判定ロジック自体は変更しない(既存のまま)。
             if (! $this->competitorReadable($viewModel)) {
                 $section->addText(
-                    (string) config('brand_wheel.cover_competitor_unreadable_notice'),
+                    $viewModel->competitorCoverNotice ?? (string) config('brand_wheel.cover_competitor_unreadable_notice'),
                     ['size' => 9, 'italic' => true],
                     ['alignment' => Jc::CENTER],
                 );

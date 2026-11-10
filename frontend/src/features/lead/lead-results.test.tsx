@@ -105,6 +105,37 @@ describe("LeadResults", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
+  it("競合サイトがアクセスを拒否していた場合、理由と、別の競合でもう一度診断するボタンを出す(PDFはそのまま)", async () => {
+    const onRetry = vi.fn();
+    render(
+      <LeadResults
+        results={baseResults({ competitor_notice: { code: "competitor_access_blocked", message: "競合サイトがアクセスを制限しています。", can_retry: true } })}
+        token="tok"
+        analysisId={1}
+        onRetry={onRetry}
+      />,
+    );
+
+    expect(screen.getByText("競合サイトがアクセスを制限しています。")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "PDFでダウンロード" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "別の競合サイトで、もう一度診断する" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("回数が残っていなければ、案内だけを出しボタンは出さない", () => {
+    render(
+      <LeadResults
+        results={baseResults({ competitor_notice: { code: "competitor_access_blocked", message: "競合サイトがアクセスを制限しています。", can_retry: false } })}
+        token="tok"
+        analysisId={1}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("競合サイトがアクセスを制限しています。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "別の競合サイトで、もう一度診断する" })).not.toBeInTheDocument();
+  });
+
   it("一部のデータが取得できなかった場合は、その旨をPDFを渡す前に伝える", () => {
     render(<LeadResults results={baseResults({ status: "partial" })} token="tok" analysisId={1} onRetry={vi.fn()} />);
 

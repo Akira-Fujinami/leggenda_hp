@@ -129,12 +129,30 @@ class CrawlDiagnosticsService
                     // 依頼CA-3: 理由ごとの「次にすべきこと」一文。理由が
                     // null(既存データ)や未知の値の場合はnull ―― blade側は
                     // nullのとき何も足さない(既存の一文だけを出す)。
-                    'reason_hint' => $reason !== null
-                        ? ((array) config('crawl_diagnostics.crawl_not_started_reason_hints', []))[$reason] ?? null
-                        : null,
+                    'reason_hint' => $this->reasonHint($websiteAnalysis, $reason),
                 ]
                 : null,
         ];
+    }
+
+    /**
+     * 依頼CA-3: 終了理由ごとの「次にすべきこと」。依頼DR: robots.txt が読めなかったときは、読めなかった理由(状態コード)ごとに出し分ける。
+     */
+    private function reasonHint(WebsiteAnalysis $websiteAnalysis, ?string $reason): ?string
+    {
+        if ($reason === null) {
+            return null;
+        }
+        if ($reason === 'robots_txt_unavailable') {
+            $robots = app(\App\Services\Analysis\RobotsAccessClassifier::class)->classify($websiteAnalysis);
+            // 状態コードが分からない(取得の結果が無い)ときは、従来の一文のまま。
+            $hint = $robots['http_status'] !== null ? (((array) config('crawl_diagnostics.robots_txt_unavailable_hints', []))[$robots['class']] ?? null) : null;
+            if (is_string($hint)) {
+                return sprintf($hint, $robots['http_status'] ?? '-');
+            }
+        }
+
+        return ((array) config('crawl_diagnostics.crawl_not_started_reason_hints', []))[$reason] ?? null;
     }
 
     /**

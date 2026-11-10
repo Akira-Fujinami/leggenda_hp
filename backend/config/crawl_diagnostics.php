@@ -189,6 +189,17 @@ return [
     | crawl_render_candidate_max_count(既定10)と同じ考え方の上限)。
     | 超えた分は「ほかN件」とだけ示す。
     */
+    /*
+    | 依頼DR: robots.txt が読めず巡回しなかったときは、読めなかった理由(RobotsAccessClassifier)ごとに「次にすべきこと」を出す。
+    | %s は robots.txt の取得のHTTPの状態コード。状態コードが分かるときだけ使い、分からないとき(取得の結果が無い)は上の crawl_not_started_reason_hints の一文のまま。
+    */
+    'robots_blocked_statuses' => [401, 403, 429],
+    'robots_txt_unavailable_hints' => [
+        'blocked' => '相手のサーバーが、このシステムからのアクセスを拒否しています(robots.txtの取得でHTTP %s。ボット対策と考えられます)。URLを変えても、時間をおいても解消しません。',
+        'server_error' => '相手のサーバーが一時的に応答しませんでした(robots.txtの取得でHTTP %s)。時間をおいて再実行すると解消することがあります。',
+        'unreachable' => '相手のサーバーが想定外の応答を返しました(robots.txtの取得でHTTP %s)。時間をおいて再実行すると解消することがあります。',
+    ],
+
     'failed_url_display_limit' => (int) env('CRAWL_DIAGNOSTICS_FAILED_URL_DISPLAY_LIMIT', 10),
 
 ];

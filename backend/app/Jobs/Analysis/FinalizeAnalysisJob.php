@@ -91,6 +91,13 @@ class FinalizeAnalysisJob implements ShouldBeUnique, ShouldQueue
             // (下のcatchに巻き込むとAnalysisErrorCode::UnknownErrorとして
             // 「分析の集計中に予期しないエラー」と誤って記録されてしまう ――
             // 集計自体は成功しているため)。
+            // 依頼DR: 競合サイトがこのシステムからのアクセスを拒否していたときは、診断の回数を戻す(別の競合で再度診断できる)。
+            try {
+                app(\App\Services\Lead\CompetitorAccessService::class)->refundIfCompetitorBlocked($analysis);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+
             try {
                 app(LeadReportDispatchService::class)->dispatchIfReportable($analysis);
             } catch (\Throwable $e) {

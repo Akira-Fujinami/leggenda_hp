@@ -681,6 +681,8 @@ return [
     | 依頼者確定)。PDF(lead-pdf.blade.php)・Word(WordReportGenerator)の
     | 両方で使う。
     */
+    // 依頼DR: 競合サイトがこのシステムからのアクセスを拒否していた(robots.txt の取得が 401・403・429)ときは、こちらの文を出す。
+    'cover_competitor_blocked_notice' => '（今回、競合サイトがこのシステムからのアクセスを制限していたため、本レポートは自社サイトの分析結果のみとなります。この診断はご利用回数に含めておりません）',
     'cover_competitor_unreadable_notice' => '（今回、競合サイトからは診断に必要な情報を読み取れなかったため、本レポートは自社サイトの分析結果のみとなります）',
 
     /*

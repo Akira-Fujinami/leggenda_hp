@@ -498,6 +498,9 @@ class ReportViewModelBuilder
             crawlSiteEnabled: $analysis->crawl_site === true,
             improvementFallbackNote: $improvementFallbackNote,
             recruitmentTrackCoverNotice: $recruitmentTrackCoverNotice,
+            competitorCoverNotice: $competitorWebsiteAnalysis !== null && app(\App\Services\Analysis\RobotsAccessClassifier::class)->isBlocked($competitorWebsiteAnalysis)
+                ? (string) config('brand_wheel.cover_competitor_blocked_notice')
+                : null,
         );
     }
 
