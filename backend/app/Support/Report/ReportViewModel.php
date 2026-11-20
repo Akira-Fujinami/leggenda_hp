@@ -90,5 +90,7 @@ readonly class ReportViewModel
         public ?string $recruitmentTrackCoverNotice = null,
         // 依頼DR: 表紙の「競合サイトを比較できなかった」一文。null のときは従来の cover_competitor_unreadable_notice。
         public ?string $competitorCoverNotice = null,
+        // 依頼DS-1: 自社と競合で比べる材料の量がそろっていないときの表紙の一文(無ければ null)。
+        public ?string $comparisonBalanceNotice = null,
     ) {}
 }

@@ -240,6 +240,13 @@ class LeadPdfViewTest extends TestCase
         $this->assertStringNotContainsString(config('brand_wheel.cover_competitor_unreadable_notice'), $html);
     }
 
+    public function test_cover_page_shows_the_comparison_balance_notice_when_set(): void
+    {
+        $html = $this->render($this->comparisonViewModel(['comparisonBalanceNotice' => 'ご注意：比較の結果は参考としてご覧ください。']));
+
+        $this->assertStringContainsString('（ご注意：比較の結果は参考としてご覧ください。）', $html);
+    }
+
     public function test_cover_page_shows_the_partial_caveat_when_the_analysis_is_partial(): void
     {
         $html = $this->render($this->viewModel(['isPartial' => true]));

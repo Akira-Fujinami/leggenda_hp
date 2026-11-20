@@ -687,6 +687,32 @@ return [
 
     /*
     |----------------------------------------------------------------
+    | 依頼DS-1(2026-11-20): 自社と競合で、比べる材料の量がそろっていないときの注記
+    |----------------------------------------------------------------
+    | 本番(報知新聞)で、自社サイトがこのシステムからのアクセスを制限していて巡回できず(入力したページだけ)、
+    | 競合はページをたどって50ページ集めたまま比較していた。比較は出したまま、理由をレポートの表紙と結果の画面に出す
+    | (App\Services\Analysis\ComparisonMaterialBalanceService)。巡回する診断(crawl_site=true)だけが対象。
+    | 競合がアクセスを制限していたとき(依頼DR)は、そちらの案内を出すので、ここでは出さない。
+    |
+    | 量の差: 採用ページ(起点)の配下から取れたページの数で比べる。多いほうが min_gap 件以上多く、かつ
+    | 少ないほう÷多いほう が max_ratio 未満のとき。
+    */
+    'comparison_balance_enabled' => filter_var(env('BRAND_WHEEL_COMPARISON_BALANCE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+    'comparison_balance_min_gap' => (int) env('BRAND_WHEEL_COMPARISON_BALANCE_MIN_GAP', 10),
+    'comparison_balance_max_ratio' => (float) env('BRAND_WHEEL_COMPARISON_BALANCE_MAX_RATIO', 0.25),
+    'comparison_balance_messages' => [
+        // 自社サイトが、このシステムからのアクセスを制限していた(robots.txt の取得が 401・403・429)。
+        'self_blocked' => 'ご注意：御社のサイトがこのシステムからのアクセスを制限していたため、御社はご入力いただいたページだけで判定しています。競合はサイトのページをたどって集めた内容で判定しているため、比較の結果は参考としてご覧ください。',
+        // 自社サイトのページをたどれなかった(それ以外の理由)。
+        'self_not_crawled' => 'ご注意：御社のサイトのページをたどって内容を集められなかったため、御社はご入力いただいたページだけで判定しています。競合とは集めた内容の量が異なるため、比較の結果は参考としてご覧ください。',
+        // 競合サイトのページをたどれなかった(アクセスの制限以外の理由)。
+        'competitor_not_crawled' => 'ご注意：競合サイトのページをたどって内容を集められなかったため、競合はご入力いただいたページだけで判定しています。御社とは集めた内容の量が異なるため、比較の結果は参考としてご覧ください。',
+        // 採用ページの配下から取れたページの数が大きく違う(%1$d=御社、%2$d=競合)。
+        'origin_imbalance' => 'ご注意：採用ページから集められた内容の量が、御社（%1$dページ）と競合（%2$dページ）で大きく異なります。比較の結果は参考としてご覧ください。',
+    ],
+
+    /*
+    |----------------------------------------------------------------
     | 前置きページ(「採用ブランドの捉え方」)の、本分析の対象範囲を説明する
     | 一文(依頼Q-1、2026-08-25追加、依頼者確定文言・原文ママ)
     |----------------------------------------------------------------
@@ -1150,6 +1176,43 @@ return [
             'privacy,cookie,terms,policy,legal,sitemap,個人情報,プライバシー,規約,免責,クッキー,サイトマップ',
         )),
     ))),
+
+    /*
+    |----------------------------------------------------------------
+    | 依頼DS-2(2026-11-20): 採用と関係の薄いページで、ページ数の枠を使わない
+    |----------------------------------------------------------------
+    | 本番で、50ページの枠のうち採用ページ(起点)の配下が2ページ(optex)・1ページ(日刊スポーツ)しか無く、
+    | 残りを英語のページ・製品・記事のページが使っていた。次の3つを足す(App\Services\Analysis\CrawlFrontierPolicy)。
+    | 一覧は一般的な語だけにし、特定の会社のパスを足さないこと。語はURLのパス(デコード後)の区切り(/〜/)と完全一致で当てる
+    | (大文字小文字は区別しない)。
+    */
+
+    // DS-2a: 外国語のページ(/en/・/e/ など)は回らない(枠を使わない)。起点URLのパスに同じ区切りがあるとき
+    // (英語の採用ページを入力した、など)は回る。
+    'crawl_foreign_language_skip_enabled' => filter_var(env('BRAND_WHEEL_CRAWL_FOREIGN_LANGUAGE_SKIP_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+    'crawl_foreign_language_segments' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env(
+            'BRAND_WHEEL_CRAWL_FOREIGN_LANGUAGE_SEGMENTS',
+            'e,en,en-us,en-gb,eng,english,zh,zh-cn,zh-tw,zh-hk,zh-hans,zh-hant,cn,tw,chinese,ko,kr,korean,th,vi,fr,de,es',
+        )),
+    ))),
+
+    // DS-2b: ニュース・記事・製品のページは後回し(捨てない。他を回り終えて枠が残っていれば回る)。
+    // 採用ページの配下の記事(社員のコラムなど)は大事な材料のため、配下の外のページにだけ当てる
+    // (起点がサイトの一番上「/」のとき・起点が分からないときは、すべてのページに当てる)。
+    'crawl_deprioritize_enabled' => filter_var(env('BRAND_WHEEL_CRAWL_DEPRIORITIZE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+    'crawl_deprioritized_segments' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env(
+            'BRAND_WHEEL_CRAWL_DEPRIORITIZED_SEGMENTS',
+            'news,newsroom,topics,topic,information,press,pressrelease,release,releases,blog,blogs,article,articles,column,columns,magazine,media,product,products,solution,solutions,case,cases,casestudy,event,events,seminar,seminars,catalog,download,downloads,support,faq,ニュース,お知らせ,製品,商品,事例',
+        )),
+    ))),
+
+    // DS-2c: 採用ページ(起点)の配下の外から取るページの数の上限。配下が少ないサイトで、枠の残りを
+    // コーポレートサイト側のページで埋めない。0以下で上限なし(変更前と同じ)。起点が分からないときは当てない。
+    'crawl_outside_origin_max_pages' => (int) env('BRAND_WHEEL_CRAWL_OUTSIDE_ORIGIN_MAX_PAGES', 20),
 
     /*
     |----------------------------------------------------------------

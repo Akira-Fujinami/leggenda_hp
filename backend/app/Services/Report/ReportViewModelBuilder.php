@@ -501,6 +501,9 @@ class ReportViewModelBuilder
             competitorCoverNotice: $competitorWebsiteAnalysis !== null && app(\App\Services\Analysis\RobotsAccessClassifier::class)->isBlocked($competitorWebsiteAnalysis)
                 ? (string) config('brand_wheel.cover_competitor_blocked_notice')
                 : null,
+            comparisonBalanceNotice: $competitorReadable
+                ? (app(\App\Services\Analysis\ComparisonMaterialBalanceService::class)->notice($analysis)['message'] ?? null)
+                : null,
         );
     }
 

@@ -115,6 +115,8 @@ export interface LeadResults {
   brand_wheel_comparison?: BrandWheelComparison | null;
   /** 依頼DR: 競合サイトがこのシステムからのアクセスを拒否していたときの案内(無ければnull)。 */
   competitor_notice?: CompetitorNotice | null;
+  /** 依頼DS-1: 自社と競合で比べる材料の量がそろっていないときの注記(無ければ null)。 */
+  comparison_notice?: ComparisonNotice | null;
 }
 
 // --- ブランド・ホイール（採用ブランドの6軸） ---
@@ -168,6 +170,12 @@ export interface BrandWheelComparison {
 }
 
 /** 依頼DR: 競合サイトを比較できなかったときの案内。can_retry=true なら、別の競合サイトでもう一度診断できる(回数は消費していない)。 */
+/** 依頼DS-1: 比べる材料の量がそろっていないときの注記。文言はバックエンドのconfig。 */
+export interface ComparisonNotice {
+  code: "self_blocked" | "self_not_crawled" | "competitor_not_crawled" | "origin_imbalance";
+  message: string;
+}
+
 export interface CompetitorNotice {
   code: "competitor_access_blocked";
   message: string;

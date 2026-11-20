@@ -165,6 +165,9 @@ class WordReportGenerator
                     ['size' => 9, 'italic' => true],
                     ['alignment' => Jc::CENTER],
                 );
+            } elseif ($viewModel->comparisonBalanceNotice !== null) {
+                // 依頼DS-1: 自社と競合で比べる材料の量がそろっていないとき(PDFと同じ一文)。
+                $section->addText('（'.$viewModel->comparisonBalanceNotice.'）', ['size' => 9, 'italic' => true], ['alignment' => Jc::CENTER]);
             }
         }
 

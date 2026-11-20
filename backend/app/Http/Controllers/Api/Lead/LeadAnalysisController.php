@@ -294,6 +294,8 @@ class LeadAnalysisController extends Controller
             'brand_wheel_comparison' => $this->composeBrandWheelComparison($analysis, $brandWheelByWebsiteAnalysisId),
             // 依頼DR: 競合サイトがこのシステムからのアクセスを拒否していたときの案内(無ければ null)。
             'competitor_notice' => $this->competitorNotice($analysis, $request->attributes->get('leadSession')),
+            // 依頼DS-1: 自社と競合で比べる材料の量がそろっていないときの注記(無ければ null)。
+            'comparison_notice' => app(\App\Services\Analysis\ComparisonMaterialBalanceService::class)->notice($analysis),
         ]);
     }
 

@@ -43,6 +43,50 @@ class CrawlFrontierPolicy
     }
 
     /**
+     * 依頼DS-2a: 外国語のページか。URLのパスの区切りのどれかが外国語の区切り(/en/・/e/ など)に一致する。
+     * 起点URLのパスにある区切りは数えない(英語の採用ページを入力したときは、その配下を回る)。
+     */
+    public function isForeignLanguage(string $url, ?string $originUrl = null): bool
+    {
+        if (! (bool) config('brand_wheel.crawl_foreign_language_skip_enabled', true)) {
+            return false;
+        }
+
+        $languages = $this->normalizedList((array) config('brand_wheel.crawl_foreign_language_segments', []));
+        $originSegments = $originUrl === null ? [] : $this->segments($originUrl);
+        foreach ($this->segments($url) as $segment) {
+            if (in_array($segment, $languages, true) && ! in_array($segment, $originSegments, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 依頼DS-2b: 後回しにするページ(ニュース・記事・製品など)か。URLのパスの区切りのどれかが一覧に一致する。
+     * 配下の外にだけ当てるかどうかは呼び出し側(CrawlWebsitePageJob::selectNextPendingPage())が決める。
+     */
+    public function isDeprioritized(string $url): bool
+    {
+        if (! (bool) config('brand_wheel.crawl_deprioritize_enabled', true)) {
+            return false;
+        }
+
+        $words = $this->normalizedList((array) config('brand_wheel.crawl_deprioritized_segments', []));
+
+        return array_intersect($this->segments($url), $words) !== [];
+    }
+
+    /**
+     * 依頼DS-2c: 配下の外から取るページの数の上限。0以下なら上限なし。
+     */
+    public function outsideOriginMaxPages(): int
+    {
+        return (int) config('brand_wheel.crawl_outside_origin_max_pages', 20);
+    }
+
+    /**
      * DF-2: 上限を数える単位(親ディレクトリ)。ホスト+パスの最後の区切りまで。
      * パスが「/」で終わるページ(ディレクトリの入口)はそのディレクトリ自身、
      * それ以外は最後の区切りまで。クエリ(?page=2 など)は無視する ―― 一覧の
@@ -80,10 +124,12 @@ class CrawlFrontierPolicy
      * (同じ優先度の中では元の順番を保つ)。enqueue()はこの順に行を作るため、同じ深さの
      * 中では先に回るリンクほど id が小さくなる。
      *
+     * 依頼DS-2a: 外国語のページ(isForeignLanguage())も除く。$originUrl を渡すと、そのパスにある区切りは除外の根拠にしない。
+     *
      * @param  array<string, string>  $links
      * @return array{links: list<string>, skipped: int, prioritized: int}
      */
-    public function orderLinks(array $links): array
+    public function orderLinks(array $links, ?string $originUrl = null): array
     {
         $priority = [];
         $normal = [];
@@ -91,7 +137,8 @@ class CrawlFrontierPolicy
 
         foreach ($links as $url => $text) {
             $url = (string) $url;
-            if ($this->shouldSkip($url, $text)) {
+            // 依頼DS-2a: 外国語のページも、回らないリンクとして数える。
+            if ($this->shouldSkip($url, $text) || $this->isForeignLanguage($url, $originUrl)) {
                 $skipped++;
 
                 continue;
@@ -105,6 +152,27 @@ class CrawlFrontierPolicy
         }
 
         return ['links' => [...$priority, ...$normal], 'skipped' => $skipped, 'prioritized' => count($priority)];
+    }
+
+    /**
+     * URLのパス(デコード後)の区切り。小文字にし、「_」は「-」にそろえる(en_US → en-us)。
+     *
+     * @return list<string>
+     */
+    private function segments(string $url): array
+    {
+        $parts = explode('/', mb_strtolower($this->decodedPath($url)));
+
+        return array_values(array_filter(array_map(fn (string $p) => str_replace('_', '-', trim($p)), $parts), fn (string $p) => $p !== ''));
+    }
+
+    /**
+     * @param  list<mixed>  $words
+     * @return list<string>
+     */
+    private function normalizedList(array $words): array
+    {
+        return array_values(array_filter(array_map(fn ($w) => str_replace('_', '-', mb_strtolower(trim((string) $w))), $words), fn (string $w) => $w !== ''));
     }
 
     private function decodedPath(string $url): string

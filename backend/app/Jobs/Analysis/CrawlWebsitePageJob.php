@@ -87,10 +87,12 @@ class CrawlWebsitePageJob implements ShouldQueue
             return;
         }
 
-        $next = $this->selectNextPendingPage($originScopeResolver);
+        $outsideCapReached = false;
+        $next = $this->selectNextPendingPage($originScopeResolver, $outsideCapReached);
 
         if ($next === null) {
-            $this->finalizeCrawl($pipeline, $htmlSeoAnalyzer, 'exhausted');
+            // 依頼DS-2c: 配下の外のページが上限に達して残っているときは、その理由で終える(ログ・巡回の確認画面で分かるように)。
+            $this->finalizeCrawl($pipeline, $htmlSeoAnalyzer, $outsideCapReached ? 'outside_origin_cap' : 'exhausted');
 
             return;
         }
@@ -110,8 +112,10 @@ class CrawlWebsitePageJob implements ShouldQueue
         $excludedPatterns = (array) config('brand_wheel.crawl_excluded_path_patterns', []);
         // 依頼DF-3: 個人情報・規約などのページ(パスが crawl_skip_words に当たる)も、取得せずに除外する
         // (ページ数の枠は fetched だけを数えるため、枠を使わない)。リンクの文字での除外は enqueue 時に行う。
+        // 依頼DS-2a: 外国語のページ(/en/・/e/ など)も同じ扱い(起点URLのパスにある区切りは除外の根拠にしない)。
         if ($this->matchesAnyPattern($path, $excludedPatterns) || $this->matchesAnyPattern($next->url, $excludedPatterns)
-            || app(CrawlFrontierPolicy::class)->shouldSkip($next->url)) {
+            || app(CrawlFrontierPolicy::class)->shouldSkip($next->url)
+            || app(CrawlFrontierPolicy::class)->isForeignLanguage($next->url, $this->originUrlForPolicy($originScopeResolver))) {
             $next->update(['status' => AnalysisCrawledPage::STATUS_EXCLUDED_BY_PATTERN]);
             $this->dispatchNext(false);
 
@@ -216,7 +220,8 @@ class CrawlWebsitePageJob implements ShouldQueue
             // 依頼DF-1/DF-3: リンクの文字も使って、回らないリンク(個人情報・規約など)を除き、
             // 制度のページへのリンクを前に並べてから enqueue する(同じ深さの中で id が小さくなり、先に回る)。
             $ordered = app(CrawlFrontierPolicy::class)->orderLinks(
-                $linkExtractor->extractAbsoluteLinksWithText($result->body, $result->finalUrl)
+                $linkExtractor->extractAbsoluteLinksWithText($result->body, $result->finalUrl),
+                $this->originUrlForPolicy($originScopeResolver),
             );
             foreach ($ordered['links'] as $link) {
                 $this->enqueue($link, $next->depth + 1, $allowedHosts);
@@ -307,7 +312,7 @@ class CrawlWebsitePageJob implements ShouldQueue
      * 従来どおり depth→id の順。リンクの文字による優先は enqueue の順番(id)で効かせている
      * (リンクの文字は保存していないため)。範囲・上限は変えない。
      */
-    private function selectNextPendingPage(CrawlOriginScopeResolver $originScopeResolver): ?AnalysisCrawledPage
+    private function selectNextPendingPage(CrawlOriginScopeResolver $originScopeResolver, bool &$outsideCapReached = false): ?AnalysisCrawledPage
     {
         $defaultOrder = fn () => $this->pages()
             ->where('status', AnalysisCrawledPage::STATUS_PENDING)
@@ -318,9 +323,10 @@ class CrawlWebsitePageJob implements ShouldQueue
         $cap = $policy->sameParentSoftCap();
         $priorityEnabled = (bool) config('brand_wheel.crawl_priority_enabled', true);
         $originEnabled = (bool) config('brand_wheel.crawl_prioritize_origin_scope', true);
+        $deprioritizeEnabled = (bool) config('brand_wheel.crawl_deprioritize_enabled', true);
 
         // すべて無効なら、この依頼より前と完全に同じ順序(depth→idの先頭)。
-        if (! $originEnabled && $cap <= 0 && ! $priorityEnabled) {
+        if (! $originEnabled && $cap <= 0 && ! $priorityEnabled && ! $deprioritizeEnabled) {
             return $defaultOrder()->first();
         }
 
@@ -340,13 +346,33 @@ class CrawlWebsitePageJob implements ShouldQueue
             }
         }
 
+        // 依頼DS-2c: 配下の外から取ったページの数が上限に達したら、配下の外のページはもう回らない(pendingのまま残す)。
+        $outsideMax = $policy->outsideOriginMaxPages();
+        $outsideFull = false;
+        if ($scope !== null && $outsideMax > 0) {
+            $outsideFetched = 0;
+            foreach ($this->pages()->where('status', AnalysisCrawledPage::STATUS_FETCHED)->get(['url', 'final_url']) as $page) {
+                if (! $originScopeResolver->isWithinScope((string) $page->url, $page->final_url, $scope)) {
+                    $outsideFetched++;
+                }
+            }
+            $outsideFull = $outsideFetched >= $outsideMax;
+        }
+        // 依頼DS-2b: ニュース・記事・製品のページを後回しにするのは、配下の外だけ(起点が一番上「/」・分からないときは全部)。
+        $deprioritizeAll = $scope === null || $scope['path'] === '/';
+
         // 段(小さいほど先): 起点の配下 → 配下の外(依頼CF-1)。それぞれの中で、
-        // 制度の言葉を含む(依頼DF-1) → 通常 → 同じ親が上限に達した(依頼DF-2、後回し)。
+        // 制度の言葉を含む(依頼DF-1) → 通常 → 同じ親が上限に達した(依頼DF-2)・ニュース/記事/製品(依頼DS-2b)、後回し。
         // 起点URLが解決できない/起点優先が無効なときは、すべて「配下」として扱う(従来どおり)。
-        $tierOf = function (AnalysisCrawledPage $page) use ($originScopeResolver, $scope, $policy, $cap, $fetchedPerParent): int {
+        // 配下の外が上限に達していれば(依頼DS-2c)、配下の外のページは null(回らない)。
+        $tierOf = function (AnalysisCrawledPage $page) use ($originScopeResolver, $scope, $policy, $cap, $fetchedPerParent, $outsideFull, $deprioritizeAll): ?int {
             $outside = $scope !== null && ! $originScopeResolver->isWithinScope($page->url, $page->final_url, $scope);
+            if ($outside && $outsideFull) {
+                return null;
+            }
             $capped = $cap > 0 && ($fetchedPerParent[$policy->parentKey($page->url)] ?? 0) >= $cap;
-            $within = $capped ? 2 : ($policy->isPriority($page->url) ? 0 : 1);
+            $deprioritized = ($outside || $deprioritizeAll) && $policy->isDeprioritized($page->url);
+            $within = ($capped || $deprioritized) ? 2 : ($policy->isPriority($page->url) ? 0 : 1);
 
             return ($outside ? 3 : 0) + $within;
         };
@@ -355,9 +381,14 @@ class CrawlWebsitePageJob implements ShouldQueue
         $best = null;
         $bestTier = PHP_INT_MAX;
 
-        $defaultOrder()->chunk($chunkSize, function ($chunk) use (&$best, &$bestTier, $tierOf) {
+        $defaultOrder()->chunk($chunkSize, function ($chunk) use (&$best, &$bestTier, &$outsideCapReached, $tierOf) {
             foreach ($chunk as $page) {
                 $tier = $tierOf($page);
+                if ($tier === null) {
+                    $outsideCapReached = true;
+
+                    continue;
+                }
                 if ($tier < $bestTier) {
                     $best = $page;
                     $bestTier = $tier;
@@ -368,7 +399,24 @@ class CrawlWebsitePageJob implements ShouldQueue
             }
         });
 
+        if ($best !== null) {
+            $outsideCapReached = false;
+        }
+
         return $best;
+    }
+
+    /**
+     * 依頼DS-2a: 外国語のページの判定に使う起点URL(採用ページ。分からなければ入力したURL)。
+     */
+    private function originUrlForPolicy(CrawlOriginScopeResolver $originScopeResolver): ?string
+    {
+        $websiteAnalysis = $this->websiteAnalysisForTrackFilter();
+        if ($websiteAnalysis === null) {
+            return null;
+        }
+
+        return $originScopeResolver->resolveScope($websiteAnalysis)['origin_url'] ?? $websiteAnalysis->website?->url;
     }
 
     /**

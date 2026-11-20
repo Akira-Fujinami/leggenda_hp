@@ -41,6 +41,8 @@ return [
         // 無いが、既に実際にログへ出ている値のため、'不明'に埋もれさせず
         // 個別の文言を用意する。
         'failed_exception' => '予期しないエラーで終了',
+        // 依頼DS-2c: 採用ページの配下の外から取るページが上限(brand_wheel.crawl_outside_origin_max_pages)に達し、配下も取り切った。
+        'outside_origin_cap' => '採用ページの配下を取り切り、配下の外は上限まで取って終了(正常)',
 
         // 依頼BV-1(2026-09-11): 巡回が「始まらなかった」2経路。どちらも
         // CrawlWebsiteJob::handle()がfinalizeCrawl()に到達する前に打ち切る

@@ -549,6 +549,9 @@
         --}}
         @if (! $competitorReadable)
             <p style="font-size: 9pt; color: #7a7a7a;">{{ $viewModel->competitorCoverNotice ?? config('brand_wheel.cover_competitor_unreadable_notice') }}</p>
+        @elseif ($viewModel->comparisonBalanceNotice)
+            {{-- 依頼DS-1: 自社と競合で比べる材料の量がそろっていないとき。 --}}
+            <p style="font-size: 9pt; color: #7a7a7a;">（{{ $viewModel->comparisonBalanceNotice }}）</p>
         @endif
     @endif
     <p>{{ $viewModel->generatedAtLabel }}</p>

@@ -228,6 +228,13 @@ export function LeadResults({
 
       {results.competitor_notice && <CompetitorNoticeBox notice={results.competitor_notice} onRetry={onRetry} />}
 
+      {/* 依頼DS-1: 自社と競合で比べる材料の量がそろっていないときの注記。 */}
+      {!results.competitor_notice && results.comparison_notice && (
+        <p className="rounded-md border p-4 text-sm text-muted-foreground" data-testid="comparison-notice">
+          {results.comparison_notice.message}
+        </p>
+      )}
+
       <ConsultationCta token={token} analysisId={analysisId} />
     </div>
   );

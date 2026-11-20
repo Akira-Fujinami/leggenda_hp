@@ -136,6 +136,20 @@ describe("LeadResults", () => {
     expect(screen.queryByRole("button", { name: "別の競合サイトで、もう一度診断する" })).not.toBeInTheDocument();
   });
 
+  it("比べる材料の量がそろっていないときは、注記を出す(PDFはそのまま)", () => {
+    render(
+      <LeadResults
+        results={baseResults({ comparison_notice: { code: "self_blocked", message: "ご注意：比較の結果は参考としてご覧ください。" } })}
+        token="tok"
+        analysisId={1}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("comparison-notice")).toHaveTextContent("ご注意：比較の結果は参考としてご覧ください。");
+    expect(screen.getByRole("link", { name: "PDFでダウンロード" })).toBeInTheDocument();
+  });
+
   it("一部のデータが取得できなかった場合は、その旨をPDFを渡す前に伝える", () => {
     render(<LeadResults results={baseResults({ status: "partial" })} token="tok" analysisId={1} onRetry={vi.fn()} />);
 
