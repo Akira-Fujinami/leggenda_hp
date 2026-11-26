@@ -50,8 +50,36 @@ class CrawlOriginScopeResolver
         return [
             'origin_url' => $originUrl,
             'host' => $originHost,
-            'path' => $this->normalizeDirectoryPath((string) ($originParts['path'] ?? '/')),
+            'path' => $this->widenToRecruitRoot($this->normalizeDirectoryPath((string) ($originParts['path'] ?? '/'))),
         ];
+    }
+
+    /**
+     * 依頼DV(2026-11-26): 起点のパスを、採用を表す区切り(recruit・saiyo・careers など)までさかのぼる。
+     *
+     * 本番の日刊スポーツ(analysis_id=213)で、採用ページ /recruit/2026/careers/ を起点にしたため、
+     * 同じ採用サイトの他のページ(/recruit/2026/ の下など)が「配下の外」になり、配下は21ページ中1ページ、
+     * 材料は1,757字しか集まらなかった。パスの区切りを先頭から見て、最初に採用の区切りに当たったところまでを
+     * 起点の範囲にする(例: /recruit/2026/careers/ → /recruit/、/jp/ja/recruit/newgrad/ → /jp/ja/recruit/)。
+     * 採用の区切りが無いとき・すでにその区切りで終わっているときは変えない。広げるだけで、狭めることはない。
+     * 起点URL(origin_url、表示・外国語の判定に使う)は変えず、配下かどうかの判定に使うパスだけを広げる。
+     * config('brand_wheel.crawl_origin_widen_to_recruit_root_enabled') を false にすると変更前に戻る。
+     */
+    private function widenToRecruitRoot(string $path): string
+    {
+        if (! (bool) config('brand_wheel.crawl_origin_widen_to_recruit_root_enabled', true)) {
+            return $path;
+        }
+
+        $roots = array_map(fn ($w) => mb_strtolower(trim((string) $w)), (array) config('brand_wheel.crawl_origin_recruit_root_segments', []));
+        $segments = array_values(array_filter(explode('/', $path), fn (string $s) => $s !== ''));
+        foreach ($segments as $i => $segment) {
+            if (in_array(mb_strtolower(rawurldecode($segment)), $roots, true)) {
+                return '/'.implode('/', array_slice($segments, 0, $i + 1)).'/';
+            }
+        }
+
+        return $path;
     }
 
     /**

@@ -819,6 +819,37 @@ class BrandWheelAnalysisInputFactory
     private function allocateCrawlBudget(array $crawlPools, int $budget, int $websiteAnalysisId, ?array $originScope): array
     {
         $budget = max(0, $budget);
+
+        // 依頼DV: 枠のうち crawl_origin_input_priority_share の割合までは、採用ページ(起点)の配下の段落を先に入れる
+        // (クラスタごとの並び(ページ横断のラウンドロビン)は保ったまま、配下の段落だけを前に出して取る)。
+        // 残りの枠は下の従来の手順で、配下の残りと配下の外の段落から選ぶ。
+        $poolsForLog = $crawlPools;
+        $prioritySelected = ['recruit' => [], 'homepage' => []];
+        $priorityCutOff = false;
+        $share = (float) config('brand_wheel.crawl_origin_input_priority_share', 0.7);
+        if ($originScope !== null && $share > 0) {
+            $priorityBudget = (int) floor($budget * min(1.0, $share));
+            $priorityUsed = 0;
+            foreach (['recruit', 'homepage'] as $cluster) {
+                $within = [];
+                $outside = [];
+                foreach ($crawlPools[$cluster] as $paragraph) {
+                    $url = $crawlPools['page_urls'][$paragraph['page_order']] ?? null;
+                    if ($url !== null && $this->originScopeResolver->isWithinScope($url, null, $originScope)) {
+                        $within[] = $paragraph;
+                    } else {
+                        $outside[] = $paragraph;
+                    }
+                }
+                [$taken, $rest, $used, $cutOff] = $this->takeParagraphsUpTo($within, max(0, $priorityBudget - $priorityUsed));
+                $prioritySelected[$cluster] = $taken;
+                $priorityUsed += $used;
+                $priorityCutOff = $priorityCutOff || $cutOff;
+                $crawlPools[$cluster] = [...$rest, ...$outside];
+            }
+            $budget -= $priorityUsed;
+        }
+
         $half = intdiv($budget, 2);
         $caps = ['recruit' => $half, 'homepage' => $budget - $half];
 
@@ -853,6 +884,13 @@ class BrandWheelAnalysisInputFactory
             $partialCutCount += $cutOff ? 1 : 0;
         }
 
+        // 依頼DV: 先に入れた配下の段落を足す(並びは下で元の順に戻す)。
+        foreach (['recruit', 'homepage'] as $cluster) {
+            $selected[$cluster] = [...$prioritySelected[$cluster], ...$selected[$cluster]];
+        }
+        $cutOffByBudget = $cutOffByBudget || $priorityCutOff;
+        $partialCutCount += $priorityCutOff ? 1 : 0;
+
         // 手順4〜5(依頼E-3): 予算内に選ばれた段落だけを、元のページ順・
         // ページ内出現順に戻してから連結する(選定の基準(長さ)と配置の
         // 順序(元の並び)は別物として扱う、依頼者指定)。
@@ -869,7 +907,7 @@ class BrandWheelAnalysisInputFactory
         // トークン見積もり)は一切変更せず、その結果を見えるようにするだけ。
         [$originChars, $adoptedParagraphCount] = $this->logCrawlSelectionBreakdown(
             websiteAnalysisId: $websiteAnalysisId,
-            crawlPools: $crawlPools,
+            crawlPools: $poolsForLog,
             originScope: $originScope,
             caps: $caps,
             usedChars: $usedChars,

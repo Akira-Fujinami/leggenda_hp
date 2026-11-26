@@ -172,4 +172,24 @@ class BrandWheelAnalysisInputFactoryOriginCharsTest extends TestCase
 
         $this->assertSame(250, $input->originChars);
     }
+
+    /**
+     * 依頼DV: 枠が足りないとき、採用ページ(起点)の配下の段落を先に入れる(配下の外の記事などで枠が埋まらない)。
+     */
+    public function test_in_scope_paragraphs_are_taken_first_when_the_budget_is_short(): void
+    {
+        config(['services.ai.max_input_tokens' => 300]); // 900字。起点ページ本文300字を引いて、巡回の材料は600字。
+        $build = function (float $share): int {
+            config(['brand_wheel.crawl_origin_input_priority_share' => $share]);
+            $wa = $this->makeWebsiteAnalysis(crawlSite: true);
+            $this->putSeedPage($wa, PageType::Recruit, 'https://example.com/recruit/', '<html><body><p>'.str_repeat('採', 300).'</p></body></html>');
+            $this->putCrawledPage($wa, 'https://example.com/baseball/news/1.html', '<html><body><p>'.str_repeat('記', 1000).'</p></body></html>');
+            $this->putCrawledPage($wa, 'https://example.com/recruit/member/', '<html><body><p>'.str_repeat('配', 400).'</p></body></html>', depth: 2);
+
+            return $this->factory->build($wa->fresh())->originChars;
+        };
+
+        $this->assertSame(300 + 400, $build(0.7), '配下の400字はすべて入る');
+        $this->assertLessThan(300 + 400, $build(0.0), '0 にすると変更前(半分ずつの枠)で、配下の段落が切られる');
+    }
 }

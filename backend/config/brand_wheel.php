@@ -1352,6 +1352,27 @@ return [
     | に、この値をそのまま1項目追加した ―― 優先が有効だったかどうかが
     | 事後にログだけで分かるようにするため(依頼者指定)。
     */
+    /*
+    | 依頼DV(2026-11-26): 起点の範囲(配下かどうかの判定)を、採用を表す区切りまでさかのぼって広げる
+    | (CrawlOriginScopeResolver::widenToRecruitRoot())。例: /recruit/2026/careers/ → /recruit/。
+    | 区切りはパスの「/〜/」と完全一致(大文字小文字は区別しない)。一般的な語だけにし、特定の会社のパスを足さないこと。
+    */
+    'crawl_origin_widen_to_recruit_root_enabled' => filter_var(env('BRAND_WHEEL_CRAWL_ORIGIN_WIDEN_TO_RECRUIT_ROOT_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+    'crawl_origin_recruit_root_segments' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env(
+            'BRAND_WHEEL_CRAWL_ORIGIN_RECRUIT_ROOT_SEGMENTS',
+            'recruit,recruitment,recruiting,saiyo,saiyou,career,careers,jobs,採用,採用情報',
+        )),
+    ))),
+
+    /*
+    | 依頼DV(2026-11-26): AIに渡す材料(巡回で集めた段落)のうち、この割合までは採用ページ(起点)の配下の段落を先に入れる。
+    | 本番のデイリースポーツ(analysis_id=213)のように、配下の外がニュースの記事ばかりのサイトで、記事の段落が
+    | 材料の枠を埋めないようにする。残りの枠は従来どおり(配下の残りと、配下の外の段落)。0 で変更前と同じ。
+    */
+    'crawl_origin_input_priority_share' => (float) env('BRAND_WHEEL_CRAWL_ORIGIN_INPUT_PRIORITY_SHARE', 0.7),
+
     'crawl_prioritize_origin_scope' => filter_var(env('BRAND_WHEEL_CRAWL_PRIORITIZE_ORIGIN_SCOPE', true), FILTER_VALIDATE_BOOLEAN),
 
     /*

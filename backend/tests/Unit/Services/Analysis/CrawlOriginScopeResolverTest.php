@@ -139,6 +139,8 @@ class CrawlOriginScopeResolverTest extends TestCase
     /** 奥のページを入力した場合は、転送の有無を問わず従来どおり最終URLのディレクトリ。 */
     public function test_a_deep_page_input_keeps_the_final_url_directory_with_or_without_a_redirect(): void
     {
+        // 依頼DV の「採用の区切りまでさかのぼる」はこのテストの対象外(下の専用テスト)。
+        config(['brand_wheel.crawl_origin_widen_to_recruit_root_enabled' => false]);
         $noRedirect = WebsiteAnalysis::factory()->create();
         $this->pages($noRedirect, 'https://cybozu.co.jp/recruit/', 'https://cybozu.co.jp/recruit/', 'https://cybozu.co.jp/recruit/', 'https://cybozu.co.jp/recruit/');
         $this->assertSame('https://cybozu.co.jp/recruit/', $this->resolver()->resolveScope($noRedirect)['origin_url']);
@@ -201,7 +203,7 @@ class CrawlOriginScopeResolverTest extends TestCase
 
     public function test_turning_the_keep_input_flag_off_gives_the_destination_as_before(): void
     {
-        config(['brand_wheel.crawl_origin_keep_input_when_redirected_within' => false]);
+        config(['brand_wheel.crawl_origin_keep_input_when_redirected_within' => false, 'brand_wheel.crawl_origin_widen_to_recruit_root_enabled' => false]);
 
         $wa = WebsiteAnalysis::factory()->create();
         $this->pages($wa, 'https://www.kayac.com/recruit', 'https://www.kayac.com/recruit/fresh', 'https://www.kayac.com/recruit', 'https://www.kayac.com/recruit/fresh');
@@ -259,5 +261,45 @@ class CrawlOriginScopeResolverTest extends TestCase
             $this->resolver()->resolveScope($wa)['origin_url'],
             app(AdminComparisonSiteHierarchyBuilder::class)->countWithinOrigin($wa)['origin_url'],
         );
+    }
+
+    /** 依頼DV: 起点の範囲は、採用を表す区切りまでさかのぼる(起点URLは変えない)。 */
+    public function test_the_scope_is_widened_up_to_the_recruit_segment(): void
+    {
+        $nikkan = WebsiteAnalysis::factory()->create();
+        $this->pages($nikkan, 'https://www.nikkansports.com/recruit/2026/careers/', 'https://www.nikkansports.com/recruit/2026/careers/', 'https://www.nikkansports.com/recruit/2026/careers/', 'https://www.nikkansports.com/recruit/2026/careers/');
+        $scope = $this->resolver()->resolveScope($nikkan);
+        $this->assertSame('https://www.nikkansports.com/recruit/2026/careers/', $scope['origin_url'], '起点URLは変えない');
+        $this->assertSame('/recruit/', $scope['path']);
+        $this->assertTrue($this->resolver()->isWithinScope('https://www.nikkansports.com/recruit/2026/interview/', null, $scope));
+        $this->assertFalse($this->resolver()->isWithinScope('https://www.nikkansports.com/baseball/news/1.html', null, $scope));
+
+        $omron = WebsiteAnalysis::factory()->create();
+        $this->pages($omron, 'https://www.omron.com/jp/ja/recruit/newgrad/', 'https://www.omron.com/jp/ja/recruit/newgrad/', 'https://www.omron.com/jp/ja/recruit/newgrad/', 'https://www.omron.com/jp/ja/recruit/newgrad/');
+        $this->assertSame('/jp/ja/recruit/', $this->resolver()->resolveScope($omron)['path']);
+    }
+
+    public function test_paths_without_a_recruit_segment_or_ending_with_it_are_unchanged(): void
+    {
+        $saiyo = WebsiteAnalysis::factory()->create();
+        $this->pages($saiyo, 'https://www.hochi.co.jp/saiyo/', 'https://www.hochi.co.jp/saiyo/', 'https://www.hochi.co.jp/saiyo/', 'https://www.hochi.co.jp/saiyo/');
+        $this->assertSame('/saiyo/', $this->resolver()->resolveScope($saiyo)['path']);
+
+        $other = WebsiteAnalysis::factory()->create();
+        $this->pages($other, 'https://example.com/company/people/', 'https://example.com/company/people/', 'https://example.com/company/people/', 'https://example.com/company/people/');
+        $this->assertSame('/company/people/', $this->resolver()->resolveScope($other)['path']);
+
+        $recruitment = WebsiteAnalysis::factory()->create();
+        $this->pages($recruitment, 'https://example.com/recruitment-info/new/', 'https://example.com/recruitment-info/new/', 'https://example.com/recruitment-info/new/', 'https://example.com/recruitment-info/new/');
+        $this->assertSame('/recruitment-info/new/', $this->resolver()->resolveScope($recruitment)['path'], '区切りの一部には当てない');
+    }
+
+    public function test_widening_can_be_turned_off(): void
+    {
+        config(['brand_wheel.crawl_origin_widen_to_recruit_root_enabled' => false]);
+        $wa = WebsiteAnalysis::factory()->create();
+        $this->pages($wa, 'https://www.nikkansports.com/recruit/2026/careers/', 'https://www.nikkansports.com/recruit/2026/careers/', 'https://www.nikkansports.com/recruit/2026/careers/', 'https://www.nikkansports.com/recruit/2026/careers/');
+
+        $this->assertSame('/recruit/2026/careers/', $this->resolver()->resolveScope($wa)['path']);
     }
 }
