@@ -155,10 +155,10 @@ class CrawlWebsiteJobTest extends TestCase
     }
 
     /**
-     * robots.txtがhttp_status=403(アクセス拒否)の場合も同様に中止する
-     * ―― resolveRobotsPolicy()が200/404以外をUnavailable扱いするため。
+     * 依頼DT: robots.txtがhttp_status=403(アクセス拒否)の場合は、禁止の指定の無い robots.txt とみなして巡回する
+     * (RFC 9309 2.3.1.3)。巡回中にページ自体が拒否してきたら止める(CrawlWebsitePageJob 側)。
      */
-    public function test_robots_txt_403_aborts_seeding(): void
+    public function test_robots_txt_403_is_treated_as_no_rules_and_seeding_goes_on(): void
     {
         Queue::fake([CrawlWebsitePageJob::class]);
         [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis();
@@ -166,7 +166,28 @@ class CrawlWebsiteJobTest extends TestCase
 
         $this->handle($analysis, $websiteAnalysis);
 
+        $this->assertGreaterThan(0, AnalysisCrawledPage::query()->count());
+        Queue::assertPushed(CrawlWebsitePageJob::class);
+        $this->assertNull($websiteAnalysis->fresh()->crawl_finished_reason);
+    }
+
+    /**
+     * 依頼DT: 429(回数の制限)は今までどおり巡回しない。切り替えを false にすると 403 でも巡回しない(変更前)。
+     */
+    public function test_robots_txt_429_still_aborts_seeding_and_403_aborts_when_switched_off(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis();
+        $this->putRobotsPage($analysis, $websiteAnalysis, 429);
+        $this->handle($analysis, $websiteAnalysis);
         $this->assertSame(0, AnalysisCrawledPage::query()->count());
+        $this->assertSame('robots_txt_unavailable', $websiteAnalysis->fresh()->crawl_finished_reason);
+
+        config(['brand_wheel.crawl_robots_refused_as_no_rules_enabled' => false]);
+        [$analysis2, $websiteAnalysis2] = $this->makeWebsiteAnalysis();
+        $this->putRobotsPage($analysis2, $websiteAnalysis2, 403);
+        $this->handle($analysis2, $websiteAnalysis2);
+        $this->assertSame('robots_txt_unavailable', $websiteAnalysis2->fresh()->crawl_finished_reason);
         Queue::assertNotPushed(CrawlWebsitePageJob::class);
     }
 

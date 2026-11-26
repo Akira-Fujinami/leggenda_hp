@@ -93,7 +93,8 @@ class CrawlFinishedReasonCoverageTest extends TestCase
 
         // CrawlWebsitePageJob: max_pages/total_timeout/max_storage/exhausted/
         // robots_became_unavailable/failed_exceptionの6箇所。
-        $this->assertSame(6, substr_count($crawlWebsitePageJobSource, '$this->finalizeCrawl('));
+        // 依頼DT: 相手のサーバーがページの取得を拒否したときの終了(blocked_by_server)を足して7。
+        $this->assertSame(7, substr_count($crawlWebsitePageJobSource, '$this->finalizeCrawl('));
     }
 
     /**

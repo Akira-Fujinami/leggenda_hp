@@ -179,6 +179,18 @@ class CrawlWebsitePageJob implements ShouldQueue
                 'http_status' => $result->httpStatus,
                 'content_type' => $result->contentType,
             ]);
+
+            // 依頼DT: 相手のサーバーがページの取得を拒否したら、その時点で巡回を止める(突破しない)。
+            // どのサイトでも 429(回数の制限)で止める。robots.txt を拒否されていたサイトでは 401・403 でも止める。
+            $stopStatuses = ($robotsDecision['robots_refused'] ?? false) === true
+                ? (array) config('brand_wheel.crawl_robots_refused_stop_statuses', [401, 403, 429])
+                : (array) config('brand_wheel.crawl_stop_statuses', [429]);
+            if (in_array($result->httpStatus, array_map('intval', $stopStatuses), true)) {
+                $this->finalizeCrawl($pipeline, $htmlSeoAnalyzer, 'blocked_by_server');
+
+                return;
+            }
+
             $this->dispatchNext(true);
 
             return;
@@ -556,6 +568,7 @@ class CrawlWebsitePageJob implements ShouldQueue
      * 【現在の5経路、テストで担保(CrawlWebsitePageJobTest)】handle()から
      * max_pages/total_timeout/max_storage/exhausted、failed()から
      * failed_exception、robots_became_unavailableの計6箇所から呼ばれる。
+     * 依頼DS-2cで exhausted の箇所が outside_origin_cap も兼ね、依頼DTで blocked_by_server(ページの取得を拒否された)を足して7箇所。
      *
      * 依頼CA-2(2026-09-15): このJobがdispatchBrandWheelAnalysisAfterCrawl()を
      * 呼ぶのはこのメソッド(下のexhausted安全弁の早期returnを除く一本道)

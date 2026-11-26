@@ -108,6 +108,14 @@ class CrawlWebsiteJob implements ShouldQueue
             return;
         }
 
+        if (($robotsDecision['robots_refused'] ?? false) === true) {
+            // 依頼DT: robots.txt を 401・403 で拒否されたが、禁止の指定は無いものとして巡回する(ID だけ。URLは出さない)。
+            Log::info('brand_wheel_crawl_robots_refused_treated_as_no_rules', [
+                'analysis_id' => $this->analysisId,
+                'website_analysis_id' => $this->websiteAnalysisId,
+            ]);
+        }
+
         $allowedHosts = $policyResolver->allowedHosts($this->websiteAnalysisId);
 
         if ($allowedHosts === []) {

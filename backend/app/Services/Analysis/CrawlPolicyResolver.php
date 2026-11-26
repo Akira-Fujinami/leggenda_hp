@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\Storage;
 class CrawlPolicyResolver
 {
     /**
-     * @return ?array{disallow: list<string>, allow: list<string>, sitemaps: list<string>, parse_error: bool}
+     * @return ?array{disallow: list<string>, allow: list<string>, sitemaps: list<string>, parse_error: bool, robots_refused?: bool}
      *         nullはrobots.txtが取得できていない(200でも404でもない=Unavailable、
      *         またはFetchRobotsJob自体が未完了/行が無い)場合。この場合クロールは
      *         中止する(依頼C-3)。
@@ -37,6 +37,12 @@ class CrawlPolicyResolver
             return ['disallow' => [], 'allow' => [], 'sitemaps' => [], 'parse_error' => false];
         }
 
+        // 依頼DT: 401・403 で拒否されたときは、禁止の指定の無い robots.txt とみなす(RFC 9309 2.3.1.3)。
+        // robots_refused=true を付け、巡回中にページ自体が拒否してきたら止める(CrawlWebsitePageJob)。
+        if ($this->isRefused($robotsPage->http_status)) {
+            return ['disallow' => [], 'allow' => [], 'sitemaps' => [], 'parse_error' => false, 'robots_refused' => true];
+        }
+
         if ($robotsPage->http_status !== 200 || $robotsPage->raw_html_path === null) {
             return null;
         }
@@ -48,6 +54,16 @@ class CrawlPolicyResolver
         }
 
         return $robotsTxtParser->parse($content);
+    }
+
+    /**
+     * 依頼DT: robots.txt の取得を拒否された状態コードで、禁止の指定の無い robots.txt とみなすか。
+     */
+    public function isRefused(?int $httpStatus): bool
+    {
+        return $httpStatus !== null
+            && (bool) config('brand_wheel.crawl_robots_refused_as_no_rules_enabled', true)
+            && in_array($httpStatus, array_map('intval', (array) config('brand_wheel.crawl_robots_refused_statuses', [401, 403])), true);
     }
 
     /**

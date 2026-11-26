@@ -1210,6 +1210,25 @@ return [
         )),
     ))),
 
+    /*
+    |----------------------------------------------------------------
+    | 依頼DT(2026-11-24): robots.txt の取得を 401・403 で拒否されたとき
+    |----------------------------------------------------------------
+    | 本番の報知新聞・オムロンは、ページ自体は返すのに robots.txt だけを 403 で拒否していて、巡回しなかった
+    | (自社は入力したページだけ、競合は50ページで比べることになった)。robots.txt の標準(RFC 9309 2.3.1.3)では、
+    | 4xx で読めないときは「禁止の指定は無い」とみなしてよい(Google も同じ扱い)。これに合わせ、ここに挙げた状態コードの
+    | ときは、禁止の指定の無い robots.txt として巡回する(間隔・上限は変えない)。
+    | 429(回数の制限)と 5xx(サーバーの不調)は、今までどおり巡回しない。
+    |
+    | 突破はしない: このとき巡回中にページ自体が crawl_robots_refused_stop_statuses を返したら、その時点で巡回を止める
+    | (終了理由 blocked_by_server)。どのサイトでも、ページが crawl_stop_statuses(429)を返したら止める。
+    | false にすると、変更前(401・403 でも巡回しない)に戻る。
+    */
+    'crawl_robots_refused_as_no_rules_enabled' => filter_var(env('BRAND_WHEEL_CRAWL_ROBOTS_REFUSED_AS_NO_RULES_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+    'crawl_robots_refused_statuses' => [401, 403],
+    'crawl_robots_refused_stop_statuses' => [401, 403, 429],
+    'crawl_stop_statuses' => [429],
+
     // DS-2c: 採用ページ(起点)の配下の外から取るページの数の上限。配下が少ないサイトで、枠の残りを
     // コーポレートサイト側のページで埋めない。0以下で上限なし(変更前と同じ)。起点が分からないときは当てない。
     'crawl_outside_origin_max_pages' => (int) env('BRAND_WHEEL_CRAWL_OUTSIDE_ORIGIN_MAX_PAGES', 20),

@@ -3,6 +3,7 @@
 namespace App\Services\Analysis;
 
 use App\Enums\PageType;
+use App\Models\AnalysisCrawledPage;
 use App\Models\AnalysisPage;
 use App\Models\WebsiteAnalysis;
 
@@ -14,6 +15,9 @@ use App\Models\WebsiteAnalysis;
  *  - server_error: 5xx。相手のサーバーの一時的な不調の可能性がある
  *  - unreachable:  取得結果が無い(時間切れ・接続の失敗など)
  *  - null:         robots.txt が理由で巡回を止めていない
+ *
+ * 依頼DT: robots.txt を 401・403 で拒否されても巡回するようにした(CrawlPolicyResolver)。巡回中にページ自体を拒否されて
+ * 1ページも取れずに止まった(crawl_finished_reason=blocked_by_server)ときも blocked とする。
  */
 class RobotsAccessClassifier
 {
@@ -28,6 +32,18 @@ class RobotsAccessClassifier
      */
     public function classify(WebsiteAnalysis $websiteAnalysis): array
     {
+        // 依頼DT: robots.txt を拒否されても巡回するようにしたため、巡回中にページ自体を拒否されて、
+        // 1ページも取れずに止まったときも「拒否していた」と扱う(状態コードは、拒否されたページのもの)。
+        if ($websiteAnalysis->crawl_finished_reason === 'blocked_by_server') {
+            $fetched = AnalysisCrawledPage::query()->where('website_analysis_id', $websiteAnalysis->id)->where('status', AnalysisCrawledPage::STATUS_FETCHED)->exists();
+            if ($fetched) {
+                return ['class' => null, 'http_status' => null];
+            }
+            $status = AnalysisCrawledPage::query()->where('website_analysis_id', $websiteAnalysis->id)->whereNotNull('http_status')->orderByDesc('id')->value('http_status');
+
+            return ['class' => self::BLOCKED, 'http_status' => $status === null ? null : (int) $status];
+        }
+
         if ($websiteAnalysis->crawl_finished_reason !== 'robots_txt_unavailable') {
             return ['class' => null, 'http_status' => null];
         }
