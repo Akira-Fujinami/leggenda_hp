@@ -197,6 +197,33 @@ class GenerateBrandWheelAnalysisJob implements ShouldBeUnique, ShouldQueue
 
         $record->update(['status' => 'running']);
 
+        // 依頼DU: 無料診断を起点にした3〜5社比較の自社サイトは、起点の無料診断の判定結果をそのまま使う
+        // (AIをもう一度呼ぶと、同じサイトでも数値がずれるため)。競合サイトは従来どおり判定する。
+        $sourceResult = app(\App\Services\BrandWheel\ComparisonSelfResultReuser::class)->sourceResultFor($websiteAnalysis);
+        if ($sourceResult !== null) {
+            $this->finalizeBrandWheelResult($record, $websiteAnalysis, [
+                ...\App\Services\BrandWheel\ComparisonSelfResultReuser::copiedAttributes($sourceResult),
+                'usage_input_tokens' => 0,
+                'usage_output_tokens' => 0,
+                'duration_ms' => 0,
+                'error_code' => null,
+                'error_message' => null,
+                'generated_at' => now(),
+            ]);
+
+            // ID だけ(本文・URLは出さない)。
+            Log::info('Brand wheel analysis reused from the source analysis', [
+                'brand_wheel_analysis_result_id' => $record->id,
+                'website_analysis_id' => $websiteAnalysis->id,
+                'source_brand_wheel_analysis_result_id' => $sourceResult->id,
+            ]);
+
+            app(BrandWheelCompletionNotifier::class)->notifyIfReady($record);
+            $this->completeAsSuccess($pipeline, $jobRecord, $analysisId, $websiteAnalysisId);
+
+            return;
+        }
+
         try {
             $input = $inputFactory->build($websiteAnalysis);
         } catch (\Throwable $e) {

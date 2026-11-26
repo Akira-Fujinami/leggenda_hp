@@ -697,6 +697,13 @@ return [
     | 量の差: 採用ページ(起点)の配下から取れたページの数で比べる。多いほうが min_gap 件以上多く、かつ
     | 少ないほう÷多いほう が max_ratio 未満のとき。
     */
+    /*
+    | 依頼DU(2026-11-26): 無料診断を起点にした3〜5社比較では、自社サイトの判定結果を起点の無料診断からそのまま写す
+    | (App\Services\BrandWheel\ComparisonSelfResultReuser)。AIをもう一度呼ぶと、同じサイトでも数値がずれるため。
+    | 比較を作るときに自社URLを変えた場合・起点の判定が成功していない場合は、従来どおり判定する。false で従来どおり。
+    */
+    'comparison_reuse_source_self_result_enabled' => filter_var(env('BRAND_WHEEL_COMPARISON_REUSE_SOURCE_SELF_RESULT_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+
     'comparison_balance_enabled' => filter_var(env('BRAND_WHEEL_COMPARISON_BALANCE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
     'comparison_balance_min_gap' => (int) env('BRAND_WHEEL_COMPARISON_BALANCE_MIN_GAP', 10),
     'comparison_balance_max_ratio' => (float) env('BRAND_WHEEL_COMPARISON_BALANCE_MAX_RATIO', 0.25),
