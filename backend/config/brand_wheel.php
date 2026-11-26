@@ -1185,6 +1185,26 @@ return [
     ))),
 
     /*
+    | 依頼DX(2026-11-26): フォームのページ(ログイン・お問い合わせ・パスワード・メルマガ登録など)も回らない。
+    | URLのパスの区切り(/〜/)が、ここに挙げた語で始まるとき(大文字小文字は区別しない。例: loginWithRegist は login に当たる)。
+    | 本番のキーエンス(analysis_id=217)で、21ページのうち約10ページをこれらのフォームが使っていた。
+    */
+    'crawl_skip_segment_prefixes' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env(
+            'BRAND_WHEEL_CRAWL_SKIP_SEGMENT_PREFIXES',
+            'login,logout,signin,signup,sign-in,sign-up,regist,mypage,inquiry,inquiries,contact,password,subscribe,unsubscribe,checkout',
+        )),
+    ))),
+
+    /*
+    | 依頼DX(2026-11-26): 巡回を始めるとき、入力ページ(トップページ・採用ページ)の、ブラウザで表示したあとのHTML
+    | (rendered_html_path)からもリンクを拾う。本番のキーエンスで、採用トップのリンクがJavaScriptで作られていて、
+    | 元のHTMLからは採用サイトの中のページへのリンクが1件も拾えなかった。false で変更前(元のHTMLだけ)に戻る。
+    */
+    'crawl_seed_from_rendered_enabled' => filter_var(env('BRAND_WHEEL_CRAWL_SEED_FROM_RENDERED_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+
+    /*
     |----------------------------------------------------------------
     | 依頼DS-2(2026-11-20): 採用と関係の薄いページで、ページ数の枠を使わない
     |----------------------------------------------------------------

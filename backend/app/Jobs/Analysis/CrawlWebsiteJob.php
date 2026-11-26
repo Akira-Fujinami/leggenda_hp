@@ -138,18 +138,25 @@ class CrawlWebsiteJob implements ShouldQueue
 
         // seed 1: トップページ・採用ページ自身の本文中のリンク。この2ページは
         // seedとして使うが再取得しない(依頼C-6、Phase 1の設計を維持)。
+        // 依頼DX: ブラウザで表示したあとのHTML(rendered_html_path)があれば、そこからもリンクを拾う(JavaScriptで作るリンク)。
+        $fromRendered = (bool) config('brand_wheel.crawl_seed_from_rendered_enabled', true);
+        $renderedSeeded = 0;
         foreach ([$homepage, $recruit] as $seedPage) {
-            if ($seedPage === null || $seedPage->raw_html_path === null) {
-                continue;
-            }
-            $html = $policyResolver->readStoredFile($seedPage->raw_html_path);
-            if ($html === null) {
+            if ($seedPage === null) {
                 continue;
             }
             $pageUrl = $seedPage->final_url ?? $seedPage->url;
-            foreach ($linkExtractor->extractAbsoluteLinks($html, $pageUrl) as $link) {
-                if ($this->enqueueSeed($link, 1, 'link', $allowedHosts)) {
-                    $seededCount++;
+            $paths = array_values(array_filter([$seedPage->raw_html_path, $fromRendered ? $seedPage->rendered_html_path : null]));
+            foreach ($paths as $path) {
+                $html = $policyResolver->readStoredFile($path);
+                if ($html === null) {
+                    continue;
+                }
+                foreach ($linkExtractor->extractAbsoluteLinks($html, $pageUrl) as $link) {
+                    if ($this->enqueueSeed($link, 1, 'link', $allowedHosts)) {
+                        $seededCount++;
+                        $renderedSeeded += $path === $seedPage->rendered_html_path ? 1 : 0;
+                    }
                 }
             }
         }
@@ -174,6 +181,8 @@ class CrawlWebsiteJob implements ShouldQueue
             'analysis_id' => $this->analysisId,
             'website_analysis_id' => $this->websiteAnalysisId,
             'seeded_count' => $seededCount,
+            // 依頼DX: そのうち、ブラウザで表示したあとのHTMLから新しく拾えたリンクの数。
+            'seeded_from_rendered' => $renderedSeeded,
         ]);
 
         if ($seededCount === 0) {

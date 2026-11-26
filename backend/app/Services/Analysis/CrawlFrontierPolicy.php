@@ -27,7 +27,21 @@ class CrawlFrontierPolicy
             return false;
         }
 
-        return $this->containsAny($this->decodedPath($url), $linkText, (array) config('brand_wheel.crawl_skip_words', []));
+        if ($this->containsAny($this->decodedPath($url), $linkText, (array) config('brand_wheel.crawl_skip_words', []))) {
+            return true;
+        }
+
+        // 依頼DX: フォームのページ(パスの区切りが login・inquiry・password などで始まる)。
+        $prefixes = $this->normalizedList((array) config('brand_wheel.crawl_skip_segment_prefixes', []));
+        foreach ($this->segments($url) as $segment) {
+            foreach ($prefixes as $prefix) {
+                if (str_starts_with($segment, $prefix)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -543,4 +543,37 @@ class CrawlWebsiteJobTest extends TestCase
                 return true;
             });
     }
+
+    /** 依頼DX: ブラウザで表示したあとのHTMLからもリンクを拾う(JavaScriptで作るリンク)。 */
+    public function test_links_in_the_rendered_html_are_also_seeded(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis();
+        $this->putRobotsPage($analysis, $websiteAnalysis, 404);
+        $renderedPath = app(AnalysisStoragePaths::class)->rawHtmlPath($analysis->id, $websiteAnalysis->id, 'homepage.rendered.html');
+        Storage::disk('analysis')->put($renderedPath, '<html><body><a href="https://example.co.jp/jobs/branch/">営業所</a><a href="https://example.co.jp/about">about</a></body></html>');
+        AnalysisPage::query()->where('website_analysis_id', $websiteAnalysis->id)->where('page_type', PageType::Homepage)->update(['rendered_html_path' => $renderedPath]);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $urls = AnalysisCrawledPage::query()->where('website_analysis_id', $websiteAnalysis->id)->pluck('url')->all();
+        $this->assertContains('https://example.co.jp/jobs/branch/', $urls);
+        $this->assertContains('https://example.co.jp/about', $urls);
+        $this->assertSame(2, count($urls), '元のHTMLと重なるリンクは1行だけ');
+    }
+
+    public function test_rendered_links_are_not_used_when_switched_off(): void
+    {
+        Queue::fake([CrawlWebsitePageJob::class]);
+        config(['brand_wheel.crawl_seed_from_rendered_enabled' => false]);
+        [$analysis, $websiteAnalysis] = $this->makeWebsiteAnalysis();
+        $this->putRobotsPage($analysis, $websiteAnalysis, 404);
+        $renderedPath = app(AnalysisStoragePaths::class)->rawHtmlPath($analysis->id, $websiteAnalysis->id, 'homepage.rendered.html');
+        Storage::disk('analysis')->put($renderedPath, '<html><body><a href="https://example.co.jp/jobs/branch/">営業所</a></body></html>');
+        AnalysisPage::query()->where('website_analysis_id', $websiteAnalysis->id)->where('page_type', PageType::Homepage)->update(['rendered_html_path' => $renderedPath]);
+
+        $this->handle($analysis, $websiteAnalysis);
+
+        $this->assertNotContains('https://example.co.jp/jobs/branch/', AnalysisCrawledPage::query()->pluck('url')->all());
+    }
 }

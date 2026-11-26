@@ -69,4 +69,19 @@ class CrawlFocusPolicyTest extends TestCase
         config(['brand_wheel.crawl_outside_origin_max_pages' => 0]);
         $this->assertSame(0, $this->policy()->outsideOriginMaxPages());
     }
+
+    /** 依頼DX: フォームのページ(ログイン・お問い合わせ・パスワード・メルマガ登録など)は回らない。 */
+    public function test_form_pages_are_skipped_by_the_start_of_a_path_segment(): void
+    {
+        $p = $this->policy();
+
+        $this->assertTrue($p->shouldSkip('https://www.keyence.co.jp/user/login/loginWithRegist/'));
+        $this->assertTrue($p->shouldSkip('https://www.keyence.co.jp/inquiry/askKeyence/?groupId='));
+        $this->assertTrue($p->shouldSkip('https://www.keyence.co.jp/user/passwordAssistance/'));
+        $this->assertTrue($p->shouldSkip('https://www.keyence.co.jp/enews/subscribe/'));
+        $this->assertTrue($p->shouldSkip('https://example.co.jp/recruit/contact/'));
+        $this->assertFalse($p->shouldSkip('https://www.keyence.co.jp/jobs/branch/'));
+        $this->assertFalse($p->shouldSkip('https://example.co.jp/company/'));
+        $this->assertFalse($p->shouldSkip('https://example.co.jp/recruit/career-login-guide/'), '区切りの途中には当てない');
+    }
 }
