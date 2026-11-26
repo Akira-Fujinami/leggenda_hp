@@ -74,7 +74,7 @@ class RenderPageJob extends BaseWebsiteAnalysisJob
         $htmlPath = $paths->rawHtmlPath($this->analysisId, $this->websiteAnalysisId, 'homepage.rendered.html');
 
         try {
-            $data = $client->render($website->normalized_url);
+            $data = $client->render($website->fetchUrl());
             $this->putToAnalysisStorage($htmlPath, (string) ($data['html'] ?? ''));
         } catch (AnalysisException $e) {
             $this->recordMetric($this->websiteAnalysisId, 'fixed_cta_present', MetricResultStatus::Unavailable, errorCode: $e->errorCode->value, errorMessage: $e->getMessage());

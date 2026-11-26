@@ -40,10 +40,29 @@ class ComparisonStrengthWeaknessComposer
             return null;
         }
 
+        $insufficientNotice = ['notice' => (string) config('admin_comparison_pptx.strength_weakness_insufficient'), 'strength' => null, 'weakness' => null, 'ai_used' => false, 'detail_used' => false, 'insight_strength' => false, 'insight_weakness' => false, 'insight_used' => false];
         foreach ($companies as $company) {
-            if (! ($company['material_sufficient'] ?? true)) {
-                return ['notice' => (string) config('admin_comparison_pptx.strength_weakness_insufficient'), 'strength' => null, 'weakness' => null, 'ai_used' => false, 'detail_used' => false, 'insight_strength' => false, 'insight_weakness' => false, 'insight_used' => false];
+            if ($company['is_self'] && ! ($company['material_sufficient'] ?? true)) {
+                return $insufficientNotice;
             }
+        }
+
+        // 依頼DW: 記述が少ない競合が1社あるだけで、全社の強み・弱みが出なくなっていた(本番 analysis_id=214、産経新聞社)。
+        // その競合を除いて、残りの競合と比べる(呼び方の記号は、比較表と同じく元の並びの番号で決める)。全社が少なければ従来どおり1行だけ。
+        $labels = $this->competitorLabels($competitors);
+        $kept = array_keys(array_filter($competitors, fn (array $c) => $c['material_sufficient'] ?? true));
+        if ($kept === []) {
+            return $insufficientNotice;
+        }
+        $excluded = array_values(array_map(fn (int $i) => (string) $competitors[$i]['name'], array_diff(array_keys($competitors), $kept)));
+        if ($excluded !== []) {
+            $competitors = array_values(array_map(fn (int $i) => $competitors[$i], $kept));
+            $labels = array_values(array_map(fn (int $i) => $labels[$i], $kept));
+            $axes = array_map(function (array $axis) use ($kept) {
+                $axis['competitor_counts'] = array_values(array_map(fn (int $i) => (int) ($axis['competitor_counts'][$i] ?? 0), $kept));
+
+                return $axis;
+            }, $axes);
         }
 
         $rows = [];
@@ -66,13 +85,33 @@ class ComparisonStrengthWeaknessComposer
         return [
             'notice' => null,
             'strength' => $insightStrength ?? $cwStrength ?? $detailStrength ?? $this->strength($rows, count($competitors)),
-            'weakness' => $insightWeakness ?? $cwWeakness ?? $detailWeakness ?? $this->weakness($rows, $competitors),
+            'weakness' => $insightWeakness ?? $cwWeakness ?? $detailWeakness ?? $this->weakness($rows, $labels),
+            // 依頼DW: 除いた競合の名前(スライドの下に小さく1行出す)。
+            'excluded_note' => $excluded === [] ? null : sprintf((string) config('admin_comparison_pptx.strength_weakness_excluded_note'), implode('・', $excluded)),
             'ai_used' => $cwStrength !== null || $cwWeakness !== null,
             'detail_used' => ($insightStrength === null && $cwStrength === null && $detailStrength !== null) || ($insightWeakness === null && $cwWeakness === null && $detailWeakness !== null),
             'insight_strength' => $insightStrength !== null,
             'insight_weakness' => $insightWeakness !== null,
             'insight_used' => $insightStrength !== null || $insightWeakness !== null,
         ];
+    }
+
+    /**
+     * 比較表の見出しと同じ呼び方: 競合が config 以下の社数なら企業名、それを超えると記号(元の並びの番号で決める)。
+     *
+     * @param  list<array{name: string}>  $competitors
+     * @return list<string>
+     */
+    private function competitorLabels(array $competitors): array
+    {
+        $useNames = count($competitors) <= (int) config('admin_comparison_pptx.wheel_names_max_competitors');
+        $symbols = (string) config('admin_comparison_pptx.wheel_competitor_symbols');
+
+        return array_map(
+            fn (array $c, int $i) => $useNames ? (string) $c['name'] : (mb_substr($symbols, $i, 1) !== '' ? mb_substr($symbols, $i, 1) : (string) ($i + 1)),
+            $competitors,
+            array_keys($competitors),
+        );
     }
 
     /**
@@ -113,9 +152,9 @@ class ComparisonStrengthWeaknessComposer
 
     /**
      * @param  list<array{index: int, axis: array<string, mixed>, self: int, best: int}>  $rows
-     * @param  list<array{name: string}>  $competitors
+     * @param  list<string>  $competitorLabels  competitor_counts と同じ並びの呼び方(competitorLabels())
      */
-    private function weakness(array $rows, array $competitors): string
+    private function weakness(array $rows, array $competitorLabels): string
     {
         $below = array_filter($rows, fn (array $r) => $r['self'] < $r['best']);
         if ($below === []) {
@@ -124,13 +163,11 @@ class ComparisonStrengthWeaknessComposer
 
         $row = $this->pick($below, fn (array $r) => $r['best'] - $r['self']);
 
-        // 最高点の会社(比較表の見出しと同じ呼び方: 競合が config 以下の社数なら企業名、それを超えると記号)。
-        $useNames = count($competitors) <= (int) config('admin_comparison_pptx.wheel_names_max_competitors');
-        $symbols = (string) config('admin_comparison_pptx.wheel_competitor_symbols');
+        // 最高点の会社(比較表の見出しと同じ呼び方)。
         $labels = [];
         foreach ($row['axis']['competitor_counts'] as $i => $count) {
             if ($count === $row['best']) {
-                $labels[] = $useNames ? (string) $competitors[$i]['name'] : (mb_substr($symbols, $i, 1) !== '' ? mb_substr($symbols, $i, 1) : (string) ($i + 1));
+                $labels[] = $competitorLabels[$i] ?? (string) ($i + 1);
             }
         }
         $who = $labels[0].(count($labels) > 1 ? (string) config('admin_comparison_pptx.strength_weakness_names_more') : '');

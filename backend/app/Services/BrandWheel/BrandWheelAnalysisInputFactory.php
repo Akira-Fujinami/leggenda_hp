@@ -731,7 +731,7 @@ class BrandWheelAnalysisInputFactory
             return [$keptRecruitBody, $keptHomepageBody, $keptLabels, $seedTruncated, $this->seedParagraphChars($keptRecruitBody, $keptHomepageBody), null];
         }
 
-        [$recruitCrawlText, $homepageCrawlText, $crawlTruncated, $crawlCharsUsed, $crawlOriginChars, $adoptedParagraphCount] = $this->allocateCrawlBudget($crawlPools, $remainingForCrawl, $websiteAnalysisId, $originScope);
+        [$recruitCrawlText, $homepageCrawlText, $crawlTruncated, $crawlCharsUsed, $crawlOriginChars, $adoptedParagraphCount] = $this->allocateCrawlBudget($crawlPools, $remainingForCrawl, $websiteAnalysisId, $originScope, $this->seedParagraphChars($keptRecruitBody, $keptHomepageBody));
         // 依頼CH追補-1: allocateCrawlBudget()/logCrawlSelectionBreakdown()が
         // 返すorigin_chars・ログの'crawl selection breakdown'のorigin_chars
         // (依頼CG-1由来、クロール段落のみの内訳)は変更しない ―― ここで
@@ -816,7 +816,7 @@ class BrandWheelAnalysisInputFactory
      * @param  array{origin_url: string, host: string, path: string}|null  $originScope
      * @return array{0: string, 1: string, 2: bool, 3: int, 4: int, 5: int} [recruit用クロールテキスト, homepage用クロールテキスト, 切り詰めが発生したか, 実際に使った文字数, 起点URL配下文字数(依頼CH-1a), 採用段落数(依頼CH-1a)]
      */
-    private function allocateCrawlBudget(array $crawlPools, int $budget, int $websiteAnalysisId, ?array $originScope): array
+    private function allocateCrawlBudget(array $crawlPools, int $budget, int $websiteAnalysisId, ?array $originScope, int $seedOriginChars = 0): array
     {
         $budget = max(0, $budget);
 
@@ -824,6 +824,7 @@ class BrandWheelAnalysisInputFactory
         // (クラスタごとの並び(ページ横断のラウンドロビン)は保ったまま、配下の段落だけを前に出して取る)。
         // 残りの枠は下の従来の手順で、配下の残りと配下の外の段落から選ぶ。
         $poolsForLog = $crawlPools;
+        $withinLeft = [];
         $prioritySelected = ['recruit' => [], 'homepage' => []];
         $priorityCutOff = false;
         $share = (float) config('brand_wheel.crawl_origin_input_priority_share', 0.7);
@@ -846,8 +847,18 @@ class BrandWheelAnalysisInputFactory
                 $priorityUsed += $used;
                 $priorityCutOff = $priorityCutOff || $cutOff;
                 $crawlPools[$cluster] = [...$rest, ...$outside];
+                $withinLeft[$cluster] = $rest;
             }
             $budget -= $priorityUsed;
+
+            // 依頼DW: 配下の段落を取り切ったら、配下の外の段落は、AIに渡す材料全体(起点ページの本文+巡回の段落)の
+            // crawl_outside_input_max_share の割合までにする。本番のデイリースポーツ(analysis_id=214)で、配下の16,606字を
+            // 全部入れた残りの枠を、ニュース一覧の見出し19,394字(野球・ゴシップなど)が埋め、採用の判定が5/24になっていた。
+            $outsideShare = (float) config('brand_wheel.crawl_outside_input_max_share', 0.3);
+            if ($outsideShare > 0 && $outsideShare < 1 && ($withinLeft['recruit'] ?? []) === [] && ($withinLeft['homepage'] ?? []) === []) {
+                $outsideMax = (int) floor(($seedOriginChars + $priorityUsed) * $outsideShare / (1 - $outsideShare));
+                $budget = min($budget, $outsideMax);
+            }
         }
 
         $half = intdiv($budget, 2);

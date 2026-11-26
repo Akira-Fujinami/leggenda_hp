@@ -536,6 +536,10 @@ class AdminComparisonPptxGenerator
             $this->font($paragraph->createTextRun((string) ($labels[$key] ?? '')), $size, true, self::NAVY);
             $this->font($paragraph->createTextRun((string) $text[$key]), $size, false, self::BODY_TEXT);
         }
+        // 依頼DW: 記述が少ない競合を除いて比べたときの1行。
+        if (is_string($text['excluded_note'] ?? null) && $text['excluded_note'] !== '') {
+            $this->font($box->createParagraph()->createTextRun($text['excluded_note']), 8, false, self::MUTED);
+        }
     }
 
     /** 依頼DC: 行の頭のラベルが占める字数(ラベルが空なら0=ラベルを出さない。あれば後ろの空白を含む)。 */

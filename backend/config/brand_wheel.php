@@ -1373,6 +1373,12 @@ return [
     */
     'crawl_origin_input_priority_share' => (float) env('BRAND_WHEEL_CRAWL_ORIGIN_INPUT_PRIORITY_SHARE', 0.7),
 
+    /*
+    | 依頼DW(2026-11-26): 起点の配下の段落を取り切ったあと、配下の外の段落は、AIに渡す材料全体(起点ページの本文+巡回の段落)の
+    | この割合までにする(配下の外=ニュース一覧などで材料を埋めない)。起点が分からないときは当てない。1 で変更前と同じ。
+    */
+    'crawl_outside_input_max_share' => (float) env('BRAND_WHEEL_CRAWL_OUTSIDE_INPUT_MAX_SHARE', 0.3),
+
     'crawl_prioritize_origin_scope' => filter_var(env('BRAND_WHEEL_CRAWL_PRIORITIZE_ORIGIN_SCOPE', true), FILTER_VALIDATE_BOOLEAN),
 
     /*

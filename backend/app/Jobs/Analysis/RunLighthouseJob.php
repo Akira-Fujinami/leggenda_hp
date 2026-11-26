@@ -60,7 +60,7 @@ class RunLighthouseJob extends BaseWebsiteAnalysisJob
         try {
             $this->rejectIfAnalyzerBusy($client);
 
-            $data = $client->lighthouse($website->normalized_url);
+            $data = $client->lighthouse($website->fetchUrl());
 
             if (isset($data['raw_report'])) {
                 /** @var AnalysisStoragePaths $paths */

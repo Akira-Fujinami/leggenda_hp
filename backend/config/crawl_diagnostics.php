@@ -204,6 +204,13 @@ return [
         'unreachable' => '相手のサーバーが想定外の応答を返しました(robots.txtの取得でHTTP %s)。時間をおいて再実行すると解消することがあります。',
     ],
 
+    // 依頼DW: 管理画面「サイトごとの状態」に失敗の理由を出す、ページを取りに行く処理と、その呼び方。
+    'page_job_failure_labels' => [
+        'fetch_static_page' => '入力したページの取得',
+        'fetch_recruit_page' => '採用ページの取得',
+        'render_page' => 'ブラウザでの表示',
+    ],
+
     'failed_url_display_limit' => (int) env('CRAWL_DIAGNOSTICS_FAILED_URL_DISPLAY_LIMIT', 10),
 
 ];

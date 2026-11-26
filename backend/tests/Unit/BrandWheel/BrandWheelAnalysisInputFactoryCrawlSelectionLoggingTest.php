@@ -36,6 +36,8 @@ class BrandWheelAnalysisInputFactoryCrawlSelectionLoggingTest extends TestCase
         $this->seed(CategoryDefinitionSeeder::class);
         $this->seed(MetricDefinitionSeeder::class);
         Storage::fake('analysis');
+        // 依頼DW の「配下の外は材料全体の30%まで」はこのテストの対象外(選び方・ログの数え方を確かめる)。
+        config(['brand_wheel.crawl_outside_input_max_share' => 1.0]);
         $this->factory = app(BrandWheelAnalysisInputFactory::class);
     }
 

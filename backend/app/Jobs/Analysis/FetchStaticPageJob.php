@@ -62,7 +62,7 @@ class FetchStaticPageJob extends BaseWebsiteAnalysisJob
         $htmlPath = $paths->rawHtmlPath($this->analysisId, $this->websiteAnalysisId, 'homepage.html');
 
         try {
-            $result = $fetcher->fetch($website->normalized_url, ['text/html', 'application/xhtml+xml']);
+            $result = $fetcher->fetch($website->fetchUrl(), ['text/html', 'application/xhtml+xml']);
             $this->putToAnalysisStorage($htmlPath, $result->body);
         } catch (AnalysisException $e) {
             $this->recordAllHttpMetricsUnavailable();

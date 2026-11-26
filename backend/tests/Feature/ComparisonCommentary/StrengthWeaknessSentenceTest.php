@@ -520,14 +520,15 @@ class StrengthWeaknessSentenceTest extends TestCase
         $this->assertFalse($schema['additionalProperties']);
     }
 
-    public function test_a_company_with_thin_material_or_an_unreadable_judgment_is_skipped_without_the_ai(): void
+    /** 依頼DW: 全社の競合が少ない・読めないときだけ、AIを呼ばずに止める(1社だけなら、その社を除いて比べる)。 */
+    public function test_it_is_skipped_without_the_ai_only_when_no_competitor_is_usable(): void
     {
         $fake = $this->fakeProvider($this->goodOutput());
 
-        $thin = $this->makeComparison(['purpose'], [['business_expansion'], ['project_initiative']], [2 => 100]);
+        $thin = $this->makeComparison(['purpose'], [['business_expansion']], [1 => 100]);
         $this->assertSame('material_insufficient', app(StrengthWeaknessSentenceService::class)->generate($thin)['skipped']);
 
-        $unreadable = $this->standard();
+        $unreadable = $this->makeComparison(['purpose'], [['business_expansion']]);
         BrandWheelAnalysisResult::query()->where('website_analysis_id', $unreadable->websiteAnalyses()->orderByDesc('id')->value('id'))->update(['status' => 'error']);
         $this->assertSame('competitor_unreadable', app(StrengthWeaknessSentenceService::class)->generate($unreadable)['skipped']);
 

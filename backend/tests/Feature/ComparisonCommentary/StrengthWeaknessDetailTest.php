@@ -364,12 +364,13 @@ class StrengthWeaknessDetailTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_a_company_with_thin_material_gives_no_sentences(): void
+    /** 依頼DW: 材料が少ない競合(A社)は除いて、残り(B社)と比べた文になる。 */
+    public function test_a_competitor_with_thin_material_is_left_out_of_the_sentences(): void
     {
         $out = $this->composer()->composeForAnalysis($this->makeAnalysis(true));
 
-        $this->assertNull($out['strength']);
-        $this->assertNull($out['weakness']);
+        $this->assertStringNotContainsString('A社', (string) $out['strength'].(string) $out['weakness']);
+        $this->assertStringContainsString('B社', (string) $out['weakness']);
     }
 
     // ------------------------------------------------------------------ CT-1・AIとの関係 / スライド(CUA-4・5)

@@ -649,4 +649,26 @@ class CrawlDiagnosticsDisplayTest extends TestCase
         $response->assertSee(config('crawl_diagnostics.warning_messages.low_origin_scope_ratio'));
         $response->assertSee('0/20', false);
     }
+
+    /** 依頼DW: ページを取りに行く処理が失敗したときの理由を「サイトごとの状態」に出す。 */
+    public function test_the_reason_a_page_could_not_be_fetched_is_shown(): void
+    {
+        $analysis = $this->makeAnalysis();
+        $wa = $this->makeWebsiteAnalysis($analysis, '産経新聞社');
+        \App\Models\AnalysisJob::query()->create([
+            'analysis_id' => $analysis->id,
+            'website_analysis_id' => $wa->id,
+            'job_type' => \App\Enums\JobType::FetchStaticPage,
+            'queue_name' => 'analysis',
+            'status' => \App\Enums\AnalysisJobStatus::Failed,
+            'error_code' => 'UNSUPPORTED_CONTENT_TYPE',
+            'error_message' => '対応していないContent-Typeです: なし(HTTP 200)',
+        ]);
+
+        $response = $this->asAdmin()->get("/admin/analyses/{$analysis->id}");
+
+        $response->assertOk();
+        $response->assertSee('ページを取れなかった理由');
+        $response->assertSee('入力したページの取得：対応していないContent-Typeです: なし(HTTP 200)');
+    }
 }

@@ -49,7 +49,7 @@ class CaptureScreenshotJob extends BaseWebsiteAnalysisJob
 
         /** @var AnalyzerClient $client */
         $client = app(AnalyzerClient::class);
-        $data = $client->screenshot($this->analysisId, $this->websiteAnalysisId, $website->normalized_url, $this->device->value);
+        $data = $client->screenshot($this->analysisId, $this->websiteAnalysisId, $website->fetchUrl(), $this->device->value);
 
         // 巨大ページ(例: ECサイトのfullPage)でANALYZER_SCREENSHOT_MAX_HEIGHTを
         // 超える場合、analyzerはviewport幅×最大高さでクリップした画像を

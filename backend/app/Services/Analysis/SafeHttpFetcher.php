@@ -96,7 +96,8 @@ class SafeHttpFetcher
                 if (! $matches) {
                     throw new AnalysisException(
                         AnalysisErrorCode::UnsupportedContentType,
-                        "対応していないContent-Typeです: {$contentType}",
+                        // 依頼DW: 状態コードも残す(ページの種類が空のとき、相手が拒否したのか、中身の無い応答なのかを見分けるため)。
+                        sprintf('対応していないContent-Typeです: %s(HTTP %d)', $contentType !== '' ? $contentType : 'なし', $status),
                     );
                 }
             }

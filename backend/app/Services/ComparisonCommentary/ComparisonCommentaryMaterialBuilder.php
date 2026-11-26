@@ -91,19 +91,31 @@ class ComparisonCommentaryMaterialBuilder
         $labels = [];
         $records = [];
         $companies = [];
+        $excludedReasons = [];
         foreach (array_values($competitors) as $i => $competitor) {
             $record = $competitor['record'];
             $name = (string) $competitor['name'];
             $label = $useNames ? $name : (mb_substr($symbols, $i, 1) !== '' ? mb_substr($symbols, $i, 1) : (string) ($i + 1));
+            // 依頼DW: 読み取れない・材料が足りない競合は、除いて残りの競合と比べる(呼び方は元の並びのまま)。
+            // 1社でもあると全社分を作らなかったため、産経新聞社(analysis_id=214)が読めないだけで強み・弱みが全社分消えていた。
             if (! $this->readable($record, $competitor['website'])) {
-                return $this->skipped('competitor_unreadable', $selfName);
+                $excludedReasons[] = 'competitor_unreadable';
+
+                continue;
             }
             if (! $this->sufficiency->isSufficient($record?->input_origin_chars)) {
-                return $this->skipped('material_insufficient', $selfName);
+                $excludedReasons[] = 'material_insufficient';
+
+                continue;
             }
             $labels[] = $label;
             $records[] = $record;
             $companies[] = ['label' => $label, 'name' => $name];
+        }
+
+        if ($records === []) {
+            // 全社が除かれたときは従来どおり(最初の競合の理由)。
+            return $this->skipped($excludedReasons[0] ?? 'competitor_unreadable', $selfName);
         }
 
         $selfMatched = $this->matchedKeys($selfRecord);

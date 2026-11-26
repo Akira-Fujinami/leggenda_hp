@@ -123,6 +123,13 @@ abstract class BaseWebsiteAnalysisJob implements ShouldBeUnique, ShouldQueue
             }
 
             $pipeline->markFailed($record, $e->errorCode, $e->getMessage());
+            // 依頼DW: 失敗の理由をログにも出す(コードだけ。URLを含みうるメッセージは出さない。メッセージは管理画面に出す)。
+            Log::warning('Website analysis job failed', [
+                'analysis_id' => $this->analysisId,
+                'website_analysis_id' => $this->websiteAnalysisId,
+                'job_type' => $this->jobType()->value,
+                'error_code' => $e->errorCode->value,
+            ]);
             $this->onWebsiteJobTerminal($pipeline);
         } catch (\Throwable $e) {
             report($e);

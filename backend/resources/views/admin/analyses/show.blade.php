@@ -247,14 +247,32 @@
 <div class="card">
     <h3>サイトごとの状態</h3>
     <table class="list">
-        <thead><tr><th>サイト</th><th>状態</th><th>HTTPステータス</th><th>応答時間</th></tr></thead>
+        <thead><tr><th>サイト</th><th>状態</th><th>HTTPステータス</th><th>応答時間</th><th>ページを取れなかった理由</th></tr></thead>
         <tbody>
+            @php
+                // 依頼DW: ページを取りに行く処理が失敗したときの理由(診断ジョブの記録にだけ残っていて、画面にもログにも出ていなかった)。
+                $pageJobLabels = (array) config('crawl_diagnostics.page_job_failure_labels', []);
+                $pageJobFailures = \App\Models\AnalysisJob::query()
+                    ->where('analysis_id', $analysis->id)
+                    ->where('status', \App\Enums\AnalysisJobStatus::Failed)
+                    ->whereIn('job_type', array_keys($pageJobLabels))
+                    ->orderBy('id')
+                    ->get()
+                    ->groupBy('website_analysis_id');
+            @endphp
             @foreach ($analysis->websiteAnalyses as $wa)
                 <tr>
                     <td>{{ $wa->website?->name }}</td>
                     <td><span class="badge status-{{ $wa->status->value }}">{{ $wa->status->value }}</span></td>
                     <td>{{ $wa->http_status ?? '—' }}</td>
                     <td>{{ $wa->response_time_ms ? $wa->response_time_ms.'ms' : '—' }}</td>
+                    <td>
+                        @forelse ($pageJobFailures->get($wa->id, collect()) as $job)
+                            <div>{{ $pageJobLabels[$job->job_type->value] ?? $job->job_type->value }}：{{ $job->error_message ?? $job->error_code }}</div>
+                        @empty
+                            —
+                        @endforelse
+                    </td>
                 </tr>
             @endforeach
         </tbody>

@@ -192,4 +192,28 @@ class BrandWheelAnalysisInputFactoryOriginCharsTest extends TestCase
         $this->assertSame(300 + 400, $build(0.7), '配下の400字はすべて入る');
         $this->assertLessThan(300 + 400, $build(0.0), '0 にすると変更前(半分ずつの枠)で、配下の段落が切られる');
     }
+
+    /**
+     * 依頼DW: 配下の段落を取り切ったら、配下の外の段落は材料全体の30%まで(ニュース一覧で材料を埋めない)。
+     */
+    public function test_outside_paragraphs_are_limited_to_the_share_of_the_whole_material(): void
+    {
+        config(['services.ai.max_input_tokens' => 3000]); // 9,000字。枠には十分に余りがある。
+        $wa = $this->makeWebsiteAnalysis(crawlSite: true);
+        $this->putSeedPage($wa, PageType::Recruit, 'https://example.com/recruit/', '<html><body><p>'.str_repeat('採', 300).'</p></body></html>');
+        $this->putCrawledPage($wa, 'https://example.com/recruit/member/', '<html><body><p>'.str_repeat('配', 400).'</p></body></html>');
+        foreach (['baseball' => '野', 'soccer' => '蹴', 'gossip' => '芸'] as $section => $char) {
+            $this->putCrawledPage($wa, "https://example.com/{$section}/", '<html><body><p>'.str_repeat($char, 1000).'</p></body></html>');
+        }
+
+        $input = $this->factory->build($wa->fresh());
+        $total = mb_strlen(str_replace("\n", '', $input->recruitPageBodyText.$input->homepageBodyText));
+
+        $this->assertSame(700, $input->originChars, '配下(起点ページ300字+配下400字)はすべて入る');
+        $this->assertSame(700 + 300, $total, '外は 700×0.3/0.7=300字まで');
+
+        config(['brand_wheel.crawl_outside_input_max_share' => 1.0]);
+        $input = $this->factory->build($wa->fresh());
+        $this->assertSame(700 + 3000, mb_strlen(str_replace("\n", '', $input->recruitPageBodyText.$input->homepageBodyText)), '1 にすると変更前(外も全部入る)');
+    }
 }

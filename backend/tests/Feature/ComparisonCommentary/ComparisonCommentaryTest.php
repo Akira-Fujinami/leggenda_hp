@@ -451,42 +451,49 @@ class ComparisonCommentaryTest extends TestCase
         $this->assertSame(['items', 'quotes', 'companies', 'sentence'], array_keys($schema['properties']['weakness']['properties']));
     }
 
-    public function test_when_a_company_has_thin_material_nothing_is_written_and_the_ai_is_not_called(): void
+    /** 依頼DW: 材料が少ない競合は除いて、残りの競合と比べる(1社だけで全社分を止めない)。全社が少なければ従来どおり作らない。 */
+    public function test_a_competitor_with_thin_material_is_left_out_and_the_rest_are_compared(): void
     {
         $analysis = $this->makeComparison(['purpose'], [['business_expansion'], ['project_initiative']], [2 => 100]);
-        $fake = $this->fakeProvider($this->goodOutput());
 
-        $result = app(ComparisonCommentaryService::class)->generate($analysis);
+        $material = app(ComparisonCommentaryMaterialBuilder::class)->build($analysis);
 
-        $this->assertSame(0, $fake->calls);
-        $this->assertSame('material_insufficient', $result['skipped']);
-        $this->assertNull($result['strength']);
-        $this->assertNull($result['weakness']);
-        $this->assertSame(0, $result['ai_calls']);
+        $this->assertSame('ok', $material['status'] ?? 'ok');
+        $this->assertSame(['A社'], array_column($material['competitors'], 'name'), 'B社(材料が少ない)は除く');
 
-        // 点数のほうは、CT-1と同じく「少ない」と1行だけ出して強み・弱みは出さない。
+        // 点数のほうも、B社を除いて強み・弱みを出し、除いたことを1行添える。
         $companies = [
             ['name' => '自社', 'matched' => 1, 'total' => 24, 'is_self' => true, 'material_sufficient' => true],
             ['name' => 'A社', 'matched' => 1, 'total' => 24, 'is_self' => false, 'material_sufficient' => true],
             ['name' => 'B社', 'matched' => 1, 'total' => 24, 'is_self' => false, 'material_sufficient' => false],
         ];
-        $axes = [['name' => '活動的魅力', 'caption' => null, 'denominator' => 4, 'self_count' => 1, 'competitor_counts' => [1, 1], 'self_gap' => false]];
-        $out = (new ComparisonStrengthWeaknessComposer)->compose($companies, $axes, true, $this->goodOutput());
-        $this->assertNotNull($out['notice']);
-        $this->assertNull($out['strength']);
-        $this->assertFalse($out['ai_used']);
+        $axes = [['name' => '活動的魅力', 'caption' => null, 'denominator' => 4, 'self_count' => 1, 'competitor_counts' => [1, 3], 'self_gap' => false]];
+        $out = (new ComparisonStrengthWeaknessComposer)->compose($companies, $axes, true);
+        $this->assertNull($out['notice']);
+        $this->assertNotNull($out['strength']);
+        $this->assertStringContainsString('B社', (string) $out['excluded_note']);
+        $this->assertStringNotContainsString('B社', (string) $out['weakness'], 'B社の3点は比べない');
+
+        // 全社が少ないときは、従来どおりAIを呼ばず、1行だけ。
+        $allThin = $this->makeComparison(['purpose'], [['business_expansion']], [1 => 100]);
+        $fake = $this->fakeProvider($this->goodOutput());
+        $result = app(ComparisonCommentaryService::class)->generate($allThin);
+        $this->assertSame(0, $fake->calls);
+        $this->assertSame('material_insufficient', $result['skipped']);
+        $companies[1]['material_sufficient'] = false;
+        $this->assertNotNull((new ComparisonStrengthWeaknessComposer)->compose($companies, $axes, true)['notice']);
     }
 
-    public function test_a_company_whose_judgment_is_not_readable_is_also_skipped_without_the_ai(): void
+    public function test_a_competitor_whose_judgment_is_not_readable_is_also_left_out(): void
     {
         $analysis = $this->standard();
-        BrandWheelAnalysisResult::query()->where('analysis_id', $analysis->id)->whereIn('website_analysis_id', $analysis->websiteAnalyses()->orderByDesc('id')->limit(1)->pluck('id'))->update(['status' => 'error']);
-        $fake = $this->fakeProvider($this->goodOutput());
+        $last = $analysis->websiteAnalyses()->orderByDesc('id')->first();
+        BrandWheelAnalysisResult::query()->where('analysis_id', $analysis->id)->where('website_analysis_id', $last->id)->update(['status' => 'error']);
 
-        $result = app(ComparisonCommentaryService::class)->generate($analysis);
+        $material = app(ComparisonCommentaryMaterialBuilder::class)->build($analysis);
 
-        $this->assertSame(0, $fake->calls);
-        $this->assertSame('competitor_unreadable', $result['skipped']);
+        $this->assertNotContains($last->website->name, array_column($material['competitors'], 'name'));
+        $this->assertNotEmpty($material['competitors']);
     }
 
     public function test_the_log_has_only_counts_and_reason_codes(): void
